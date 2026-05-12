@@ -1,0 +1,64 @@
+services:
+  agent-adk:
+    build: ./agent_1_adk
+    ports: ["8001:8001"]
+    environment:
+      - AGENT_LLAMAINDEX_URL=http://agent-llamaindex:8002
+      - AGENT_LANGGRAPH_URL=http://agent-langgraph:8003
+      - AGENT_CREWAI_URL=http://agent-crewai:8004
+      - GROQ_API_KEY=${GROQ_API_KEY}
+    depends_on:
+      - agent-llamaindex
+      - agent-langgraph
+      - agent-crewai
+
+  agent-llamaindex:
+    build: ./agent_2_llamaindex
+    ports: ["8002:8002"]
+    environment:
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - CHROMA_DIR=/data/chroma
+    volumes:
+      - chroma_data:/data/chroma
+
+  agent-langgraph:
+    build: ./agent_3_langgraph
+    ports: ["8003:8003"]
+
+  agent-crewai:
+    build: ./agent_4_crewai
+    ports: ["8004:8004"]
+    environment:
+      - GROQ_API_KEY=${GROQ_API_KEY}
+    depends_on:
+      - mcp-reddit
+
+  mcp-yfinance:
+    build: ./mcp_servers
+    command: python mcp_servers/yfinance_server.py
+    ports: ["8010:8010"]
+
+  mcp-sec-edgar:
+    build: ./mcp_servers
+    command: python mcp_servers/sec_edgar_server.py
+    ports: ["8020:8020"]
+
+  mcp-reddit:
+    build: ./mcp_servers
+    command: python mcp_servers/reddit_server.py
+    ports: ["8030:8030"]
+    environment:
+      - REDDIT_CLIENT_ID=${REDDIT_CLIENT_ID}
+      - REDDIT_CLIENT_SECRET=${REDDIT_CLIENT_SECRET}
+
+  mcp-python-runner:
+    build: ./mcp_servers
+    command: python mcp_servers/python_runner_server.py
+    ports: ["8040:8040"]
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+
+volumes:
+  chroma_data:

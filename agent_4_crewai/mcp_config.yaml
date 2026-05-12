@@ -1,0 +1,22 @@
+mcp_servers:
+  - name: reddit-mcp
+    url: http://localhost:8030/sse
+    tools:
+      - get_ticker_posts
+
+  - name: twitter-mcp
+    url: http://localhost:8035/sse
+    tools:
+      - search_tweets
+
+  - name: financial-news
+    url: http://localhost:8025/sse
+    tools:
+      - get_news_sentiment
+      - get_earnings_calendar
+
+  - name: sec-insider-mcp
+    url: http://localhost:8020/sse
+    tools:
+      - get_company_filings
+      - full_text_search

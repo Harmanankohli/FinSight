@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+.venv/
+venv/
+*.egg
+
+# Environment
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+logs/
+*.log
+
+# Vector store data
+chroma_db/
+.adk/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp files
+request.json
+run_adk_web.bat

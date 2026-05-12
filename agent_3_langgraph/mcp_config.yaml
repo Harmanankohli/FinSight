@@ -1,0 +1,12 @@
+mcp_servers:
+  - name: yfinance
+    url: http://localhost:8010/sse
+    tools:
+      - get_prices
+      - get_financials
+      - get_options_chain
+
+  - name: python-runner
+    url: http://localhost:8040/sse
+    tools:
+      - execute_python

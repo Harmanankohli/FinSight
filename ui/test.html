@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html>
+<head><title>FinSight - Investment Research</title>
+<style>
+  body { font-family: system-ui; max-width: 800px; margin: 20px auto; padding: 20px; background: #0f172a; color: #e2e8f0; }
+  input, textarea, select { width: 100%; padding: 8px; margin: 8px 0; background: #1e293b; border: 1px solid #334155; color: #e2e8f0; border-radius: 6px; }
+  button { background: #3b82f6; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; }
+  button:hover { background: #2563eb; }
+  pre { background: #1e293b; padding: 15px; border-radius: 8px; overflow-x: auto; white-space: pre-wrap; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-weight: bold; }
+  .buy { background: #22c55e; color: #052e16; }
+  .sell { background: #ef4444; color: #450a0a; }
+  .hold { background: #eab308; color: #422006; }
+  .row { display: flex; gap: 10px; }
+  .row > div { flex: 1; }
+  h3 { margin: 20px 0 5px; color: #94a3b8; }
+  .section { background: #1e293b; border-radius: 8px; padding: 15px; margin: 10px 0; }
+</style>
+</head>
+<body>
+<h1>FinSight</h1>
+<p>Multi-Agent Investment Research System</p>
+
+<div class="section">
+  <label>Query</label>
+  <textarea id="query" rows="2">Should I invest in NVDA?</textarea>
+  <div class="row">
+    <div><label>Portfolio</label><input id="portfolio" value="AAPL, MSFT"></div>
+    <div><label>Risk Profile</label>
+      <select id="risk"><option>conservative</option><option selected>moderate</option><option>aggressive</option></select>
+    </div>
+  </div>
+  <button onclick="analyze()">Analyze</button>
+  <div id="status" style="margin-top:8px;font-size:0.9em;color:#64748b"></div>
+</div>
+
+<div id="result" style="display:none">
+  <h2>Investment Brief: <span id="ticker"></span></h2>
+  <div id="rec"></div>
+  <p id="rationale"></p>
+
+  <h3>RAG Insights</h3>
+  <div class="section" id="rag"></div>
+
+  <h3>Quant Metrics</h3>
+  <div class="section" id="quant"></div>
+
+  <h3>Sentiment</h3>
+  <div class="section" id="sentiment"></div>
+
+  <p id="disclaimer" style="font-size:0.8em;color:#64748b;margin-top:20px"></p>
+</div>
+
+<script>
+async function analyze() {
+  document.getElementById('status').textContent = 'Calling agents (RAG + Quant + Sentiment)...';
+  document.getElementById('result').style.display = 'none';
+  try {
+    const r = await fetch('/query', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        query: document.getElementById('query').value,
+        portfolio: document.getElementById('portfolio').value.split(',').map(s => s.trim()),
+        risk_profile: document.getElementById('risk').value
+      })
+    });
+    const d = await r.json();
+    document.getElementById('status').textContent = 'Done';
+    document.getElementById('result').style.display = 'block';
+
+    const rec = d.final_recommendation;
+    const badge = document.getElementById('rec');
+    badge.innerHTML = `<span class="badge ${rec.toLowerCase()}">${rec}</span> Confidence: ${(d.confidence_score*100).toFixed(0)}%`;
+
+    document.getElementById('ticker').textContent = d.ticker;
+    document.getElementById('rationale').textContent = d.recommendation_rationale;
+
+    const rag = d.rag_insights;
+    document.getElementById('rag').innerHTML = `
+      <b>Confidence:</b> ${rag.confidence_score}<br>
+      <b>Forward Guidance:</b> ${rag.forward_guidance || 'N/A'}<br>
+      <b>Sources:</b> ${(rag.cited_documents||[]).join(', ') || 'None'}<br>
+      <b>Risks:</b> ${(rag.key_risks||[]).join(', ') || 'N/A'}
+    `;
+
+    const qm = d.quant_metrics;
+    document.getElementById('quant').innerHTML = `
+      <b>Sharpe:</b> ${qm.sharpe_ratio} | <b>Vol:</b> ${qm.annual_volatility} | <b>Beta:</b> ${qm.beta}<br>
+      <b>VaR 95%:</b> ${qm.var_95_daily} | <b>DCF:</b> ${qm.dcf_intrinsic_value || 'N/A'}<br>
+      <b>Signal:</b> ${qm.quant_signal} (conf: ${qm.quant_confidence})
+    `;
+
+    const si = d.sentiment_intelligence;
+    document.getElementById('sentiment').innerHTML = `
+      <b>Signal:</b> ${si.overall_signal} (conf: ${si.confidence_score})<br>
+      <b>Narrative:</b> ${(si.narrative||'').substring(0,300)}<br>
+      <b>Risks:</b> ${(si.key_risks||[]).join(', ') || 'N/A'}<br>
+      <b>Catalysts:</b> ${(si.key_catalysts||[]).join(', ') || 'N/A'}
+    `;
+    document.getElementById('disclaimer').textContent = d.disclaimer;
+  } catch(e) {
+    document.getElementById('status').textContent = 'Error: ' + e.message;
+  }
+}
+</script>
+</body>
+</html>

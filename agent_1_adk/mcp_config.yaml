@@ -1,0 +1,15 @@
+mcp_servers:
+  - name: google-search
+    url: https://mcp.google.com/search/v1
+    auth: bearer
+    tools:
+      - web_search
+      - news_search
+
+  - name: google-drive
+    url: https://mcp.google.com/drive/v1
+    auth: oauth2
+    tools:
+      - list_files
+      - read_file
+      - search_files
