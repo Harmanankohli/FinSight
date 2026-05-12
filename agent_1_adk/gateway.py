@@ -13,20 +13,33 @@ from a2a.server.routes import create_agent_card_routes
 from a2a.server.routes.common import DefaultServerCallContextBuilder
 from a2a.types import AgentCapabilities, AgentCard, AgentSkill
 
-from .a2a_client import A2AClient
+from .a2a_client import A2AClient, A2ADiscoverer
 from .intent_parser import parse_query
 from .report_generator import synthesize
 
 logger = logging.getLogger(__name__)
 
-_RAG_URL = os.environ.get("AGENT_LLAMAINDEX_URL", "http://localhost:8002")
-_QUANT_URL = os.environ.get("AGENT_LANGGRAPH_URL", "http://localhost:8003")
-_SENTIMENT_URL = os.environ.get("AGENT_CREWAI_URL", "http://localhost:8004")
+_SEED_URLS = os.environ.get(
+    "AGENT_SEED_URLS",
+    "http://localhost:8002,http://localhost:8003,http://localhost:8004",
+)
 
-a2a = A2AClient(timeout=45.0)
+discoverer = A2ADiscoverer(seed_urls=[u.strip() for u in _SEED_URLS.split(",") if u.strip()])
+a2a = A2AClient(timeout=45.0).with_discoverer(discoverer)
+_discovered = False
+
+
+async def _ensure_discovered():
+    global _discovered
+    if not _discovered:
+        await discoverer.discover()
+        _discovered = True
+        logger.info("Discovered %d agents with %d skills",
+                     len(discoverer.list_agents()), len(discoverer.list_skills()))
 
 
 async def handle_query(request: Request):
+    await _ensure_discovered()
     body = await request.json()
     query = body.get("query", "")
     portfolio = body.get("portfolio", [])
@@ -40,14 +53,14 @@ async def handle_query(request: Request):
 
     tasks = {}
 
-    if _RAG_URL:
-        tasks["rag"] = a2a.query_rag(_RAG_URL, ticker, query)
-
-    if _QUANT_URL:
-        tasks["quant"] = a2a.query_quant(_QUANT_URL, ticker)
-
-    if _SENTIMENT_URL:
-        tasks["sentiment"] = a2a.query_sentiment(_SENTIMENT_URL, ticker)
+    skills = discoverer.list_skills()
+    for skill_id in skills:
+        if "sec_filing" in skill_id or "earnings" in skill_id:
+            tasks["rag"] = a2a.query_rag(skill_id, ticker, query)
+        elif "quant" in skill_id or "analysis" in skill_id:
+            tasks["quant"] = a2a.query_quant(skill_id, ticker)
+        elif "sentiment" in skill_id or "narrative" in skill_id:
+            tasks["sentiment"] = a2a.query_sentiment(skill_id, ticker)
 
     results = {}
     for name, task in tasks.items():
@@ -76,13 +89,17 @@ async def ui(_):
 
 
 async def health(_):
+    await _ensure_discovered()
     return JSONResponse({
         "status": "ok",
-        "rag": _RAG_URL,
-        "quant": _QUANT_URL,
-        "sentiment": _SENTIMENT_URL,
+        "discovered_agents": {
+            url: card.get("name") for url, card in discoverer.list_agents().items()
+        },
+        "discovered_skills": list(discoverer.list_skills().keys()),
     })
 
+
+from starlette.routing import Route
 
 routes = [
     *create_agent_card_routes(AgentCard(
@@ -99,13 +116,23 @@ routes = [
             output_modes=["data"],
         )],
     )),
+    Route("/query", endpoint=handle_query, methods=["POST"]),
+    Route("/health", endpoint=health, methods=["GET"]),
 ]
 
-from starlette.routing import Route
-routes.append(Route("/query", endpoint=handle_query, methods=["POST"]))
-routes.append(Route("/health", endpoint=health, methods=["GET"]))
-
 app = Starlette(routes=routes)
+
+
+@app.on_event("startup")
+async def _startup():
+    try:
+        await discoverer.discover()
+        global _discovered
+        _discovered = True
+        logger.info("Discovered %d agents with %d skills",
+                     len(discoverer.list_agents()), len(discoverer.list_skills()))
+    except Exception as e:
+        logger.warning("Agent discovery failed (non-fatal): %s", e)
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)

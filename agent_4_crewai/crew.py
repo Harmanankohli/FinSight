@@ -4,13 +4,7 @@ from typing import Any
 
 from crewai import Agent, Crew, Process, Task
 
-from .mcp_tools import (
-    FinancialNewsMCPTool,
-    MCPClientWrapper,
-    RedditMCPTool,
-    SECInsiderMCPTool,
-    TwitterMCPTool,
-)
+from .mcp_tools import MCPClientWrapper
 
 logger = logging.getLogger(__name__)
 
@@ -23,24 +17,23 @@ class SentimentIntelligenceCrew:
     def __init__(self, mcp_wrapper: MCPClientWrapper):
         self._mcp = mcp_wrapper
 
-    def build_crew(self, ticker: str) -> Crew:
+    def build_crew(self, ticker: str, tools: list | None = None) -> Crew:
+        tool_list = tools or []
+
         social_agent = Agent(
             role="Social Media Sentiment Analyst",
-            goal=f"Analyze retail investor sentiment for {ticker} across Reddit and Twitter",
+            goal=f"Analyze retail investor sentiment for {ticker} using available tools",
             backstory="Expert in quantitative social sentiment analysis for financial markets",
-            tools=[
-                RedditMCPTool(self._mcp),
-                TwitterMCPTool(self._mcp),
-            ],
+            tools=tool_list,
             llm=_LLM_CONFIG,
             verbose=True,
         )
 
         analyst_agent = Agent(
             role="Sell-Side Analyst Tracker",
-            goal=f"Aggregate and analyze latest analyst upgrades, downgrades, and price targets for {ticker}",
+            goal=f"Aggregate and analyze latest analyst ratings and price targets for {ticker}",
             backstory="Former Goldman Sachs equity research associate with deep sector knowledge",
-            tools=[FinancialNewsMCPTool(self._mcp)],
+            tools=tool_list,
             llm=_LLM_CONFIG,
         )
 
@@ -48,7 +41,7 @@ class SentimentIntelligenceCrew:
             role="Insider Trading Monitor",
             goal=f"Review recent Form 4 filings for {ticker} executives and flag unusual activity",
             backstory="Compliance expert specializing in SEC Form 4 analysis and insider pattern detection",
-            tools=[SECInsiderMCPTool(self._mcp)],
+            tools=tool_list,
             llm=_LLM_CONFIG,
         )
 
@@ -61,8 +54,8 @@ class SentimentIntelligenceCrew:
 
         social_task = Task(
             description=(
-                f"Scrape and score Reddit r/stocks, r/investing and Twitter/X posts mentioning "
-                f"{ticker} in last 30 days. Return sentiment score (-1 to 1), volume, and key themes."
+                f"Analyze social media sentiment for {ticker}. "
+                f"Return sentiment score (-1 to 1), volume, and key themes."
             ),
             agent=social_agent,
             expected_output="JSON with sentiment_score, post_volume, top_themes, notable_posts",
@@ -70,8 +63,8 @@ class SentimentIntelligenceCrew:
 
         analyst_task = Task(
             description=(
-                f"Find all analyst ratings changes for {ticker} in last 90 days. "
-                f"Identify consensus rating, average price target, and most bullish/bearish arguments."
+                f"Find analyst ratings changes and price targets for {ticker} in last 90 days. "
+                f"Return consensus rating, average price target, and key arguments."
             ),
             agent=analyst_agent,
             expected_output="JSON with consensus_rating, avg_price_target, bull_case, bear_case",
@@ -79,8 +72,8 @@ class SentimentIntelligenceCrew:
 
         insider_task = Task(
             description=(
-                f"Review last 6 months of Form 4 filings for {ticker}. "
-                f"Flag any unusual buy/sell patterns by C-suite or board members."
+                f"Review Form 4 filings for {ticker} and flag unusual insider trading patterns. "
+                f"Return activity summary and signal."
             ),
             agent=insider_agent,
             expected_output="JSON with insider_activity_summary, notable_transactions, signal (bullish/bearish/neutral)",
@@ -88,8 +81,8 @@ class SentimentIntelligenceCrew:
 
         synthesis_task = Task(
             description=(
-                "Synthesize all intelligence into a 3-paragraph investment narrative "
-                "with an overall sentiment signal and confidence score."
+                f"Synthesize all intelligence for {ticker} into a 3-paragraph investment narrative "
+                f"with an overall sentiment signal and confidence score."
             ),
             agent=synthesis_agent,
             context=[social_task, analyst_task, insider_task],
@@ -105,8 +98,8 @@ class SentimentIntelligenceCrew:
             verbose=True,
         )
 
-    async def analyze(self, ticker: str) -> dict:
-        crew = self.build_crew(ticker)
+    async def analyze(self, ticker: str, tools: list | None = None) -> dict:
+        crew = self.build_crew(ticker, tools=tools)
         try:
             result = crew.kickoff()
             raw = result.raw if hasattr(result, "raw") else str(result)

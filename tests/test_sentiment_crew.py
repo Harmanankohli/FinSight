@@ -1,9 +1,9 @@
 import json
 
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
-from agent_4_crewai.mcp_tools import MCPClientWrapper, RedditMCPTool, SECInsiderMCPTool
+from agent_4_crewai.mcp_tools import MCPClientWrapper
 
 
 class MockContent:
@@ -12,23 +12,11 @@ class MockContent:
 
 
 class MockMCPClient:
-    async def call_tool(self, server, tool, arguments):
-        if tool == "get_ticker_posts":
-            return MockContent({
-                "ticker": arguments.get("ticker"),
-                "sentiment_score": 0.25,
-                "total_posts": 50,
-                "positive_posts": 20,
-                "negative_posts": 10,
-                "posts": [],
-            })
-        if tool == "get_form4_filings":
-            return MockContent({
-                "ticker": arguments.get("ticker"),
-                "insider_activity": "No unusual activity",
-                "signal": "neutral",
-            })
-        return MockContent({"error": "unknown tool"})
+    async def list_tools(self):
+        return []
+
+    async def call_tool_by_name(self, tool_name, arguments):
+        return MockContent({"result": "ok", "tool": tool_name})
 
 
 @pytest.fixture
@@ -36,27 +24,16 @@ def mcp_wrapper():
     return MCPClientWrapper(MockMCPClient())
 
 
-def test_reddit_tool(mcp_wrapper):
-    tool = RedditMCPTool(mcp_wrapper)
-    result = tool._run("NVDA")
-    data = json.loads(result)
-    assert data["ticker"] == "NVDA"
-    assert data["sentiment_score"] == 0.25
-    assert data["total_posts"] == 50
+@pytest.mark.asyncio
+async def test_discover_tools_returns_empty_when_no_tools(mcp_wrapper):
+    tools = await mcp_wrapper.discover_tools()
+    assert tools == []
 
 
-def test_insider_tool(mcp_wrapper):
-    tool = SECInsiderMCPTool(mcp_wrapper)
-    result = tool._run("AAPL")
-    data = json.loads(result)
-    assert data["ticker"] == "AAPL"
-    assert "signal" in data
-
-
-def test_mcp_client_wrapper_error_handling(mcp_wrapper):
-    import asyncio
-    result = asyncio.run(mcp_wrapper.call("unknown-server", "unknown-tool", {}))
-    assert "error" in result or "content" in str(type(result))
+@pytest.mark.asyncio
+async def test_call_by_name(mcp_wrapper):
+    result = await mcp_wrapper.call_by_name("test_tool", {"key": "val"})
+    assert "result" in str(result) or "result" in str(type(result))
 
 
 def test_sentiment_crew_build(monkeypatch):

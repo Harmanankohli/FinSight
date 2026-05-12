@@ -88,8 +88,8 @@ class RAGRequestHandler(DefaultRequestHandlerV2):
             self._ingestion = DocumentIngestionPipeline(self._index)
 
         try:
-            result = await self._mcp.call_tool(
-                "sec-edgar", "get_company_filings",
+            result = await self._mcp.call_tool_by_name(
+                "get_company_filings",
                 {"ticker": ticker, "form_types": ["10-K", "10-Q", "8-K"], "limit": 5},
             )
             if hasattr(result, "content"):

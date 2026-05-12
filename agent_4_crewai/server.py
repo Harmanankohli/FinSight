@@ -69,7 +69,20 @@ def _data_part(data: dict) -> Part:
 class SentimentRequestHandler(DefaultRequestHandlerV2):
     def __init__(self):
         self._mcp = MCPClient(config_path="agent_4_crewai/mcp_config.yaml")
-        self._crew = SentimentIntelligenceCrew(MCPClientWrapper(self._mcp))
+        self._wrapper = MCPClientWrapper(self._mcp)
+        self._crew = SentimentIntelligenceCrew(self._wrapper)
+        self._discovered_tools: list | None = None
+
+    async def _get_tools(self) -> list:
+        if self._discovered_tools is None:
+            try:
+                await self._mcp.connect_all()
+                self._discovered_tools = await self._wrapper.discover_tools()
+                logger.info("Discovered %d MCP tools", len(self._discovered_tools))
+            except Exception as e:
+                logger.warning("MCP discovery failed: %s", e)
+                self._discovered_tools = []
+        return self._discovered_tools or []
 
     async def on_message_send(
         self, params: SendMessageRequest, context: ServerCallContext
@@ -91,7 +104,8 @@ class SentimentRequestHandler(DefaultRequestHandlerV2):
             if not ticker:
                 raise ValueError("Could not determine ticker")
 
-            result = await self._crew.analyze(ticker.upper())
+            tools = await self._get_tools()
+            result = await self._crew.analyze(ticker.upper(), tools=tools)
 
             return Task(
                 id=str(uuid.uuid4()),
