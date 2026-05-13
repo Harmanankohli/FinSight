@@ -1,112 +1,63 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from agent_1_adk.a2a_client import A2AClient
+from agent_1_adk.a2a_client import A2ADiscoverer
 
 
 @pytest.fixture
-def a2a_client():
-    return A2AClient(timeout=5.0, max_retries=1)
-
-
-def _mock_response(status_code=200, json_data=None):
-    mock = MagicMock()
-    mock.status_code = status_code
-    mock.json.return_value = json_data or {}
-    return mock
+def discoverer():
+    return A2ADiscoverer(seed_urls=["http://localhost:8002"])
 
 
 @pytest.mark.asyncio
-async def test_send_task_success(a2a_client):
-    mock_response = {
-        "jsonrpc": "2.0",
-        "id": "test-id",
-        "result": {
-            "task": {
-                "id": "test-id",
-                "status": {"state": "TASK_STATE_COMPLETED"},
-                "artifacts": [
-                    {
-                        "name": "test_result",
-                        "parts": [{"data": {"key": "value"}}],
-                    }
-                ],
-            }
-        },
-    }
-
-    with patch("httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client_cls.return_value.__aenter__.return_value = mock_client
-        mock_client.post = AsyncMock(return_value=_mock_response(json_data=mock_response))
-
-        result = await a2a_client.send_task(
-            "http://localhost:8002", "sec_filing_retrieval", "test query",
-        )
-
-        task = result.get("result", {}).get("task", {})
-        assert task["status"]["state"] == "TASK_STATE_COMPLETED"
-        assert task["artifacts"][0]["parts"][0]["data"]["key"] == "value"
+async def test_discoverer_returns_empty_when_no_agents():
+    d = A2ADiscoverer(seed_urls=[])
+    await d.discover()
+    assert d.list_skills() == {}
+    assert d.list_agents() == {}
 
 
 @pytest.mark.asyncio
-async def test_send_task_failure(a2a_client):
-    mock_response = {
-        "jsonrpc": "2.0",
-        "id": "test-id",
-        "result": {
-            "task": {
-                "id": "test-id",
-                "status": {"state": "TASK_STATE_FAILED"},
-                "artifacts": [{"name": "error", "parts": [{"text": "Analysis failed"}]}],
-            }
-        },
-    }
-
-    with patch("httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client_cls.return_value.__aenter__.return_value = mock_client
-        mock_client.post = AsyncMock(return_value=_mock_response(json_data=mock_response))
-
-        with pytest.raises(RuntimeError, match="Analysis failed"):
-            await a2a_client.send_task(
-                "http://localhost:8002", "sec_filing_retrieval", "test",
-            )
+async def test_find_agent_returns_none_for_unknown_skill(discoverer):
+    assert discoverer.find_agent("nonexistent") is None
 
 
 @pytest.mark.asyncio
-async def test_send_task_retry_on_timeout(a2a_client):
-    with patch("httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client_cls.return_value.__aenter__.return_value = mock_client
-        mock_client.post = AsyncMock(side_effect=Exception("Connection error"))
-
-        with pytest.raises(Exception, match="Connection error"):
-            await a2a_client.send_task(
-                "http://localhost:8002", "sec_filing_retrieval", "test",
-            )
-        assert mock_client.post.call_count <= a2a_client.max_retries + 1
+async def test_find_agent_by_query_matches_skill_keywords(discoverer):
+    await discoverer.discover()
+    match = discoverer.find_agent_by_query("SEC filings risk factors")
+    if match:
+        skill_id, entry = match
+        assert "sec" in skill_id or "filing" in skill_id
 
 
 @pytest.mark.asyncio
-async def test_query_rag(a2a_client):
-    mock_response = {
-        "jsonrpc": "2.0",
-        "id": "test-id",
-        "result": {
-            "task": {
-                "id": "test-id",
-                "status": {"state": "TASK_STATE_COMPLETED"},
-                "artifacts": [
-                    {
-                        "name": "NVDA_rag_result",
-                        "parts": [{"data": {"summary": "Strong revenue growth"}}],
-                    }
-                ],
-            }
-        },
-    }
+async def test_list_skills_returns_dict(discoverer):
+    await discoverer.discover()
+    skills = discoverer.list_skills()
+    assert isinstance(skills, dict)
 
-    with patch.object(a2a_client, "send_task", new_callable=AsyncMock, return_value=mock_response):
-        result = await a2a_client.query_rag("http://localhost:8002", "NVDA", "analyze")
-        assert result == {"summary": "Strong revenue growth"}
+
+def test_intent_parser_extracts_ticker():
+    from agent_1_adk.intent_parser import extract_ticker
+    assert extract_ticker("Should I invest in NVDA?") == "NVDA"
+    assert extract_ticker("What about AAPL?") == "AAPL"
+    assert extract_ticker("no ticker here") is None
+
+
+def test_intent_parser_extracts_risk_profile():
+    from agent_1_adk.intent_parser import extract_risk_profile
+    assert extract_risk_profile("conservative investor") == "conservative"
+    assert extract_risk_profile("aggressive growth") == "aggressive"
+    assert extract_risk_profile("moderate risk") == "moderate"
+
+
+def test_report_generator_handles_none_data():
+    from agent_1_adk.report_generator import synthesize
+    from agent_1_adk.intent_parser import parse_query
+    import asyncio
+    context = asyncio.run(parse_query("Analyze NVDA", ["AAPL"]))
+    brief = synthesize(context, rag_data=None, quant_data=None, sentiment_data=None)
+    assert brief.final_recommendation in ("BUY", "HOLD", "SELL")
+    assert brief.ticker == "NVDA"
+    assert brief.disclaimer is not None

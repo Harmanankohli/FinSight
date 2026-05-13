@@ -4,6 +4,8 @@ from typing import Any
 import numpy as np
 from rank_bm25 import BM25Okapi
 from sentence_transformers import CrossEncoder
+
+from shared.config import RERANKER_MODEL
 from llama_index.core.schema import NodeWithScore, TextNode
 
 logger = logging.getLogger(__name__)
@@ -29,7 +31,7 @@ class HybridSearchPipeline:
     def reranker(self) -> CrossEncoder:
         if self._reranker is None:
             self._reranker = CrossEncoder(
-                "cross-encoder/ms-marco-MiniLM-L-6-v2",
+                RERANKER_MODEL,
                 max_length=512,
             )
         return self._reranker

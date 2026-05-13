@@ -8,49 +8,70 @@ _src = str(Path(__file__).resolve().parent.parent.parent)
 if _src not in sys.path:
     sys.path.insert(0, _src)
 
-from google.adk import Agent
+import httpx as _httpx
 
-from agent_1_adk.a2a_client import A2AClient
+from a2a.client import A2ACardResolver, ClientConfig, create_client
+from a2a.helpers import new_text_message
+from a2a.types import SendMessageRequest, Role
+from google.protobuf.json_format import MessageToDict
+from google.protobuf.struct_pb2 import Struct
+
+from google.adk import Agent
+from shared.config import (
+    RAG_AGENT_URL, QUANT_AGENT_URL, SENTIMENT_AGENT_URL,
+    A2A_TIMEOUT, ADK_MODEL, GROQ_API_KEY, LLM_BASE_URL,
+)
+
+os.environ.setdefault("OPENAI_API_KEY", GROQ_API_KEY)
+os.environ.setdefault("OPENAI_BASE_URL", LLM_BASE_URL)
 
 logger = logging.getLogger(__name__)
 
-_RAG_URL = os.environ.get("AGENT_LLAMAINDEX_URL", "http://localhost:8002")
-_QUANT_URL = os.environ.get("AGENT_LANGGRAPH_URL", "http://localhost:8003")
-_SENTIMENT_URL = os.environ.get("AGENT_CREWAI_URL", "http://localhost:8004")
 
-a2a = A2AClient(timeout=45.0)
+async def _call_skill(url: str, query: str, ticker: str = "", period: str = "5y") -> str:
+    try:
+        async with _httpx.AsyncClient(timeout=_httpx.Timeout(A2A_TIMEOUT)) as h:
+            card = await A2ACardResolver(h, url).get_agent_card()
+            client = await create_client(agent=card, client_config=ClientConfig(streaming=False, httpx_client=h))
+            meta = Struct()
+            meta.update({"ticker": ticker, "period": period})
+            req = SendMessageRequest(message=new_text_message(query, role=Role.ROLE_USER), metadata=meta)
+            async for event in client.send_message(req):
+                if hasattr(event, "task") and event.task and event.task.status.state == 3:
+                    for art in event.task.artifacts:
+                        for p in art.parts:
+                            if p.data:
+                                return json.dumps(MessageToDict(p.data))
+                            if p.text:
+                                return json.dumps({"text": p.text})
+            await client.close()
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+    return "{}"
 
 
-async def query_rag(ticker: str, query: str) -> str:
-    result = await a2a.query_rag(_RAG_URL, ticker, query)
-    return json.dumps(result)
+async def query_rag(ticker: str, query: str = "") -> str:
+    return await _call_skill(RAG_AGENT_URL, query or f"Research {ticker}", ticker)
 
 
 async def query_quant(ticker: str, period: str = "5y") -> str:
-    result = await a2a.query_quant(_QUANT_URL, ticker, period)
-    return json.dumps(result)
+    return await _call_skill(QUANT_AGENT_URL, f"Analyze {ticker}", ticker, period)
 
 
 async def query_sentiment(ticker: str) -> str:
-    result = await a2a.query_sentiment(_SENTIMENT_URL, ticker)
-    return json.dumps(result)
+    return await _call_skill(SENTIMENT_AGENT_URL, f"Sentiment for {ticker}", ticker)
 
-
-_MODEL = os.environ.get("ADK_MODEL", "groq/llama-3.3-70b-versatile")
 
 root_agent = Agent(
     name="investment_orchestrator",
-    model=_MODEL,
+    model=ADK_MODEL,
     instruction=(
         "You are an investment research assistant. "
-        "Only use tools when the user asks about a specific stock ticker.\n"
-        "For greetings or general chat, respond conversationally without calling tools.\n\n"
-        "When the user asks about a stock (e.g. 'Should I invest in NVDA?'):\n"
-        "1. Call `query_rag` to retrieve SEC filings\n"
-        "2. Call `query_quant` for risk metrics\n"
-        "3. Call `query_sentiment` for market sentiment\n"
-        "4. Synthesize into a BUY/HOLD/SELL recommendation.\n\n"
-        "Always respond conversationally in plain English, not JSON."
+        "When the user asks about a stock (e.g. 'Should I invest in NVDA?'), "
+        "call query_rag for SEC filings, query_quant for risk metrics, "
+        "and query_sentiment for market sentiment. Then synthesize into "
+        "a BUY/HOLD/SELL recommendation with rationale. "
+        "For greetings, just respond conversationally."
     ),
     tools=[query_rag, query_quant, query_sentiment],
 )

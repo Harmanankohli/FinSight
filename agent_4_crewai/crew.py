@@ -8,9 +8,9 @@ from .mcp_tools import MCPClientWrapper
 
 logger = logging.getLogger(__name__)
 
-import os
+from shared.config import GROQ_MODEL
 
-_LLM_CONFIG = f"hosted_vllm/{os.environ.get('GROQ_MODEL', 'mixtral-8x7b-32768')}"
+_LLM_CONFIG = f"hosted_vllm/{GROQ_MODEL}"
 
 
 class SentimentIntelligenceCrew:

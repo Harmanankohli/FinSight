@@ -1,5 +1,4 @@
 import logging
-import os
 from typing import Any
 
 from llama_index.core import (
@@ -17,27 +16,25 @@ from llama_index.llms.groq import Groq
 from llama_index.vector_stores.chroma import ChromaVectorStore
 import chromadb
 
-logger = logging.getLogger(__name__)
+from shared.config import GROQ_MODEL, EMBED_MODEL, CHROMA_DIR, GROQ_API_KEY
 
-_EMBED_MODEL = os.environ.get("EMBED_MODEL", "all-MiniLM-L6-v2")
-_GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
-_CHROMA_DIR = os.environ.get("CHROMA_DIR", "./chroma_db")
+logger = logging.getLogger(__name__)
 
 
 class FinancialIndexManager:
     def __init__(self):
         self.llm = Groq(
-            model=_GROQ_MODEL,
-            api_key=os.environ.get("GROQ_API_KEY"),
+            model=GROQ_MODEL,
+            api_key=GROQ_API_KEY,
         )
         self.embed_model = HuggingFaceEmbedding(
-            model_name=f"sentence-transformers/{_EMBED_MODEL}"
+            model_name=f"sentence-transformers/{EMBED_MODEL}"
         )
         Settings.llm = self.llm
         Settings.embed_model = self.embed_model
         Settings.node_parser = SentenceSplitter(chunk_size=512, chunk_overlap=50)
 
-        self._chroma = chromadb.PersistentClient(path=_CHROMA_DIR)
+        self._chroma = chromadb.PersistentClient(path=CHROMA_DIR)
         self._indexes: dict[str, VectorStoreIndex] = {}
         self._router: RouterQueryEngine | None = None
 

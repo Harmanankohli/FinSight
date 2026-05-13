@@ -1,45 +1,77 @@
-import asyncio
 import json
 import logging
 import os
-import uuid
 
+import httpx
 import uvicorn
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
+from starlette.routing import Route
 
+from a2a.client import A2ACardResolver, ClientConfig, create_client
+from a2a.helpers import new_text_message
 from a2a.server.routes import create_agent_card_routes
-from a2a.server.routes.common import DefaultServerCallContextBuilder
-from a2a.types import AgentCapabilities, AgentCard, AgentSkill
+from a2a.types import (
+    AgentCapabilities,
+    AgentCard,
+    AgentInterface,
+    AgentSkill,
+    SendMessageRequest,
+)
+from google.protobuf.json_format import MessageToDict
 
-from .a2a_client import A2AClient, A2ADiscoverer
 from .intent_parser import parse_query
 from .report_generator import synthesize
 
 logger = logging.getLogger(__name__)
 
-_SEED_URLS = os.environ.get(
-    "AGENT_SEED_URLS",
-    "http://localhost:8002,http://localhost:8003,http://localhost:8004",
-)
-
-discoverer = A2ADiscoverer(seed_urls=[u.strip() for u in _SEED_URLS.split(",") if u.strip()])
-a2a = A2AClient(timeout=45.0).with_discoverer(discoverer)
-_discovered = False
+from shared.config import AGENT_SEED_URLS as _SEED_URLS
 
 
-async def _ensure_discovered():
-    global _discovered
-    if not _discovered:
-        await discoverer.discover()
-        _discovered = True
-        logger.info("Discovered %d agents with %d skills",
-                     len(discoverer.list_agents()), len(discoverer.list_skills()))
+def _list_skills(card: AgentCard) -> dict[str, str]:
+    return {s.id: s.description for s in card.skills}
+
+
+async def _discover() -> dict[str, tuple]:
+    agents: dict[str, tuple] = {}
+    h = httpx.AsyncClient(timeout=httpx.Timeout(60.0))
+    async with h:
+        for url in _SEED_URLS.split(","):
+            url = url.strip()
+            if not url:
+                continue
+            try:
+                card = await A2ACardResolver(h, url).get_agent_card()
+                client = await create_client(
+                    agent=card, client_config=ClientConfig(streaming=False, httpx_client=h),
+                )
+                agents[url] = (card, client)
+                logger.info("Discovered '%s' at %s", card.name, url)
+            except Exception as e:
+                logger.warning("Failed to discover %s: %s", url, e)
+    return agents
+
+
+async def _call_agent(client, query: str, ticker: str, period: str = "5y") -> dict:
+    from google.protobuf.struct_pb2 import Struct
+    meta = Struct()
+    meta.update({"ticker": ticker, "period": period})
+    req = SendMessageRequest(message=new_text_message(query, role=1), metadata=meta)
+    async for event in client.send_message(req):
+        if hasattr(event, "task") and event.task:
+            t = event.task
+            if t.status.state == 3:
+                for art in t.artifacts:
+                    for p in art.parts:
+                        if p.data:
+                            return MessageToDict(p.data)
+                        if p.text:
+                            return {"text": p.text}
+    return {}
 
 
 async def handle_query(request: Request):
-    await _ensure_discovered()
     body = await request.json()
     query = body.get("query", "")
     portfolio = body.get("portfolio", [])
@@ -47,28 +79,33 @@ async def handle_query(request: Request):
 
     context = await parse_query(query, portfolio)
     ticker = context.ticker
-
     if not ticker:
-        return JSONResponse({"error": "Could not determine ticker from query"}, status_code=400)
+        return JSONResponse({"error": "Could not determine ticker"}, status_code=400)
 
-    tasks = {}
-
-    skills = discoverer.list_skills()
-    for skill_id in skills:
-        if "sec_filing" in skill_id or "earnings" in skill_id:
-            tasks["rag"] = a2a.query_rag(skill_id, ticker, query)
-        elif "quant" in skill_id or "analysis" in skill_id:
-            tasks["quant"] = a2a.query_quant(skill_id, ticker)
-        elif "sentiment" in skill_id or "narrative" in skill_id:
-            tasks["sentiment"] = a2a.query_sentiment(skill_id, ticker)
+    agents = await _discover()
+    if not agents:
+        return JSONResponse({"error": "No agents discovered"}, status_code=503)
 
     results = {}
-    for name, task in tasks.items():
+    for url, (card, client) in agents.items():
+        skills = _list_skills(card)
         try:
-            results[name] = await task
+            for skill_id in skills:
+                s = skill_id.lower()
+                if "sec_filing" in s or "earnings" in s:
+                    results["rag"] = await _call_agent(
+                        client, query, ticker,
+                    )
+                elif "quant" in s or "analysis" in s:
+                    results["quant"] = await _call_agent(
+                        client, f"Analyze {ticker}", ticker, "5y",
+                    )
+                elif "sentiment" in s or "narrative" in s:
+                    results["sentiment"] = await _call_agent(
+                        client, f"Analyze sentiment for {ticker}", ticker,
+                    )
         except Exception as e:
-            logger.warning("%s agent failed: %s", name, e)
-            results[name] = None
+            logger.warning("Agent at %s failed: %s", url, e)
 
     brief = synthesize(
         context,
@@ -76,35 +113,17 @@ async def handle_query(request: Request):
         quant_data=results.get("quant"),
         sentiment_data=results.get("sentiment"),
     )
-
     return JSONResponse(json.loads(brief.model_dump_json()))
 
 
-from starlette.responses import FileResponse
-from pathlib import Path
-
-
-async def ui(_):
-    return FileResponse(str(Path(__file__).resolve().parent.parent / "ui" / "test.html"))
-
-
 async def health(_):
-    await _ensure_discovered()
-    return JSONResponse({
-        "status": "ok",
-        "discovered_agents": {
-            url: card.get("name") for url, card in discoverer.list_agents().items()
-        },
-        "discovered_skills": list(discoverer.list_skills().keys()),
-    })
+    return JSONResponse({"status": "ok"})
 
-
-from starlette.routing import Route
 
 routes = [
     *create_agent_card_routes(AgentCard(
         name="investment-orchestrator",
-        description="Coordinates RAG, Quant, and Sentiment agents into an Investment Brief",
+        description="Coordinates agents into an Investment Brief",
         version="1.0.0",
         documentation_url=f"http://{os.environ.get('HOST', 'localhost')}:8001",
         capabilities=AgentCapabilities(streaming=False),
@@ -120,19 +139,7 @@ routes = [
     Route("/health", endpoint=health, methods=["GET"]),
 ]
 
-app = Starlette(routes=routes)
-
-
-@app.on_event("startup")
-async def _startup():
-    try:
-        await discoverer.discover()
-        global _discovered
-        _discovered = True
-        logger.info("Discovered %d agents with %d skills",
-                     len(discoverer.list_agents()), len(discoverer.list_skills()))
-    except Exception as e:
-        logger.warning("Agent discovery failed (non-fatal): %s", e)
+app = Starlette(routes=routes, debug=True)
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)

@@ -1,10 +1,11 @@
 import json
 import logging
-import os
 
 from google.adk import Agent
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
+
+from shared.config import RAG_AGENT_URL, QUANT_AGENT_URL, SENTIMENT_AGENT_URL, A2A_TIMEOUT
 
 from .a2a_client import A2AClient
 from .intent_parser import parse_query
@@ -12,25 +13,21 @@ from .report_generator import synthesize
 
 logger = logging.getLogger(__name__)
 
-_RAG_URL = os.environ.get("AGENT_LLAMAINDEX_URL", "http://localhost:8002")
-_QUANT_URL = os.environ.get("AGENT_LANGGRAPH_URL", "http://localhost:8003")
-_SENTIMENT_URL = os.environ.get("AGENT_CREWAI_URL", "http://localhost:8004")
-
-a2a = A2AClient()
+a2a = A2AClient(timeout=A2A_TIMEOUT)
 
 
 async def _query_rag(ticker: str, query: str) -> str:
-    result = await a2a.query_rag(_RAG_URL, ticker, query)
+    result = await a2a.query_rag(RAG_AGENT_URL, ticker, query)
     return json.dumps(result)
 
 
 async def _query_quant(ticker: str, period: str = "5y") -> str:
-    result = await a2a.query_quant(_QUANT_URL, ticker, period)
+    result = await a2a.query_quant(QUANT_AGENT_URL, ticker, period)
     return json.dumps(result)
 
 
 async def _query_sentiment(ticker: str) -> str:
-    result = await a2a.query_sentiment(_SENTIMENT_URL, ticker)
+    result = await a2a.query_sentiment(SENTIMENT_AGENT_URL, ticker)
     return json.dumps(result)
 
 
