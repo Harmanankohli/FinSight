@@ -101,7 +101,7 @@ class FinancialIndexManager:
 
     async def query(self, ticker: str, query_text: str) -> dict:
         try:
-            response = self.router.aquery(
+            response = await self.router.aquery(
                 f"Query: {query_text}\nTicker: {ticker}\nAnswer with specific data and cite sources."
             )
             from llama_index.core.response import Response
