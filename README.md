@@ -9,27 +9,27 @@ An autonomous multi-agent system that answers investment queries like *"Should I
 │              ADK Web UI / API (port 8001)                    │
 │           Orchestrator (gateway.py + planner)                │
 │         Decomposes query → discovers agents → executes       │
-└──────────┬─────────────────────────────────────┬─────────────┘
-           │ A2A Protocol (JSON-RPC over HTTP)    │ MCP Registry
-           │                                      │ (port 10200)
-           ▼                                      ▼
-┌──────────────────────┐            ┌──────────────────────┐
-│  Agent Pool          │            │  Agent Registry MCP  │
-│                      │            │  (agent_cards/*.json)│
-│  RAG       Quant     │            │  find_agent()        │
-│  :8002     :8003     │            │  resource endpoints  │
-│  (LlamaIndex) (LG)   │            └──────────────────────┘
-│  Sentiment           │
-│  :8004 (CrewAI)      │
-└──────┬───────┬───────┘
-       │       │
-       ▼       ▼
-┌──────────┐ ┌───────────┐ ┌────────────┐
-│ SEC      │ │ yfinance  │ │  Financial │
-│ EDGAR    │ │ MCP :8010 │ │  News MCP  │
-│ MCP:8020 │ │ PythonRun │ │  :8025     │
-│          │ │ :8040     │ │            │
-└──────────┘ └───────────┘ └────────────┘
+└──────────────────────┬───────────────────────────────────────┘
+                       │ A2A Protocol (JSON-RPC over HTTP)
+                       ▼
+┌──────────────────────────────────────────────────────────────┐
+│  Agent Pool                                                   │
+│  RAG (:8002)    Quant (:8003)    Sentiment (:8004)           │
+│  (LlamaIndex)   (LangGraph)      (CrewAI)                    │
+└────────┬────────────┬────────────────┬───────────────────────┘
+         │            │                │
+         ▼            ▼                ▼
+┌──────────────────────────────────────────────────────────────┐
+│          Unified finsight-mcp Server (port 8010)              │
+│  ┌─────────────────┐  ┌──────────────────────────────────┐   │
+│  │ Agent Registry  │  │  Data Sources                    │   │
+│  │ find_agent()    │  │  get_prices, get_financials,     │   │
+│  │ resource://cards│  │  get_company_filings,            │   │
+│  └─────────────────┘  │  full_text_search,              │   │
+│                        │  get_news_sentiment,            │   │
+│                        │  execute_python, ...            │   │
+│                        └──────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 ## Agents
@@ -40,7 +40,7 @@ An autonomous multi-agent system that answers investment queries like *"Should I
 | **RAG** | LlamaIndex + ChromaDB | 8002 | `agent_cards/rag_agent.json` | `GenericAgentExecutor(RAGAgent)` |
 | **Quant** | LangGraph + yfinance | 8003 | `agent_cards/quant_agent.json` | `GenericAgentExecutor(QuantAgent)` |
 | **Sentiment** | CrewAI | 8004 | `agent_cards/sentiment_agent.json` | `GenericAgentExecutor(SentimentAgent)` |
-| **Registry** | MCP (FastMCP) | 10200 | — | `agent_registry_server.py` |
+| **MCP Server** | FastMCP | 8010 | `mcp_servers/finsight_server.py` | Registry + all data tools |
 
 ## Tech Stack
 
@@ -99,10 +99,9 @@ run_adk_web.bat
 This starts the Agent Registry MCP server, all 4 data MCP servers, 3 sub-agents, and the ADK Web UI / orchestrator.
 
 **Startup order:**
-1. Agent Registry MCP (`localhost:10200`) — hosts agent cards for discovery
-2. Data MCP Servers — SEC EDGAR (`:8020`), yfinance (`:8010`), Financial News (`:8025`), Python Runner (`:8040`)
-3. Sub-agents — RAG (`:8002`), Quant (`:8003`), Sentiment (`:8004`)
-4. Orchestrator (`:8001`) — discovers agents via registry and serves the ADK Web UI
+1. Unified MCP Server (`localhost:8010`) — agent registry + all data tools
+2. Sub-agents — RAG (`:8002`), Quant (`:8003`), Sentiment (`:8004`)
+3. Orchestrator (`:8001`) — discovers agents via MCP and serves the ADK Web UI
 
 ### Test the System
 
@@ -154,12 +153,9 @@ Open http://127.0.0.1:8001 in your browser for the ADK Web UI.
 │   ├── quant_agent.json
 │   └── sentiment_agent.json
 │
-├── mcp_servers/              # Custom MCP Servers
-│   ├── agent_registry_server.py  # Agent card registry (NEW)
-│   ├── yfinance_server.py    # Stock prices & financials
-│   ├── sec_edgar_server.py   # SEC EDGAR filings
-│   ├── financial_news_server.py  # RSS news + VADER sentiment
-│   └── python_runner_server.py   # Sandboxed Python executor
+├── mcp_servers/              # Single unified MCP Server
+│   ├── finsight_server.py    # Registry + all data tools (port 8010)
+│   └── Dockerfile
 │
 ├── shared/                   # Shared libraries
 │   ├── base_agent.py         # BaseAgent abstract class (NEW)

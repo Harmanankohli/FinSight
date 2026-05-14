@@ -159,28 +159,34 @@ User Query → Planner decomposes into ordered tasks
 
 ## MCP Architecture
 
-### Tool Access (Data Sources)
+### Single Unified MCP Server
+
+Following the a2a_mcp reference pattern, FinSight uses a **single MCP server** (`mcp_servers/finsight_server.py`) that hosts all tools and the agent registry:
+
+```
+┌──────────────────────────────────────────────────────┐
+│              finsight-mcp (port 8010)                 │
+│                                                       │
+│  Agent Registry         │  Data Sources               │
+│  ├── find_agent()       │  ├── get_prices()           │
+│  ├── resource://cards   │  ├── get_financials()       │
+│  └── resource://{name}  │  ├── get_options_chain()    │
+│                         │  ├── get_company_filings()  │
+│                         │  ├── full_text_search()     │
+│                         │  ├── get_news_sentiment()   │
+│                         │  ├── get_earnings_calendar()│
+│                         │  └── execute_python()       │
+└──────────────────────────────────────────────────────┘
+```
+
+Agent cards are loaded from `agent_cards/*.json`, embedded via `sentence-transformers`, and queried via the `find_agent` tool using dot-product similarity.
 
 ```
 MCPClient (shared/mcp_client.py)
-  ├── connect_all()           # SSE connection to each server
+  ├── connect_all()           # SSE connection to single server
   ├── list_tools()            # Dynamic discovery via MCP protocol
-  ├── call_tool_by_name()     # Routes by tool name (not server)
+  ├── call_tool_by_name()     # Routes by tool name
   └── _tool_registry          # tool_name → server_name mapping
-```
-
-Each MCP server is a `FastMCP` SSE server. Tools are defined with `@app.tool()` decorators.
-
-### Agent Registry (Discovery)
-
-```
-AgentRegistryServer (mcp_servers/agent_registry_server.py)
-  ├── Loads agent_cards/*.json
-  ├── Generates embeddings via sentence-transformers
-  ├── find_agent(query)     # Semantic search → best card
-  └── Resource endpoints:
-      ├── resource://agent_cards/list
-      └── resource://agent_cards/{name}
 ```
 
 ## Error Handling

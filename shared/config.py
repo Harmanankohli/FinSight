@@ -45,11 +45,11 @@ MCP_TIMEOUT = float(os.environ.get("MCP_TIMEOUT", "30.0"))
 MCP_MAX_RETRIES = int(os.environ.get("MCP_MAX_RETRIES", "3"))
 A2A_TIMEOUT = float(os.environ.get("A2A_TIMEOUT", "45.0"))
 CHROMA_DIR = os.environ.get("CHROMA_DIR", "./chroma_db")
+MCP_SERVER_URL = os.environ.get("MCP_SERVER_URL", "http://localhost:8010/sse")
+MCP_SERVER_PORT = int(os.environ.get("MCP_SERVER_PORT", "8010"))
 
-# Agent Registry (MCP-based discovery)
-AGENT_REGISTRY_URL = os.environ.get("AGENT_REGISTRY_URL", "http://localhost:10200")
-REGISTRY_HOST = os.environ.get("REGISTRY_HOST", "localhost")
-REGISTRY_PORT = int(os.environ.get("REGISTRY_PORT", "10200"))
+# Agent Registry (MCP-based discovery, hosted on the unified finsight MCP server)
+AGENT_REGISTRY_URL = os.environ.get("AGENT_REGISTRY_URL", "http://localhost:8010")
 
 # Reddit
 REDDIT_CLIENT_ID = os.environ.get("REDDIT_CLIENT_ID", "")

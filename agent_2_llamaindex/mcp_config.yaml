@@ -1,6 +1,13 @@
 mcp_servers:
-  - name: sec-edgar
-    url: http://localhost:8020/sse
+  - name: finsight-mcp
+    url: http://localhost:8010/sse
     tools:
       - get_company_filings
       - full_text_search
+      - get_prices
+      - get_financials
+      - get_options_chain
+      - get_news_sentiment
+      - get_earnings_calendar
+      - execute_python
+      - find_agent

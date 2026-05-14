@@ -1,12 +1,8 @@
 mcp_servers:
-  - name: financial-news
-    url: http://localhost:8025/sse
+  - name: finsight-mcp
+    url: http://localhost:8010/sse
     tools:
       - get_news_sentiment
       - get_earnings_calendar
-
-  - name: sec-edgar
-    url: http://localhost:8020/sse
-    tools:
       - get_company_filings
       - full_text_search
