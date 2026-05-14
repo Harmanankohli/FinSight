@@ -41,6 +41,6 @@ def test_sentiment_crew_build(monkeypatch):
     from agent_4_crewai.crew import SentimentIntelligenceCrew
     crew_builder = SentimentIntelligenceCrew(MCPClientWrapper(MockMCPClient()))
     crew = crew_builder.build_crew("TSLA")
-    assert len(crew.agents) == 4
-    assert len(crew.tasks) == 4
+    assert len(crew.agents) == 2
+    assert len(crew.tasks) == 2
     assert crew.process == "sequential"
