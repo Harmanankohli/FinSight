@@ -6,8 +6,9 @@ An autonomous multi-agent system that answers investment queries like *"Should I
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│                    ADK Web UI / API                      │
-│                   (port 8001)                            │
+│              ADK Web UI / API (port 8001)                │
+│           Google ADK Orchestrator Agent                  │
+│       Dynamically discovers agents via A2A cards         │
 └────────────────────┬─────────────────────────────────────┘
                      │ A2A Protocol (JSON-RPC over HTTP)
      ┌───────────────┼───────────────────┐
@@ -19,37 +20,38 @@ An autonomous multi-agent system that answers investment queries like *"Should I
 │ :8002    │  │ :8003      │  │ :8004           │
 └────┬─────┘  └─────┬──────┘  └───────┬─────────┘
      │               │                 │
-┌────▼────┐   ┌─────▼──────┐  ┌───────▼────────┐
-│ SEC     │   │ yfinance   │  │ Reddit/Twitter  │
-│ EDGAR   │   │ MCP :8010  │  │ MCP :8030      │
-│ MCP:8020│   │ Python Run │  │ SEC Insider    │
-│         │   │ :8040      │  │ :8020          │
-└─────────┘   └────────────┘  └────────────────┘
+     ▼               ▼                 ▼
+┌────────┐   ┌───────────┐   ┌────────────┐
+│  SEC   │   │ yfinance  │   │  Financial │
+│ EDGAR  │   │ MCP :8010 │   │  News MCP  │
+│:8020   │   │ Python Run│   │  :8025     │
+│        │   │ :8040     │   │            │
+└────────┘   └───────────┘   └────────────┘
 ```
 
 ## Agents
 
-| Agent | Framework | Role | Port |
-|---|---|---|---|
-| **Orchestrator** | Google ADK + LiteLLM | Intent parsing, sub-task dispatch, result synthesis | 8001 |
-| **RAG** | LlamaIndex + ChromaDB + Groq | SEC filings retrieval, hybrid search (BM25 + dense), citation-backed insights | 8002 |
-| **Quant** | LangGraph + yfinance | Sharpe ratio, Beta, VaR, volatility, conditional stress testing vs DCF valuation | 8003 |
-| **Sentiment** | CrewAI (4 sub-agents) | Social media sentiment, analyst commentary, insider trading signals | 8004 |
+| Agent | Framework | Role | LLM | Port |
+|---|---|---|---|---|
+| **Orchestrator** | Google ADK | Intent parsing, sub-task dispatch, result synthesis | Ollama (llama3.2 local) | 8001 |
+| **RAG** | LlamaIndex + ChromaDB | SEC filings retrieval, hybrid search, citation-backed insights | Ollama (llama3.2 local) | 8002 |
+| **Quant** | LangGraph + yfinance | Sharpe ratio, Beta, VaR, volatility, stress tests, DCF | Ollama (llama3.2 local) | 8003 |
+| **Sentiment** | CrewAI (2 agents) | Financial news sentiment, SEC insider analysis | Ollama (llama3.2 local) | 8004 |
 
 ## Tech Stack
 
 | Layer | Technology |
 |---|---|
-| Agent Communication | Google A2A Protocol (JSON-RPC over HTTP) |
-| Tool Access | MCP (Model Context Protocol) |
+| Agent Communication | Google A2A Protocol v1.0 (JSON-RPC over HTTP) |
+| Tool Access | MCP (Model Context Protocol) via SSE |
 | Orchestrator | Google ADK (Agent Development Kit) |
 | RAG | LlamaIndex + ChromaDB (local) + HuggingFace embeddings |
-| Quant | LangChain + LangGraph |
-| Sentiment | CrewAI |
-| LLM | Groq (via LiteLLM) |
-| Embeddings | sentence-transformers (local, all-MiniLM-L6-v2) |
-| Storage | ChromaDB (local vector store) |
-| Infra | Docker Compose |
+| Quant | LangChain + LangGraph (state machine) |
+| Sentiment | CrewAI (parallel data collection + synthesis) |
+| LLM | Ollama (llama3.2 local) — no API keys needed |
+| Embeddings | sentence-transformers (all-MiniLM-L6-v2, local) |
+| Vector Store | ChromaDB (local, persisted) |
+| All LLMs | Fully local via Ollama |
 
 ## Quick Start
 
@@ -57,118 +59,118 @@ An autonomous multi-agent system that answers investment queries like *"Should I
 
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/) (recommended) or pip
-- Groq API key (free at https://console.groq.com)
+- [Ollama](https://ollama.com) with `ollama pull llama3.2`
 
 ### Setup
 
 ```bash
-# Clone
 git clone https://github.com/Harmanankohli/FinSight.git
 cd multi-agent-investment-system
 
 # Create virtualenv & install
 uv venv --python 3.12
-.venv\Scripts\activate   # Windows
-uv pip install -r <(uv pip compile pyproject.toml)
+.venv\Scripts\activate
+uv pip install -e .
+uv pip install llama-index-llms-ollama langchain-ollama
 
-# Set API key
-set GROQ_API_KEY=gsk_your_key_here
+# Pull local LLM
+ollama pull llama3.2
+
+# (Optional) For Sentiment agent with faster inference:
+# ollama pull lfm2.5-thinking:1.2b
+
+# Configure .env (no API keys needed for Ollama)
+echo LLM_MODEL=llama3.2 > .env
 ```
 
 ### Run All Services
 
-**Quick start (single command):**
 ```bash
 run_adk_web.bat
 ```
-This starts all agents + MCP servers + ADK Web UI on port 8001.
 
-**Or individually with Docker:**
-```bash
-docker-compose up --build
-```
-
-**Or manually start services:**
-
-```bash
-# Terminal 1 — MCP servers
-uvicorn mcp_servers.yfinance_server:get_app --port 8010
-uvicorn mcp_servers.sec_edgar_server:get_app --port 8020
-uvicorn mcp_servers.python_runner_server:get_app --port 8040
-
-# Terminal 2 — Agents
-uvicorn agent_2_llamaindex.server:app --port 8002
-uvicorn agent_3_langgraph.server:app --port 8003
-uvicorn agent_4_crewai.server:app --port 8004
-
-# Terminal 3 — ADK Web UI
-adk web --port 8001 agents
-```
+This starts all 4 MCP servers, 3 agents, and the ADK Web UI.
 
 ### Test the System
 
 ```bash
-# Via the gateway API
-curl -X POST http://localhost:8001/query \
+# Test each agent individually
+curl -X POST http://localhost:8003/a2a \
   -H "Content-Type: application/json" \
-  -d '{"query":"Should I invest in NVDA?","portfolio":["AAPL","MSFT"],"risk_profile":"moderate"}'
+  -H "A2A-Version: 1.0" \
+  -d '{"jsonrpc":"2.0","method":"SendMessage","id":"1","params":{"message":{"messageId":"1","role":"ROLE_USER","parts":[{"text":"Analyze NVDA"}]},"metadata":{"ticker":"NVDA","period":"1mo"}}}'
 ```
 
-Or open http://localhost:8001 in your browser for the ADK Web UI.
+Open http://127.0.0.1:8001 in your browser for the ADK Web UI.
 
 ## Project Structure
 
 ```
 ├── agent_1_adk/              # ADK Orchestrator
-│   ├── gateway.py            # REST API gateway
-│   ├── a2a_client.py         # A2A protocol client
+│   ├── gateway.py            # REST API gateway (uses SDK client)
+│   ├── a2a_client.py         # A2ADiscoverer + custom client
 │   ├── intent_parser.py      # Query → QueryContext parsing
-│   ├── report_generator.py   # Synthesizes InvestmentBrief
-│   └── orchestrator.py       # ADK Agent definition
+│   └── report_generator.py   # Synthesizes InvestmentBrief
 │
 ├── agent_2_llamaindex/       # RAG Agent
-│   ├── server.py             # A2A server (Starlette)
-│   ├── index_manager.py      # Multi-index router (SEC/earnings/news)
+│   ├── server.py             # AgentExecutor pattern
+│   ├── executor.py           # A2A AgentExecutor (auto-ingests SEC filings)
+│   ├── index_manager.py      # ChromaDB multi-index + Ollama LLM
 │   ├── hybrid_search.py      # BM25 + dense + RRF + reranker
 │   └── document_ingestion.py # MCP ingestion pipeline
 │
 ├── agent_3_langgraph/        # Quant Agent
-│   ├── server.py             # A2A server
+│   ├── server.py             # AgentExecutor pattern
+│   ├── executor.py           # A2A AgentExecutor
 │   ├── graph.py              # LangGraph state machine
-│   ├── nodes.py              # Price fetch, metrics, stress test, DCF
+│   ├── nodes.py              # Nodes + Ollama LLM summary
 │   └── state.py              # QuantAnalysisState schema
 │
 ├── agent_4_crewai/           # Sentiment Agent
-│   ├── server.py             # A2A server
-│   ├── crew.py               # 4-agent CrewAI definition
-│   └── mcp_tools.py          # MCP tool wrappers
+│   ├── server.py             # AgentExecutor pattern
+│   ├── executor.py           # Parallel MCP data collection
+│   ├── crew.py               # 2-agent CrewAI (analysis + synthesis)
+│   └── mcp_tools.py          # DynamicMCPTool with Pydantic args_schema
 │
 ├── agents/finsight_agent/    # ADK Web-compatible agent
 │
 ├── mcp_servers/              # Custom MCP Servers
 │   ├── yfinance_server.py    # Stock prices & financials
-│   ├── sec_edgar_server.py   # SEC EDGAR API
-│   ├── reddit_server.py      # Reddit sentiment
-│   └── python_runner_server.py # Sandboxed Python executor
+│   ├── sec_edgar_server.py   # SEC EDGAR filings
+│   ├── financial_news_server.py  # RSS news + VADER sentiment
+│   └── python_runner_server.py   # Sandboxed Python executor
 │
 ├── shared/                   # Shared libraries
+│   ├── config.py             # Centralized .env configuration
 │   ├── models.py             # Pydantic data models
-│   ├── a2a_schema.py         # A2A protocol types (re-exports a2a-sdk)
-│   └── mcp_client.py         # MCP client wrapper with retry
+│   └── mcp_client.py         # MCP client with dynamic tool discovery
 │
-├── tests/                    # Pytest suite (8 tests)
-├── docker-compose.yml
-└── pyproject.toml
+└── docker-compose.yml
 ```
 
-## Testing
+## Sample Output
 
-```bash
-.venv\Scripts\activate
-python -m pytest tests/ -v
+```json
+{
+  "ticker": "NVDA",
+  "final_recommendation": "SELL",
+  "confidence_score": 0.485,
+  "quant_metrics": {
+    "sharpe_ratio": 1.337,
+    "annual_volatility": 0.516,
+    "beta": 2.151,
+    "quant_signal": "SELL"
+  },
+  "rag_insights": {
+    "sources": ["NVDA_10-K_2026-02-25.html"],
+    "confidence_score": 0.454
+  },
+  "sentiment_intelligence": {
+    "overall_signal": "neutral",
+    "confidence_score": 0.5
+  }
+}
 ```
-
-Tests cover: A2A communication, MCP client retry, LangGraph state branching, RRF merge, document ingestion, CrewAI crew building.
 
 ## License
 
