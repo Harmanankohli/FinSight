@@ -63,14 +63,29 @@ async def _call_skill(skill_id: str, params: dict) -> str:
 
 
 async def query_rag(ticker: str) -> str:
+    """Retrieve SEC filings and financial documents for a stock ticker. Only call if the user explicitly asks about a publicly traded company.
+    
+    Args:
+        ticker: Stock ticker symbol (e.g. NVDA, AAPL, MSFT). Must be a valid US stock ticker.
+    """
     return await _call_skill("sec_filing_retrieval", {"ticker": ticker, "query": f"Research {ticker}"})
 
 
 async def query_quant(ticker: str) -> str:
+    """Compute quantitative risk metrics (Sharpe ratio, Beta, VaR, volatility) for a stock ticker. Only call for investment analysis.
+    
+    Args:
+        ticker: Stock ticker symbol (e.g. NVDA, AAPL, MSFT). Must be a valid US stock ticker.
+    """
     return await _call_skill("quant_analysis", {"ticker": ticker, "query": f"Analyze {ticker}", "period": "5y"})
 
 
 async def query_sentiment(ticker: str) -> str:
+    """Analyze market sentiment and insider signals for a stock ticker from news and SEC filings. Only call for stock-specific sentiment analysis.
+    
+    Args:
+        ticker: Stock ticker symbol (e.g. NVDA, AAPL, MSFT). Must be a valid US stock ticker.
+    """
     return await _call_skill("sentiment_analysis", {"ticker": ticker, "query": f"Sentiment for {ticker}"})
 
 
@@ -78,13 +93,21 @@ root_agent = Agent(
     name="investment_orchestrator",
     model=ADK_MODEL,
     instruction=(
-        "You are an investment research assistant. "
-        "When the user asks about a stock (e.g. 'Should I invest in NVDA?'), "
-        "ALWAYS call ALL THREE tools: first query_rag, then query_quant, "
-        "then query_sentiment. Each requires a 'ticker' parameter (e.g. NVDA, AAPL). "
+        "You are an investment research assistant.\n\n"
+        "Tool call rules:\n"
+        "1. ONLY call tools if the user explicitly asks about a stock or investment.\n"
+        "2. For general chat, greetings (hello, hi), or non-stock queries (e.g. 'google', 'weather'), "
+        "respond conversationally — do NOT call any tools.\n"
+        "3. When a stock IS mentioned (e.g. 'Analyze NVDA', 'Should I invest in AAPL?'), "
+        "call ALL THREE tools with the stock's ticker symbol as the 'ticker' parameter.\n"
+        "4. If uncertain whether something is a ticker (e.g. 'google' is not a stock ticker), "
+        "do NOT call tools — just respond conversationally.\n\n"
+        "When calling tools, use these ticker values:\n"
+        "- query_rag(ticker) — retrieves SEC filings\n"
+        "- query_quant(ticker) — computes risk metrics\n"
+        "- query_sentiment(ticker) — analyzes market sentiment\n\n"
         "After getting all three results, synthesize into a BUY/HOLD/SELL "
-        "recommendation with a clear rationale. For greetings, just respond "
-        "conversationally without calling any tools."
+        "recommendation with a clear rationale."
     ),
     tools=[query_rag, query_quant, query_sentiment],
 )
