@@ -12,7 +12,7 @@
 - **Singleton discoverer**: ADK agent tool calls share a single cached discoverer with `asyncio.Lock` to avoid race conditions
 - **Timeout fixes**: `ClientCallContext(timeout=...)` propagated to A2A SDK transport, `.env` increased to 300s
 - **42/42 tests passing** (was 21), including new tests for BaseAgent, WorkflowGraph, planner, agent cards
-- **Docs**: README, ARCHITECTURE.md, AGENTS.md, tests/README.md updated
+- **Docs**: README, ARCHITECTURE.md, AGENTS.md, TESTS.md updated
 
 ## v0.3 — Local LLMs with Ollama
 
