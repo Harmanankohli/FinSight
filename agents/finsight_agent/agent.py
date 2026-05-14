@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -20,32 +21,41 @@ os.environ.setdefault("OPENAI_API_KEY", "ollama")
 logger = logging.getLogger(__name__)
 
 _discoverer = None
+_discoverer_lock = asyncio.Lock()
 
 
 async def _get_discoverer():
     global _discoverer
     from agent_1_adk.a2a_client import A2ADiscoverer
 
-    if _discoverer is None:
-        _discoverer = A2ADiscoverer(
+    async with _discoverer_lock:
+        if _discoverer is not None:
+            return _discoverer
+        d = A2ADiscoverer(
             seed_urls=[u.strip() for u in AGENT_SEED_URLS.split(",") if u.strip()],
             request_timeout=A2A_TIMEOUT,
         )
         if AGENT_REGISTRY_URL:
-            _discoverer.with_mcp_registry(AGENT_REGISTRY_URL)
-        await _discoverer.discover()
-        logger.info("Discovered agents: %s", list(_discoverer.list_skills().keys()))
+            d.with_mcp_registry(AGENT_REGISTRY_URL)
+        await d.discover()
+        logger.info("Discovered %d skills: %s", len(d.list_skills()), list(d.list_skills().keys()))
+        _discoverer = d
     return _discoverer
 
 
 async def _call_skill(skill_id: str, params: dict) -> str:
-    from agent_1_adk.a2a_client import A2AClient, A2ADiscoveryError
+    from agent_1_adk.a2a_client import A2AClient
 
     discoverer = await _get_discoverer()
     if not discoverer.find_agent(skill_id):
-        logger.warning("Skill '%s' not cached, re-discovering...", skill_id)
-        _discoverer = None
+        logger.warning("Skill '%s' not found among %s, recreating discoverer...", skill_id, list(discoverer.list_skills().keys()))
+        async with _discoverer_lock:
+            _discoverer = None
         discoverer = await _get_discoverer()
+
+    if not discoverer.find_agent(skill_id):
+        logger.error("Skill '%s' still not found after re-discovery", skill_id)
+        return json.dumps({"error": f"No agent available for {skill_id}"})
 
     client = A2AClient(timeout=A2A_TIMEOUT).with_discoverer(discoverer)
     result = await client.send_message(skill_id, params.get("query", ""), metadata=params)

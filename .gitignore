@@ -27,8 +27,9 @@ chroma_db/
 .DS_Store
 Thumbs.db
 
-# Temp files
+# Temp / debug files
 request.json
 run_adk_web.bat
-
 test_server.py
+restart_adk.ps1
+tools/
