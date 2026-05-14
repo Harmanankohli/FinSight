@@ -77,6 +77,37 @@ Pre-collect MCP data in parallel using `asyncio.gather`, then pass it as context
 
 The `RouterQueryEngine` with `LLMMultiSelector` kept failing because the Groq model returned malformed JSON for the routing decision. Fix: fallback queries the SEC filings index directly.
 
+## The A2A Timeout Struggle
+
+The ADK Web UI consistently timed out when calling sub-agents via A2A. Here's the debugging journey:
+
+### Attempt 1: Increase A2A_TIMEOUT in Python
+
+We changed the default in `shared/config.py` from 45s to 180s. **Didn't work** — the `.env` file had `A2A_TIMEOUT=45.0` which overrode the Python default because `shared/config.py` uses `os.environ.get("A2A_TIMEOUT", "180.0")`.
+
+### Attempt 2: Increase .env
+
+Changed `.env` to `A2A_TIMEOUT=300.0`. **Still timed out** — the old ADK Web UI process was still running on port 8001 from a previous `start` command. Every subsequent `cmd /c "start ..."` opened a new window that failed to bind the port (already in use), so the user was always hitting the OLD process with the old 45s timeout. Killing the PID first fixed this.
+
+### Attempt 3: httpx ReadTimeout
+
+Even after fixing the .env and process, `httpx.ReadTimeout` appeared. This happened because:
+- `A2ADiscoverer` creates an `httpx.AsyncClient` with `httpx.Timeout(180.0, connect=10.0)`
+- But the A2A SDK's `send_http_request` calls `get_http_args(context)` which can override the timeout
+- `get_http_args` reads `context.timeout` and creates `httpx.Timeout(context.timeout)` — if context is `None`, the override is skipped and the client's timeout is used
+- **Fix**: Pass `ClientCallContext(timeout=self.timeout)` explicitly to `client.send_message(req, context=ctx)` so the timeout is always set
+
+### Root Cause
+
+Three bugs compounded:
+1. `.env` overrode the Python default silently
+2. Old process was never killed, so new code wasn't picked up
+3. `ClientCallContext` timeout wasn't being passed, so the httpx client's timeout was inconsistent
+
+### Key Lesson
+
+Always check `.env` values first when debugging configuration issues. And always kill old processes before starting new ones on the same port.
+
 ## What Didn't Work
 
 1. **Google ADK `LiteLlm` wrapper**: `PydanticSerializationError`. Switched to plain model string with `openai/` prefix.
@@ -84,3 +115,6 @@ The `RouterQueryEngine` with `LLMMultiSelector` kept failing because the Groq mo
 3. **CrewAI hosted_vllm provider**: Switched to the `groq/` prefix with litellm.
 4. **new_agent_text_message**: Doesn't exist in the installed a2a-sdk v1.0.2. Use `new_text_message` instead.
 5. **Per-call A2ADiscoverer**: Creating a new discoverer on every tool call caused race conditions when the ADK agent ran tools in parallel. Fixed with `asyncio.Lock` singleton.
+6. **Python default timeout override**: `A2A_TIMEOUT = float(os.environ.get("A2A_TIMEOUT", "180.0"))` in `shared/config.py` is overridden by `.env` file. Changed `.env` to match.
+7. **Context timeout not propagated**: `client.send_message(req)` without `context=ClientCallContext(timeout=...)` means `get_http_args(context)` returns empty, and the httpx client's pool timeout is used instead of read timeout. Fixed by always passing context.
+8. **httpx.Timeout constructor ambiguity**: `httpx.Timeout(180.0, connect=10.0)` sets the first positional arg as the overall default timeout. Using explicit keyword args (`read=..., connect=..., write=..., pool=...`) is clearer.
