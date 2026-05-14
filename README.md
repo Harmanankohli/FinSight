@@ -5,44 +5,51 @@ An autonomous multi-agent system that answers investment queries like *"Should I
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│              ADK Web UI / API (port 8001)                │
-│           Google ADK Orchestrator Agent                  │
-│       Dynamically discovers agents via A2A cards         │
-└────────────────────┬─────────────────────────────────────┘
-                     │ A2A Protocol (JSON-RPC over HTTP)
-     ┌───────────────┼───────────────────┐
-     ▼               ▼                   ▼
-┌──────────┐  ┌────────────┐  ┌────────────────┐
-│ Agent 2  │  │  Agent 3   │  │    Agent 4      │
-│LlamaIndex│  │ LangGraph  │  │    CrewAI       │
-│ RAG      │  │ Quant      │  │ Sentiment       │
-│ :8002    │  │ :8003      │  │ :8004           │
-└────┬─────┘  └─────┬──────┘  └───────┬─────────┘
-     │               │                 │
-     ▼               ▼                 ▼
-┌────────┐   ┌───────────┐   ┌────────────┐
-│  SEC   │   │ yfinance  │   │  Financial │
-│ EDGAR  │   │ MCP :8010 │   │  News MCP  │
-│:8020   │   │ Python Run│   │  :8025     │
-│        │   │ :8040     │   │            │
-└────────┘   └───────────┘   └────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│              ADK Web UI / API (port 8001)                    │
+│           Orchestrator (gateway.py + planner)                │
+│         Decomposes query → discovers agents → executes       │
+└──────────┬─────────────────────────────────────┬─────────────┘
+           │ A2A Protocol (JSON-RPC over HTTP)    │ MCP Registry
+           │                                      │ (port 10200)
+           ▼                                      ▼
+┌──────────────────────┐            ┌──────────────────────┐
+│  Agent Pool          │            │  Agent Registry MCP  │
+│                      │            │  (agent_cards/*.json)│
+│  RAG       Quant     │            │  find_agent()        │
+│  :8002     :8003     │            │  resource endpoints  │
+│  (LlamaIndex) (LG)   │            └──────────────────────┘
+│  Sentiment           │
+│  :8004 (CrewAI)      │
+└──────┬───────┬───────┘
+       │       │
+       ▼       ▼
+┌──────────┐ ┌───────────┐ ┌────────────┐
+│ SEC      │ │ yfinance  │ │  Financial │
+│ EDGAR    │ │ MCP :8010 │ │  News MCP  │
+│ MCP:8020 │ │ PythonRun │ │  :8025     │
+│          │ │ :8040     │ │            │
+└──────────┘ └───────────┘ └────────────┘
 ```
 
 ## Agents
 
-| Agent | Framework | Role | LLM | Port |
+| Agent | Framework | Port | Agent Card | Executor |
 |---|---|---|---|---|
-| **Orchestrator** | Google ADK | Intent parsing, sub-task dispatch, result synthesis | Ollama (llama3.2 local) | 8001 |
-| **RAG** | LlamaIndex + ChromaDB | SEC filings retrieval, hybrid search, citation-backed insights | Ollama (llama3.2 local) | 8002 |
-| **Quant** | LangGraph + yfinance | Sharpe ratio, Beta, VaR, volatility, stress tests, DCF | Ollama (llama3.2 local) | 8003 |
-| **Sentiment** | CrewAI (2 agents) | Financial news sentiment, SEC insider analysis | Ollama (llama3.2 local) | 8004 |
+| **Orchestrator** | Google ADK | 8001 | `agent_cards/orchestrator_agent.json` | `gateway.py` + `A2AClient` |
+| **RAG** | LlamaIndex + ChromaDB | 8002 | `agent_cards/rag_agent.json` | `GenericAgentExecutor(RAGAgent)` |
+| **Quant** | LangGraph + yfinance | 8003 | `agent_cards/quant_agent.json` | `GenericAgentExecutor(QuantAgent)` |
+| **Sentiment** | CrewAI | 8004 | `agent_cards/sentiment_agent.json` | `GenericAgentExecutor(SentimentAgent)` |
+| **Registry** | MCP (FastMCP) | 10200 | — | `agent_registry_server.py` |
 
 ## Tech Stack
 
 | Layer | Technology |
 |---|---|
 | Agent Communication | Google A2A Protocol v1.0 (JSON-RPC over HTTP) |
+| Agent Discovery | MCP Protocol (agent registry with embedding search) |
+| Agent Cards | Declarative JSON files (`agent_cards/*.json`) |
+| Shared Executor | `GenericAgentExecutor` + `BaseAgent` pattern |
 | Tool Access | MCP (Model Context Protocol) via SSE |
 | Orchestrator | Google ADK (Agent Development Kit) |
 | RAG | LlamaIndex + ChromaDB (local) + HuggingFace embeddings |
@@ -89,7 +96,13 @@ echo LLM_MODEL=llama3.2 > .env
 run_adk_web.bat
 ```
 
-This starts all 4 MCP servers, 3 agents, and the ADK Web UI.
+This starts the Agent Registry MCP server, all 4 data MCP servers, 3 sub-agents, and the ADK Web UI / orchestrator.
+
+**Startup order:**
+1. Agent Registry MCP (`localhost:10200`) — hosts agent cards for discovery
+2. Data MCP Servers — SEC EDGAR (`:8020`), yfinance (`:8010`), Financial News (`:8025`), Python Runner (`:8040`)
+3. Sub-agents — RAG (`:8002`), Quant (`:8003`), Sentiment (`:8004`)
+4. Orchestrator (`:8001`) — discovers agents via registry and serves the ADK Web UI
 
 ### Test the System
 
@@ -107,43 +120,65 @@ Open http://127.0.0.1:8001 in your browser for the ADK Web UI.
 
 ```
 ├── agent_1_adk/              # ADK Orchestrator
-│   ├── gateway.py            # REST API gateway (uses SDK client)
-│   ├── a2a_client.py         # A2ADiscoverer + custom client
-│   ├── intent_parser.py      # Query → QueryContext parsing
+│   ├── gateway.py            # REST API gateway (workflow orchestrator)
+│   ├── orchestrator.py       # ADK-native orchestrator alternative
+│   ├── a2a_client.py         # A2ADiscoverer + A2AClient (unified)
+│   ├── planner.py            # Query decomposition → ordered TaskList
 │   └── report_generator.py   # Synthesizes InvestmentBrief
 │
 ├── agent_2_llamaindex/       # RAG Agent
-│   ├── server.py             # AgentExecutor pattern
-│   ├── executor.py           # A2A AgentExecutor (auto-ingests SEC filings)
+│   ├── server.py             # GenericAgentExecutor(RAGAgent)
+│   ├── executor.py           # RAGAgent extends BaseAgent with stream()
 │   ├── index_manager.py      # ChromaDB multi-index + Ollama LLM
 │   ├── hybrid_search.py      # BM25 + dense + RRF + reranker
 │   └── document_ingestion.py # MCP ingestion pipeline
 │
 ├── agent_3_langgraph/        # Quant Agent
-│   ├── server.py             # AgentExecutor pattern
-│   ├── executor.py           # A2A AgentExecutor
+│   ├── server.py             # GenericAgentExecutor(QuantAgent)
+│   ├── executor.py           # QuantAgent extends BaseAgent with stream()
 │   ├── graph.py              # LangGraph state machine
 │   ├── nodes.py              # Nodes + Ollama LLM summary
 │   └── state.py              # QuantAnalysisState schema
 │
 ├── agent_4_crewai/           # Sentiment Agent
-│   ├── server.py             # AgentExecutor pattern
-│   ├── executor.py           # Parallel MCP data collection
+│   ├── server.py             # GenericAgentExecutor(SentimentAgent)
+│   ├── executor.py           # SentimentAgent extends BaseAgent with stream()
 │   ├── crew.py               # 2-agent CrewAI (analysis + synthesis)
 │   └── mcp_tools.py          # DynamicMCPTool with Pydantic args_schema
 │
 ├── agents/finsight_agent/    # ADK Web-compatible agent
 │
+├── agent_cards/              # Declarative A2A Agent Card JSON files
+│   ├── orchestrator_agent.json
+│   ├── rag_agent.json
+│   ├── quant_agent.json
+│   └── sentiment_agent.json
+│
 ├── mcp_servers/              # Custom MCP Servers
+│   ├── agent_registry_server.py  # Agent card registry (NEW)
 │   ├── yfinance_server.py    # Stock prices & financials
 │   ├── sec_edgar_server.py   # SEC EDGAR filings
 │   ├── financial_news_server.py  # RSS news + VADER sentiment
 │   └── python_runner_server.py   # Sandboxed Python executor
 │
 ├── shared/                   # Shared libraries
+│   ├── base_agent.py         # BaseAgent abstract class (NEW)
+│   ├── generic_executor.py   # GenericAgentExecutor (NEW)
+│   ├── workflow.py           # WorkflowGraph state machine (NEW)
+│   ├── types.py              # Shared Pydantic models (NEW)
 │   ├── config.py             # Centralized .env configuration
 │   ├── models.py             # Pydantic data models
 │   └── mcp_client.py         # MCP client with dynamic tool discovery
+│
+├── tests/                    # Test suite
+│   ├── test_base_agent.py    # NEW
+│   ├── test_planner.py       # NEW
+│   ├── test_workflow.py      # NEW
+│   ├── test_agent_cards.py   # NEW
+│   ├── test_a2a_communication.py
+│   ├── test_quant_graph.py
+│   ├── test_rag_pipeline.py
+│   └── test_sentiment_crew.py
 │
 └── docker-compose.yml
 ```

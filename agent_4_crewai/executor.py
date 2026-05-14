@@ -1,20 +1,8 @@
 import logging
 import re
+from collections.abc import AsyncIterable
 
-from a2a.helpers import new_task_from_user_message, new_text_message
-from a2a.server.agent_execution import AgentExecutor, RequestContext
-from a2a.server.events import EventQueue
-from a2a.types import (
-    Artifact,
-    Part as PartProto,
-    TaskArtifactUpdateEvent,
-    TaskState,
-    TaskStatus,
-    TaskStatusUpdateEvent,
-)
-from google.protobuf.json_format import MessageToDict
-from google.protobuf.struct_pb2 import Struct, Value
-
+from shared.base_agent import BaseAgent
 from shared.mcp_client import MCPClient
 
 from .crew import SentimentIntelligenceCrew
@@ -23,8 +11,13 @@ from .mcp_tools import MCPClientWrapper
 logger = logging.getLogger(__name__)
 
 
-class SentimentAgent:
+class SentimentAgent(BaseAgent):
     def __init__(self):
+        super().__init__(
+            agent_name="Sentiment Intelligence Agent",
+            description="Synthesizes financial news sentiment, SEC insider trading signals, and investment narratives using CrewAI",
+            content_types=["text", "application/json"],
+        )
         from shared.config import MCP_TIMEOUT
         self._mcp = MCPClient(config_path="agent_4_crewai/mcp_config.yaml", timeout=MCP_TIMEOUT)
         self._wrapper = MCPClientWrapper(self._mcp)
@@ -36,7 +29,6 @@ class SentimentAgent:
             self._connected = True
 
     async def _collect_data_parallel(self, ticker: str) -> dict:
-        """Call all MCP tools in parallel and return aggregated data."""
         results = {}
 
         async def call(tool, args):
@@ -75,75 +67,25 @@ class SentimentAgent:
         crew_builder = SentimentIntelligenceCrew(self._wrapper)
         return await crew_builder.analyze(ticker, precollected_data=data)
 
-
-class SentimentAgentExecutor(AgentExecutor):
-    def __init__(self):
-        self.agent = SentimentAgent()
-
-    async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
-        task = context.current_task or new_task_from_user_message(context.message)
-        await event_queue.enqueue_event(task)
-
-        await event_queue.enqueue_event(
-            TaskStatusUpdateEvent(
-                task_id=context.task_id,
-                context_id=context.context_id,
-                status=TaskStatus(
-                    state=TaskState.TASK_STATE_WORKING,
-                    message=new_text_message("Gathering sentiment intelligence..."),
-                ),
-            )
-        )
-
-        query_text = ""
-        for part in context.message.parts:
-            if part.text:
-                query_text = part.text
-                break
-
-        meta = {}
-        if context.message.metadata:
-            meta = MessageToDict(context.message.metadata)
-
-        ticker = meta.get("ticker", "")
-        if not ticker:
-            match = re.search(r"\b[A-Z]{1,5}\b", query_text)
-            ticker = match.group(0) if match else ""
+    async def stream(
+        self, query: str, context_id: str, task_id: str
+    ) -> AsyncIterable[dict]:
+        ticker_match = re.search(r"\b[A-Z]{2,5}\b", query)
+        ticker = ticker_match.group(0) if ticker_match else ""
 
         try:
-            result = await self.agent.analyze(ticker, query_text)
-            s = Struct()
-            s.update(result)
-            await event_queue.enqueue_event(
-                TaskArtifactUpdateEvent(
-                    task_id=context.task_id,
-                    context_id=context.context_id,
-                    artifact=Artifact(
-                        name=f"{ticker}_sentiment",
-                        parts=[PartProto(data=Value(struct_value=s))],
-                    ),
-                )
-            )
+            result = await self.analyze(ticker, query)
+            yield {
+                "response_type": "data",
+                "is_task_complete": True,
+                "require_user_input": False,
+                "content": result,
+            }
         except Exception as e:
             logger.exception("Sentiment analysis failed")
-            await event_queue.enqueue_event(
-                TaskArtifactUpdateEvent(
-                    task_id=context.task_id,
-                    context_id=context.context_id,
-                    artifact=Artifact(
-                        name="error",
-                        parts=[PartProto(text=str(e))],
-                    ),
-                )
-            )
-
-        await event_queue.enqueue_event(
-            TaskStatusUpdateEvent(
-                task_id=context.task_id,
-                context_id=context.context_id,
-                status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED),
-            )
-        )
-
-    async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
-        raise Exception("cancel not supported")
+            yield {
+                "response_type": "text",
+                "is_task_complete": True,
+                "require_user_input": False,
+                "content": f"Sentiment analysis failed: {e}",
+            }

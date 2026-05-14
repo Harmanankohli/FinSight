@@ -6,8 +6,9 @@
 |---|---|
 | Framework | Google ADK |
 | Port | 8001 |
-| Agent Card | `GET /.well-known/agent-card.json` |
+| Agent Card | `agent_cards/orchestrator_agent.json` (served at `GET /.well-known/agent-card.json`) |
 | A2A Endpoint | `POST /a2a` |
+| Discovery | MCP Registry (`localhost:10200`) or seed URLs (`AGENT_SEED_URLS`) |
 
 ### Skill
 
@@ -17,11 +18,22 @@
 
 ### Tools (ADK-registered, available to the LLM)
 
-| Tool | Calls | Description |
-|---|---|---|
-| `query_rag(ticker)` | RAG Agent (port 8002) | Retrieves SEC filings and financial documents |
-| `query_quant(ticker)` | Quant Agent (port 8003) | Computes risk metrics and valuations |
-| `query_sentiment(ticker)` | Sentiment Agent (port 8004) | Gathers market sentiment and insider signals |
+| Tool | Calls | Skill ID | Description |
+|---|---|---|---|
+| `query_rag(ticker)` | RAG Agent (port 8002) | `sec_filing_retrieval` | Retrieves SEC filings and financial documents |
+| `query_quant(ticker)` | Quant Agent (port 8003) | `quant_analysis` | Computes risk metrics and valuations |
+| `query_sentiment(ticker)` | Sentiment Agent (port 8004) | `sentiment_analysis` | Gathers market sentiment and insider signals |
+
+### Architecture
+
+```
+User Query → planner.py: parse_query() → QueryContext
+          → planner.py: plan() → TaskList with 3 ordered tasks
+          → For each task:
+              A2ADiscoverer.find_agent(skill_id) → agent entry
+              A2AClient.send_message(skill_id, query, metadata)
+          → report_generator.py: synthesize() → InvestmentBrief
+```
 
 ### Sample Request
 
@@ -50,12 +62,13 @@ Body:
 | Property | Value |
 |---|---|
 | Framework | LlamaIndex |
+| Executor | `GenericAgentExecutor(RAGAgent)` |
 | LLM | Ollama (llama3.2) via `llama-index-llms-ollama` |
 | Vector Store | ChromaDB (local, persisted to `./chroma_db`) |
 | Embeddings | HuggingFace `all-MiniLM-L6-v2` (local) |
 | Port | 8002 |
-| Agent Card | `GET http://localhost:8002/.well-known/agent-card.json` |
-| A2A Endpoint | `POST http://localhost:8002/a2a` |
+| Agent Card | `agent_cards/rag_agent.json` (served at `GET /.well-known/agent-card.json`) |
+| A2A Endpoint | `POST /a2a` |
 
 ### Skills
 
@@ -73,15 +86,19 @@ Body:
 ### Architecture
 
 ```
-Request → DefaultRequestHandler → RAGAgentExecutor.execute()
-  → RAGAgent._ensure_ingested(ticker)
-    ├── MCPClient.connect_all()
-    └── MCPClient.call_tool_by_name("get_company_filings", {...})
-  → FinancialIndexManager.query(ticker, query)
-    ├── Try: RouterQueryEngine → Ollama LLM → response
-    └── Fallback: SEC filings index directly
-  → Response: {summary, sources, relevance_scores, confidence_score}
+Request → DefaultRequestHandler → GenericAgentExecutor(RAGAgent)
+  → RAGAgent.stream(query, context_id, task_id)
+    → RAGAgent._ensure_ingested(ticker)
+      ├── MCPClient.connect_all()
+      └── MCPClient.call_tool_by_name("get_company_filings", {...})
+    → FinancialIndexManager.query(ticker, query)
+      ├── Try: RouterQueryEngine → Ollama LLM → response
+      └── Fallback: SEC filings index directly
+  → Yields: {response_type: "data", content: result, is_task_complete: true}
+  → GenericAgentExecutor converts to A2A events
 ```
+
+### Sample Response
 
 ### Index Structure
 
@@ -113,11 +130,12 @@ Four ChromaDB collections:
 | Property | Value |
 |---|---|
 | Framework | LangChain + LangGraph |
+| Executor | `GenericAgentExecutor(QuantAgent)` |
 | LLM | Ollama (llama3.2) via `langchain-ollama` (for summary node only) |
 | Data Source | yfinance (direct, not via MCP) |
 | Port | 8003 |
-| Agent Card | `GET http://localhost:8003/.well-known/agent-card.json` |
-| A2A Endpoint | `POST http://localhost:8003/a2a` |
+| Agent Card | `agent_cards/quant_agent.json` (served at `GET /.well-known/agent-card.json`) |
+| A2A Endpoint | `POST /a2a` |
 
 ### Skills
 
@@ -125,13 +143,17 @@ Four ChromaDB collections:
 |---|---|---|
 | `quant_analysis` | Quantitative Analysis | Compute Sharpe ratio, Beta, VaR, volatility, DCF valuation, stress tests |
 
-### State Machine
+### Architecture
 
 ```
-fetch_prices → compute_metrics → conditional branch
-  ├── high_volatility (annual_vol > 35%) → stress_test
-  └── low_volatility → dcf_valuation
-  → portfolio_correlation → format_output → llm_summary → END
+Request → DefaultRequestHandler → GenericAgentExecutor(QuantAgent)
+  → QuantAgent.stream(query, context_id, task_id)
+    → QuantAgent.analyze(ticker)
+      → fetch_prices → compute_metrics → conditional branch
+        ├── high_volatility (annual_vol > 35%) → stress_test
+        └── low_volatility → dcf_valuation
+      → portfolio_correlation → format_output → llm_summary
+  → Yields: {response_type: "data", content: result, is_task_complete: true}
 ```
 
 ### Nodes
@@ -192,11 +214,12 @@ Recommendation = BUY if positive signals > negative signals, SELL if negative > 
 | Property | Value |
 |---|---|
 | Framework | CrewAI |
+| Executor | `GenericAgentExecutor(SentimentAgent)` |
 | LLM | Ollama (llama3.2) via litellm |
 | Data Collection | Parallel via `asyncio.gather` |
 | Port | 8004 |
-| Agent Card | `GET http://localhost:8004/.well-known/agent-card.json` |
-| A2A Endpoint | `POST http://localhost:8004/a2a` |
+| Agent Card | `agent_cards/sentiment_agent.json` (served at `GET /.well-known/agent-card.json`) |
+| A2A Endpoint | `POST /a2a` |
 
 ### Skills
 
@@ -214,17 +237,18 @@ Recommendation = BUY if positive signals > negative signals, SELL if negative > 
 ### Architecture
 
 ```
-Request → SentimentAgentExecutor.execute()
-  → SentimentAgent.analyze(ticker)
-    ├── _connect() → MCPClient.connect_all()
-    ├── _collect_data_parallel(ticker)
-    │   ├── call("get_news_sentiment", {ticker})  ─┐
-    │   ├── call("get_company_filings", {ticker})  ─┤─ asyncio.gather
-    │   └── results merged                          ─┘
-    └── SentimentIntelligenceCrew.analyze(ticker, precollected_data)
-        ├── Analysis Agent     # Extracts sentiment signals
-        └── Synthesis Agent    # Writes 2-3 paragraph narrative
-  → Response: {overall_signal, narrative, confidence_score}
+Request → DefaultRequestHandler → GenericAgentExecutor(SentimentAgent)
+  → SentimentAgent.stream(query, context_id, task_id)
+    → SentimentAgent.analyze(ticker)
+      ├── _connect() → MCPClient.connect_all()
+      ├── _collect_data_parallel(ticker)
+      │   ├── call("get_news_sentiment", {ticker})
+      │   ├── call("get_company_filings", {ticker})
+      │   └── asyncio.gather
+      └── SentimentIntelligenceCrew.analyze(ticker, precollected_data)
+          ├── Analysis Agent     # Extracts sentiment signals
+          └── Synthesis Agent    # Writes 2-3 paragraph narrative
+  → Yields: {response_type: "data", content: result, is_task_complete: true}
 ```
 
 ### Sample Response

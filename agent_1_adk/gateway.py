@@ -3,31 +3,27 @@ import logging
 import os
 from pathlib import Path
 
-import httpx
 import uvicorn
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from a2a.client import A2ACardResolver, ClientConfig, create_client
-from a2a.helpers import new_text_message
 from a2a.server.routes import create_agent_card_routes
-from a2a.types import (
-    AgentCapabilities,
-    AgentCard,
-    AgentInterface,
-    AgentSkill,
-    SendMessageRequest,
-)
-from google.protobuf.json_format import MessageToDict
+from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
 
-from .intent_parser import parse_query
+from .a2a_client import A2AClient, A2ADiscoverer
+from .planner import parse_query, plan
 from .report_generator import synthesize
 
-logger = logging.getLogger(__name__)
+from shared.config import (
+    AGENT_REGISTRY_URL,
+    AGENT_SEED_URLS,
+    A2A_TIMEOUT,
+    ORCHESTRATOR_PORT,
+)
 
-from shared.config import AGENT_SEED_URLS as _SEED_URLS
+logger = logging.getLogger(__name__)
 
 HOST = os.environ.get("HOST", "localhost")
 
@@ -36,46 +32,31 @@ with _card_path.open("r") as _f:
     _orchestrator_card = json.load(_f)
 
 
-def _list_skills(card: AgentCard) -> dict[str, str]:
-    return {s.id: s.description for s in card.skills}
+async def _discover_agents() -> A2ADiscoverer:
+    discoverer = A2ADiscoverer(
+        seed_urls=[u.strip() for u in AGENT_SEED_URLS.split(",") if u.strip()]
+    )
+
+    if AGENT_REGISTRY_URL:
+        discoverer.with_mcp_registry(AGENT_REGISTRY_URL)
+
+    await discoverer.discover()
+    skills = discoverer.list_skills()
+    logger.info("Discovered %d skills: %s", len(skills), list(skills.keys()))
+    return discoverer
 
 
-async def _discover() -> dict[str, tuple]:
-    agents: dict[str, tuple] = {}
-    h = httpx.AsyncClient(timeout=httpx.Timeout(60.0))
-    async with h:
-        for url in _SEED_URLS.split(","):
-            url = url.strip()
-            if not url:
-                continue
-            try:
-                card = await A2ACardResolver(h, url).get_agent_card()
-                client = await create_client(
-                    agent=card, client_config=ClientConfig(streaming=False, httpx_client=h),
-                )
-                agents[url] = (card, client)
-                logger.info("Discovered '%s' at %s", card.name, url)
-            except Exception as e:
-                logger.warning("Failed to discover %s: %s", url, e)
-    return agents
+async def _execute_task(
+    client: A2AClient, skill_id: str, params: dict
+) -> dict:
+    ticker = params.get("ticker", "")
+    query = params.get("query", f"Analyze {ticker}")
+    period = params.get("period", "5y")
+    metadata = {"ticker": ticker, "period": period}
 
-
-async def _call_agent(client, query: str, ticker: str, period: str = "5y") -> dict:
-    from google.protobuf.struct_pb2 import Struct
-    meta = Struct()
-    meta.update({"ticker": ticker, "period": period})
-    req = SendMessageRequest(message=new_text_message(query, role=1), metadata=meta)
-    async for event in client.send_message(req):
-        if hasattr(event, "task") and event.task:
-            t = event.task
-            if t.status.state == 3:
-                for art in t.artifacts:
-                    for p in art.parts:
-                        if p.data:
-                            return MessageToDict(p.data)
-                        if p.text:
-                            return {"text": p.text}
-    return {}
+    logger.info("Executing skill '%s' for ticker %s", skill_id, ticker)
+    result = await client.send_message(skill_id, query, metadata=metadata)
+    return result
 
 
 async def handle_query(request: Request):
@@ -84,35 +65,45 @@ async def handle_query(request: Request):
     portfolio = body.get("portfolio", [])
     risk_profile = body.get("risk_profile", "moderate")
 
-    context = await parse_query(query, portfolio)
+    context = parse_query(query, portfolio)
     ticker = context.ticker
     if not ticker:
-        return JSONResponse({"error": "Could not determine ticker"}, status_code=400)
+        return JSONResponse({"error": "Could not determine ticker from query"}, status_code=400)
 
-    agents = await _discover()
-    if not agents:
+    discoverer = await _discover_agents()
+    if not discoverer.list_skills():
         return JSONResponse({"error": "No agents discovered"}, status_code=503)
 
-    results = {}
-    for url, (card, client) in agents.items():
-        skills = _list_skills(card)
+    a2a_client = A2AClient(timeout=A2A_TIMEOUT).with_discoverer(discoverer)
+
+    task_list = plan(context)
+    logger.info(
+        "Planned %d tasks for %s: %s",
+        len(task_list.tasks), ticker,
+        [t.skill_id for t in task_list.tasks],
+    )
+
+    results: dict[str, dict] = {}
+    for task_def in task_list.tasks:
         try:
-            for skill_id in skills:
-                s = skill_id.lower()
-                if "sec_filing" in s or "earnings" in s:
-                    results["rag"] = await _call_agent(
-                        client, query, ticker,
-                    )
-                elif "quant" in s or "analysis" in s:
-                    results["quant"] = await _call_agent(
-                        client, f"Analyze {ticker}", ticker, "5y",
-                    )
-                elif "sentiment" in s or "narrative" in s:
-                    results["sentiment"] = await _call_agent(
-                        client, f"Analyze sentiment for {ticker}", ticker,
-                    )
+            skill_id = task_def.skill_id
+            entry = discoverer.find_agent(skill_id)
+            if not entry:
+                logger.warning("No agent found for skill '%s', skipping", skill_id)
+                continue
+
+            result = await _execute_task(a2a_client, skill_id, task_def.params)
+
+            if "sec_filing" in skill_id or "earnings" in skill_id:
+                results["rag"] = result
+            elif "quant" in skill_id:
+                results["quant"] = result
+            elif "sentiment" in skill_id:
+                results["sentiment"] = result
+
+            logger.info("Task '%s' completed successfully", skill_id)
         except Exception as e:
-            logger.warning("Agent at %s failed: %s", url, e)
+            logger.warning("Task '%s' failed: %s", task_def.skill_id, e)
 
     brief = synthesize(
         context,
@@ -143,8 +134,12 @@ routes = [
         name=_orchestrator_card["name"],
         description=_orchestrator_card["description"],
         version=_orchestrator_card.get("version", "1.0.0"),
-        documentation_url=f"http://{HOST}:8001",
-        capabilities=AgentCapabilities(streaming=_orchestrator_card.get("capabilities", {}).get("streaming", False)),
+        documentation_url=f"http://{HOST}:{ORCHESTRATOR_PORT}",
+        default_input_modes=_orchestrator_card.get("defaultInputModes", ["text"]),
+        default_output_modes=_orchestrator_card.get("defaultOutputModes", ["application/json"]),
+        capabilities=AgentCapabilities(
+            streaming=_orchestrator_card.get("capabilities", {}).get("streaming", False)
+        ),
         skills=_skills,
     )),
     Route("/query", endpoint=handle_query, methods=["POST"]),
@@ -155,4 +150,4 @@ app = Starlette(routes=routes, debug=True)
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    uvicorn.run(app, host="0.0.0.0", port=8001)
+    uvicorn.run(app, host="0.0.0.0", port=ORCHESTRATOR_PORT)

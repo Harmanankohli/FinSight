@@ -5,29 +5,39 @@ from google.adk import Agent
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 
-from shared.config import RAG_AGENT_URL, QUANT_AGENT_URL, SENTIMENT_AGENT_URL, A2A_TIMEOUT
+from shared.config import A2A_TIMEOUT, AGENT_REGISTRY_URL, AGENT_SEED_URLS
 
-from .a2a_client import A2AClient
-from .intent_parser import parse_query
+from .a2a_client import A2AClient, A2ADiscoverer
+from .planner import parse_query, plan
 from .report_generator import synthesize
 
 logger = logging.getLogger(__name__)
 
-a2a = A2AClient(timeout=A2A_TIMEOUT)
+
+async def _execute_skill(skill_id: str, params: dict) -> dict:
+    discoverer = A2ADiscoverer(
+        seed_urls=[u.strip() for u in AGENT_SEED_URLS.split(",") if u.strip()]
+    )
+    if AGENT_REGISTRY_URL:
+        discoverer.with_mcp_registry(AGENT_REGISTRY_URL)
+    await discoverer.discover()
+
+    client = A2AClient(timeout=A2A_TIMEOUT).with_discoverer(discoverer)
+    return await client.send_message(skill_id, params.get("query", ""), metadata=params)
 
 
-async def _query_rag(ticker: str, query: str) -> str:
-    result = await a2a.query_rag(RAG_AGENT_URL, ticker, query)
+async def query_rag(ticker: str, query: str = "") -> str:
+    result = await _execute_skill("sec_filing_retrieval", {"ticker": ticker, "query": query or f"Research {ticker}"})
     return json.dumps(result)
 
 
-async def _query_quant(ticker: str, period: str = "5y") -> str:
-    result = await a2a.query_quant(QUANT_AGENT_URL, ticker, period)
+async def query_quant(ticker: str, period: str = "5y") -> str:
+    result = await _execute_skill("quant_analysis", {"ticker": ticker, "query": f"Analyze {ticker}", "period": period})
     return json.dumps(result)
 
 
-async def _query_sentiment(ticker: str) -> str:
-    result = await a2a.query_sentiment(SENTIMENT_AGENT_URL, ticker)
+async def query_sentiment(ticker: str) -> str:
+    result = await _execute_skill("sentiment_analysis", {"ticker": ticker, "query": f"Sentiment for {ticker}"})
     return json.dumps(result)
 
 
@@ -43,7 +53,7 @@ orchestrator_agent = Agent(
         "5. Synthesize all results into a structured Investment Brief with a clear BUY/HOLD/SELL recommendation.\n"
         "Always respond with a complete Investment Brief in JSON format."
     ),
-    tools=[_query_rag, _query_quant, _query_sentiment],
+    tools=[query_rag, query_quant, query_sentiment],
     output_schema=dict,
 )
 
@@ -57,7 +67,7 @@ _runner = Runner(
 
 
 async def run_investment_query(query: str, portfolio: list[str] | None = None) -> dict:
-    context = await parse_query(query, portfolio)
+    context = parse_query(query, portfolio)
 
     rag_result = None
     quant_result = None
@@ -65,11 +75,16 @@ async def run_investment_query(query: str, portfolio: list[str] | None = None) -
 
     if context.ticker:
         try:
-            rag_result = await a2a.query_rag(_RAG_URL, context.ticker, query)
-            quant_result = await a2a.query_quant(_QUANT_URL, context.ticker)
-            sentiment_result = await a2a.query_sentiment(_SENTIMENT_URL, context.ticker)
+            rag_result = await query_rag(context.ticker, query)
+            quant_result = await query_quant(context.ticker)
+            sentiment_result = await query_sentiment(context.ticker)
         except Exception as e:
             logger.warning("Sub-agent calls partially failed: %s", e)
 
-    brief = synthesize(context, rag_result, quant_result, sentiment_result)
+    brief = synthesize(
+        context,
+        rag_data=json.loads(rag_result) if rag_result else None,
+        quant_data=json.loads(quant_result) if quant_result else None,
+        sentiment_data=json.loads(sentiment_result) if sentiment_result else None,
+    )
     return brief.model_dump()

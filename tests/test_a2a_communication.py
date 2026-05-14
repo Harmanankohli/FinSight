@@ -10,11 +10,11 @@ def discoverer():
 
 
 @pytest.mark.asyncio
-async def test_discoverer_returns_empty_when_no_agents():
+async def test_discoverer_raises_when_no_sources():
+    from agent_1_adk.a2a_client import A2ADiscoveryError
     d = A2ADiscoverer(seed_urls=[])
-    await d.discover()
-    assert d.list_skills() == {}
-    assert d.list_agents() == {}
+    with pytest.raises(A2ADiscoveryError, match="No discovery sources configured"):
+        await d.discover()
 
 
 @pytest.mark.asyncio

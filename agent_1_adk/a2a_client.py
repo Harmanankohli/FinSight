@@ -6,6 +6,7 @@ from typing import Any
 
 import httpx
 from google.protobuf.json_format import MessageToDict
+from google.protobuf.struct_pb2 import Struct
 
 from a2a.client.card_resolver import A2ACardResolver
 from a2a.client.client_factory import ClientFactory, ClientConfig
@@ -17,6 +18,8 @@ from a2a.types import (
     SendMessageRequest,
 )
 
+from shared.config import MCP_TIMEOUT, MCP_MAX_RETRIES
+
 logger = logging.getLogger(__name__)
 
 
@@ -25,11 +28,13 @@ class A2ADiscoveryError(Exception):
 
 
 class A2ADiscoverer:
+    """Discovers agents via seed URLs (A2A cards) or MCP registry."""
+
     def __init__(self, seed_urls: list[str] | None = None):
         self._seed_urls = seed_urls or []
         self._skill_registry: dict[str, dict] = {}
         self._agent_cards: dict[str, AgentCard] = {}
-        self._clients: dict[str, Any] = {}
+        self._mcp_registry_url: str | None = None
 
     @classmethod
     def from_env(cls, env_var: str = "AGENT_SEED_URLS") -> "A2ADiscoverer":
@@ -37,9 +42,32 @@ class A2ADiscoverer:
         urls = [u.strip() for u in raw.split(",") if u.strip()]
         return cls(seed_urls=urls)
 
+    def with_mcp_registry(self, url: str) -> "A2ADiscoverer":
+        self._mcp_registry_url = url
+        return self
+
     async def discover(self) -> None:
         if self._agent_cards:
             return
+        errors = []
+
+        if self._mcp_registry_url:
+            try:
+                await self._discover_via_mcp_registry()
+                return
+            except Exception as e:
+                errors.append(f"MCP registry: {e}")
+                logger.warning("MCP registry discovery failed, falling back to seed URLs: %s", e)
+
+        if self._seed_urls:
+            await self._discover_via_seed_urls()
+            return
+
+        if errors:
+            raise A2ADiscoveryError(f"Discovery failed: {'; '.join(errors)}")
+        raise A2ADiscoveryError("No discovery sources configured")
+
+    async def _discover_via_seed_urls(self) -> None:
         for url in self._seed_urls:
             h = httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0))
             try:
@@ -62,12 +90,76 @@ class A2ADiscoverer:
                             "output_modes": list(skill.output_modes),
                         },
                     }
-                logger.info(
-                    "Discovered '%s' at %s with %d skills",
-                    card.name, url, len(card.skills),
-                )
+                logger.info("Discovered '%s' at %s with %d skills", card.name, url, len(card.skills))
             except Exception as e:
                 logger.warning("Failed to discover agent at %s: %s", url, e)
+
+    async def _discover_via_mcp_registry(self) -> None:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as c:
+            resp = await c.post(
+                f"{self._mcp_registry_url}/mcp",
+                json={
+                    "jsonrpc": "2.0",
+                    "method": "resources/read",
+                    "params": {"uri": "resource://agent_cards/list"},
+                    "id": "1",
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            card_uris = data.get("result", {}).get("contents", [{}])[0].get("text", "{}")
+            card_list = json.loads(card_uris).get("agent_cards", [])
+
+        for uri in card_list:
+            try:
+                card_name = uri.replace("resource://agent_cards/", "")
+                async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as c:
+                    resp = await c.post(
+                        f"{self._mcp_registry_url}/mcp",
+                        json={
+                            "jsonrpc": "2.0",
+                            "method": "resources/read",
+                            "params": {"uri": uri},
+                            "id": "1",
+                        },
+                    )
+                    resp.raise_for_status()
+                    card_data = resp.json()
+                    card_json = json.loads(
+                        card_data.get("result", {}).get("contents", [{}])[0].get("text", "{}")
+                    ).get("agent_card", {})
+            except Exception as e:
+                logger.warning("Failed to fetch card %s: %s", uri, e)
+                continue
+
+            agent_url = card_json.get("url", "").rstrip("/")
+            if not agent_url:
+                continue
+
+            try:
+                h = httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0))
+                resolver = A2ACardResolver(h, agent_url)
+                card = await resolver.get_agent_card()
+                self._agent_cards[agent_url] = card
+                factory = ClientFactory(ClientConfig(streaming=False, httpx_client=h))
+                client = factory.create(card)
+                for skill in card.skills:
+                    sid = skill.id
+                    self._skill_registry[sid] = {
+                        "agent_url": agent_url,
+                        "agent_name": card.name,
+                        "client": client,
+                        "skill": {
+                            "id": sid,
+                            "name": skill.name,
+                            "description": skill.description,
+                            "input_modes": list(skill.input_modes),
+                            "output_modes": list(skill.output_modes),
+                        },
+                    }
+                logger.info("MCP-discovered '%s' at %s", card.name, agent_url)
+            except Exception as e:
+                logger.warning("Failed to resolve card for %s: %s", agent_url, e)
 
     def find_agent(self, skill_id: str) -> dict | None:
         return self._skill_registry.get(skill_id)
@@ -79,7 +171,11 @@ class A2ADiscoverer:
         for sid, entry in self._skill_registry.items():
             desc = entry["skill"].get("description", "").lower()
             name = entry["skill"].get("name", "").lower()
-            score = sum(2 if w in sid else 1 for w in re.findall(r"\w+", query_lower) if w in desc or w in name or w in sid)
+            score = sum(
+                2 if w in sid else 1
+                for w in re.findall(r"\w+", query_lower)
+                if w in desc or w in name or w in sid
+            )
             if any(w in query_lower for w in ["ticker", "stock", "sec", "filing"]):
                 if "sec" in sid or "filing" in sid or "earnings" in sid:
                     score += 1
@@ -98,6 +194,10 @@ class A2ADiscoverer:
         entry = self._skill_registry.get(skill_id)
         return entry["client"] if entry else None
 
+    def get_agent_url(self, skill_id: str) -> str | None:
+        entry = self._skill_registry.get(skill_id)
+        return entry["agent_url"] if entry else None
+
     def list_agents(self) -> dict[str, str]:
         return {url: card.name for url, card in self._agent_cards.items()}
 
@@ -106,6 +206,8 @@ class A2ADiscoverer:
 
 
 class A2AClient:
+    """Sends A2A messages to discovered agents."""
+
     def __init__(self, timeout: float = 30.0):
         self.timeout = timeout
         self._discoverer: A2ADiscoverer | None = None
@@ -130,8 +232,7 @@ class A2AClient:
             ),
         )
         if metadata:
-            from google.protobuf.struct_pb2 import Struct as S
-            s = S()
+            s = Struct()
             s.update(metadata)
             req.metadata.CopyFrom(s)
 
@@ -144,7 +245,7 @@ class A2AClient:
         return {}
 
     def _task_to_dict(self, task: Any) -> dict:
-        result = {
+        result: dict[str, Any] = {
             "id": task.id,
             "state": task.status.state,
         }
@@ -159,12 +260,3 @@ class A2AClient:
                     except Exception:
                         result["data"] = str(part.data)
         return result
-
-    def _extract_data(self, task_dict: dict) -> dict[str, Any]:
-        data = {}
-        for k, v in task_dict.items():
-            if k not in ("id", "state", "text"):
-                data[k] = v
-        if not data and "text" in task_dict:
-            data["text"] = task_dict["text"]
-        return data

@@ -11,7 +11,8 @@ from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
 from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
 
-from .executor import RAGAgentExecutor
+from shared.generic_executor import GenericAgentExecutor
+from .executor import RAGAgent
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +47,7 @@ agent_card = AgentCard(
 )
 
 request_handler = DefaultRequestHandler(
-    agent_executor=RAGAgentExecutor(),
+    agent_executor=GenericAgentExecutor(RAGAgent()),
     task_store=InMemoryTaskStore(),
     agent_card=agent_card,
 )

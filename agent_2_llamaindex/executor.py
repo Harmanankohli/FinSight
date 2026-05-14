@@ -1,13 +1,9 @@
 import json
 import logging
+import re
+from collections.abc import AsyncIterable
 
-from a2a.helpers import new_task_from_user_message, new_text_artifact, new_text_message
-from a2a.server.agent_execution import AgentExecutor, RequestContext
-from a2a.server.events import EventQueue
-from a2a.types import TaskArtifactUpdateEvent, TaskState, TaskStatus, TaskStatusUpdateEvent
-from google.protobuf.json_format import MessageToDict
-from google.protobuf.struct_pb2 import Struct, Value
-
+from shared.base_agent import BaseAgent
 from shared.mcp_client import MCPClient
 
 from .document_ingestion import DocumentIngestionPipeline
@@ -16,8 +12,13 @@ from .index_manager import FinancialIndexManager
 logger = logging.getLogger(__name__)
 
 
-class RAGAgent:
+class RAGAgent(BaseAgent):
     def __init__(self):
+        super().__init__(
+            agent_name="Financial RAG Agent",
+            description="Retrieves and analyzes financial documents using RAG with ChromaDB and Ollama",
+            content_types=["text", "application/json"],
+        )
         self.index = FinancialIndexManager()
         self._mcp: MCPClient | None = None
         self._ingestion: DocumentIngestionPipeline | None = None
@@ -52,74 +53,25 @@ class RAGAgent:
         await self._ensure_ingested(ticker)
         return await self.index.query(ticker, query_text)
 
-
-class RAGAgentExecutor(AgentExecutor):
-    def __init__(self):
-        self.agent = RAGAgent()
-
-    async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
-        task = context.current_task or new_task_from_user_message(context.message)
-        await event_queue.enqueue_event(task)
-
-        await event_queue.enqueue_event(
-            TaskStatusUpdateEvent(
-                task_id=context.task_id,
-                context_id=context.context_id,
-                status=TaskStatus(
-                    state=TaskState.TASK_STATE_WORKING,
-                    message=new_text_message("Retrieving documents..."),
-                ),
-            )
-        )
-
-        query_text = ""
-        for part in context.message.parts:
-            if part.text:
-                query_text = part.text
-                break
-
-        meta = {}
-        if context.message.metadata:
-            meta = MessageToDict(context.message.metadata)
-
-        ticker = meta.get("ticker", "")
-        if not ticker:
-            import re
-            match = re.search(r"\b[A-Z]{1,5}\b", query_text)
-            ticker = match.group(0) if match else ""
+    async def stream(
+        self, query: str, context_id: str, task_id: str
+    ) -> AsyncIterable[dict]:
+        ticker_match = re.search(r"\b[A-Z]{2,5}\b", query)
+        ticker = ticker_match.group(0) if ticker_match else ""
 
         try:
-            result = await self.agent.query(ticker, query_text)
-            from a2a.types import Artifact, Part as PartProto
-            s = Struct()
-            s.update(result)
-            await event_queue.enqueue_event(
-                TaskArtifactUpdateEvent(
-                    task_id=context.task_id,
-                    context_id=context.context_id,
-                    artifact=Artifact(
-                        name=f"{ticker}_rag_result",
-                        parts=[PartProto(data=Value(struct_value=s))],
-                    ),
-                )
-            )
+            result = await self.query(ticker, query)
+            yield {
+                "response_type": "data",
+                "is_task_complete": True,
+                "require_user_input": False,
+                "content": result,
+            }
         except Exception as e:
             logger.exception("RAG query failed")
-            await event_queue.enqueue_event(
-                TaskArtifactUpdateEvent(
-                    task_id=context.task_id,
-                    context_id=context.context_id,
-                    artifact=new_text_artifact(name="error", text=str(e)),
-                )
-            )
-
-        await event_queue.enqueue_event(
-            TaskStatusUpdateEvent(
-                task_id=context.task_id,
-                context_id=context.context_id,
-                status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED),
-            )
-        )
-
-    async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
-        raise Exception("cancel not supported")
+            yield {
+                "response_type": "text",
+                "is_task_complete": True,
+                "require_user_input": False,
+                "content": f"RAG analysis failed: {e}",
+            }
