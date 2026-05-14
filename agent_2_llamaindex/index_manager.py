@@ -26,7 +26,7 @@ class FinancialIndexManager:
         self.llm = Ollama(
             model=LLM_MODEL,
             base_url=LLM_BASE_URL.replace("/v1", ""),
-            request_timeout=120.0,
+            request_timeout=600.0,
         )
         self.embed_model = HuggingFaceEmbedding(
             model_name=f"sentence-transformers/{EMBED_MODEL}"
