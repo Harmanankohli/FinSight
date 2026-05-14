@@ -78,7 +78,7 @@ cd multi-agent-investment-system
 uv venv --python 3.12
 .venv\Scripts\activate
 uv pip install -e .
-uv pip install llama-index-llms-ollama langchain-ollama
+uv pip install llama-index-llms-ollama langchain-ollama sentence-transformers
 
 # Pull local LLM
 ollama pull llama3.2
@@ -86,22 +86,36 @@ ollama pull llama3.2
 # (Optional) For Sentiment agent with faster inference:
 # ollama pull lfm2.5-thinking:1.2b
 
-# Configure .env (no API keys needed for Ollama)
-echo LLM_MODEL=llama3.2 > .env
+# Copy configuration template
+copy .env.example .env
+# Edit .env if needed — defaults work for local Ollama
 ```
 
 ### Run All Services
 
-```bash
-run_adk_web.bat
-```
+Each service runs in its own terminal window:
 
-This starts the Agent Registry MCP server, all 4 data MCP servers, 3 sub-agents, and the ADK Web UI / orchestrator.
+```bash
+# Terminal 1: Unified MCP Server (agent registry + all data tools)
+uv run python -m uvicorn mcp_servers.finsight_server:get_app --host 0.0.0.0 --port 8010
+
+# Terminal 2: RAG Agent
+uv run python -m uvicorn agent_2_llamaindex.server:app --host 0.0.0.0 --port 8002
+
+# Terminal 3: Quant Agent
+uv run python -m uvicorn agent_3_langgraph.server:app --host 0.0.0.0 --port 8003
+
+# Terminal 4: Sentiment Agent
+uv run python -m uvicorn agent_4_crewai.server:app --host 0.0.0.0 --port 8004
+
+# Terminal 5: ADK Web UI
+.venv\Scripts\activate && adk web --port 8001 agents
+```
 
 **Startup order:**
 1. Unified MCP Server (`localhost:8010`) — agent registry + all data tools
 2. Sub-agents — RAG (`:8002`), Quant (`:8003`), Sentiment (`:8004`)
-3. Orchestrator (`:8001`) — discovers agents via MCP and serves the ADK Web UI
+3. ADK Web UI (`:8001`) — serves the agent playground at http://127.0.0.1:8001
 
 ### Test the System
 
@@ -158,19 +172,19 @@ Open http://127.0.0.1:8001 in your browser for the ADK Web UI.
 │   └── Dockerfile
 │
 ├── shared/                   # Shared libraries
-│   ├── base_agent.py         # BaseAgent abstract class (NEW)
-│   ├── generic_executor.py   # GenericAgentExecutor (NEW)
-│   ├── workflow.py           # WorkflowGraph state machine (NEW)
-│   ├── types.py              # Shared Pydantic models (NEW)
+│   ├── base_agent.py         # BaseAgent abstract class
+│   ├── generic_executor.py   # GenericAgentExecutor
+│   ├── workflow.py           # WorkflowGraph state machine
+│   ├── types.py              # Shared Pydantic models
 │   ├── config.py             # Centralized .env configuration
 │   ├── models.py             # Pydantic data models
 │   └── mcp_client.py         # MCP client with dynamic tool discovery
 │
 ├── tests/                    # Test suite
-│   ├── test_base_agent.py    # NEW
-│   ├── test_planner.py       # NEW
-│   ├── test_workflow.py      # NEW
-│   ├── test_agent_cards.py   # NEW
+│   ├── test_base_agent.py
+│   ├── test_planner.py
+│   ├── test_workflow.py
+│   ├── test_agent_cards.py
 │   ├── test_a2a_communication.py
 │   ├── test_quant_graph.py
 │   ├── test_rag_pipeline.py
