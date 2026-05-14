@@ -17,7 +17,6 @@ _RSS_FEEDS = {
     "seeking_alpha": "https://seekingalpha.com/feed.xml",
 }
 
-
 _SEC_HEADERS = {
     "User-Agent": "FinSight Research (contact@finsight.com)",
     "Accept-Encoding": "gzip, deflate",
@@ -38,7 +37,18 @@ async def _get_company_name(ticker: str) -> list[str]:
 
 @app.tool()
 async def get_news_sentiment(ticker: str, limit: int = 10) -> dict:
-    """Fetch financial news for a ticker and compute sentiment"""
+    """Fetch recent financial news articles mentioning a ticker and compute VADER sentiment scores.
+
+    Aggregates news from Yahoo Finance, CNBC, MarketWatch, and Seeking Alpha RSS feeds.
+    Filters articles by ticker and company name. Returns both aggregate sentiment and per-article scores.
+
+    Args:
+        ticker: Stock ticker symbol to search for in news (e.g. NVDA, AAPL, MSFT)
+        limit: Maximum number of articles to return (default 10)
+
+    Returns:
+        dict with keys: ticker (str), total_articles (int), sentiment_score (float -1 to 1), positive_articles (int), negative_articles (int), neutral_articles (int), articles (list of dicts each with: source, title, link, published, sentiment)
+    """
     keywords = await _get_company_name(ticker)
     articles = []
     scores = []
@@ -80,7 +90,14 @@ async def get_news_sentiment(ticker: str, limit: int = 10) -> dict:
 
 @app.tool()
 async def get_earnings_calendar(ticker: str) -> dict:
-    """Fetch upcoming earnings date for a ticker"""
+    """Fetch upcoming earnings report date and status for a stock ticker.
+
+    Args:
+        ticker: Stock ticker symbol (e.g. NVDA, AAPL, MSFT)
+
+    Returns:
+        dict with keys: ticker (str), source (str), status (str) or error (str)
+    """
     try:
         async with httpx.AsyncClient(timeout=10) as c:
             url = f"https://finance.yahoo.com/calendar/earnings?symbol={ticker}"

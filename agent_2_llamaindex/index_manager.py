@@ -12,20 +12,21 @@ from llama_index.core.query_engine import RouterQueryEngine
 from llama_index.core.selectors import LLMMultiSelector
 from llama_index.core.tools import QueryEngineTool, ToolMetadata
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
-from llama_index.llms.groq import Groq
+from llama_index.llms.ollama import Ollama
 from llama_index.vector_stores.chroma import ChromaVectorStore
 import chromadb
 
-from shared.config import GROQ_MODEL, EMBED_MODEL, CHROMA_DIR, GROQ_API_KEY
+from shared.config import LLM_MODEL, EMBED_MODEL, CHROMA_DIR, LLM_BASE_URL
 
 logger = logging.getLogger(__name__)
 
 
 class FinancialIndexManager:
     def __init__(self):
-        self.llm = Groq(
-            model=GROQ_MODEL,
-            api_key=GROQ_API_KEY,
+        self.llm = Ollama(
+            model=LLM_MODEL,
+            base_url=LLM_BASE_URL.replace("/v1", ""),
+            request_timeout=120.0,
         )
         self.embed_model = HuggingFaceEmbedding(
             model_name=f"sentence-transformers/{EMBED_MODEL}"
@@ -100,41 +101,53 @@ class FinancialIndexManager:
         return self._router
 
     async def query(self, ticker: str, query_text: str) -> dict:
-        try:
-            response = await self.router.aquery(
-                f"Query: {query_text}\nTicker: {ticker}\nAnswer with specific data and cite sources."
-            )
-            from llama_index.core.response import Response
-            if isinstance(response, Response):
-                resp_text = str(response)
-                sources = [
-                    n.node.metadata.get("file_name", "unknown")
-                    for n in response.source_nodes
-                ]
-                scores = [round(n.score, 3) for n in response.source_nodes]
-            else:
-                resp_text = str(response)
-                sources = []
-                scores = []
-
-            return {
-                "ticker": ticker,
-                "summary": resp_text,
-                "sources": sources[:5],
-                "relevance_scores": scores[:5],
-                "confidence_score": round(
-                    max(scores) if scores else 0.0, 3
-                ),
-            }
-        except Exception as e:
-            logger.exception("RAG query failed for %s", ticker)
-            return {
-                "ticker": ticker,
-                "summary": f"Error: {e}",
-                "sources": [],
-                "relevance_scores": [],
-                "confidence_score": 0.0,
-            }
+        for attempt, engine in enumerate([
+            self.router.aquery,
+            self._get_or_create_index("sec_filings").as_query_engine(similarity_top_k=5).aquery,
+        ]):
+            try:
+                if attempt == 0:
+                    response = await engine(
+                        f"Query: {query_text}\nTicker: {ticker}\nAnswer with specific data and cite sources."
+                    )
+                else:
+                    response = await engine(
+                        f"Research {ticker}: {query_text}\nProvide specific data with citations."
+                    )
+                from llama_index.core.response import Response
+                if isinstance(response, Response):
+                    resp_text = str(response)
+                    sources = [
+                        n.node.metadata.get("file_name", "unknown")
+                        for n in response.source_nodes
+                    ]
+                    scores = [round(n.score, 3) for n in response.source_nodes]
+                    return {
+                        "ticker": ticker,
+                        "summary": resp_text,
+                        "sources": sources[:5],
+                        "relevance_scores": scores[:5],
+                        "confidence_score": round(max(scores) if scores else 0.0, 3),
+                    }
+            except Exception as e:
+                if attempt == 0:
+                    logger.warning("Router query failed, falling back to SEC index: %s", e)
+                else:
+                    logger.exception("RAG query failed for %s", ticker)
+                    return {
+                        "ticker": ticker,
+                        "summary": f"Error: {e}",
+                        "sources": [],
+                        "relevance_scores": [],
+                        "confidence_score": 0.0,
+                    }
+        return {
+            "ticker": ticker,
+            "summary": "No response",
+            "sources": [],
+            "relevance_scores": [],
+            "confidence_score": 0.0,
+        }
 
     async def query_sec_filings(self, ticker: str, query_text: str) -> dict:
         index = self._get_or_create_index("sec_filings")

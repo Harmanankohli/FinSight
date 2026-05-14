@@ -25,34 +25,55 @@ logger = logging.getLogger(__name__)
 
 class SentimentAgent:
     def __init__(self):
-        import os as _os
-        from shared.config import GROQ_API_KEY, LLM_BASE_URL, MCP_TIMEOUT
-        _os.environ.setdefault("VLLM_API_KEY", GROQ_API_KEY)
-        _os.environ.setdefault("VLLM_BASE_URL", LLM_BASE_URL)
-        _os.environ.setdefault("OPENAI_API_KEY", GROQ_API_KEY)
-        _os.environ.setdefault("OPENAI_BASE_URL", LLM_BASE_URL)
+        from shared.config import MCP_TIMEOUT
         self._mcp = MCPClient(config_path="agent_4_crewai/mcp_config.yaml", timeout=MCP_TIMEOUT)
         self._wrapper = MCPClientWrapper(self._mcp)
-        self._tools_discovered = False
-        self._tools: list = []
+        self._connected = False
 
-    async def _ensure_tools(self) -> list:
-        if not self._tools_discovered:
+    async def _connect(self):
+        if not self._connected:
+            await self._mcp.connect_all()
+            self._connected = True
+
+    async def _collect_data_parallel(self, ticker: str) -> dict:
+        """Call all MCP tools in parallel and return aggregated data."""
+        results = {}
+
+        async def call(tool, args):
             try:
-                await self._mcp.connect_all()
-                self._tools = await self._wrapper.discover_tools()
-                self._tools_discovered = True
-                logger.info("Discovered %d MCP tools", len(self._tools))
+                r = await self._mcp.call_tool_by_name(tool, args)
+                if hasattr(r, "content"):
+                    for item in r.content:
+                        txt = item.text if hasattr(item, "text") else str(item)
+                        import json
+                        try:
+                            return json.loads(txt)
+                        except (json.JSONDecodeError, TypeError):
+                            return {"raw": txt[:500]}
+                return {"raw": str(r)[:500]}
             except Exception as e:
-                logger.warning("MCP discovery failed: %s", e)
-                self._tools = []
-                self._tools_discovered = True
-        return self._tools
+                return {"error": str(e)}
+
+        import asyncio, json
+        await self._connect()
+
+        tasks = {
+            "news": call("get_news_sentiment", {"ticker": ticker, "limit": 5}),
+            "filings": call("get_company_filings", {"ticker": ticker, "form_types": "", "limit": 3}),
+        }
+        done = await asyncio.gather(*[asyncio.create_task(t) for t in tasks.values()], return_exceptions=True)
+        for name, result in zip(tasks.keys(), done):
+            if isinstance(result, Exception):
+                results[name] = {"error": str(result)}
+            else:
+                results[name] = result
+        return results
 
     async def analyze(self, ticker: str, query_text: str) -> dict:
-        tools = await self._ensure_tools()
+        data = await self._collect_data_parallel(ticker)
+        logger.info("Collected data for %s: %s", ticker, list(data.keys()))
         crew_builder = SentimentIntelligenceCrew(self._wrapper)
-        return await crew_builder.analyze(ticker, tools=tools)
+        return await crew_builder.analyze(ticker, precollected_data=data)
 
 
 class SentimentAgentExecutor(AgentExecutor):

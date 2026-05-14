@@ -1,5 +1,5 @@
+import asyncio
 import logging
-from html.parser import HTMLParser
 
 import httpx
 from mcp.server.fastmcp import FastMCP
@@ -100,7 +100,8 @@ class _EdgarClient:
         return {"query": query, "results": results}
 
     async def close(self):
-        await self._client.aclose()
+        if self._client:
+            await self._client.aclose()
 
 
 _edgar = _EdgarClient()
@@ -108,15 +109,38 @@ _edgar = _EdgarClient()
 
 @app.tool()
 async def get_company_filings(
-    ticker: str, form_types: list[str] | None = None, limit: int = 10
+    ticker: str, form_types: str = "", limit: int = 10
 ) -> dict:
-    """Retrieve SEC filings for a company by ticker (10-K, 10-Q, 8-K, etc.)"""
-    return await _edgar.get_company_filings(ticker, form_types, limit)
+    """Retrieve SEC filings for a publicly traded company by ticker symbol.
+
+    Fetches filings from the SEC EDGAR system including annual reports (10-K), quarterly reports (10-Q),
+    and current reports (8-K). Each filing includes the form type, filing date, description, and EDGAR URL.
+
+    Args:
+        ticker: Stock ticker symbol (e.g. NVDA, AAPL, MSFT)
+        form_types: Comma-separated list of SEC form types to filter (e.g. "10-K,10-Q,8-K"). Leave empty to return all form types.
+        limit: Maximum number of filings to return (default 10)
+
+    Returns:
+        dict with keys: ticker (str), cik (str - SEC Central Index Key), filings (list of dicts each with: form, filing_date, description, edgar_url)
+    """
+    types_list = [t.strip() for t in form_types.split(",") if t.strip()] if form_types else None
+    return await _edgar.get_company_filings(ticker, types_list, limit)
 
 
 @app.tool()
 async def full_text_search(query: str, ticker: str | None = None) -> dict:
-    """Search SEC EDGAR full-text index for filings matching a query"""
+    """Search the full text of SEC EDGAR filings for matching keywords.
+
+    Searches across all SEC filings including exhibits and attachments. Results are relevance-scored.
+
+    Args:
+        query: Search query string (e.g. "revenue growth AI semiconductors")
+        ticker: Optional ticker symbol to narrow search to a specific company
+
+    Returns:
+        dict with keys: query (str), results (list of dicts each with: score, ticker, form, filing_date, description, url)
+    """
     return await _edgar.full_text_search(query, ticker)
 
 

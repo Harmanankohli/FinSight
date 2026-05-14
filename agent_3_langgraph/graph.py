@@ -8,6 +8,7 @@ from .nodes import (
     dcf_valuation_node,
     fetch_price_data_node,
     format_output_node,
+    llm_summary_node,
     stress_test_node,
 )
 from .state import QuantAnalysisState
@@ -34,6 +35,7 @@ class QuantAnalysisGraph:
         builder.add_node("run_dcf", dcf_valuation_node)
         builder.add_node("portfolio_correlation", correlation_node)
         builder.add_node("format_output", format_output_node)
+        builder.add_node("llm_summary", llm_summary_node)
 
         builder.set_entry_point("fetch_prices")
         builder.add_edge("fetch_prices", "compute_base_metrics")
@@ -45,7 +47,8 @@ class QuantAnalysisGraph:
         builder.add_edge("run_stress_test", "portfolio_correlation")
         builder.add_edge("run_dcf", "portfolio_correlation")
         builder.add_edge("portfolio_correlation", "format_output")
-        builder.add_edge("format_output", END)
+        builder.add_edge("format_output", "llm_summary")
+        builder.add_edge("llm_summary", END)
 
         return builder.compile()
 

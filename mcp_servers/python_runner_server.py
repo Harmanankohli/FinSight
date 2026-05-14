@@ -79,7 +79,20 @@ def _check_code_safety(code: str) -> tuple[bool, str]:
 
 @app.tool()
 async def execute_python(code: str, timeout: int = 30) -> dict:
-    """Execute Python code in a sandboxed subprocess with restricted imports"""
+    """Execute Python code in a sandboxed subprocess with restricted imports.
+
+    Runs the provided Python code in an isolated subprocess with limited builtins.
+    Only safe libraries (pandas, numpy, math, json, etc.) are available.
+    Restricted imports: os, subprocess, shutil, socket, ctypes, importlib, pickle, inspect, sys.
+    The code can return a value by assigning to a `result` variable.
+
+    Args:
+        code: Python code string to execute. Use `result = <value>` to return data.
+        timeout: Maximum execution time in seconds (default 30)
+
+    Returns:
+        dict with keys: success (bool), stdout (str - captured print output), stderr (str - error messages), result (dict with type and value of the result variable, or None)
+    """
     safe, reason = _check_code_safety(code)
     if not safe:
         return {"success": False, "stdout": "", "stderr": reason, "result": None}

@@ -35,7 +35,7 @@ class RAGAgent:
         try:
             result = await self._mcp.call_tool_by_name(
                 "get_company_filings",
-                {"ticker": ticker, "form_types": ["10-K", "10-Q", "8-K"], "limit": 5},
+                {"ticker": ticker, "form_types": "10-K,10-Q,8-K", "limit": 5},
             )
             if hasattr(result, "content"):
                 for item in result.content:

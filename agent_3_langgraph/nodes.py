@@ -296,3 +296,40 @@ async def format_output_node(state: QuantAnalysisState) -> dict:
         "dcf_valuation": dcf,
         "correlation_matrix": corr,
     }
+
+
+async def llm_summary_node(state: QuantAnalysisState) -> dict:
+    from langchain_ollama import ChatOllama
+    from shared.config import LLM_MODEL, OLLAMA_BASE_URL
+
+    metrics = state.get("metrics", {})
+    stress = state.get("stress_test_result")
+    dcf = state.get("dcf_valuation")
+    ticker = state.get("ticker", "")
+    rec = state.get("recommendation", "HOLD")
+    reasoning = state.get("reasoning", "")
+
+    prompt = (
+        f"You are a financial analyst. Summarize the following quantitative analysis for {ticker} "
+        f"in 2-3 sentences for an investor.\n\n"
+        f"Recommendation: {rec}\n"
+        f"Key metrics: Sharpe={metrics.get('sharpe_ratio')}, "
+        f"Volatility={metrics.get('annual_volatility')}, "
+        f"Beta={metrics.get('beta')}, "
+        f"VaR={metrics.get('var_95_daily')}\n"
+        f"Reasoning: {reasoning}\n"
+    )
+    if dcf:
+        prompt += f"DCF: intrinsic value=${dcf.get('intrinsic_value')}, upside={dcf.get('upside_pct')}%\n"
+    if stress:
+        prompt += f"Stress test CVaR: {stress.get('cvar_95')}\n"
+
+    try:
+        llm = ChatOllama(model=LLM_MODEL, base_url=OLLAMA_BASE_URL, temperature=0.3, num_predict=256)
+        response = await llm.ainvoke(prompt)
+        summary = response.content if hasattr(response, "content") else str(response)
+    except Exception as e:
+        logger.warning("LLM summary failed: %s", e)
+        summary = reasoning
+
+    return {"reasoning": summary}

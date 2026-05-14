@@ -26,7 +26,20 @@ async def get_ticker_posts(
     days_back: int = 7,
     limit: int = 100,
 ) -> dict:
-    """Fetch Reddit posts mentioning a ticker and compute sentiment"""
+    """Fetch Reddit posts mentioning a stock ticker and compute VADER sentiment scores.
+
+    Searches across specified subreddits for posts containing the ticker symbol.
+    Computes compound sentiment score (-1 to 1) for each post using VADER sentiment analysis.
+
+    Args:
+        ticker: Stock ticker symbol to search for (e.g. NVDA, AAPL, MSFT)
+        subreddits: List of subreddits to search (default: stocks, investing, wallstreetbets)
+        days_back: How many days back to search (default 7)
+        limit: Maximum total posts to return (default 100)
+
+    Returns:
+        dict with keys: ticker (str), total_posts (int), sentiment_score (float -1 to 1), positive_posts (int), negative_posts (int), neutral_posts (int), posts (list of dicts each with: subreddit, title, score, num_comments, url, created_utc, sentiment)
+    """
     subreddits = subreddits or ["stocks", "investing", "wallstreetbets"]
     reddit = _get_reddit()
     all_posts = []

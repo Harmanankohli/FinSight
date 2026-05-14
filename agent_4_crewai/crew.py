@@ -8,98 +8,88 @@ from .mcp_tools import MCPClientWrapper
 
 logger = logging.getLogger(__name__)
 
-from shared.config import GROQ_MODEL
+from crewai import LLM as CrewLLM
+from shared.config import LLM_MODEL, OLLAMA_BASE_URL
 
-_LLM_CONFIG = f"hosted_vllm/{GROQ_MODEL}"
+_LLM = CrewLLM(model=f"ollama/{LLM_MODEL}", base_url=OLLAMA_BASE_URL, temperature=0.3)
 
 
 class SentimentIntelligenceCrew:
     def __init__(self, mcp_wrapper: MCPClientWrapper):
         self._mcp = mcp_wrapper
 
-    def build_crew(self, ticker: str, tools: list | None = None) -> Crew:
-        tool_list = tools or []
-
-        social_agent = Agent(
-            role="Social Media Sentiment Analyst",
-            goal=f"Analyze retail investor sentiment for {ticker} using available tools",
-            backstory="Expert in quantitative social sentiment analysis for financial markets",
-            tools=tool_list,
-            llm=_LLM_CONFIG,
-            verbose=True,
-        )
-
-        analyst_agent = Agent(
-            role="Sell-Side Analyst Tracker",
-            goal=f"Aggregate and analyze latest analyst ratings and price targets for {ticker}",
-            backstory="Former Goldman Sachs equity research associate with deep sector knowledge",
-            tools=tool_list,
-            llm=_LLM_CONFIG,
-        )
-
-        insider_agent = Agent(
-            role="Insider Trading Monitor",
-            goal=f"Review recent Form 4 filings for {ticker} executives and flag unusual activity",
-            backstory="Compliance expert specializing in SEC Form 4 analysis and insider pattern detection",
-            tools=tool_list,
-            llm=_LLM_CONFIG,
-        )
+    def build_crew(self, ticker: str, data: dict | None = None) -> Crew:
+        _agent_defaults = dict(llm=_LLM, verbose=True, allow_delegation=False, max_retry_limit=1)
 
         synthesis_agent = Agent(
             role="Investment Narrative Synthesizer",
-            goal=f"Produce a coherent sentiment narrative combining all intelligence sources for {ticker}",
+            goal=f"Produce a sentiment narrative for {ticker} based on provided data",
             backstory="Senior portfolio manager with 20 years of experience writing investment theses",
-            llm=_LLM_CONFIG,
+            **_agent_defaults,
         )
 
-        social_task = Task(
-            description=(
-                f"Analyze social media sentiment for {ticker}. "
-                f"Return sentiment score (-1 to 1), volume, and key themes."
-            ),
-            agent=social_agent,
-            expected_output="JSON with sentiment_score, post_volume, top_themes, notable_posts",
+        news_summary = ""
+        filings_summary = ""
+        if data:
+            news = data.get("news", {})
+            if "error" not in news:
+                articles = news.get("articles", [])
+                news_summary = f"News articles found: {len(articles)}. Sentiment score: {news.get('sentiment_score', 'N/A')}. Top articles: "
+                for a in articles[:3]:
+                    news_summary += f"\n- {a.get('title', '')} (sentiment: {a.get('sentiment', 'N/A')})"
+            else:
+                news_summary = f"News unavailable: {news.get('error')}"
+            filings = data.get("filings", {})
+            if "error" not in filings:
+                flist = filings.get("filings", [])
+                filings_summary = f"SEC filings found: {len(flist)}. "
+                for f in flist[:3]:
+                    filings_summary += f"\n- {f.get('form', '')} filed {f.get('filing_date', '')}: {f.get('description', '')}"
+            else:
+                filings_summary = f"Filings unavailable: {filings.get('error')}"
+
+        context_data = f"Data for {ticker}:\n\nNews:\n{news_summary}\n\nSEC Filings:\n{filings_summary}"
+
+        analysis_agent = Agent(
+            role="Sentiment Analyst",
+            goal=f"Analyze sentiment for {ticker} and return key insights",
+            backstory="Expert financial analyst",
+            **_agent_defaults,
         )
 
-        analyst_task = Task(
+        analysis_task = Task(
             description=(
-                f"Find analyst ratings changes and price targets for {ticker} in last 90 days. "
-                f"Return consensus rating, average price target, and key arguments."
+                f"Analyze the following data for {ticker} and extract:\n"
+                f"1. Sentiment signal (bullish/bearish/neutral)\n"
+                f"2. Key risks and catalysts\n"
+                f"3. Overall confidence score (0-1)\n\n"
+                f"{context_data}"
             ),
-            agent=analyst_agent,
-            expected_output="JSON with consensus_rating, avg_price_target, bull_case, bear_case",
-        )
-
-        insider_task = Task(
-            description=(
-                f"Review Form 4 filings for {ticker} and flag unusual insider trading patterns. "
-                f"Return activity summary and signal."
-            ),
-            agent=insider_agent,
-            expected_output="JSON with insider_activity_summary, notable_transactions, signal (bullish/bearish/neutral)",
+            agent=analysis_agent,
+            expected_output="JSON with overall_signal, key_risks, key_catalysts, confidence_score",
         )
 
         synthesis_task = Task(
             description=(
-                f"Synthesize all intelligence for {ticker} into a 3-paragraph investment narrative "
-                f"with an overall sentiment signal and confidence score."
+                f"Synthesize a 2-3 paragraph investment narrative for {ticker} "
+                f"with overall sentiment signal and confidence score."
             ),
             agent=synthesis_agent,
-            context=[social_task, analyst_task, insider_task],
+            context=[analysis_task],
             expected_output=(
                 "JSON with narrative, overall_signal, confidence_score (0-1), key_risks, key_catalysts"
             ),
         )
 
         return Crew(
-            agents=[social_agent, analyst_agent, insider_agent, synthesis_agent],
-            tasks=[social_task, analyst_task, insider_task, synthesis_task],
+            agents=[analysis_agent, synthesis_agent],
+            tasks=[analysis_task, synthesis_task],
             process=Process.sequential,
             verbose=True,
         )
 
-    async def analyze(self, ticker: str, tools: list | None = None) -> dict:
-        crew = self.build_crew(ticker, tools=tools)
+    async def analyze(self, ticker: str, precollected_data: dict | None = None) -> dict:
+        crew = self.build_crew(ticker, data=precollected_data)
         try:
             result = crew.kickoff()
             raw = result.raw if hasattr(result, "raw") else str(result)
