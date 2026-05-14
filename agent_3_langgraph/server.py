@@ -1,5 +1,7 @@
+import json
 import logging
 import os
+from pathlib import Path
 
 import uvicorn
 from starlette.applications import Starlette
@@ -14,25 +16,33 @@ from .executor import QuantAgentExecutor
 logger = logging.getLogger(__name__)
 
 host = os.environ.get("HOST", "localhost")
-skill = AgentSkill(
-    id="quant_analysis",
-    name="Quantitative Analysis",
-    description="Compute Sharpe ratio, Beta, VaR, volatility, DCF valuation, stress tests",
-    input_modes=["text"],
-    output_modes=["data"],
-)
+
+card_path = Path(__file__).resolve().parent.parent / "agent_cards" / "quant_agent.json"
+with card_path.open("r") as f:
+    card_data = json.load(f)
+
+skills = [
+    AgentSkill(
+        id=s["id"],
+        name=s["name"],
+        description=s["description"],
+        input_modes=["text"],
+        output_modes=["data"],
+    )
+    for s in card_data.get("skills", [])
+]
 
 agent_card = AgentCard(
-    name="quant-analysis-agent",
-    description="Computes quantitative risk metrics and financial analysis",
-    version="1.0.0",
-    default_input_modes=["text/plain"],
-    default_output_modes=["application/json"],
-    capabilities=AgentCapabilities(streaming=True),
+    name=card_data["name"],
+    description=card_data["description"],
+    version=card_data.get("version", "1.0.0"),
+    default_input_modes=card_data.get("defaultInputModes", ["text/plain"]),
+    default_output_modes=card_data.get("defaultOutputModes", ["text/plain"]),
+    capabilities=AgentCapabilities(streaming=card_data.get("capabilities", {}).get("streaming", True)),
     supported_interfaces=[
         AgentInterface(protocol_binding="JSONRPC", url=f"http://{host}:8003/a2a")
     ],
-    skills=[skill],
+    skills=skills,
 )
 
 request_handler = DefaultRequestHandler(

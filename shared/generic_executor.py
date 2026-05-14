@@ -1,0 +1,134 @@
+import logging
+
+from a2a.helpers import new_agent_text_message, new_task
+from a2a.server.agent_execution import AgentExecutor, RequestContext
+from a2a.server.events import EventQueue
+from a2a.types import (
+    DataPart,
+    InvalidParamsError,
+    SendStreamingMessageSuccessResponse,
+    Task,
+    TaskArtifactUpdateEvent,
+    TaskState,
+    TaskStatusUpdateEvent,
+    TextPart,
+    UnsupportedOperationError,
+)
+from a2a.utils.errors import ServerError
+
+from shared.base_agent import BaseAgent
+
+logger = logging.getLogger(__name__)
+
+
+class GenericAgentExecutor(AgentExecutor):
+    """Reusable A2A AgentExecutor that delegates all logic to a BaseAgent."""
+
+    def __init__(self, agent: BaseAgent):
+        self.agent = agent
+
+    async def execute(
+        self,
+        context: RequestContext,
+        event_queue: EventQueue,
+    ) -> None:
+        logger.info("Executing agent %s", self.agent.agent_name)
+        error = self._validate_request(context)
+        if error:
+            raise ServerError(error=InvalidParamsError())
+
+        query = context.get_user_input()
+        task = context.current_task
+        if not task:
+            task = new_task(context.message)
+            await event_queue.enqueue_event(task)
+
+        updater = TaskUpdater(event_queue, task.id, task.context_id)
+
+        async for item in self.agent.stream(query, task.context_id, task.id):
+            if hasattr(item, "root") and isinstance(
+                item.root, SendStreamingMessageSuccessResponse
+            ):
+                event = item.root.result
+                if isinstance(event, (TaskStatusUpdateEvent, TaskArtifactUpdateEvent)):
+                    await event_queue.enqueue_event(event)
+                continue
+
+            is_task_complete = item.get("is_task_complete", False)
+            require_user_input = item.get("require_user_input", False)
+
+            if is_task_complete:
+                if item.get("response_type") == "data":
+                    part = DataPart(data=item["content"])
+                else:
+                    part = TextPart(text=item["content"])
+
+                await updater.add_artifact(
+                    [part],
+                    name=f"{self.agent.agent_name}-result",
+                )
+                await updater.complete()
+                break
+            if require_user_input:
+                await updater.update_status(
+                    TaskState.input_required,
+                    new_agent_text_message(
+                        item["content"],
+                        task.context_id,
+                        task.id,
+                    ),
+                    final=True,
+                )
+                break
+            await updater.update_status(
+                TaskState.working,
+                new_agent_text_message(
+                    item["content"],
+                    task.context_id,
+                    task.id,
+                ),
+            )
+
+    def _validate_request(self, context: RequestContext) -> bool:
+        return False
+
+    async def cancel(
+        self, context: RequestContext, event_queue: EventQueue
+    ) -> Task | None:
+        raise ServerError(error=UnsupportedOperationError())
+
+
+class TaskUpdater:
+    """Helper to emit status and artifact events."""
+
+    def __init__(self, event_queue: EventQueue, task_id: str, context_id: str):
+        self.event_queue = event_queue
+        self.task_id = task_id
+        self.context_id = context_id
+
+    async def add_artifact(self, parts: list, name: str = "result") -> None:
+        from a2a.types import Artifact
+
+        await self.event_queue.enqueue_event(
+            TaskArtifactUpdateEvent(
+                task_id=self.task_id,
+                context_id=self.context_id,
+                artifact=Artifact(name=name, parts=parts),
+            )
+        )
+
+    async def update_status(
+        self, state: TaskState, message=None, final: bool = False
+    ) -> None:
+        from a2a.types import TaskStatus
+
+        await self.event_queue.enqueue_event(
+            TaskStatusUpdateEvent(
+                task_id=self.task_id,
+                context_id=self.context_id,
+                status=TaskStatus(state=state, message=message),
+            )
+        )
+
+    async def complete(self) -> None:
+        await self.update_status(TaskState.TASK_STATE_COMPLETED)

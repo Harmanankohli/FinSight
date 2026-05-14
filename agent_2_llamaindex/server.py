@@ -1,5 +1,7 @@
+import json
 import logging
 import os
+from pathlib import Path
 
 import uvicorn
 from starlette.applications import Starlette
@@ -14,33 +16,33 @@ from .executor import RAGAgentExecutor
 logger = logging.getLogger(__name__)
 
 host = os.environ.get("HOST", "localhost")
-skill = AgentSkill(
-    id="sec_filing_retrieval",
-    name="SEC Filing Retrieval",
-    description="Retrieves and analyzes SEC 10-K, 10-Q, 8-K filings",
-    input_modes=["text"],
-    output_modes=["text", "data"],
-)
 
-earnings_skill = AgentSkill(
-    id="earnings_summary",
-    name="Earnings Summary",
-    description="Summarizes earnings call transcripts",
-    input_modes=["text"],
-    output_modes=["text"],
-)
+card_path = Path(__file__).resolve().parent.parent / "agent_cards" / "rag_agent.json"
+with card_path.open("r") as f:
+    card_data = json.load(f)
+
+skills = [
+    AgentSkill(
+        id=s["id"],
+        name=s["name"],
+        description=s["description"],
+        input_modes=["text"],
+        output_modes=["text", "data"] if "data" in s.get("id", "") else ["text"],
+    )
+    for s in card_data.get("skills", [])
+]
 
 agent_card = AgentCard(
-    name="financial-rag-agent",
-    description="Retrieves and analyzes financial documents using RAG",
-    version="1.0.0",
-    default_input_modes=["text/plain"],
-    default_output_modes=["text/plain", "application/json"],
-    capabilities=AgentCapabilities(streaming=True),
+    name=card_data["name"],
+    description=card_data["description"],
+    version=card_data.get("version", "1.0.0"),
+    default_input_modes=card_data.get("defaultInputModes", ["text/plain"]),
+    default_output_modes=card_data.get("defaultOutputModes", ["text/plain"]),
+    capabilities=AgentCapabilities(streaming=card_data.get("capabilities", {}).get("streaming", True)),
     supported_interfaces=[
         AgentInterface(protocol_binding="JSONRPC", url=f"http://{host}:8002/a2a")
     ],
-    skills=[skill, earnings_skill],
+    skills=skills,
 )
 
 request_handler = DefaultRequestHandler(

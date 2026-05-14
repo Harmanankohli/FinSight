@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+from pathlib import Path
 
 import httpx
 import uvicorn
@@ -27,6 +28,12 @@ from .report_generator import synthesize
 logger = logging.getLogger(__name__)
 
 from shared.config import AGENT_SEED_URLS as _SEED_URLS
+
+HOST = os.environ.get("HOST", "localhost")
+
+_card_path = Path(__file__).resolve().parent.parent / "agent_cards" / "orchestrator_agent.json"
+with _card_path.open("r") as _f:
+    _orchestrator_card = json.load(_f)
 
 
 def _list_skills(card: AgentCard) -> dict[str, str]:
@@ -120,20 +127,25 @@ async def health(_):
     return JSONResponse({"status": "ok"})
 
 
+_skills = [
+    AgentSkill(
+        id=s["id"],
+        name=s["name"],
+        description=s["description"],
+        input_modes=["text"],
+        output_modes=["data"],
+    )
+    for s in _orchestrator_card.get("skills", [])
+]
+
 routes = [
     *create_agent_card_routes(AgentCard(
-        name="investment-orchestrator",
-        description="Coordinates agents into an Investment Brief",
-        version="1.0.0",
-        documentation_url=f"http://{os.environ.get('HOST', 'localhost')}:8001",
-        capabilities=AgentCapabilities(streaming=False),
-        skills=[AgentSkill(
-            id="investment_research",
-            name="Investment Research",
-            description="Answer investment queries with a complete research brief",
-            input_modes=["text"],
-            output_modes=["data"],
-        )],
+        name=_orchestrator_card["name"],
+        description=_orchestrator_card["description"],
+        version=_orchestrator_card.get("version", "1.0.0"),
+        documentation_url=f"http://{HOST}:8001",
+        capabilities=AgentCapabilities(streaming=_orchestrator_card.get("capabilities", {}).get("streaming", False)),
+        skills=_skills,
     )),
     Route("/query", endpoint=handle_query, methods=["POST"]),
     Route("/health", endpoint=health, methods=["GET"]),

@@ -1,0 +1,39 @@
+{
+    "name": "Quant Analysis Agent",
+    "description": "Computes quantitative risk metrics and financial analysis using yfinance and LangGraph",
+    "url": "http://localhost:8003/",
+    "version": "1.0.0",
+    "capabilities": {
+        "streaming": true,
+        "pushNotifications": false,
+        "stateTransitionHistory": false
+    },
+    "defaultInputModes": [
+        "text",
+        "text/plain"
+    ],
+    "defaultOutputModes": [
+        "text",
+        "application/json"
+    ],
+    "skills": [
+        {
+            "id": "quant_analysis",
+            "name": "Quantitative Analysis",
+            "description": "Compute Sharpe ratio, Beta, VaR, volatility, DCF valuation, stress tests, and portfolio correlation",
+            "tags": [
+                "quantitative",
+                "risk metrics",
+                "sharpe",
+                "beta",
+                "dcf",
+                "valuation"
+            ],
+            "examples": [
+                "Calculate risk metrics for NVDA",
+                "Run a DCF valuation on AAPL",
+                "Stress test MSFT under different market scenarios"
+            ]
+        }
+    ]
+}

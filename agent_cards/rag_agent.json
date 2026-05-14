@@ -1,0 +1,50 @@
+{
+    "name": "Financial RAG Agent",
+    "description": "Retrieves and analyzes financial documents using RAG with ChromaDB and Ollama",
+    "url": "http://localhost:8002/",
+    "version": "1.0.0",
+    "capabilities": {
+        "streaming": true,
+        "pushNotifications": false,
+        "stateTransitionHistory": false
+    },
+    "defaultInputModes": [
+        "text",
+        "text/plain"
+    ],
+    "defaultOutputModes": [
+        "text",
+        "application/json"
+    ],
+    "skills": [
+        {
+            "id": "sec_filing_retrieval",
+            "name": "SEC Filing Retrieval",
+            "description": "Retrieves and analyzes SEC 10-K, 10-Q, 8-K filings with citation-backed insights",
+            "tags": [
+                "sec",
+                "edgar",
+                "filings",
+                "financial documents"
+            ],
+            "examples": [
+                "What are the key risks mentioned in NVDA's latest 10-K?",
+                "Summarize AAPL's latest earnings report"
+            ]
+        },
+        {
+            "id": "earnings_summary",
+            "name": "Earnings Summary",
+            "description": "Summarizes earnings call transcripts and forward guidance",
+            "tags": [
+                "earnings",
+                "transcripts",
+                "guidance"
+            ],
+            "examples": [
+                "Summarize MSFT's latest earnings call",
+                "What was NVDA's forward guidance?"
+            ]
+        }
+    ]
+}

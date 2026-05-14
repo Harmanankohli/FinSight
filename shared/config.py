@@ -46,6 +46,11 @@ MCP_MAX_RETRIES = int(os.environ.get("MCP_MAX_RETRIES", "3"))
 A2A_TIMEOUT = float(os.environ.get("A2A_TIMEOUT", "45.0"))
 CHROMA_DIR = os.environ.get("CHROMA_DIR", "./chroma_db")
 
+# Agent Registry (MCP-based discovery)
+AGENT_REGISTRY_URL = os.environ.get("AGENT_REGISTRY_URL", "http://localhost:10200")
+REGISTRY_HOST = os.environ.get("REGISTRY_HOST", "localhost")
+REGISTRY_PORT = int(os.environ.get("REGISTRY_PORT", "10200"))
+
 # Reddit
 REDDIT_CLIENT_ID = os.environ.get("REDDIT_CLIENT_ID", "")
 REDDIT_CLIENT_SECRET = os.environ.get("REDDIT_CLIENT_SECRET", "")
