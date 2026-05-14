@@ -24,8 +24,9 @@ _discoverer = None
 
 async def _get_discoverer():
     global _discoverer
+    from agent_1_adk.a2a_client import A2ADiscoverer
+
     if _discoverer is None:
-        from agent_1_adk.a2a_client import A2ADiscoverer
         _discoverer = A2ADiscoverer(
             seed_urls=[u.strip() for u in AGENT_SEED_URLS.split(",") if u.strip()],
             request_timeout=A2A_TIMEOUT,
@@ -38,9 +39,14 @@ async def _get_discoverer():
 
 
 async def _call_skill(skill_id: str, params: dict) -> str:
-    from agent_1_adk.a2a_client import A2AClient
+    from agent_1_adk.a2a_client import A2AClient, A2ADiscoveryError
 
     discoverer = await _get_discoverer()
+    if not discoverer.find_agent(skill_id):
+        logger.warning("Skill '%s' not cached, re-discovering...", skill_id)
+        _discoverer = None
+        discoverer = await _get_discoverer()
+
     client = A2AClient(timeout=A2A_TIMEOUT).with_discoverer(discoverer)
     result = await client.send_message(skill_id, params.get("query", ""), metadata=params)
     return json.dumps(result)
