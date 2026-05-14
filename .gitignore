@@ -30,3 +30,5 @@ Thumbs.db
 # Temp files
 request.json
 run_adk_web.bat
+
+test_server.py
