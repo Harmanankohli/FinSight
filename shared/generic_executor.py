@@ -1,20 +1,17 @@
 import logging
 
-from a2a.helpers import new_agent_text_message, new_task
+from a2a.helpers import new_task_from_user_message, new_text_message
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.types import (
-    DataPart,
-    InvalidParamsError,
-    SendStreamingMessageSuccessResponse,
-    Task,
+    Artifact,
+    Part,
     TaskArtifactUpdateEvent,
     TaskState,
+    TaskStatus,
     TaskStatusUpdateEvent,
-    TextPart,
-    UnsupportedOperationError,
 )
-from a2a.utils.errors import ServerError
+from google.protobuf.struct_pb2 import Struct, Value
 
 from shared.base_agent import BaseAgent
 
@@ -33,102 +30,82 @@ class GenericAgentExecutor(AgentExecutor):
         event_queue: EventQueue,
     ) -> None:
         logger.info("Executing agent %s", self.agent.agent_name)
-        error = self._validate_request(context)
-        if error:
-            raise ServerError(error=InvalidParamsError())
 
         query = context.get_user_input()
         task = context.current_task
         if not task:
-            task = new_task(context.message)
+            task = new_task_from_user_message(context.message)
             await event_queue.enqueue_event(task)
 
-        updater = TaskUpdater(event_queue, task.id, task.context_id)
+        await event_queue.enqueue_event(
+            TaskStatusUpdateEvent(
+                task_id=task.id,
+                context_id=task.context_id,
+                status=TaskStatus(
+                    state=TaskState.TASK_STATE_WORKING,
+                    message=new_text_message(f"Running {self.agent.agent_name}..."),
+                ),
+            )
+        )
 
         async for item in self.agent.stream(query, task.context_id, task.id):
-            if hasattr(item, "root") and isinstance(
-                item.root, SendStreamingMessageSuccessResponse
-            ):
-                event = item.root.result
-                if isinstance(event, (TaskStatusUpdateEvent, TaskArtifactUpdateEvent)):
-                    await event_queue.enqueue_event(event)
-                continue
-
             is_task_complete = item.get("is_task_complete", False)
             require_user_input = item.get("require_user_input", False)
 
             if is_task_complete:
-                if item.get("response_type") == "data":
-                    part = DataPart(data=item["content"])
+                content = item.get("content", {})
+                if item.get("response_type") == "data" and isinstance(content, dict):
+                    s = Struct()
+                    s.update(content)
+                    part = Part(data=Value(struct_value=s))
                 else:
-                    part = TextPart(text=item["content"])
+                    part = Part(text=str(content))
 
-                await updater.add_artifact(
-                    [part],
-                    name=f"{self.agent.agent_name}-result",
+                await event_queue.enqueue_event(
+                    TaskArtifactUpdateEvent(
+                        task_id=task.id,
+                        context_id=task.context_id,
+                        artifact=Artifact(
+                            name=f"{self.agent.agent_name}-result",
+                            parts=[part],
+                        ),
+                    )
                 )
-                await updater.complete()
-                break
+
+                await event_queue.enqueue_event(
+                    TaskStatusUpdateEvent(
+                        task_id=task.id,
+                        context_id=task.context_id,
+                        status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED),
+                    )
+                )
+                return
+
             if require_user_input:
-                await updater.update_status(
-                    TaskState.input_required,
-                    new_agent_text_message(
-                        item["content"],
-                        task.context_id,
-                        task.id,
-                    ),
-                    final=True,
+                await event_queue.enqueue_event(
+                    TaskStatusUpdateEvent(
+                        task_id=task.id,
+                        context_id=task.context_id,
+                        status=TaskStatus(
+                            state=TaskState.input_required,
+                            message=new_text_message(str(item.get("content", ""))),
+                        ),
+                    )
                 )
-                break
-            await updater.update_status(
-                TaskState.working,
-                new_agent_text_message(
-                    item["content"],
-                    task.context_id,
-                    task.id,
-                ),
-            )
+                return
 
-    def _validate_request(self, context: RequestContext) -> bool:
-        return False
+            await event_queue.enqueue_event(
+                TaskStatusUpdateEvent(
+                    task_id=task.id,
+                    context_id=task.context_id,
+                    status=TaskStatus(
+                        state=TaskState.TASK_STATE_WORKING,
+                        message=new_text_message(str(item.get("content", ""))),
+                    ),
+                )
+            )
 
     async def cancel(
         self, context: RequestContext, event_queue: EventQueue
-    ) -> Task | None:
-        raise ServerError(error=UnsupportedOperationError())
-
-
-class TaskUpdater:
-    """Helper to emit status and artifact events."""
-
-    def __init__(self, event_queue: EventQueue, task_id: str, context_id: str):
-        self.event_queue = event_queue
-        self.task_id = task_id
-        self.context_id = context_id
-
-    async def add_artifact(self, parts: list, name: str = "result") -> None:
-        from a2a.types import Artifact
-
-        await self.event_queue.enqueue_event(
-            TaskArtifactUpdateEvent(
-                task_id=self.task_id,
-                context_id=self.context_id,
-                artifact=Artifact(name=name, parts=parts),
-            )
-        )
-
-    async def update_status(
-        self, state: TaskState, message=None, final: bool = False
     ) -> None:
-        from a2a.types import TaskStatus
-
-        await self.event_queue.enqueue_event(
-            TaskStatusUpdateEvent(
-                task_id=self.task_id,
-                context_id=self.context_id,
-                status=TaskStatus(state=state, message=message),
-            )
-        )
-
-    async def complete(self) -> None:
-        await self.update_status(TaskState.TASK_STATE_COMPLETED)
+        raise Exception("cancel not supported")

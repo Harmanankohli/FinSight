@@ -13,7 +13,7 @@ def discoverer():
 async def test_discoverer_raises_when_no_sources():
     from agent_1_adk.a2a_client import A2ADiscoveryError
     d = A2ADiscoverer(seed_urls=[])
-    with pytest.raises(A2ADiscoveryError, match="No discovery sources configured"):
+    with pytest.raises(A2ADiscoveryError, match="No agents discovered from any source"):
         await d.discover()
 
 

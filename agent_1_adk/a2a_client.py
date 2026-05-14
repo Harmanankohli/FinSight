@@ -10,11 +10,9 @@ from google.protobuf.struct_pb2 import Struct
 
 from a2a.client.card_resolver import A2ACardResolver
 from a2a.client.client_factory import ClientFactory, ClientConfig
+from a2a.helpers import new_text_message
 from a2a.types import (
     AgentCard,
-    Message,
-    Part,
-    Role,
     SendMessageRequest,
 )
 
@@ -49,23 +47,21 @@ class A2ADiscoverer:
     async def discover(self) -> None:
         if self._agent_cards:
             return
-        errors = []
+
+        if self._seed_urls:
+            await self._discover_via_seed_urls()
+            if self._skill_registry:
+                return
 
         if self._mcp_registry_url:
             try:
                 await self._discover_via_mcp_registry()
                 return
             except Exception as e:
-                errors.append(f"MCP registry: {e}")
-                logger.warning("MCP registry discovery failed, falling back to seed URLs: %s", e)
+                logger.warning("MCP registry discovery failed: %s", e)
 
-        if self._seed_urls:
-            await self._discover_via_seed_urls()
-            return
-
-        if errors:
-            raise A2ADiscoveryError(f"Discovery failed: {'; '.join(errors)}")
-        raise A2ADiscoveryError("No discovery sources configured")
+        if not self._skill_registry:
+            raise A2ADiscoveryError("No agents discovered from any source")
 
     async def _discover_via_seed_urls(self) -> None:
         for url in self._seed_urls:
@@ -95,71 +91,52 @@ class A2ADiscoverer:
                 logger.warning("Failed to discover agent at %s: %s", url, e)
 
     async def _discover_via_mcp_registry(self) -> None:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as c:
-            resp = await c.post(
-                f"{self._mcp_registry_url}/mcp",
-                json={
-                    "jsonrpc": "2.0",
-                    "method": "resources/read",
-                    "params": {"uri": "resource://agent_cards/list"},
-                    "id": "1",
-                },
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            card_uris = data.get("result", {}).get("contents", [{}])[0].get("text", "{}")
-            card_list = json.loads(card_uris).get("agent_cards", [])
+        from shared.mcp_client import MCPClient, MCPServerConfig
 
-        for uri in card_list:
-            try:
-                card_name = uri.replace("resource://agent_cards/", "")
-                async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as c:
-                    resp = await c.post(
-                        f"{self._mcp_registry_url}/mcp",
-                        json={
-                            "jsonrpc": "2.0",
-                            "method": "resources/read",
-                            "params": {"uri": uri},
-                            "id": "1",
-                        },
-                    )
-                    resp.raise_for_status()
-                    card_data = resp.json()
-                    card_json = json.loads(
-                        card_data.get("result", {}).get("contents", [{}])[0].get("text", "{}")
-                    ).get("agent_card", {})
-            except Exception as e:
-                logger.warning("Failed to fetch card %s: %s", uri, e)
-                continue
+        mcp = MCPClient(configs=[MCPServerConfig(name="registry", url=f"{self._mcp_registry_url}/sse")])
+        try:
+            await mcp.connect_all()
+        except Exception as e:
+            logger.warning("MCP registry SSE connection failed: %s", e)
+            return
 
-            agent_url = card_json.get("url", "").rstrip("/")
-            if not agent_url:
-                continue
+        tool_list = await mcp.list_tools()
+        logger.info("MCP registry has %d tools", len(tool_list))
 
-            try:
-                h = httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0))
-                resolver = A2ACardResolver(h, agent_url)
-                card = await resolver.get_agent_card()
-                self._agent_cards[agent_url] = card
-                factory = ClientFactory(ClientConfig(streaming=False, httpx_client=h))
-                client = factory.create(card)
-                for skill in card.skills:
-                    sid = skill.id
-                    self._skill_registry[sid] = {
-                        "agent_url": agent_url,
-                        "agent_name": card.name,
-                        "client": client,
-                        "skill": {
-                            "id": sid,
-                            "name": skill.name,
-                            "description": skill.description,
-                            "input_modes": list(skill.input_modes),
-                            "output_modes": list(skill.output_modes),
-                        },
-                    }
-                logger.info("MCP-discovered '%s' at %s", card.name, agent_url)
-            except Exception as e:
-                logger.warning("Failed to resolve card for %s: %s", agent_url, e)
+        result = await mcp.call_tool_by_name("find_agent", {"query": "list all available agents"})
+        if hasattr(result, "content"):
+            for item in result.content:
+                raw = item.text if hasattr(item, "text") else str(item)
+                try:
+                    import json
+                    card_json = json.loads(raw) if isinstance(raw, str) else raw
+                    agent_url = card_json.get("url", "").rstrip("/")
+                    if agent_url and agent_url not in self._agent_cards:
+                        h = httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0))
+                        resolver = A2ACardResolver(h, agent_url)
+                        card = await resolver.get_agent_card()
+                        self._agent_cards[agent_url] = card
+                        factory = ClientFactory(ClientConfig(streaming=False, httpx_client=h))
+                        client = factory.create(card)
+                        for skill in card.skills:
+                            sid = skill.id
+                            self._skill_registry[sid] = {
+                                "agent_url": agent_url,
+                                "agent_name": card.name,
+                                "client": client,
+                                "skill": {
+                                    "id": sid,
+                                    "name": skill.name,
+                                    "description": skill.description,
+                                    "input_modes": list(skill.input_modes),
+                                    "output_modes": list(skill.output_modes),
+                                },
+                            }
+                        logger.info("MCP-discovered '%s' at %s", card.name, agent_url)
+                except Exception as e:
+                    logger.warning("Failed to process MCP-discovered card: %s", e)
+
+        await mcp.disconnect_all()
 
     def find_agent(self, skill_id: str) -> dict | None:
         return self._skill_registry.get(skill_id)
@@ -226,10 +203,7 @@ class A2AClient:
             raise A2ADiscoveryError(f"No client for skill '{skill_id}'")
 
         req = SendMessageRequest(
-            message=Message(
-                role=Role.ROLE_USER,
-                parts=[Part(text=query)],
-            ),
+            message=new_text_message(query, role=1),
         )
         if metadata:
             s = Struct()
