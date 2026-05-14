@@ -28,8 +28,9 @@ class A2ADiscoveryError(Exception):
 class A2ADiscoverer:
     """Discovers agents via seed URLs (A2A cards) or MCP registry."""
 
-    def __init__(self, seed_urls: list[str] | None = None):
+    def __init__(self, seed_urls: list[str] | None = None, request_timeout: float = 120.0):
         self._seed_urls = seed_urls or []
+        self._request_timeout = request_timeout
         self._skill_registry: dict[str, dict] = {}
         self._agent_cards: dict[str, AgentCard] = {}
         self._mcp_registry_url: str | None = None
@@ -65,7 +66,7 @@ class A2ADiscoverer:
 
     async def _discover_via_seed_urls(self) -> None:
         for url in self._seed_urls:
-            h = httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0))
+            h = httpx.AsyncClient(timeout=httpx.Timeout(self._request_timeout, connect=10.0))
             try:
                 resolver = A2ACardResolver(h, url)
                 card = await resolver.get_agent_card()
@@ -191,6 +192,7 @@ class A2AClient:
 
     def with_discoverer(self, discoverer: A2ADiscoverer) -> "A2AClient":
         self._discoverer = discoverer
+        discoverer._request_timeout = max(discoverer._request_timeout, self.timeout)
         return self
 
     async def send_message(
