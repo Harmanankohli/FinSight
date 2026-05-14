@@ -14,6 +14,15 @@
 - **42/42 tests passing** (was 21), including new tests for BaseAgent, WorkflowGraph, planner, agent cards
 - **Docs**: README, ARCHITECTURE.md, AGENTS.md, TESTS.md updated
 
+## v0.5 — Qwen Model Migration
+
+- **Model change**: Switched from Ollama llama3.2 to qwen3.5:0.8b for faster inference and better instruction following
+- **Prompt improvements**: Rewrote ADK agent instructions with clearer tool-call rules. Greetings and non-stock queries no longer trigger tool calls.
+
+## v0.4 — Reference Codebase Refactor
+
+...
+
 ## v0.3 — Local LLMs with Ollama
 
 - **RAG Agent**: Switched from Groq to Ollama (llama3.2) via `llama-index-llms-ollama`

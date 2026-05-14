@@ -205,7 +205,7 @@ All agents run with local Ollama:
 
 | Agent | Default LLM | Fallback |
 |---|---|---|
-| RAG (LlamaIndex) | Ollama llama3.2 via `llama-index-llms-ollama` | — |
-| Quant (LangGraph) | Ollama llama3.2 via `langchain-ollama` | — |
-| Sentiment (CrewAI) | Ollama llama3.2 via litellm | Groq llama-3.1-8b-instant |
-| ADK Web (Orchestrator) | Ollama llama3.2 via `openai/` prefix | — |
+| RAG (LlamaIndex) | Ollama qwen3.5 via `llama-index-llms-ollama` | — |
+| Quant (LangGraph) | Ollama qwen3.5 via `langchain-ollama` | — |
+| Sentiment (CrewAI) | Ollama qwen3.5 via litellm | Groq llama-3.1-8b-instant |
+| ADK Web (Orchestrator) | Ollama qwen3.5 via `openai/` prefix | — |
