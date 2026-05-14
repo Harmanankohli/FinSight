@@ -63,11 +63,22 @@ The initial implementation used Groq (free tier via API) for all LLM calls. Afte
 
 | Factor | Groq | Ollama (local) |
 |---|---|---|
-| Speed | ~200 t/s | ~5-10 t/s |
-| Latency | ~1-2s per call | ~10-30s per call |
+| Speed | ~200 t/s | ~10-60 t/s |
+| Latency | ~1-2s per call | ~2-15s per call |
 | Rate limits | 6K TPM / 100K TPD | None |
 | Cost | Free tier, need upgrade | Free, just hardware |
-| Setup | API key only | Download 2GB model |
+| Setup | API key only | Download model |
+
+### Model Selection: llama3.2 → qwen3.5
+
+Originally used `llama3.2:3b` from Ollama. It was slow (~10-30s per call) and had poor instruction following — the ADK agent would call stock tools for queries like "hello" or "google" despite explicit instructions not to.
+
+Switched to `qwen3.5:0.8b` which is:
+- **Faster**: ~2-5s per call vs ~10-30s for llama3.2 (smaller model)
+- **Better instruction following**: The Qwen family is known for strong instruction adherence even at small sizes
+- **Smaller**: 0.8B vs 3B parameters — less RAM, faster loading
+
+The tradeoff: smaller models have less general knowledge, but for structured tool-calling tasks, instruction adherence matters more than raw knowledge.
 
 ### Sentiment agent performance
 
