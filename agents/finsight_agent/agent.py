@@ -19,17 +19,28 @@ os.environ.setdefault("OPENAI_API_KEY", "ollama")
 
 logger = logging.getLogger(__name__)
 
+_discoverer = None
+
+
+async def _get_discoverer():
+    global _discoverer
+    if _discoverer is None:
+        from agent_1_adk.a2a_client import A2ADiscoverer
+        _discoverer = A2ADiscoverer(
+            seed_urls=[u.strip() for u in AGENT_SEED_URLS.split(",") if u.strip()],
+            request_timeout=A2A_TIMEOUT,
+        )
+        if AGENT_REGISTRY_URL:
+            _discoverer.with_mcp_registry(AGENT_REGISTRY_URL)
+        await _discoverer.discover()
+        logger.info("Discovered agents: %s", list(_discoverer.list_skills().keys()))
+    return _discoverer
+
 
 async def _call_skill(skill_id: str, params: dict) -> str:
-    from agent_1_adk.a2a_client import A2AClient, A2ADiscoverer
+    from agent_1_adk.a2a_client import A2AClient
 
-    discoverer = A2ADiscoverer(
-        seed_urls=[u.strip() for u in AGENT_SEED_URLS.split(",") if u.strip()]
-    )
-    if AGENT_REGISTRY_URL:
-        discoverer.with_mcp_registry(AGENT_REGISTRY_URL)
-    await discoverer.discover()
-
+    discoverer = await _get_discoverer()
     client = A2AClient(timeout=A2A_TIMEOUT).with_discoverer(discoverer)
     result = await client.send_message(skill_id, params.get("query", ""), metadata=params)
     return json.dumps(result)

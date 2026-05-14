@@ -11,6 +11,7 @@ from google.protobuf.struct_pb2 import Struct
 from a2a.client.card_resolver import A2ACardResolver
 from a2a.client.client_factory import ClientFactory, ClientConfig
 from a2a.helpers import new_text_message
+from a2a.client.base_client import ClientCallContext
 from a2a.types import (
     AgentCard,
     SendMessageRequest,
@@ -66,7 +67,7 @@ class A2ADiscoverer:
 
     async def _discover_via_seed_urls(self) -> None:
         for url in self._seed_urls:
-            h = httpx.AsyncClient(timeout=httpx.Timeout(self._request_timeout, connect=10.0))
+            h = httpx.AsyncClient(timeout=httpx.Timeout(read=self._request_timeout, connect=10.0, write=self._request_timeout, pool=self._request_timeout))
             try:
                 resolver = A2ACardResolver(h, url)
                 card = await resolver.get_agent_card()
@@ -212,7 +213,8 @@ class A2AClient:
             s.update(metadata)
             req.metadata.CopyFrom(s)
 
-        async for event in client.send_message(req):
+        ctx = ClientCallContext(timeout=self.timeout)
+        async for event in client.send_message(req, context=ctx):
             if hasattr(event, "task") and event.task:
                 task = event.task
                 if task.status.state in (3, 4, 5):
