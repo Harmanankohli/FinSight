@@ -63,7 +63,7 @@ Body:
 |---|---|
 | Framework | LlamaIndex |
 | Executor | `GenericAgentExecutor(RAGAgent)` |
-| LLM | Ollama (qwen3.5) via `llama-index-llms-ollama` |
+| LLM | Ollama (ministral-3) via `llama-index-llms-ollama` |
 | Vector Store | ChromaDB (local, persisted to `./chroma_db`) |
 | Embeddings | HuggingFace `all-MiniLM-L6-v2` (local) |
 | Port | 8002 |
@@ -131,7 +131,7 @@ Four ChromaDB collections:
 |---|---|
 | Framework | LangChain + LangGraph |
 | Executor | `GenericAgentExecutor(QuantAgent)` |
-| LLM | Ollama (qwen3.5) via `langchain-ollama` (for summary node only) |
+| LLM | Ollama (ministral-3) via `langchain-ollama` (for summary node only) |
 | Data Source | yfinance (direct, not via MCP) |
 | Port | 8003 |
 | Agent Card | `agent_cards/quant_agent.json` (served at `GET /.well-known/agent-card.json`) |
@@ -215,7 +215,7 @@ Recommendation = BUY if positive signals > negative signals, SELL if negative > 
 |---|---|
 | Framework | CrewAI |
 | Executor | `GenericAgentExecutor(SentimentAgent)` |
-| LLM | Ollama (qwen3.5) via litellm |
+| LLM | Ollama (ministral-3) via litellm |
 | Data Collection | Parallel via `asyncio.gather` |
 | Port | 8004 |
 | Agent Card | `agent_cards/sentiment_agent.json` (served at `GET /.well-known/agent-card.json`) |

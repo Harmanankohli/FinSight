@@ -69,16 +69,17 @@ The initial implementation used Groq (free tier via API) for all LLM calls. Afte
 | Cost | Free tier, need upgrade | Free, just hardware |
 | Setup | API key only | Download model |
 
-### Model Selection: llama3.2 → qwen3.5
+### Model Evolution: llama3.2 → qwen3.5 → ministral-3
 
 Originally used `llama3.2:3b` from Ollama. It was slow (~10-30s per call) and had poor instruction following — the ADK agent would call stock tools for queries like "hello" or "google" despite explicit instructions not to.
 
-Switched to `qwen3.5:0.8b` which is:
-- **Faster**: ~2-5s per call vs ~10-30s for llama3.2 (smaller model)
-- **Better instruction following**: The Qwen family is known for strong instruction adherence even at small sizes
-- **Smaller**: 0.8B vs 3B parameters — less RAM, faster loading
+Switched to `qwen3.5:0.8b` which was faster (~2-5s per call) and had better instruction adherence, but the small 0.8B parameter count limited its reasoning capability for complex investment queries.
 
-The tradeoff: smaller models have less general knowledge, but for structured tool-calling tasks, instruction adherence matters more than raw knowledge.
+Currently using `ministral-3:3b` which offers:
+- **Better instruction following**: Mistral family is known for strong tool-calling and instruction adherence
+- **Larger context window**: 32K tokens vs 8K for qwen3.5
+- **3B parameters**: Good balance of speed and capability
+- **~5-10s per call**: Acceptable latency for investment analysis
 
 ### Sentiment agent performance
 

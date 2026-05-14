@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.6 — Ministral-3 Migration
+
+- **Model change**: Switched from qwen3.5 to ministral-3:3b for better instruction following and larger context window
+
+## v0.5 — Qwen Model Migration
+
+- **Model change**: Switched from Ollama llama3.2 to qwen3.5:0.8b for faster inference and better instruction following
+- **Prompt improvements**: Rewrote ADK agent instructions with clearer tool-call rules
+- **RAG timeout**: Increased Ollama `request_timeout` from 120s to 600s
+
 ## v0.4 — Reference Codebase Refactor
 
 - **MCP consolidation**: 6 individual MCP servers merged into single `finsight_server.py` (port 8010) with agent registry + all data tools
