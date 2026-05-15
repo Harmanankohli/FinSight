@@ -13,11 +13,10 @@ if _dotenv_path.exists():
                 k, v = line.split("=", 1)
                 os.environ.setdefault(k.strip(), v.strip().strip("\"'"))
 
-# LLM (Ollama local)
-LLM_MODEL = os.environ.get("LLM_MODEL", "llama3.2")
-LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "http://localhost:11434/v1")
-OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
-ADK_MODEL = os.environ.get("ADK_MODEL", "openai/llama3.2")
+# LLM (LM Studio / OpenAI-compatible local)
+LLM_MODEL = os.environ.get("LLM_MODEL", "gpt-oss-20b")
+LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "http://localhost:1234/v1")
+ADK_MODEL = os.environ.get("ADK_MODEL", "openai/gpt-oss-20b")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.1-8b-instant")
 

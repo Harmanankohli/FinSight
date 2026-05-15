@@ -9,9 +9,9 @@ from .mcp_tools import MCPClientWrapper
 logger = logging.getLogger(__name__)
 
 from crewai import LLM as CrewLLM
-from shared.config import LLM_MODEL, OLLAMA_BASE_URL
+from shared.config import LLM_MODEL, LLM_BASE_URL
 
-_LLM = CrewLLM(model=f"ollama/{LLM_MODEL}", base_url=OLLAMA_BASE_URL, temperature=0.3)
+_LLM = CrewLLM(model=LLM_MODEL, base_url=LLM_BASE_URL, api_key="lmstudio", temperature=0.3)
 
 
 class SentimentIntelligenceCrew:

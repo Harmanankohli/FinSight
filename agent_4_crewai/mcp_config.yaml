@@ -1,8 +1,0 @@
-mcp_servers:
-  - name: finsight-mcp
-    url: http://localhost:8010/sse
-    tools:
-      - get_news_sentiment
-      - get_earnings_calendar
-      - get_company_filings
-      - full_text_search

@@ -3,7 +3,8 @@ import re
 from collections.abc import AsyncIterable
 
 from shared.base_agent import BaseAgent
-from shared.mcp_client import MCPClient
+from shared.mcp_client import MCPClient, MCPServerConfig
+from shared.config import MCP_SERVER_URL, MCP_TIMEOUT
 
 from .crew import SentimentIntelligenceCrew
 from .mcp_tools import MCPClientWrapper
@@ -18,8 +19,7 @@ class SentimentAgent(BaseAgent):
             description="Synthesizes financial news sentiment, SEC insider trading signals, and investment narratives using CrewAI",
             content_types=["text", "application/json"],
         )
-        from shared.config import MCP_TIMEOUT
-        self._mcp = MCPClient(config_path="agent_4_crewai/mcp_config.yaml", timeout=MCP_TIMEOUT)
+        self._mcp = MCPClient(configs=[MCPServerConfig(name="finsight-mcp", url=MCP_SERVER_URL)], timeout=MCP_TIMEOUT)
         self._wrapper = MCPClientWrapper(self._mcp)
         self._connected = False
 

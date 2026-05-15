@@ -1,8 +1,0 @@
-mcp_servers:
-  - name: finsight-mcp
-    url: http://localhost:8010/sse
-    tools:
-      - get_prices
-      - get_financials
-      - get_options_chain
-      - execute_python

@@ -3,6 +3,8 @@ import re
 from collections.abc import AsyncIterable
 
 from shared.base_agent import BaseAgent
+from shared.mcp_client import MCPClient, MCPServerConfig
+from shared.config import MCP_SERVER_URL, MCP_TIMEOUT
 
 from .graph import QuantAnalysisGraph
 
@@ -13,13 +15,22 @@ class QuantAgent(BaseAgent):
     def __init__(self):
         super().__init__(
             agent_name="Quant Analysis Agent",
-            description="Computes quantitative risk metrics and financial analysis using yfinance and LangGraph",
+            description="Computes quantitative risk metrics and financial analysis using MCP data and LangGraph",
             content_types=["text", "application/json"],
         )
         self.graph = QuantAnalysisGraph()
+        self._mcp: MCPClient | None = None
+        self._connected = False
+
+    async def _ensure_connected(self):
+        if not self._connected:
+            self._mcp = MCPClient(configs=[MCPServerConfig(name="finsight-mcp", url=MCP_SERVER_URL)], timeout=MCP_TIMEOUT)
+            await self._mcp.connect_all()
+            self._connected = True
 
     async def analyze(self, ticker: str, period: str = "5y") -> dict:
-        return await self.graph.run(ticker, period=period)
+        await self._ensure_connected()
+        return await self.graph.run(ticker, period=period, mcp_client=self._mcp)
 
     async def stream(
         self, query: str, context_id: str, task_id: str

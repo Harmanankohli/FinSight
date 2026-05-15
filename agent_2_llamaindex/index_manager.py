@@ -12,21 +12,23 @@ from llama_index.core.query_engine import RouterQueryEngine
 from llama_index.core.selectors import LLMMultiSelector
 from llama_index.core.tools import QueryEngineTool, ToolMetadata
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
-from llama_index.llms.ollama import Ollama
+from llama_index.llms.openai_like import OpenAILike
 from llama_index.vector_stores.chroma import ChromaVectorStore
 import chromadb
 
-from shared.config import LLM_MODEL, EMBED_MODEL, CHROMA_DIR, LLM_BASE_URL
+from shared.config import LLM_MODEL, EMBED_MODEL, CHROMA_DIR, LLM_BASE_URL, ADK_MODEL
 
 logger = logging.getLogger(__name__)
 
 
 class FinancialIndexManager:
     def __init__(self):
-        self.llm = Ollama(
+        self.llm = OpenAILike(
             model=LLM_MODEL,
-            base_url=LLM_BASE_URL.replace("/v1", ""),
+            api_base=LLM_BASE_URL,
+            api_key="lmstudio",
             request_timeout=600.0,
+            is_chat_model=True,
         )
         self.embed_model = HuggingFaceEmbedding(
             model_name=f"sentence-transformers/{EMBED_MODEL}"

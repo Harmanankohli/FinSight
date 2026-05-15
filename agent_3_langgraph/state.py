@@ -1,4 +1,4 @@
-from typing import Annotated, TypedDict
+from typing import Annotated, Any, TypedDict
 
 from langgraph.graph.message import add_messages
 
@@ -19,3 +19,4 @@ class QuantAnalysisState(TypedDict):
     correlation_matrix: dict
     recommendation: str
     reasoning: str
+    mcp_client: Any | None

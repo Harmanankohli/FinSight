@@ -1,9 +1,9 @@
+import json
 import logging
 from datetime import datetime, timezone
 
 import numpy as np
 import pandas as pd
-import yfinance as yf
 from scipy import stats
 
 from .state import QuantAnalysisState
@@ -11,16 +11,33 @@ from .state import QuantAnalysisState
 logger = logging.getLogger(__name__)
 
 
+def _parse_price_data(mcp_result, ticker: str) -> dict:
+    if not hasattr(mcp_result, "content"):
+        return {}
+    for item in mcp_result.content:
+        raw = item.text if hasattr(item, "text") else str(item)
+        try:
+            data = json.loads(raw)
+            records = data.get("data", [])
+            return {str(r.get("Date", r.get("date", ""))): float(r.get("Close", r.get("close", 0)))
+                    for r in records if r.get("Date") or r.get("date")}
+        except (json.JSONDecodeError, TypeError, ValueError):
+            continue
+    return {}
+
+
 async def fetch_price_data_node(state: QuantAnalysisState) -> dict:
     ticker = state["ticker"]
     period = state.get("period", "5y")
+    mcp = state.get("mcp_client")
+    if not mcp:
+        return {"price_data": {}}
+
     try:
-        stock = yf.Ticker(ticker)
-        hist = stock.history(period=period)
-        if hist.empty:
+        result = await mcp.call_tool_by_name("get_prices", {"ticker": ticker, "period": period, "interval": "1d"})
+        prices = _parse_price_data(result, ticker)
+        if not prices:
             raise ValueError(f"No price data found for {ticker}")
-        prices = hist["Close"].to_dict()
-        prices = {str(k): float(v) for k, v in prices.items()}
         return {"price_data": prices}
     except Exception as e:
         logger.error("Failed to fetch prices for %s: %s", ticker, e)
@@ -69,10 +86,14 @@ async def compute_metrics_node(state: QuantAnalysisState) -> dict:
     max_dd = float(drawdown.min())
 
     try:
-        sp500 = yf.Ticker("^GSPC")
-        sp_hist = sp500.history(period=state.get("period", "5y"))
-        if not sp_hist.empty:
-            sp_returns = sp_hist["Close"].pct_change().dropna()
+        mcp = state.get("mcp_client")
+        sp_data = {}
+        if mcp:
+            sp_result = await mcp.call_tool_by_name("get_prices", {"ticker": "^GSPC", "period": state.get("period", "5y"), "interval": "1d"})
+            sp_data = _parse_price_data(sp_result, "^GSPC")
+        if sp_data:
+            sp_series = pd.Series({pd.Timestamp(k): v for k, v in sp_data.items()}).sort_index()
+            sp_returns = sp_series.pct_change().dropna()
             common = returns.align(sp_returns, join="inner")
             if len(common[0]) > 1:
                 cov = np.cov(common[0], common[1])
@@ -139,25 +160,39 @@ async def stress_test_node(state: QuantAnalysisState) -> dict:
     }
 
 
+def _get_fcf_from_financials(financials_dict: dict) -> float | None:
+    for period_key, metrics in financials_dict.items():
+        if "Free Cash Flow" in metrics:
+            return float(metrics["Free Cash Flow"])
+    for period_key, metrics in financials_dict.items():
+        op = metrics.get("Operating Cash Flow")
+        capex = metrics.get("Capital Expenditure")
+        if op is not None and capex is not None:
+            return float(op) + float(capex)
+    return None
+
+
 async def dcf_valuation_node(state: QuantAnalysisState) -> dict:
     ticker = state["ticker"]
+    mcp = state.get("mcp_client")
+    if not mcp:
+        return {"dcf_valuation": None}
+
     try:
-        stock = yf.Ticker(ticker)
-        info = stock.info or {}
-        financials = stock.financials
-
-        if financials is None or financials.empty:
+        result = await mcp.call_tool_by_name("get_financials", {"ticker": ticker})
+        raw = ""
+        if hasattr(result, "content") and result.content:
+            raw = result.content[0].text if hasattr(result.content[0], "text") else str(result.content[0])
+        if not raw:
+            return {"dcf_valuation": None}
+        data = json.loads(raw)
+        info = data.get("info", {})
+        financials = data.get("income_statement", {})
+        if not financials:
             return {"dcf_valuation": None}
 
-        if "Free Cash Flow" in financials.index:
-            fcf = financials.loc["Free Cash Flow"]
-        elif "Operating Cash Flow" in financials.index and "Capital Expenditure" in financials.index:
-            fcf = financials.loc["Operating Cash Flow"] + financials.loc["Capital Expenditure"]
-        else:
-            return {"dcf_valuation": None}
-
-        latest_fcf = float(fcf.iloc[0]) if not fcf.empty else 0
-        if latest_fcf <= 0:
+        latest_fcf = _get_fcf_from_financials(financials)
+        if latest_fcf is None or latest_fcf <= 0:
             return {"dcf_valuation": None}
 
         growth_rate = 0.08
@@ -177,16 +212,10 @@ async def dcf_valuation_node(state: QuantAnalysisState) -> dict:
         enterprise_value = pv_fcf + pv_terminal
 
         shares_outstanding = info.get("sharesOutstanding", 0)
-        if shares_outstanding and shares_outstanding > 0:
-            intrinsic_value = enterprise_value / shares_outstanding
-        else:
-            intrinsic_value = 0
+        intrinsic_value = enterprise_value / shares_outstanding if shares_outstanding and shares_outstanding > 0 else 0
 
         current_price = info.get("currentPrice") or info.get("regularMarketPrice", 0)
-        if current_price and intrinsic_value > 0:
-            upside = (intrinsic_value - current_price) / current_price
-        else:
-            upside = 0
+        upside = (intrinsic_value - current_price) / current_price if current_price and intrinsic_value > 0 else 0
 
         return {
             "dcf_valuation": {
@@ -207,24 +236,38 @@ async def dcf_valuation_node(state: QuantAnalysisState) -> dict:
 async def correlation_node(state: QuantAnalysisState) -> dict:
     prices_dict = state.get("price_data", {})
     holdings = state.get("portfolio_holdings", [])
+    mcp = state.get("mcp_client")
 
-    if not prices_dict or not holdings:
+    if not prices_dict or not holdings or not mcp:
         return {"correlation_matrix": {}}
 
     ticker = state["ticker"]
     all_tickers = [ticker] + holdings
 
     try:
-        data = yf.download(all_tickers, period=state.get("period", "5y"))["Close"]
-        returns = data.pct_change().dropna()
+        all_prices = {ticker: prices_dict}
+        for h in holdings:
+            result = await mcp.call_tool_by_name("get_prices", {"ticker": h, "period": state.get("period", "5y"), "interval": "1d"})
+            hp = _parse_price_data(result, h)
+            if hp:
+                all_prices[h] = hp
+
+        close_df = pd.DataFrame({t: pd.Series({pd.Timestamp(k): v for k, v in p.items()})
+                                  for t, p in all_prices.items()}).sort_index()
+        returns = close_df.pct_change().dropna()
+        if returns.empty or len(returns.columns) < 2:
+            return {"correlation_matrix": {}}
         corr = returns.corr()
 
         matrix = {}
         for t1 in all_tickers:
+            if t1 not in corr.index:
+                continue
             matrix[t1] = {}
             for t2 in all_tickers:
-                val = corr.loc[t1, t2] if t1 in corr.index and t2 in corr.columns else 0
-                matrix[t1][t2] = round(float(val), 3)
+                if t2 not in corr.columns:
+                    continue
+                matrix[t1][t2] = round(float(corr.loc[t1, t2]), 3)
 
         return {"correlation_matrix": matrix}
     except Exception as e:
@@ -299,8 +342,8 @@ async def format_output_node(state: QuantAnalysisState) -> dict:
 
 
 async def llm_summary_node(state: QuantAnalysisState) -> dict:
-    from langchain_ollama import ChatOllama
-    from shared.config import LLM_MODEL, OLLAMA_BASE_URL
+    from langchain_openai import ChatOpenAI
+    from shared.config import LLM_MODEL, LLM_BASE_URL
 
     metrics = state.get("metrics", {})
     stress = state.get("stress_test_result")
@@ -325,7 +368,7 @@ async def llm_summary_node(state: QuantAnalysisState) -> dict:
         prompt += f"Stress test CVaR: {stress.get('cvar_95')}\n"
 
     try:
-        llm = ChatOllama(model=LLM_MODEL, base_url=OLLAMA_BASE_URL, temperature=0.3, num_predict=256)
+        llm = ChatOpenAI(model=LLM_MODEL, base_url=LLM_BASE_URL, api_key="lmstudio", temperature=0.3, max_tokens=256)
         response = await llm.ainvoke(prompt)
         summary = response.content if hasattr(response, "content") else str(response)
     except Exception as e:

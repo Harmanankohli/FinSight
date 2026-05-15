@@ -9,7 +9,7 @@ from shared.config import ADK_MODEL, LLM_BASE_URL
 from .sub_agent_client import SubAgentClient
 
 os.environ.setdefault("OPENAI_API_BASE", LLM_BASE_URL)
-os.environ.setdefault("OPENAI_API_KEY", "ollama")
+os.environ.setdefault("OPENAI_API_KEY", "lmstudio")
 
 logger = logging.getLogger(__name__)
 
@@ -54,17 +54,22 @@ _SKILL_LINES = "\n".join(
 _INSTRUCTION = f"""\
 You are an investment research orchestrator.
 
-Available agent tools (call ALL of them for stock queries):
+Available agent tools (call ALL of them in parallel for stock queries):
 {_SKILL_LINES}
 
 When the user asks about a stock (e.g. "NVDA", "msft", "AAPL"),
-call EVERY available tool with the ticker parameter. Each tool
-provides a different type of analysis — you need ALL their results.
+call EVERY available tool with the ticker parameter **simultaneously**
+in a single response — do NOT wait for one tool to finish before
+calling the next. Each tool provides a different type of analysis
+and you need ALL their results.
 
-Synthesize the results into a BUY/HOLD/SELL recommendation.
+After all tools return, synthesize the results into a BUY/HOLD/SELL
+recommendation.
 
 For general chat or non-stock queries, respond conversationally.
 """
+
+from google.genai import types as genai_types
 
 root_agent = LlmAgent(
     name="orchestrator",
@@ -75,4 +80,7 @@ root_agent = LlmAgent(
     ),
     instruction=_INSTRUCTION,
     tools=_tools,
+    generate_content_config=genai_types.GenerateContentConfig(
+        temperature=0.0,
+    ),
 )

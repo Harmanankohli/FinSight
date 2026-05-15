@@ -1,4 +1,5 @@
 import logging
+from typing import Any
 
 from langgraph.graph import END, StateGraph
 
@@ -53,7 +54,7 @@ class QuantAnalysisGraph:
         return builder.compile()
 
     async def run(
-        self, ticker: str, period: str = "5y", portfolio_holdings: list[str] | None = None
+        self, ticker: str, period: str = "5y", portfolio_holdings: list[str] | None = None, mcp_client: Any | None = None
     ) -> dict:
         initial: QuantAnalysisState = {
             "ticker": ticker.upper(),
@@ -69,6 +70,7 @@ class QuantAnalysisGraph:
             "correlation_matrix": {},
             "recommendation": "",
             "reasoning": "",
+            "mcp_client": mcp_client,
         }
 
         result = await self._graph.ainvoke(initial)

@@ -4,7 +4,8 @@ import re
 from collections.abc import AsyncIterable
 
 from shared.base_agent import BaseAgent
-from shared.mcp_client import MCPClient
+from shared.mcp_client import MCPClient, MCPServerConfig
+from shared.config import MCP_SERVER_URL
 
 from .document_ingestion import DocumentIngestionPipeline
 from .index_manager import FinancialIndexManager
@@ -16,7 +17,7 @@ class RAGAgent(BaseAgent):
     def __init__(self):
         super().__init__(
             agent_name="Financial RAG Agent",
-            description="Retrieves and analyzes financial documents using RAG with ChromaDB and Ollama",
+            description="Retrieves and analyzes financial documents using RAG with ChromaDB and LM Studio",
             content_types=["text", "application/json"],
         )
         self.index = FinancialIndexManager()
@@ -25,7 +26,7 @@ class RAGAgent(BaseAgent):
 
     async def _ensure_ingested(self, ticker: str) -> None:
         if self._mcp is None:
-            self._mcp = MCPClient(config_path="agent_2_llamaindex/mcp_config.yaml")
+            self._mcp = MCPClient(configs=[MCPServerConfig(name="finsight-mcp", url=MCP_SERVER_URL)])
             try:
                 await self._mcp.connect_all()
             except Exception as e:
