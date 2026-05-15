@@ -39,33 +39,32 @@ An autonomous multi-agent system that answers investment queries like *"Should I
 |---|---|---|---|---|
 | **Orchestrator** | Google ADK | 8001 | `agent_1_adk/agent_card.json` | ADK `LlmAgent` with tool-per-agent |
 | **RAG** | LlamaIndex + ChromaDB | 8002 | `agent_cards/rag_agent.json` | `GenericAgentExecutor(RAGAgent)` |
-| **Quant** | LangGraph + yfinance | 8003 | `agent_cards/quant_agent.json` | `GenericAgentExecutor(QuantAgent)` |
+| **Quant** | LangGraph + MCP | 8003 | `agent_cards/quant_agent.json` | `GenericAgentExecutor(QuantAgent)` |
 | **Sentiment** | CrewAI | 8004 | `agent_cards/sentiment_agent.json` | `GenericAgentExecutor(SentimentAgent)` |
 | **MCP Server** | FastMCP | 8010 | `mcp_servers/finsight_server.py` | Registry + all data tools |
 
 ### How the Orchestrator Works
 
-The orchestrator is an ADK `LlmAgent` that:
+The orchestrator uses ADK's `SequentialAgent` + `ParallelAgent` to run sub-agents concurrently:
 
 1. **Discovers agents at startup** — Fetches agent cards from seed URLs via sync HTTP (no asyncio conflicts with ADK Web UI). Retries up to 3 times for slow-starting agents.
-2. **Generates one ADK tool per discovered A2A agent** — Tool names are derived from agent card names. Tools are dynamically created — no hardcoded tool definitions.
-3. **Delegates tasks via A2A** — Each tool sends a `SendMessageRequest` to the remote agent's A2A endpoint. The remote agent processes the task internally using its own tools.
-4. **Synthesizes results** — The LLM collects all agent responses and produces a BUY/HOLD/SELL recommendation.
+2. **Runs all sub-agents in parallel** — A `ParallelAgent` fans out A2A calls to all discovered agents simultaneously.
+3. **Synthesizes results** — A final `LlmAgent` collects all agent responses and produces a BUY/HOLD/SELL recommendation.
 
-A2A clients for communicating with sub-agents are created lazily on first tool call, ensuring they use the correct async event loop.
+A2A clients for communicating with sub-agents are created lazily on first call, ensuring they use the correct async event loop.
 
 ## Tech Stack
 
 | Layer | Technology |
 |---|---|
 | Agent Communication | Google A2A Protocol (JSON-RPC over HTTP) |
-| Orchestrator | Google ADK `LlmAgent` with dynamic tool generation |
+| Orchestrator | Google ADK `SequentialAgent` + `ParallelAgent` |
 | Sub-agent Executor | `GenericAgentExecutor` + `BaseAgent` pattern |
 | RAG | LlamaIndex + ChromaDB (local) + HuggingFace embeddings |
-| Quant | LangChain + LangGraph (state machine) |
+| Quant | LangChain + LangGraph (state machine, MCP data) |
 | Sentiment | CrewAI (parallel data collection + synthesis) |
 | MCP Server | FastMCP (agent registry + data tools) |
-| LLM | Ollama (local, tested with `qwen2.5:7b`) |
+| LLM | LM Studio (local, OpenAI-compatible) |
 | Embeddings | sentence-transformers (all-MiniLM-L6-v2, local) |
 | Vector Store | ChromaDB (local, persisted) |
 | Agent Discovery | Seed URLs (AGENT_SEED_URLS) + MCP registry |
@@ -76,7 +75,7 @@ A2A clients for communicating with sub-agents are created lazily on first tool c
 
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/) (recommended) or pip
-- [Ollama](https://ollama.com) with `ollama pull qwen2.5:7b`
+- [LM Studio](https://lmstudio.ai) with a model loaded (e.g. `gpt-oss-20b`) on port 1234
 
 ### Setup
 
@@ -88,14 +87,11 @@ cd multi-agent-investment-system
 uv venv --python 3.12
 .venv\Scripts\activate
 uv pip install -e ".[dev]"
-uv pip install llama-index-llms-ollama langchain-ollama sentence-transformers
-
-# Pull local LLM
-ollama pull qwen2.5:7b
+uv pip install sentence-transformers
 
 # Copy configuration template
 copy .env.example .env
-# Edit .env if needed
+# Edit .env if needed (model name, port, etc.)
 ```
 
 ### Run All Services
@@ -210,10 +206,10 @@ Key environment variables in `.env`:
 
 | Variable | Default | Description |
 |---|---|---|
-| `ADK_MODEL` | `openai/qwen2.5:7b` | LLM model for the orchestrator |
+| `ADK_MODEL` | `openai/gpt-oss-20b` | LLM model for the orchestrator |
 | `AGENT_SEED_URLS` | `http://localhost:8002,http://localhost:8003,http://localhost:8004` | A2A agent discovery URLs |
 | `A2A_TIMEOUT` | `300.0` | Timeout for A2A communication (seconds) |
-| `LLM_BASE_URL` | `http://localhost:11434/v1` | Ollama OpenAI-compatible endpoint |
+| `LLM_BASE_URL` | `http://localhost:1234/v1` | LM Studio OpenAI-compatible endpoint |
 
 ## Testing
 

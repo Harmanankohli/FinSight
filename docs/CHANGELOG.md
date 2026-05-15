@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.0 — LM Studio Migration
+
+- **Model change**: All agents migrated from Ollama (`qwen2.5:7b`) to LM Studio (`gpt-oss-20b`) — OpenAI-compatible local API
+- **Config**: Removed `OLLAMA_BASE_URL`, changed `LLM_BASE_URL` default to `http://localhost:1234/v1`
+- **Dependencies**: Replaced `llama-index-llms-ollama` with `llama-index-llms-openai-like`, `langchain-ollama` with `langchain-openai`
+- **Agent 3 (Quant)**: Switched from direct `yfinance` calls to MCP tools (`get_prices`, `get_financials`)
+- **Agent 3 (Quant)**: Removed orphaned `mcp_config.yaml` — MCP config now sourced from `shared/config.py` with dynamic tool discovery
+- **Agent 2 (RAG)**: Removed static `mcp_config.yaml` — MCP server URL passed inline via `MCPServerConfig`
+- **Agent 4 (Sentiment)**: Removed static `mcp_config.yaml` — same inline pattern
+- **`.env`**: Cleaned up obsolete Ollama variables
+- **Orchestrator**: Updated instruction to use ADK env var `OPENAI_API_BASE`
+
 ## v0.9 — Model Migration to qwen2.5:7b
 
 - **Model change**: All agents migrated from `llama3.2` to `qwen2.5:7b` — reliable tool calling and better instruction following

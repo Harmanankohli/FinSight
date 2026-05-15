@@ -9,14 +9,14 @@
 | Agent Card | `agent_1_adk/agent_card.json` *(only used when running as standalone A2A server via `main.py`)* |
 | Discovery | Seed URLs (`AGENT_SEED_URLS`) with 3x retry |
 
-The orchestrator is an ADK `LlmAgent` that:
+The orchestrator uses a `SequentialAgent` workflow with a `ParallelAgent` for concurrent sub-agent execution:
 
 1. **Discovers agents at module load** via `SubAgentClient.discover_sync()` — sync HTTP with retries
-2. **Generates one ADK tool per discovered agent** — dynamically, no hardcoded tool definitions
-3. **Delegates tasks via A2A** — each tool sends a `SendMessageRequest` to the remote agent
-4. **Synthesizes results** — LLM collects all agent responses and produces a recommendation
+2. **Extracts ticker** via a dedicated `LlmAgent` that parses the user query
+3. **Runs all sub-agents in parallel** via `ParallelAgent` — each sub-agent is an `LlmAgent` with a single A2A tool, executed concurrently
+4. **Synthesizes results** — a final `LlmAgent` collects all outputs and produces a BUY/HOLD/SELL recommendation
 
-A2A clients for sub-agent communication are created lazily on first tool call via `create_client()`, ensuring correct event loop context.
+A2A clients for sub-agent communication are created lazily on first call via `create_client()`, ensuring correct event loop context.
 
 ### Architecture
 
@@ -25,13 +25,15 @@ Module load → SubAgentClient.discover_sync()
   ├── GET http://localhost:8002/.well-known/agent-card.json
   ├── GET http://localhost:8003/.well-known/agent-card.json
   └── GET http://localhost:8004/.well-known/agent-card.json
-  → _agent_list populated → _tools created (1 per agent)
+  → _agent_list populated → parallel sub-agents created
 
-Tool call (e.g. financial_rag_agent("NVDA"))
-  → _get_a2a_client(agent_name)  # lazy, cached
-  → create_client(url)           # A2A SDK
-  → client.send_message(req)     # JSON-RPC to sub-agent
-  → _extract_text(task)          # handles text + data responses
+SequentialAgent:
+  ├── ticker_extractor (LlmAgent) → extracts ticker from query
+  ├── research_swarm (ParallelAgent) ← ALL CONCURRENT
+  │   ├── rag_agent      → A2A call to port 8002
+  │   ├── quant_agent    → A2A call to port 8003
+  │   └── sentiment_agent → A2A call to port 8004
+  └── synthesizer (LlmAgent) → BUY/HOLD/SELL recommendation
 ```
 
 ### Sample Request
@@ -62,7 +64,7 @@ Body:
 |---|---|
 | Framework | LlamaIndex |
 | Executor | `GenericAgentExecutor(RAGAgent)` |
-| LLM | Ollama (qwen2.5:7b) via `llama-index-llms-ollama` |
+| LLM | LM Studio via `llama-index-llms-openai-like` |
 | Vector Store | ChromaDB (local, persisted to `./chroma_db`) |
 | Embeddings | HuggingFace `all-MiniLM-L6-v2` (local) |
 | Port | 8002 |
@@ -85,7 +87,7 @@ Request → DefaultRequestHandler → GenericAgentExecutor(RAGAgent)
       ├── MCPClient.connect_all()
       └── MCPClient.call_tool_by_name("get_company_filings", {...})
     → FinancialIndexManager.query(ticker, query)
-      ├── Try: RouterQueryEngine → Ollama LLM → response
+      ├── Try: RouterQueryEngine → LM Studio LLM → response
       └── Fallback: SEC filings index directly
   → Yields: {response_type: "data", content: result, is_task_complete: true}
 ```
@@ -98,8 +100,8 @@ Request → DefaultRequestHandler → GenericAgentExecutor(RAGAgent)
 |---|---|
 | Framework | LangChain + LangGraph |
 | Executor | `GenericAgentExecutor(QuantAgent)` |
-| LLM | Ollama (qwen2.5:7b) via `langchain-ollama` (summary node only) |
-| Data Source | yfinance (direct) |
+| LLM | LM Studio via `langchain-openai` (summary node only) |
+| Data Source | MCP (finsight-mcp `get_prices`, `get_financials`) |
 | Port | 8003 |
 | Agent Card | `agent_cards/quant_agent.json` |
 | A2A Endpoint | `POST /a2a` |
@@ -116,7 +118,7 @@ Request → DefaultRequestHandler → GenericAgentExecutor(RAGAgent)
 Request → DefaultRequestHandler → GenericAgentExecutor(QuantAgent)
   → QuantAgent.stream(query, context_id, task_id)
     → QuantAgent.analyze(ticker)
-      → fetch_prices → compute_metrics → conditional branch
+      [MCP: get_prices → parse Close data] → compute_metrics → conditional branch
         ├── high_volatility (annual_vol > 35%) → stress_test
         └── low_volatility → dcf_valuation
       → portfolio_correlation → format_output → llm_summary
@@ -131,7 +133,7 @@ Request → DefaultRequestHandler → GenericAgentExecutor(QuantAgent)
 |---|---|
 | Framework | CrewAI |
 | Executor | `GenericAgentExecutor(SentimentAgent)` |
-| LLM | Ollama (qwen2.5:7b) via litellm |
+| LLM | LM Studio via CrewLLM |
 | Data Collection | Parallel via `asyncio.gather` |
 | Port | 8004 |
 | Agent Card | `agent_cards/sentiment_agent.json` |

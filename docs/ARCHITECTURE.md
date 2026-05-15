@@ -28,32 +28,37 @@ FinSight is a multi-agent investment research system where four specialized agen
 
 ## Orchestrator Architecture
 
-The orchestrator (`agent_1_adk/`) follows a discover → generate → delegate pattern:
+The orchestrator (`agent_1_adk/`) uses a `SequentialAgent` workflow with `ParallelAgent` for concurrent execution:
 
 ```
 Module load → SubAgentClient.discover_sync()
   ├── httpx.Client.get(/.well-known/agent-card.json) per seed URL
   ├── Retries failed URLs up to 3x with 5s delay
-  └── _agent_list populated
+  └── _agent_list populated → parallel sub-agents created
 
-LlmAgent construction
-  ├── _make_agent_tool(name, desc) → one ADK tool per agent
-  ├── Instruction lists all available agents
-  └── tools=[financial_rag_agent, quant_analysis_agent, ...]
-
-At runtime (LLM tool call)
-  → _get_a2a_client(agent_name)  # lazy, cached
-    → create_client(url)         # A2A SDK — creates httpx + A2A client
-    → ClientConfig with proper timeout via ClientConfig + httpx client
-  → client.send_message(req, context=ClientCallContext(timeout=300))
-  → Iterate StreamResponse events
-  → _extract_text(task)          # text or MessageToDict for data parts
+SequentialAgent workflow at runtime:
+  ├── ticker_extractor (LlmAgent)
+  │     → LLM extracts ticker from user query
+  ├── research_swarm (ParallelAgent) ← ALL CONCURRENT
+  │   ├── rag_agent (LlmAgent)
+  │   │   → _get_a2a_client("Financial RAG Agent")
+  │   │   → send_message("Research and analyze PLTR")
+  │   ├── quant_agent (LlmAgent)
+  │   │   → _get_a2a_client("Quant Analysis Agent")
+  │   │   → send_message("Research and analyze PLTR")
+  │   └── sentiment_agent (LlmAgent)
+  │       → _get_a2a_client("Sentiment Intelligence Agent")
+  │       → send_message("Research and analyze PLTR")
+  └── synthesizer (LlmAgent)
+        → reads all _result keys from session state
+        → produces BUY/HOLD/SELL recommendation
 ```
 
 **Key design choices:**
 
 - **Sync discovery** (not async): Avoids `asyncio.run()` conflicts with ADK Web UI's running event loop
-- **Lazy A2A clients**: Created on first tool call in the correct async event loop
+- **Lazy A2A clients**: Created on first call in the correct async event loop
+- **Parallel execution**: All sub-agents run concurrently via `ParallelAgent` — no sequential LLM tool dispatch
 - **Explicit timeouts**: Both `ClientConfig` and `ClientCallContext` propagate the 300s timeout
 - **Response extraction**: Handles both `text` and `data` (protobuf Struct via `MessageToDict`) responses
 
@@ -90,10 +95,12 @@ A2A Request → DefaultRequestHandler → GenericAgentExecutor(RAGAgent)
 ```
 A2A Request → DefaultRequestHandler → GenericAgentExecutor(QuantAgent)
   → QuantAgent.stream()
-    → fetch_prices → compute_metrics → conditional branch:
+    [MCP: get_prices → parse Close data]
+    → compute_metrics → conditional branch:
         high volatility → stress_test
-        low volatility  → dcf_valuation
-    → portfolio_correlation → format_output → llm_summary
+        low volatility  → dcf_valuation [MCP: get_financials]
+    → portfolio_correlation [MCP: get_prices per holding]
+    → format_output → llm_summary
   → Yields data response
 ```
 
@@ -154,11 +161,11 @@ Timeouts configured via `.env` with `A2A_TIMEOUT=300.0`:
 
 ## LLM Configuration
 
-Agent run with Ollama:
+All agents use LM Studio (OpenAI-compatible local API):
 
 | Agent | Model | Provider |
 |---|---|---|
-| Orchestrator (ADK) | `qwen2.5:7b` | `openai/` prefix (Ollama endpoint) |
-| RAG (LlamaIndex) | `qwen2.5:7b` | `llama-index-llms-ollama` |
-| Quant (LangGraph) | `qwen2.5:7b` | `langchain-ollama` |
-| Sentiment (CrewAI) | `qwen2.5:7b` | litellm via Ollama |
+| Orchestrator (ADK) | `gpt-oss-20b` | `openai/` prefix (LM Studio endpoint) |
+| RAG (LlamaIndex) | `gpt-oss-20b` | `llama-index-llms-openai-like` |
+| Quant (LangGraph) | `gpt-oss-20b` | `langchain-openai` |
+| Sentiment (CrewAI) | `gpt-oss-20b` | CrewLLM (OpenAI-compatible) |

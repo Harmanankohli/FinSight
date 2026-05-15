@@ -8,7 +8,7 @@ This walkthrough shows the full pipeline for the query *"Should I invest in NVDA
 User Query → ADK Web (8001) → ADK LlmAgent
   → LLM calls all 3 agent tools in parallel:
     → financial_rag_agent → RAG Agent (8002) → MCP (SEC EDGAR) → ChromaDB
-    → quant_analysis_agent → Quant Agent (8003) → yfinance → LangGraph
+    → quant_analysis_agent → Quant Agent (8003) → MCP (prices + financials) → LangGraph
     → sentiment_intelligence_agent → Sentiment Agent (8004) → MCP (News + SEC) → CrewAI
   → LLM synthesizes all results → BUY/HOLD/SELL recommendation
 ```
@@ -35,7 +35,7 @@ The ADK orchestrator discovers all 3 agents at startup and generates one ADK too
 | 2 | Agent Tool fn | Calls `_client.send_message(agent_name, task)` |
 | 3 | SubAgentClient | Lazily creates A2A client via `create_client()`, sends `SendMessageRequest` |
 | 4 | Sub-agent server | `GenericAgentExecutor` runs the agent's `stream()` |
-| 5 | Sub-agent logic | Each agent processes with its own tools (MCP, yfinance, etc.) |
+| 5 | Sub-agent logic | Each agent processes with its own tools (MCP, etc.) |
 | 6 | Response | Agent yields `{response_type, content, is_task_complete}` |
 | 7 | Orchestrator | `_extract_text` converts response to string |
 | 8 | LLM synthesis | All agent results returned to LLM → final recommendation |

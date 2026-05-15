@@ -45,4 +45,4 @@ uv run pytest -v --timeout=30
 
 ## Pre-existing Test Issues
 
-`test_rag_pipeline.py` tests require the full llama-index stack. The `ThinkingBlock` import error in newer `llama-index-llms-ollama` versions was fixed by pinning to `<0.6.0`.
+`test_rag_pipeline.py` tests require the full llama-index stack (ChromaDB, sentence-transformers, etc.).
