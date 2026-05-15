@@ -148,6 +148,41 @@ class MCPClient:
                 logger.warning("Failed to list tools on '%s': %s", name, e)
         return all_tools
 
+    async def list_resources(self, server_name: str | None = None) -> list[Any]:
+        sessions = (
+            [(server_name, self._sessions.get(server_name))]
+            if server_name
+            else list(self._sessions.items())
+        )
+        resources = []
+        for name, session in sessions:
+            if not session:
+                continue
+            try:
+                result = await session.list_resources()
+                items = result.resources if hasattr(result, "resources") else result
+                for r in items:
+                    r._server_name = name  # type: ignore
+                resources.extend(items)
+            except Exception as e:
+                logger.warning("Failed to list resources on '%s': %s", name, e)
+        return resources
+
+    async def read_resource(self, uri: str, server_name: str | None = None) -> Any:
+        sessions = (
+            [(server_name, self._sessions.get(server_name))]
+            if server_name
+            else list(self._sessions.items())
+        )
+        for name, session in sessions:
+            if not session:
+                continue
+            try:
+                return await session.read_resource(uri)
+            except Exception as e:
+                logger.debug("Failed to read resource '%s' on '%s': %s", uri, name, e)
+        raise MCPClientError(f"Resource '{uri}' not found on any connected server")
+
     def get_available_tools(self) -> dict[str, str]:
         return dict(self._tool_registry)
 

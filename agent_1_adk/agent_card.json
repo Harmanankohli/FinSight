@@ -1,0 +1,42 @@
+{
+    "name": "Investment Orchestrator",
+    "description": "Coordinates specialized investment agents into a comprehensive Investment Brief",
+    "url": "http://localhost:8001/",
+    "version": "1.0.0",
+    "capabilities": {
+        "streaming": true,
+        "pushNotifications": false,
+        "stateTransitionHistory": false,
+        "extensions": [
+            {
+                "uri": "https://google.github.io/adk-docs/a2a/a2a-extension/",
+                "description": "Ability to use the new agent executor implementation",
+                "required": false
+            }
+        ]
+    },
+    "defaultInputModes": [
+        "text",
+        "text/plain"
+    ],
+    "defaultOutputModes": [
+        "text",
+        "application/json"
+    ],
+    "skills": [
+        {
+            "id": "investment_research",
+            "name": "Investment Research",
+            "description": "Answer investment queries with a complete research brief including RAG, quant, and sentiment analysis",
+            "tags": [
+                "investment",
+                "stock research",
+                "portfolio"
+            ],
+            "examples": [
+                "Should I invest in NVDA given my current portfolio?",
+                "Analyze AAPL for a long-term hold"
+            ]
+        }
+    ]
+}

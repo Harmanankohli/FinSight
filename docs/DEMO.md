@@ -5,95 +5,40 @@ This walkthrough shows the full pipeline for the query *"Should I invest in NVDA
 ## Architecture Flow
 
 ```
-User Query → ADK Web (8001) → ADK Agent (LLM decides)
-  → query_rag → RAG Agent (8002) → finsight-mcp (8010: SEC EDGAR) → ChromaDB → Ollama LLM
-  → query_quant → Quant Agent (8003) → finsight-mcp (8010: yfinance) → LangGraph → Ollama LLM
-  → query_sentiment → Sentiment Agent (8004) → finsight-mcp (8010: News + SEC) → CrewAI
-Orchestrator synthesizes → Final Investment Brief
+User Query → ADK Web (8001) → ADK LlmAgent
+  → LLM calls all 3 agent tools in parallel:
+    → financial_rag_agent → RAG Agent (8002) → MCP (SEC EDGAR) → ChromaDB
+    → quant_analysis_agent → Quant Agent (8003) → yfinance → LangGraph
+    → sentiment_intelligence_agent → Sentiment Agent (8004) → MCP (News + SEC) → CrewAI
+  → LLM synthesizes all results → BUY/HOLD/SELL recommendation
 ```
 
-All MCP tools are served from a single `finsight-mcp` server (port 8010).
+## Step 1: Start Services
 
-## Step 1: Send Query
-
-Open http://127.0.0.1:8001 in a browser and type: *"Should I invest in NVDA?"*
-
-Or via curl:
-```bash
-curl -X POST http://localhost:8002/a2a \
-  -H "Content-Type: application/json" \
-  -H "A2A-Version: 1.0" \
-  -d '{"jsonrpc":"2.0","method":"SendMessage","id":"1","params":{"message":{"messageId":"1","role":"ROLE_USER","parts":[{"text":"Research NVDA"}]},"metadata":{"ticker":"NVDA"}}}'
+```bat
+run_adk_web.bat
 ```
 
-## Step 2: Orchestrator Dispatches to Agents
+This starts in order: MCP Server (8010) → RAG (8002) → Quant (8003) → Sentiment (8004) → ADK Web UI (8001)
 
-The ADK Web agent's LLM (Ollama llama3.2) calls all three tools in parallel:
+## Step 2: Send Query
 
-### Tool Call 1: `query_rag("NVDA")` → RAG Agent (port 8002)
+Open http://127.0.0.1:8001 and type: *"Should I invest in NVDA?"* or just **"NVDA"**.
 
-```
-A2A Request → GenericAgentExecutor(RAGAgent)
-  → RAGAgent.stream()
-    → _ensure_ingested() → finsight-mcp (get_company_filings)
-    → FinancialIndexManager.query() → ChromaDB + Ollama
-  → Response: {summary, sources, confidence_score}
-```
+The ADK orchestrator discovers all 3 agents at startup and generates one ADK tool per agent. The LLM calls all tools in response to stock queries.
 
-### Tool Call 2: `query_quant("NVDA")` → Quant Agent (port 8003)
+## Step 3: What Happens
 
-```
-A2A Request → GenericAgentExecutor(QuantAgent)
-  → QuantAgent.stream()
-    → fetch_prices (finsight-mcp / yfinance)
-    → compute_metrics (Sharpe, Beta, VaR, Volatility)
-    → conditional branch: high vol → stress_test | low vol → DCF
-    → portfolio_correlation → format_output → Ollama summary
-  → Response: {recommendation, metrics, stress_test, dcf_valuation}
-```
-
-### Tool Call 3: `query_sentiment("NVDA")` → Sentiment Agent (port 8004)
-
-```
-A2A Request → GenericAgentExecutor(SentimentAgent)
-  → SentimentAgent.stream()
-    → Parallel MCP data (finsight-mcp):
-      ├── get_news_sentiment (RSS + VADER)
-      └── get_company_filings (SEC EDGAR)
-    → 2-agent CrewAI (analysis + synthesis)
-  → Response: {overall_signal, narrative, confidence_score}
-```
-
-## Step 3: Orchestrator Synthesizes
-
-The ADK Web agent's LLM receives all three results and generates a final BUY/HOLD/SELL recommendation with rationale.
-
-## Sample Full Response
-
-```json
-{
-  "ticker": "NVDA",
-  "final_recommendation": "SELL",
-  "confidence_score": 0.485,
-  "quant_metrics": {
-    "sharpe_ratio": 1.34,
-    "annual_volatility": 0.52,
-    "beta": 2.15,
-    "quant_signal": "SELL"
-  },
-  "rag_insights": {
-    "forward_guidance": "Management expects data center segment to grow 30% YoY",
-    "key_risks": ["Export restrictions", "Competition from AMD"],
-    "confidence_score": 0.51
-  },
-  "sentiment_intelligence": {
-    "overall_signal": "neutral",
-    "confidence_score": 0.5,
-    "key_risks": ["Activist investor pressure"],
-    "key_catalysts": ["AI chip demand growth"]
-  }
-}
-```
+| Step | Component | Action |
+|---|---|---|
+| 1 | ADK LlmAgent | Receives query, decides which tools to call |
+| 2 | Agent Tool fn | Calls `_client.send_message(agent_name, task)` |
+| 3 | SubAgentClient | Lazily creates A2A client via `create_client()`, sends `SendMessageRequest` |
+| 4 | Sub-agent server | `GenericAgentExecutor` runs the agent's `stream()` |
+| 5 | Sub-agent logic | Each agent processes with its own tools (MCP, yfinance, etc.) |
+| 6 | Response | Agent yields `{response_type, content, is_task_complete}` |
+| 7 | Orchestrator | `_extract_text` converts response to string |
+| 8 | LLM synthesis | All agent results returned to LLM → final recommendation |
 
 ## Running the Demo
 

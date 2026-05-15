@@ -3,36 +3,35 @@
 ## Agent 1: Orchestrator (ADK)
 
 | Property | Value |
-|---|---|
+|---|---|---|
 | Framework | Google ADK |
 | Port | 8001 |
-| Agent Card | `agent_cards/orchestrator_agent.json` (served at `GET /.well-known/agent-card.json`) |
-| A2A Endpoint | `POST /a2a` |
-| Discovery | MCP Registry (`localhost:10200`) or seed URLs (`AGENT_SEED_URLS`) |
+| Agent Card | `agent_1_adk/agent_card.json` *(only used when running as standalone A2A server via `main.py`)* |
+| Discovery | Seed URLs (`AGENT_SEED_URLS`) with 3x retry |
 
-### Skill
+The orchestrator is an ADK `LlmAgent` that:
 
-| ID | Name | Description |
-|---|---|---|
-| `investment_research` | Investment Research | Answer investment queries with a complete research brief |
+1. **Discovers agents at module load** via `SubAgentClient.discover_sync()` — sync HTTP with retries
+2. **Generates one ADK tool per discovered agent** — dynamically, no hardcoded tool definitions
+3. **Delegates tasks via A2A** — each tool sends a `SendMessageRequest` to the remote agent
+4. **Synthesizes results** — LLM collects all agent responses and produces a recommendation
 
-### Tools (ADK-registered, available to the LLM)
-
-| Tool | Calls | Skill ID | Description |
-|---|---|---|---|
-| `query_rag(ticker)` | RAG Agent (port 8002) | `sec_filing_retrieval` | Retrieves SEC filings and financial documents |
-| `query_quant(ticker)` | Quant Agent (port 8003) | `quant_analysis` | Computes risk metrics and valuations |
-| `query_sentiment(ticker)` | Sentiment Agent (port 8004) | `sentiment_analysis` | Gathers market sentiment and insider signals |
+A2A clients for sub-agent communication are created lazily on first tool call via `create_client()`, ensuring correct event loop context.
 
 ### Architecture
 
 ```
-User Query → planner.py: parse_query() → QueryContext
-          → planner.py: plan() → TaskList with 3 ordered tasks
-          → For each task:
-              A2ADiscoverer.find_agent(skill_id) → agent entry
-              A2AClient.send_message(skill_id, query, metadata)
-          → report_generator.py: synthesize() → InvestmentBrief
+Module load → SubAgentClient.discover_sync()
+  ├── GET http://localhost:8002/.well-known/agent-card.json
+  ├── GET http://localhost:8003/.well-known/agent-card.json
+  └── GET http://localhost:8004/.well-known/agent-card.json
+  → _agent_list populated → _tools created (1 per agent)
+
+Tool call (e.g. financial_rag_agent("NVDA"))
+  → _get_a2a_client(agent_name)  # lazy, cached
+  → create_client(url)           # A2A SDK
+  → client.send_message(req)     # JSON-RPC to sub-agent
+  → _extract_text(task)          # handles text + data responses
 ```
 
 ### Sample Request
@@ -63,11 +62,11 @@ Body:
 |---|---|
 | Framework | LlamaIndex |
 | Executor | `GenericAgentExecutor(RAGAgent)` |
-| LLM | Ollama (llama3.2) via `llama-index-llms-ollama` |
+| LLM | Ollama (qwen2.5:7b) via `llama-index-llms-ollama` |
 | Vector Store | ChromaDB (local, persisted to `./chroma_db`) |
 | Embeddings | HuggingFace `all-MiniLM-L6-v2` (local) |
 | Port | 8002 |
-| Agent Card | `agent_cards/rag_agent.json` (served at `GET /.well-known/agent-card.json`) |
+| Agent Card | `agent_cards/rag_agent.json` |
 | A2A Endpoint | `POST /a2a` |
 
 ### Skills
@@ -76,12 +75,6 @@ Body:
 |---|---|---|
 | `sec_filing_retrieval` | SEC Filing Retrieval | Retrieves and analyzes SEC 10-K, 10-Q, 8-K filings |
 | `earnings_summary` | Earnings Summary | Summarizes earnings call transcripts |
-
-### MCP Tools Used
-
-| Server | Tool | Purpose |
-|---|---|---|
-| SEC EDGAR (`:8020`) | `get_company_filings` | Auto-ingest filings before query |
 
 ### Architecture
 
@@ -95,32 +88,6 @@ Request → DefaultRequestHandler → GenericAgentExecutor(RAGAgent)
       ├── Try: RouterQueryEngine → Ollama LLM → response
       └── Fallback: SEC filings index directly
   → Yields: {response_type: "data", content: result, is_task_complete: true}
-  → GenericAgentExecutor converts to A2A events
-```
-
-### Sample Response
-
-### Index Structure
-
-Four ChromaDB collections:
-
-| Collection | Document Type | Source |
-|---|---|---|
-| `sec_filings` | 10-K, 10-Q, 8-K | SEC EDGAR MCP |
-| `earnings` | Earnings call transcripts | SEC EDGAR MCP |
-| `news` | Financial news articles | Financial News MCP |
-| `analyst_reports` | Analyst reports | External |
-
-### Sample Response
-
-```json
-{
-  "ticker": "NVDA",
-  "summary": "Key risks for NVDA include market competition and regulatory changes...",
-  "sources": ["NVDA_10-K_2026-02-25.html"],
-  "relevance_scores": [0.513, 0.492],
-  "confidence_score": 0.513
-}
 ```
 
 ---
@@ -131,10 +98,10 @@ Four ChromaDB collections:
 |---|---|
 | Framework | LangChain + LangGraph |
 | Executor | `GenericAgentExecutor(QuantAgent)` |
-| LLM | Ollama (llama3.2) via `langchain-ollama` (for summary node only) |
-| Data Source | yfinance (direct, not via MCP) |
+| LLM | Ollama (qwen2.5:7b) via `langchain-ollama` (summary node only) |
+| Data Source | yfinance (direct) |
 | Port | 8003 |
-| Agent Card | `agent_cards/quant_agent.json` (served at `GET /.well-known/agent-card.json`) |
+| Agent Card | `agent_cards/quant_agent.json` |
 | A2A Endpoint | `POST /a2a` |
 
 ### Skills
@@ -156,57 +123,6 @@ Request → DefaultRequestHandler → GenericAgentExecutor(QuantAgent)
   → Yields: {response_type: "data", content: result, is_task_complete: true}
 ```
 
-### Nodes
-
-| Node | What it does | Libraries |
-|---|---|---|
-| `fetch_prices` | Downloads OHLCV from Yahoo Finance | yfinance, pandas |
-| `compute_metrics` | Sharpe, Beta, VaR, Volatility, Max Drawdown | numpy, scipy |
-| `stress_test` | 4 crash scenarios (2008, Covid, dot-com, recession) | numpy |
-| `dcf_valuation` | Discounted cash flow from financial statements | yfinance |
-| `portfolio_correlation` | Correlation matrix vs holdings | yfinance, pandas |
-| `format_output` | Signal generation + confidence scoring | — |
-| `llm_summary` | Natural language summary via Ollama | langchain-ollama |
-
-### Signal Rules
-
-| Condition | Signal |
-|---|---|
-| Sharpe >= 1.0 | `positive_risk_adjusted_return` |
-| Sharpe < 0 | `negative_risk_adjusted_return` |
-| Volatility > 35% | `high_volatility` |
-| Volatility < 15% | `low_volatility` |
-| DCF upside > 20% | `undervalued_dcf` |
-| DCF upside < -20% | `overvalued_dcf` |
-| CVaR < -5% | `tail_risk` |
-
-Recommendation = BUY if positive signals > negative signals, SELL if negative > positive, else HOLD.
-
-### Sample Response
-
-```json
-{
-  "ticker": "NVDA",
-  "recommendation": "SELL",
-  "reasoning": "Based on the analysis, NVDA has a Sharpe ratio of 1.35 indicating...",
-  "metrics": {
-    "sharpe_ratio": 1.35,
-    "annual_volatility": 0.516,
-    "beta": 2.155,
-    "quant_signal": "SELL",
-    "quant_confidence": 0.5,
-    "signals": ["positive_risk_adjusted_return", "high_volatility", "tail_risk"]
-  },
-  "stress_test": {
-    "scenarios": {
-      "market_crash_2008": {"decline_pct": -0.37},
-      "covid_crash_2020": {"decline_pct": -0.34}
-    }
-  },
-  "dcf_valuation": null
-}
-```
-
 ---
 
 ## Agent 4: Sentiment (CrewAI)
@@ -215,10 +131,10 @@ Recommendation = BUY if positive signals > negative signals, SELL if negative > 
 |---|---|
 | Framework | CrewAI |
 | Executor | `GenericAgentExecutor(SentimentAgent)` |
-| LLM | Ollama (llama3.2) via litellm |
+| LLM | Ollama (qwen2.5:7b) via litellm |
 | Data Collection | Parallel via `asyncio.gather` |
 | Port | 8004 |
-| Agent Card | `agent_cards/sentiment_agent.json` (served at `GET /.well-known/agent-card.json`) |
+| Agent Card | `agent_cards/sentiment_agent.json` |
 | A2A Endpoint | `POST /a2a` |
 
 ### Skills
@@ -226,13 +142,6 @@ Recommendation = BUY if positive signals > negative signals, SELL if negative > 
 | ID | Name | Description |
 |---|---|---|
 | `sentiment_analysis` | Sentiment & Narrative Intelligence | Analyze news sentiment, SEC filings, produce investment narrative |
-
-### MCP Tools Used
-
-| Server | Tool | Purpose |
-|---|---|---|
-| Financial News (`:8025`) | `get_news_sentiment` | RSS news with VADER sentiment |
-| SEC EDGAR (`:8020`) | `get_company_filings` | SEC filings for insider context |
 
 ### Architecture
 
@@ -246,19 +155,7 @@ Request → DefaultRequestHandler → GenericAgentExecutor(SentimentAgent)
       │   ├── call("get_company_filings", {ticker})
       │   └── asyncio.gather
       └── SentimentIntelligenceCrew.analyze(ticker, precollected_data)
-          ├── Analysis Agent     # Extracts sentiment signals
-          └── Synthesis Agent    # Writes 2-3 paragraph narrative
+          ├── Analysis Agent
+          └── Synthesis Agent
   → Yields: {response_type: "data", content: result, is_task_complete: true}
-```
-
-### Sample Response
-
-```json
-{
-  "overall_signal": "neutral",
-  "confidence_score": 0.64,
-  "narrative": "NVIDIA Corporation (NVDA) is poised to navigate its corporate landscape...",
-  "key_risks": ["Activist investor pressure", "Market volatility"],
-  "key_catalysts": ["Corporate governance improvements", "AI chip demand"]
-}
 ```

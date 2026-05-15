@@ -2,7 +2,7 @@
 
 ## Overview
 
-FinSight is a multi-agent investment research system where four specialized agents communicate via the **Google A2A Protocol v1.0**. Agents are discovered via an **MCP-based agent registry** that hosts declarative agent card JSON files. The orchestrator decomposes queries into ordered tasks, routes each task to the right agent via skill-based discovery, and synthesizes results into a structured `InvestmentBrief`.
+FinSight is a multi-agent investment research system where four specialized agents communicate via the **Google A2A Protocol**. The orchestrator (ADK `LlmAgent`) discovers sub-agents at startup, generates one ADK tool per agent, and delegates tasks via A2A. Each sub-agent processes tasks internally using its own framework and tools.
 
 ## Communication Pattern
 
@@ -18,7 +18,6 @@ FinSight is a multi-agent investment research system where four specialized agen
 │  │ JSON-RPC over HTTP                                    │    │
 │  │ POST /a2a  {"method":"SendMessage","params":{...}}    │    │
 │  │ Headers: A2A-Version: 1.0                             │    │
-│  │ Response: {result: {task: {status, artifacts}}}       │    │
 │  └──────────────────────────────────────────────────────┘    │
 │  ┌──────────────────────────────────────────────────────┐    │
 │  │ Task Lifecycle                                        │    │
@@ -27,46 +26,40 @@ FinSight is a multi-agent investment research system where four specialized agen
 └──────────────────────────────────────────────────────────────┘
 ```
 
-### Discovery Flow
+## Orchestrator Architecture
 
-Two discovery modes are supported:
+The orchestrator (`agent_1_adk/`) follows a discover → generate → delegate pattern:
 
-**1. MCP Registry (primary):** An MCP server (`mcp_servers/agent_registry_server.py`) hosts agent card JSONs from `agent_cards/`. The orchestrator queries resources via MCP to list and retrieve cards. Embedding-based `find_agent` tool enables semantic skill matching.
+```
+Module load → SubAgentClient.discover_sync()
+  ├── httpx.Client.get(/.well-known/agent-card.json) per seed URL
+  ├── Retries failed URLs up to 3x with 5s delay
+  └── _agent_list populated
 
-**2. Seed URLs (fallback):** The orchestrator knows agent URLs from `AGENT_SEED_URLS` env var and fetches cards directly via `GET /.well-known/agent-card.json`.
+LlmAgent construction
+  ├── _make_agent_tool(name, desc) → one ADK tool per agent
+  ├── Instruction lists all available agents
+  └── tools=[financial_rag_agent, quant_analysis_agent, ...]
 
-### Agent Card Registry
+At runtime (LLM tool call)
+  → _get_a2a_client(agent_name)  # lazy, cached
+    → create_client(url)         # A2A SDK — creates httpx + A2A client
+    → ClientConfig with proper timeout via ClientConfig + httpx client
+  → client.send_message(req, context=ClientCallContext(timeout=300))
+  → Iterate StreamResponse events
+  → _extract_text(task)          # text or MessageToDict for data parts
+```
 
-Agent cards are stored as declarative JSON files in `agent_cards/`:
+**Key design choices:**
 
-| File | Agent | Skills |
-|---|---|---|
-| `orchestrator_agent.json` | Investment Orchestrator | `investment_research` |
-| `rag_agent.json` | Financial RAG Agent | `sec_filing_retrieval`, `earnings_summary` |
-| `quant_agent.json` | Quant Analysis Agent | `quant_analysis` |
-| `sentiment_agent.json` | Sentiment Intelligence Agent | `sentiment_analysis` |
-
-The registry MCP server loads these files, generates embeddings via `sentence-transformers`, and exposes:
-- `find_agent(query)` — finds the best agent for a natural language task description
-- `resource://agent_cards/list` — lists all available cards
-- `resource://agent_cards/{name}` — retrieves a specific card
-
-### A2A v1.0 Requirements
-
-The SDK (`a2a-sdk`) enforces several requirements:
-
-| Requirement | What we use |
-|---|---|
-| Method name | `SendMessage` (not `tasks/send`) |
-| Role enum | `ROLE_USER` (not `user`) |
-| messageId | Required UUID on every Message |
-| Version header | `A2A-Version: 1.0` |
-| Agent card interfaces | `protocol_binding: "JSONRPC"` |
-| Response structure | `result.task.artifacts[].parts[].data` |
+- **Sync discovery** (not async): Avoids `asyncio.run()` conflicts with ADK Web UI's running event loop
+- **Lazy A2A clients**: Created on first tool call in the correct async event loop
+- **Explicit timeouts**: Both `ClientConfig` and `ClientCallContext` propagate the 300s timeout
+- **Response extraction**: Handles both `text` and `data` (protobuf Struct via `MessageToDict`) responses
 
 ## GenericAgentExecutor Pattern
 
-Instead of duplicated A2A event plumbing per agent, all agents extend `BaseAgent` and implement a single `stream()` method. A shared `GenericAgentExecutor` handles all A2A lifecycle events:
+All sub-agents extend `BaseAgent` and implement `stream()`. A shared `GenericAgentExecutor` handles A2A lifecycle:
 
 ```
 A2A Request → DefaultRequestHandler → GenericAgentExecutor.execute()
@@ -76,18 +69,6 @@ A2A Request → DefaultRequestHandler → GenericAgentExecutor.execute()
   → COMPLETED state
 ```
 
-**Why this pattern**: Eliminates ~100 lines of duplicated A2A boilerplate per agent (3 executors × 100 = 300 lines saved). Agents focus on business logic, not protocol plumbing.
-
-```
-Shared Modules:
-├── shared/base_agent.py        # Abstract base class with stream() contract
-├── shared/generic_executor.py  # Single AgentExecutor for all agents
-├── shared/workflow.py          # WorkflowGraph state machine
-├── shared/types.py             # Pydantic models (PlannerTask, TaskList, etc.)
-├── shared/mcp_client.py        # MCP client for tool access
-└── shared/config.py            # Centralized configuration
-```
-
 ## Agent Architecture
 
 ### RAG Agent (LlamaIndex)
@@ -95,34 +76,26 @@ Shared Modules:
 ```
 A2A Request → DefaultRequestHandler → GenericAgentExecutor(RAGAgent)
   → RAGAgent.stream()
-    → RAGAgent._ensure_ingested()      # Fetches SEC filings via MCP
-    → FinancialIndexManager.query()     # ChromaDB + Ollama LLM
-      ├── Try: RouterQueryEngine        # Falls back if JSON parsing fails
-      └── Fallback: SEC filings index   # Direct query
+    → RAGAgent._ensure_ingested(ticker)
+      ├── MCPClient.connect_all()
+      └── MCPClient.call_tool_by_name("get_company_filings", {...})
+    → FinancialIndexManager.query(ticker, query)
+      ├── Try: RouterQueryEngine
+      └── Fallback: SEC filings index directly
   → Yields data response with summary + sources
 ```
-
-**Why LlamaIndex for RAG**: LlamaIndex's `RouterQueryEngine` with `LLMMultiSelector` provides automatic index selection based on query intent. The `VectorStoreIndex` + ChromaDB integration is straightforward. The `SentenceSplitter` node parser handles chunking at 512 tokens with 50-token overlap.
-
-**What we learned**: The `RouterQueryEngine` with Groq's LLM generated malformed JSON for the routing decision. We added a fallback that queries the SEC filings index directly if the router fails.
 
 ### Quant Agent (LangGraph)
 
 ```
 A2A Request → DefaultRequestHandler → GenericAgentExecutor(QuantAgent)
   → QuantAgent.stream()
-    → fetch_prices            # yfinance OHLCV
-    → compute_metrics         # Sharpe, Beta, VaR, Volatility
-    → conditional branch:
-        high volatility → stress_test    # 4 crash scenarios
-        low volatility  → dcf_valuation  # Discounted cash flow
-    → portfolio_correlation  # vs benchmark + holdings
-    → format_output          # Signal + confidence
-    → llm_summary            # Ollama natural language summary
+    → fetch_prices → compute_metrics → conditional branch:
+        high volatility → stress_test
+        low volatility  → dcf_valuation
+    → portfolio_correlation → format_output → llm_summary
   → Yields data response
 ```
-
-**Why LangGraph**: The conditional branching (high volatility → stress test vs DCF) is a natural fit for LangGraph's `StateGraph`. The `add_conditional_edges` API makes the routing explicit.
 
 ### Sentiment Agent (CrewAI)
 
@@ -130,38 +103,15 @@ A2A Request → DefaultRequestHandler → GenericAgentExecutor(QuantAgent)
 A2A Request → DefaultRequestHandler → GenericAgentExecutor(SentimentAgent)
   → SentimentAgent.stream()
     → Parallel MCP data collection (asyncio.gather):
-      ├── get_news_sentiment    (financial-news MCP :8025)
-      └── get_company_filings   (SEC EDGAR MCP :8020)
-    → 2-agent CrewAI:
-      ├── Analysis Agent        # Extracts signals from data
-      └── Synthesis Agent       # Writes investment narrative
+      ├── get_news_sentiment
+      └── get_company_filings
+    → 2-agent CrewAI: Analysis → Synthesis
   → Yields data response
-```
-
-**Why parallel data collection**: By pre-collecting data in parallel and passing it as context, we eliminated tool calling from the CrewAI workflow entirely, avoiding LLM hallucination of non-existent tool names.
-
-## Orchestration Pattern
-
-The orchestrator (`agent_1_adk/gateway.py`) uses a planner → execute → synthesize pattern:
-
-```
-User Query → Planner decomposes into ordered tasks
-  ├── Task 1: sec_filing_retrieval (ticker=NVDA)
-  ├── Task 2: quant_analysis (ticker=NVDA)
-  └── Task 3: sentiment_analysis (ticker=NVDA)
-→ For each task:
-    ├── Discover agent via A2ADiscoverer (MCP registry or seed URLs)
-    ├── Execute via A2AClient.send_message(skill_id, query, metadata)
-    └── Collect result
-→ Synthesize all results into InvestmentBrief
-→ Return JSON response
 ```
 
 ## MCP Architecture
 
-### Single Unified MCP Server
-
-Following the a2a_mcp reference pattern, FinSight uses a **single MCP server** (`mcp_servers/finsight_server.py`) that hosts all tools and the agent registry:
+Single unified MCP server (`mcp_servers/finsight_server.py`, port 8010) hosting agent registry + all data tools:
 
 ```
 ┌──────────────────────────────────────────────────────┐
@@ -179,33 +129,36 @@ Following the a2a_mcp reference pattern, FinSight uses a **single MCP server** (
 └──────────────────────────────────────────────────────┘
 ```
 
-Agent cards are loaded from `agent_cards/*.json`, embedded via `sentence-transformers`, and queried via the `find_agent` tool using dot-product similarity.
+Agent cards loaded from `agent_cards/*.json`, embedded via `sentence-transformers`, queried via `find_agent` tool using dot-product similarity.
 
-```
-MCPClient (shared/mcp_client.py)
-  ├── connect_all()           # SSE connection to single server
-  ├── list_tools()            # Dynamic discovery via MCP protocol
-  ├── call_tool_by_name()     # Routes by tool name
-  └── _tool_registry          # tool_name → server_name mapping
-```
+## Timeout Architecture
+
+Timeouts configured via `.env` with `A2A_TIMEOUT=300.0`:
+
+| Layer | Timeout | Mechanism |
+|---|---|---|
+| Sync discovery | 10s per URL | httpx.Client timeout |
+| A2A messaging | 300s | ClientConfig + httpx.AsyncClient |
+| Per-call timeout | 300s | ClientCallContext |
+| MCP tool calls | 30s | MCPClient default |
 
 ## Error Handling
 
 | Failure Mode | Strategy |
 |---|---|
-| A2A timeout | `A2A_TIMEOUT` (default 45s), proceed with partial results |
-| MCP connection failure | Exponential backoff (2^attempt), `MCP_MAX_RETRIES` (default 3) |
-| Agent unavailable | Orchestrator proceeds with available agents, continues to next task |
-| LLM routing failure | Fallback to direct index query |
-| Discovery failure | Falls back from MCP registry to seed URLs |
+| Agent discovery failure | Retries 3x with 5s delay |
+| A2A timeout | Proceed with partial results |
+| MCP connection failure | Exponential backoff (2^attempt), max 3 retries |
+| Agent unavailable | Skipped, LLM works with what it has |
+| Response parse failure | `json.JSONDecodeError` caught, text used as-is |
 
 ## LLM Configuration
 
-All agents run with local Ollama:
+Agent run with Ollama:
 
-| Agent | Default LLM | Fallback |
+| Agent | Model | Provider |
 |---|---|---|
-| RAG (LlamaIndex) | Ollama llama3.2 via `llama-index-llms-ollama` | — |
-| Quant (LangGraph) | Ollama llama3.2 via `langchain-ollama` | — |
-| Sentiment (CrewAI) | Ollama llama3.2 via litellm | Groq llama-3.1-8b-instant |
-| ADK Web (Orchestrator) | Ollama llama3.2 via `openai/` prefix | — |
+| Orchestrator (ADK) | `qwen2.5:7b` | `openai/` prefix (Ollama endpoint) |
+| RAG (LlamaIndex) | `qwen2.5:7b` | `llama-index-llms-ollama` |
+| Quant (LangGraph) | `qwen2.5:7b` | `langchain-ollama` |
+| Sentiment (CrewAI) | `qwen2.5:7b` | litellm via Ollama |

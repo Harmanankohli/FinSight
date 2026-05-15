@@ -41,10 +41,15 @@ class RAGAgent(BaseAgent):
             if hasattr(result, "content"):
                 for item in result.content:
                     raw = item.text if hasattr(item, "text") else str(item)
-                    filings = json.loads(raw) if isinstance(raw, str) else raw
-                    if isinstance(filings, dict):
+                    if not raw or not raw.strip():
+                        continue
+                    try:
+                        data = json.loads(raw) if isinstance(raw, str) else raw
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(data, dict):
                         self._ingestion.ingest_sec_filings_batch(
-                            ticker, filings.get("filings", [])
+                            ticker, data.get("filings", [])
                         )
         except Exception as e:
             logger.warning("Auto-ingest failed for %s: %s", ticker, e)

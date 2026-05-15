@@ -1,75 +1,63 @@
 # Changelog
 
+## v0.9 — Model Migration to qwen2.5:7b
+
+- **Model change**: All agents migrated from `llama3.2` to `qwen2.5:7b` — reliable tool calling and better instruction following
+- **`.env.example`**: Updated default models to `qwen2.5:7b`
+- **Docs**: All model references updated from `llama3.2` to `qwen2.5:7b`
+
+## v0.8 — Streamlined ADK Agent
+
+- **ADK agent restructured**: Replaced `gateway.py`, `orchestrator.py`, `a2a_client.py`, `planner.py`, `report_generator.py`, `intent_parser.py` with clean `agent.py` + `sub_agent_client.py` + `agent_executor.py` + `main.py`
+- **Dynamic per-agent tools**: One ADK tool generated per discovered A2A agent — no hardcoded tool definitions
+- **Sync discovery**: `SubAgentClient.discover_sync()` uses sync HTTP (no asyncio conflicts with ADK Web UI). Retries failed URLs 3x with 5s delay.
+- **Lazy A2A clients**: `create_client()` called on first tool use, cached per agent
+- **Proper timeout propagation**: `ClientConfig(httpx_client=h)` with 300s timeout + `ClientCallContext(timeout=300)`
+- **Response extraction**: `_extract_text` handles both `text` and `data` artifact parts
+- **Removed dead code**: 6 files removed, ~500 lines eliminated
+- **39 tests passing**
+- **Batch files**: `run_adk_web.bat` updated, `stop_servers.bat` added
+
 ## v0.7 — Return to llama3.2
 
-- **Model change**: Returned to `llama3.2` after testing qwen3.5, lfm2.5-thinking, ministral-3, and granite4.1. Llama3.2 had the best balance of speed and instruction following.
+- **Model change**: Returned to `llama3.2` after testing qwen3.5, lfm2.5-thinking, ministral-3, and granite4.1
 
 ## v0.6 — Model Testing Phase
 
-- Tested models: qwen3.5:0.8b, qwen3.5:2b, lfm2.5-thinking:1.2b, ministral-3:3b, granite4.1:8b — all had issues with speed or reliability
-- **Final choice**: `llama3.2` for best overall balance
+- Tested models: qwen3.5, lfm2.5-thinking, ministral-3, granite4.1
 
 ## v0.5 — Qwen Model Migration
 
-- **Model change**: Switched from Ollama llama3.2 to qwen3.5:0.8b for faster inference and better instruction following
-- **Prompt improvements**: Rewrote ADK agent instructions with clearer tool-call rules
-- **RAG timeout**: Increased Ollama `request_timeout` from 120s to 600s
+- Switched from Ollama llama3.2 to qwen3.5:0.8b
+- Prompt improvements with clearer tool-call rules
 
 ## v0.4 — Reference Codebase Refactor
 
-- **MCP consolidation**: 6 individual MCP servers merged into single `finsight_server.py` (port 8010) with agent registry + all data tools
-- **Declarative agent cards**: Moved from Python code to `agent_cards/*.json` files loaded at runtime
-- **MCP-based agent registry**: New `find_agent` tool with embedding search for semantic agent discovery
-- **GenericAgentExecutor pattern**: 3 duplicated A2A executors replaced with shared `GenericAgentExecutor` + `BaseAgent` contract, saving ~300 lines
-- **Consolidated A2A client**: Unified `A2ADiscoverer` + `A2AClient` with both seed URL and MCP registry discovery
-- **WorkflowGraph**: Added state machine for orchestrator task execution with pause/resume support
-- **Planner**: Query decomposition into ordered `TaskList` with skill-based routing
-- **Singleton discoverer**: ADK agent tool calls share a single cached discoverer with `asyncio.Lock` to avoid race conditions
-- **Timeout fixes**: `ClientCallContext(timeout=...)` propagated to A2A SDK transport, `.env` increased to 300s
-- **42/42 tests passing** (was 21), including new tests for BaseAgent, WorkflowGraph, planner, agent cards
-- **Docs**: README, ARCHITECTURE.md, AGENTS.md, TESTS.md updated
-
-## v0.5 — Qwen Model Migration
-
-- **Model change**: Switched from Ollama llama3.2 to qwen3.5:0.8b for faster inference and better instruction following
-- **Prompt improvements**: Rewrote ADK agent instructions with clearer tool-call rules. Greetings and non-stock queries no longer trigger tool calls.
-
-## v0.4 — Reference Codebase Refactor
-
-...
+- MCP consolidation: 6 individual MCP servers → single `finsight_server.py`
+- Declarative agent cards in `agent_cards/*.json`
+- MCP-based agent registry with embedding search
+- GenericAgentExecutor pattern saving ~300 lines
+- Unified A2ADiscoverer + A2AClient
+- WorkflowGraph state machine
+- 42/42 tests passing
 
 ## v0.3 — Local LLMs with Ollama
 
-- **RAG Agent**: Switched from Groq to Ollama (llama3.2) via `llama-index-llms-ollama`
-- **Quant Agent**: Added LLM summary node using `langchain-ollama` for natural language explanations
-- **Sentiment Agent**: Parallel MCP data collection via `asyncio.gather` — eliminates sequential tool calls
-- **Sentiment Agent**: Reduced from 4 agents to 2 (analysis + synthesis) for faster execution
-- **ADK Web**: Switched to `openai/` prefix with `OPENAI_API_BASE` pointing to Ollama
-- **Centralized config**: `shared/config.py` with env vars for both Ollama and Groq
-- **MCP docstrings**: All MCP servers updated with proper Args/Returns documentation
-- **DynamicMCPTool**: `args_schema` uses `str` types to handle LLM string coercion
+- RAG Agent switched from Groq to Ollama (llama3.2)
+- Quant Agent: added LLM summary node
+- Sentiment Agent: parallel MCP data collection, reduced from 4 to 2 agents
+- ADK Web: `openai/` prefix with Ollama endpoint
 
 ## v0.2 — Official A2A SDK Integration
 
-- **AgentExecutor pattern**: All 3 agents rewritten using `DefaultRequestHandler` + `AgentExecutor` + `InMemoryTaskStore`
-- **A2A client**: Replaced custom HTTP client with SDK's `create_client()` + `A2ACardResolver`
-- **Dynamic A2A discovery**: Orchestrator discovers agents via `/.well-known/agent-card.json`
-- **Financial News MCP**: Replaced Reddit sentiment with free RSS-based news aggregation
-- **Dynamic MCP tools**: `MCPClient.call_tool_by_name()` auto-routes by tool name
-- **Gateway**: Refactored to use SDK client with `AgentInterface` negotiation
-- **MCP configs**: Fixed port inconsistencies, removed unused servers
-- **SEC EDGAR**: Fixed `Host` header causing 404s, changed `form_types` to comma-separated string
-- **Tests**: Updated for new A2A patterns (21 tests passing)
+- AgentExecutor pattern for all 3 sub-agents
+- A2A client via SDK's `create_client()` + `A2ACardResolver`
+- Dynamic A2A discovery
+- 21 tests passing
 
 ## v0.1 — Initial Implementation
 
-- **Project scaffolding**: Directory structure, `pyproject.toml`, Docker Compose
-- **4 MCP servers**: yfinance, SEC EDGAR, Reddit, Python Runner
-- **Agent 1**: ADK Orchestrator with intent parser, A2A client, report generator
-- **Agent 2**: LlamaIndex RAG with ChromaDB, BM25 hybrid search, Groq LLM
-- **Agent 3**: LangGraph Quant with state machine, conditional branching (stress test vs DCF)
-- **Agent 4**: CrewAI Sentiment with 4-agent crew (social, analyst, insider, synthesis)
-- **A2A protocol**: Custom JSON-RPC client with retry logic
-- **ADK Web**: Agent discovery via agent cards with dynamic tool creation
-- **Tests**: 8 pytest tests for A2A comms, RAG pipeline, LangGraph graph, CrewAI crew
-- **Docker**: Docker Compose with all 4 agents + MCP servers + Redis
+- Project scaffolding, Docker Compose
+- 4 MCP servers (yfinance, SEC EDGAR, Reddit, Python Runner)
+- All 4 agents with initial implementations
+- 8 pytest tests
