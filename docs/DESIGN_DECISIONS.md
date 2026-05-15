@@ -72,7 +72,17 @@ Sync `httpx.Client` for startup discovery (no event loop needed). A2A clients cr
 
 **Fix**: `_extract_text()` now checks `part.data` first, converting via `MessageToDict(part.data)` for protobuf Struct serialization, then falls back to `part.text`.
 
-### 5. MCP Resource URI Type Mismatch
+### 5. Local LLMs Don't Support Parallel Function Calling
+
+**Problem**: The orchestrator's instruction told the LLM to call all three agent tools simultaneously for stock queries. However, `gpt-oss-20b` (and most local models) do not support parallel function calling — they only emit one tool call per LLM turn. Each tool call required a separate LLM inference, adding ~20-40s latency per call and making the total query time 2-3 minutes.
+
+**Attempted solutions:**
+- Instruction prompt emphasis ("call ALL tools simultaneously") — ignored by the model
+- `parallel_tool_calls=true` in `generate_content_config` — the model doesn't support the parameter
+
+**Final solution**: Restructured the orchestrator from a single `LlmAgent` with per-agent tools to a `SequentialAgent` workflow with a `ParallelAgent`. Instead of relying on the LLM to orchestrate tool calls, ADK's `ParallelAgent` fans out all sub-agents concurrently at the framework level. Each sub-agent is its own `LlmAgent` with exactly one tool, so no parallel function calling is needed from the LLM.
+
+### 6. MCP Resource URI Type Mismatch
 
 **Problem**: `'AnyUrl' object has no attribute 'startswith'` — the `mcp` library returns resource URIs as Pydantic `AnyUrl` objects, not plain strings. Calling `.startswith()` directly failed.
 
@@ -98,19 +108,19 @@ Sync `httpx.Client` for startup discovery (no event loop needed). A2A clients cr
 
 **Final solution**: `qwen2.5:7b` via `openai/` prefix (OpenAI-compatible endpoint on Ollama). The `ollama/` prefix caused formatting issues with LiteLLM's Ollama provider. Direct API testing confirmed `qwen2.5:7b` correctly calls multiple tools with the OpenAI format.
 
-### 8. Agent Name Validation Error
+### 9. Agent Name Validation Error
 
 **Problem**: `LlmAgent(name="FinSight Orchestrator")` raised `Value error: Agent name must be a valid identifier` — spaces not allowed. Agent names must start with a letter/underscore and contain only letters, digits, and underscores.
 
 **Fix**: Changed to `name="orchestrator"`.
 
-### 9. Slow-Starting Sub-agents Not Discovered
+### 10. Slow-Starting Sub-agents Not Discovered
 
 **Problem**: When the ADK Web UI loaded the orchestrator module, some sub-agents (especially the RAG agent, which imports llama-index) weren't fully booted yet. Discovery found 0-2 agents instead of 3.
 
 **Fix**: `discover_sync()` now retries each failed URL up to 3 times with a 5-second delay between attempts.
 
-### 10. MCP Registry Discovery Not Ported to Sync Path
+### 11. MCP Registry Discovery Not Ported to Sync Path
 
 **Problem**: The original async `A2ADiscoverer` had MCP registry discovery (`_discover_via_mcp_registry`), but the streamlined `SubAgentClient` only supported seed URLs. The sync discovery path didn't include MCP resource-based agent card discovery.
 
@@ -124,11 +134,11 @@ The ADK Web UI imports the agent module synchronously. Using `asyncio.run()` at 
 
 ## Timeout Strategy
 
-The default `create_client()` creates an httpx client with default timeouts (~5s). Sub-agent analyses (yfinance data download, ChromaDB queries, CrewAI execution) routinely exceed this.
+The default `create_client()` creates an httpx client with default timeouts (~5s). Sub-agent analyses (MCP data retrieval, ChromaDB queries, CrewAI execution) routinely exceed this.
 
 **Fix**: Pass a pre-configured `httpx.AsyncClient(timeout=httpx.Timeout(300))` via `ClientConfig(httpx_client=http)`, plus `ClientCallContext(timeout=300)` for each send call.
 
-## Model Selection
+## Model Selection (Ollama Era)
 
 | Model | Verdict | Reason |
 |---|---|---|
@@ -137,6 +147,39 @@ The default `create_client()` creates an httpx client with default timeouts (~5s
 | `deepseek-r1` (7B) | ❌ | Does not support tool/function calling |
 
 **Key**: The `openai/` prefix (LiteLLM OpenAI-compatible provider) sends tool definitions in the correct format to Ollama's API. The `ollama/` prefix (LiteLLM Ollama native provider) had formatting issues. Direct API test with `curl` confirmed this — the OpenAI format works, the Ollama native format doesn't.
+
+## Migration from Ollama to LM Studio
+
+### Problem: Ollama was too slow
+
+Ollama's inference speed for `qwen2.5:7b` was consistently slow — 20-40 seconds per LLM call on the test machine. With the orchestrator calling all three sub-agents sequentially (each making their own LLM calls), a single query took 2-3 minutes. The RAG agent was especially slow due to combining Ollama LLM calls with ChromaDB queries.
+
+Additionally, Ollama required a separate server process (`ollama serve`) with manual model pulling (`ollama pull qwen2.5:7b`), adding friction to setup.
+
+### Solution: LM Studio
+
+LM Studio provides:
+- **Faster inference**: `gpt-oss-20b` runs 3-5x faster than Ollama's `qwen2.5:7b` on the same hardware due to better GPU utilization and quantization
+- **OpenAI-compatible API**: No special client libraries needed — works with `openai` Python SDK, `langchain-openai`, `llama-index-llms-openai-like`, and ADK's native OpenAI provider
+- **Simpler setup**: Single GUI app, no command-line model management
+- **Built-in server**: Exposes `http://localhost:1234/v1` automatically
+
+### Changes made
+
+| Area | Before (Ollama) | After (LM Studio) |
+|---|---|---|
+| Base URL | `http://localhost:11434/v1` | `http://localhost:1234/v1` |
+| Model name | `qwen2.5:7b` | `gpt-oss-20b` |
+| Agent 1 (ADK) | `openai/qwen2.5:7b` + LiteLLM | `openai/gpt-oss-20b` (native ADK) |
+| Agent 2 (LlamaIndex) | `llama-index-llms-ollama` + `Ollama` class | `llama-index-llms-openai-like` + `OpenAILike` class |
+| Agent 3 (LangGraph) | `langchain-ollama` + `ChatOllama` | `langchain-openai` + `ChatOpenAI` |
+| Agent 4 (CrewAI) | `CrewLLM(model="ollama/...")` | `CrewLLM(model="gpt-oss-20b", base_url=...)` |
+| ADK env var | `OPENAI_API_BASE` for LiteLLM | Same var, but ADK uses native OpenAI provider |
+| Dependencies | `llama-index-llms-ollama`, `langchain-ollama` | `llama-index-llms-openai-like`, `langchain-openai` |
+
+### Key lesson
+
+The `openai/` provider prefix in LiteLLM/ADK proved more reliable than native Ollama providers even when Ollama was the backend. Migrating to a true OpenAI-compatible server (LM Studio) eliminated the translation layer entirely — no more protocol mismatches, no more tool-calling formatting issues. Every framework (LlamaIndex, LangChain, CrewAI, ADK) has native OpenAI support, so switching to LM Studio simplified the entire stack.
 
 ## RAG Agent Auto-ingest
 
