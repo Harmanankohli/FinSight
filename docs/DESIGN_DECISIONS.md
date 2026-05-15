@@ -170,7 +170,7 @@ LM Studio provides:
 |---|---|---|
 | Base URL | `http://localhost:11434/v1` | `http://localhost:1234/v1` |
 | Model name | `qwen2.5:7b` | `gpt-oss-20b` |
-| Agent 1 (ADK) | `openai/qwen2.5:7b` + LiteLLM | `openai/gpt-oss-20b` (native ADK) |
+| Agent 1 (ADK) | `openai/qwen2.5:7b` (via LiteLLM) | `openai/gpt-oss-20b` (via LiteLLM) |
 | Agent 2 (LlamaIndex) | `llama-index-llms-ollama` + `Ollama` class | `llama-index-llms-openai-like` + `OpenAILike` class |
 | Agent 3 (LangGraph) | `langchain-ollama` + `ChatOllama` | `langchain-openai` + `ChatOpenAI` |
 | Agent 4 (CrewAI) | `CrewLLM(model="ollama/...")` | `CrewLLM(model="gpt-oss-20b", base_url=...)` |
@@ -179,7 +179,7 @@ LM Studio provides:
 
 ### Key lesson
 
-The `openai/` provider prefix in LiteLLM/ADK proved more reliable than native Ollama providers even when Ollama was the backend. Migrating to a true OpenAI-compatible server (LM Studio) eliminated the translation layer entirely — no more protocol mismatches, no more tool-calling formatting issues. Every framework (LlamaIndex, LangChain, CrewAI, ADK) has native OpenAI support, so switching to LM Studio simplified the entire stack.
+The `openai/` provider prefix in LiteLLM/ADK proved more reliable than native Ollama providers even when Ollama was the backend. Migrating to a true OpenAI-compatible server (LM Studio) means LiteLLM communicates with a standard OpenAI API instead of Ollama's custom interface — fewer protocol mismatches and tool-calling formatting issues. Every framework (LlamaIndex, LangChain, CrewAI, ADK) has stable OpenAI support, so the migration was clean across all agents.
 
 ## RAG Agent Auto-ingest
 
