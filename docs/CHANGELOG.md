@@ -1,8 +1,13 @@
 # Changelog
 
-## v0.6 — Ministral-3 Migration
+## v0.7 — Return to llama3.2
 
-- **Model change**: Switched from qwen3.5 to ministral-3:3b for better instruction following and larger context window
+- **Model change**: Returned to `llama3.2` after testing qwen3.5, lfm2.5-thinking, ministral-3, and granite4.1. Llama3.2 had the best balance of speed and instruction following.
+
+## v0.6 — Model Testing Phase
+
+- Tested models: qwen3.5:0.8b, qwen3.5:2b, lfm2.5-thinking:1.2b, ministral-3:3b, granite4.1:8b — all had issues with speed or reliability
+- **Final choice**: `llama3.2` for best overall balance
 
 ## v0.5 — Qwen Model Migration
 

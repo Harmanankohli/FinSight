@@ -55,7 +55,7 @@ An autonomous multi-agent system that answers investment queries like *"Should I
 | RAG | LlamaIndex + ChromaDB (local) + HuggingFace embeddings |
 | Quant | LangChain + LangGraph (state machine) |
 | Sentiment | CrewAI (parallel data collection + synthesis) |
-| LLM | Ollama (ministral-3 local) — no API keys needed |
+| LLM | Ollama (llama3.2 local) — no API keys needed |
 | Embeddings | sentence-transformers (all-MiniLM-L6-v2, local) |
 | Vector Store | ChromaDB (local, persisted) |
 | All LLMs | Fully local via Ollama |
@@ -66,7 +66,7 @@ An autonomous multi-agent system that answers investment queries like *"Should I
 
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/) (recommended) or pip
-- [Ollama](https://ollama.com) with `ollama pull ministral-3:3b`
+- [Ollama](https://ollama.com) with `ollama pull llama3.2`
 
 ### Setup
 
@@ -81,7 +81,7 @@ uv pip install -e .
 uv pip install llama-index-llms-ollama langchain-ollama sentence-transformers
 
 # Pull local LLM
-ollama pull ministral-3:3b
+ollama pull llama3.2
 
 # Copy configuration template
 copy .env.example .env

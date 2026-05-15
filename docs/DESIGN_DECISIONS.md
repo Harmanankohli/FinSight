@@ -69,17 +69,20 @@ The initial implementation used Groq (free tier via API) for all LLM calls. Afte
 | Cost | Free tier, need upgrade | Free, just hardware |
 | Setup | API key only | Download model |
 
-### Model Evolution: llama3.2 → qwen3.5 → ministral-3
+### Model Evolution: llama3.2 (returned)
 
-Originally used `llama3.2:3b` from Ollama. It was slow (~10-30s per call) and had poor instruction following — the ADK agent would call stock tools for queries like "hello" or "google" despite explicit instructions not to.
+The system went through extensive model testing before settling back on `llama3.2`:
 
-Switched to `qwen3.5:0.8b` which was faster (~2-5s per call) and had better instruction adherence, but the small 0.8B parameter count limited its reasoning capability for complex investment queries.
+| Model | Verdict | Reason |
+|---|---|---|
+| `llama3.2` | ✅ Current | Best balance of speed and reliability |
+| `qwen3.5:0.8b` | ❌ Too small | Limited reasoning for complex queries |
+| `qwen3.5:2b` | ❌ Weak instruction following | Called tools for greetings |
+| `lfm2.5-thinking:1.2b` | ❌ Inconsistent | Unpredictable output format |
+| `ministral-3:3b` | ❌ Slow | ~15-30s per call |
+| `granite4.1:8b` | ❌ Too slow | ~30-60s per call on CPU |
 
-Currently using `ministral-3:3b` which offers:
-- **Better instruction following**: Mistral family is known for strong tool-calling and instruction adherence
-- **Larger context window**: 32K tokens vs 8K for qwen3.5
-- **3B parameters**: Good balance of speed and capability
-- **~5-10s per call**: Acceptable latency for investment analysis
+The improved **prompt engineering** (clear tool-call rules, "ONLY call if" guard clauses, better tool docstrings) resolved the instruction-following issues with llama3.2 that prompted the original model switch.
 
 ### Sentiment agent performance
 

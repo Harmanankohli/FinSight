@@ -28,7 +28,7 @@ curl -X POST http://localhost:8002/a2a \
 
 ## Step 2: Orchestrator Dispatches to Agents
 
-The ADK Web agent's LLM (Ollama ministral-3) calls all three tools in parallel:
+The ADK Web agent's LLM (Ollama llama3.2) calls all three tools in parallel:
 
 ### Tool Call 1: `query_rag("NVDA")` → RAG Agent (port 8002)
 
