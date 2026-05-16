@@ -75,7 +75,7 @@ All A2A communication uses `A2ACardResolver` for standard discovery and `ClientF
 
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/) (recommended) or pip
-- [LM Studio](https://lmstudio.ai) with a model loaded (e.g. `gpt-oss-20b`) on port 1234
+- [LM Studio](https://lmstudio.ai) with a model loaded (e.g. `qwen3-30b-a3b-2507`) on port 1234
 
 ### Setup
 
@@ -209,7 +209,7 @@ Key environment variables in `.env`:
 
 | Variable | Default | Description |
 |---|---|---|
-| `ADK_MODEL` | `openai/gpt-oss-20b` | LLM model for the orchestrator |
+| `ADK_MODEL` | `openai/qwen/qwen3-30b-a3b-2507` | LLM model for the orchestrator |
 | `AGENT_SEED_URLS` | `http://localhost:8002,http://localhost:8003,http://localhost:8004` | A2A agent discovery URLs |
 | `A2A_TIMEOUT` | `300.0` | Timeout for A2A communication (seconds) |
 | `LLM_BASE_URL` | `http://localhost:1234/v1` | LM Studio OpenAI-compatible endpoint |

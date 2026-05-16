@@ -11,6 +11,7 @@ from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core.query_engine import RouterQueryEngine
 from llama_index.core.selectors import LLMMultiSelector
 from llama_index.core.tools import QueryEngineTool, ToolMetadata
+from llama_index.core.vector_stores import MetadataFilters, ExactMatchFilter
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.llms.openai_like import OpenAILike
 from llama_index.vector_stores.chroma import ChromaVectorStore
@@ -103,9 +104,14 @@ class FinancialIndexManager:
         return self._router
 
     async def query(self, ticker: str, query_text: str) -> dict:
+        filters = MetadataFilters(
+            filters=[ExactMatchFilter(key="ticker", value=ticker)]
+        )
         for attempt, engine in enumerate([
             self.router.aquery,
-            self._get_or_create_index("sec_filings").as_query_engine(similarity_top_k=5).aquery,
+            self._get_or_create_index("sec_filings").as_query_engine(
+                similarity_top_k=5, filters=filters
+            ).aquery,
         ]):
             try:
                 if attempt == 0:
@@ -152,13 +158,25 @@ class FinancialIndexManager:
         }
 
     async def query_sec_filings(self, ticker: str, query_text: str) -> dict:
+        filters = MetadataFilters(
+            filters=[ExactMatchFilter(key="ticker", value=ticker)]
+        )
         index = self._get_or_create_index("sec_filings")
-        engine = index.as_query_engine(similarity_top_k=5)
+        engine = index.as_query_engine(similarity_top_k=5, filters=filters)
         response = await engine.aquery(
             f"For {ticker}: {query_text}\nCite specific filing sections."
         )
         sources = [n.node.metadata.get("file_name", "unknown") for n in response.source_nodes]
         scores = [round(n.score, 3) for n in response.source_nodes]
+        first_file = sources[0] if sources else ""
+        if first_file and not first_file.upper().startswith(ticker.upper()):
+            return {
+                "ticker": ticker,
+                "summary": f"No {ticker} filings found in the index.",
+                "sources": [],
+                "relevance_scores": [],
+                "confidence_score": 0.0,
+            }
         return {
             "ticker": ticker,
             "summary": str(response),

@@ -53,6 +53,7 @@ class GenericAgentExecutor(AgentExecutor):
             require_user_input = item.get("require_user_input", False)
 
             if is_task_complete:
+                is_error = item.get("is_error", False)
                 content = item.get("content", {})
                 if item.get("response_type") == "data" and isinstance(content, dict):
                     s = Struct()
@@ -76,7 +77,10 @@ class GenericAgentExecutor(AgentExecutor):
                     TaskStatusUpdateEvent(
                         task_id=task.id,
                         context_id=task.context_id,
-                        status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED),
+                        status=TaskStatus(
+                            state=TaskState.TASK_STATE_FAILED if is_error else TaskState.TASK_STATE_COMPLETED,
+                            message=new_text_message(str(content)) if is_error else None,
+                        ),
                     )
                 )
                 return

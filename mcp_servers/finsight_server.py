@@ -1,14 +1,21 @@
+from __future__ import annotations
+
 import asyncio
 import ast
 import json
 import logging
 import os
-import subprocess
 import sys
+import subprocess
+
+if sys.platform != "win32":
+    import resource
 import tempfile
-import uuid
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
+from urllib.parse import quote as urlquote
 
 import feedparser
 import httpx
@@ -29,13 +36,22 @@ EMBED_MODEL_NAME = os.environ.get("EMBED_MODEL", "all-MiniLM-L6-v2")
 
 
 # ──────────────────────────────────────────────
-# Agent Registry
+# Lazy Agent Registry (no model download at import time)
 # ──────────────────────────────────────────────
 
-def _load_agent_cards():
+_registry_lock = asyncio.Lock()
+_registry_ready = False
+_model_embed: SentenceTransformer | None = None
+_df_registry: pd.DataFrame = pd.DataFrame(
+    columns=["card_uri", "agent_card", "card_embeddings"]
+)
+
+
+def _load_agent_cards() -> tuple[list[str], list[dict]]:
+    """Load agent card JSON files from AGENT_CARDS_DIR synchronously (called once)."""
     card_uris, agent_cards = [], []
     if not AGENT_CARDS_DIR.is_dir():
-        logger.error("Agent cards directory not found: %s", AGENT_CARDS_DIR)
+        logger.warning("Agent cards directory not found: %s", AGENT_CARDS_DIR)
         return card_uris, agent_cards
     for filename in sorted(os.listdir(AGENT_CARDS_DIR)):
         if filename.lower().endswith(".json"):
@@ -44,53 +60,84 @@ def _load_agent_cards():
                 try:
                     with file_path.open("r", encoding="utf-8") as f:
                         data = json.load(f)
-                        stem = Path(filename).stem
-                        card_uris.append(f"resource://agent_cards/{stem}")
-                        agent_cards.append(data)
-                except Exception as e:
-                    logger.error("Error loading %s: %s", filename, e)
+                    stem = Path(filename).stem
+                    card_uris.append(f"resource://agent_cards/{stem}")
+                    agent_cards.append(data)
+                except Exception as exc:
+                    logger.error("Error loading %s: %s", filename, exc)
     logger.info("Loaded %d agent cards", len(agent_cards))
     return card_uris, agent_cards
 
 
-_card_uris, _agent_cards = _load_agent_cards()
-_df_registry = None
-_model_embed = None
+async def _ensure_registry() -> None:
+    """Initialise the embedding model and registry DataFrame on first use."""
+    global _registry_ready, _model_embed, _df_registry
+    if _registry_ready:
+        return
+    async with _registry_lock:
+        if _registry_ready:
+            return
+        loop = asyncio.get_running_loop()
 
-if _agent_cards:
-    _model_embed = SentenceTransformer(EMBED_MODEL_NAME)
-    _df_registry = pd.DataFrame({"card_uri": _card_uris, "agent_card": _agent_cards})
-    _df_registry["card_embeddings"] = _df_registry["agent_card"].apply(
-        lambda c: _model_embed.encode(json.dumps(c))
-    )
-else:
-    _df_registry = pd.DataFrame(columns=["card_uri", "agent_card", "card_embeddings"])
+        def _init():
+            card_uris, agent_cards = _load_agent_cards()
+            if not agent_cards:
+                return None, pd.DataFrame(
+                    columns=["card_uri", "agent_card", "card_embeddings"]
+                )
+            model = SentenceTransformer(EMBED_MODEL_NAME)
+            df = pd.DataFrame({"card_uri": card_uris, "agent_card": agent_cards})
+            df["card_embeddings"] = df["agent_card"].apply(
+                lambda c: model.encode(json.dumps(c))
+            )
+            return model, df
 
+        _model_embed, _df_registry = await loop.run_in_executor(None, _init)
+        _registry_ready = True
+
+
+# ──────────────────────────────────────────────
+# Agent Registry Tools
+# ──────────────────────────────────────────────
 
 @app.tool(
     name="find_agent",
     description="Finds the most relevant agent card based on a natural language query string",
 )
-def find_agent(query: str) -> str:
-    if _df_registry.empty:
+async def find_agent(query: str) -> str:
+    await _ensure_registry()
+    if _df_registry.empty or _model_embed is None:
         return json.dumps({"error": "No agent cards loaded"})
-    query_embedding = _model_embed.encode(query)
-    dot_products = np.dot(np.stack(_df_registry["card_embeddings"]), query_embedding)
-    best_idx = int(np.argmax(dot_products))
+    loop = asyncio.get_running_loop()
+
+    def _search():
+        q_emb = _model_embed.encode(query)
+        dots = np.dot(np.stack(_df_registry["card_embeddings"]), q_emb)
+        return int(np.argmax(dots))
+
+    best_idx = await loop.run_in_executor(None, _search)
     return json.dumps(_df_registry.iloc[best_idx]["agent_card"])
 
 
 @app.resource("resource://agent_cards/list", mime_type="application/json")
-def get_agent_cards() -> dict:
-    return {"agent_cards": _df_registry["card_uri"].to_list() if not _df_registry.empty else []}
+async def get_agent_cards() -> dict:
+    await _ensure_registry()
+    return {
+        "agent_cards": _df_registry["card_uri"].to_list()
+        if not _df_registry.empty
+        else []
+    }
 
 
 @app.resource("resource://agent_cards/{card_name}", mime_type="application/json")
-def get_agent_card(card_name: str) -> dict:
+async def get_agent_card(card_name: str) -> dict:
+    await _ensure_registry()
     if _df_registry.empty:
         return {"agent_card": None}
     uri = f"resource://agent_cards/{card_name}"
-    cards = _df_registry.loc[_df_registry["card_uri"] == uri, "agent_card"].to_list()
+    cards = _df_registry.loc[
+        _df_registry["card_uri"] == uri, "agent_card"
+    ].to_list()
     return {"agent_card": cards[0]} if cards else {"agent_card": None}
 
 
@@ -98,25 +145,47 @@ def get_agent_card(card_name: str) -> dict:
 # yfinance Tools
 # ──────────────────────────────────────────────
 
+def _serialise_value(v: Any) -> Any:
+    """Recursively convert non-JSON-serialisable types (Timestamp,
+    datetime, numpy scalars, NaN/Inf) so the caller never hits a
+    serialisation error."""
+    if isinstance(v, dict):
+        return {_serialise_value(k): _serialise_value(val) for k, val in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_serialise_value(i) for i in v]
+    if isinstance(v, float) and (v != v or v in (float("inf"), float("-inf"))):
+        return None
+    if hasattr(v, "isoformat"):
+        return v.isoformat()
+    if isinstance(v, (np.integer,)):
+        return int(v)
+    if isinstance(v, (np.floating,)):
+        return float(v)
+    if isinstance(v, np.ndarray):
+        return v.tolist()
+    return v
+
+
 @app.tool()
 async def get_prices(ticker: str, period: str = "1y", interval: str = "1d") -> dict:
     """Fetch OHLCV price history data for a stock ticker.
 
     Args:
         ticker: Stock ticker symbol (e.g. NVDA, AAPL, MSFT)
-        period: Time period for historical data. Options: 1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y, 10y, ytd, max
-        interval: Data interval. Options: 1m, 2m, 5m, 15m, 30m, 60m, 90m, 1h, 1d, 5d, 1wk, 1mo, 3mo
+        period: Time period. Options: 1d 5d 1mo 3mo 6mo 1y 2y 5y 10y ytd max
+        interval: Data interval. Options: 1m 2m 5m 15m 30m 60m 90m 1h 1d 5d 1wk 1mo 3mo
 
     Returns:
-        dict with keys: ticker, period, data (list of OHLCV records)
+        dict with keys: ticker, period, data (list of OHLCV records with ISO dates)
     """
-    stock = yf.Ticker(ticker)
-    hist = stock.history(period=period, interval=interval)
-    return {
-        "ticker": ticker,
-        "period": period,
-        "data": hist.reset_index().to_dict(orient="records"),
-    }
+    try:
+        stock = yf.Ticker(ticker)
+        hist = stock.history(period=period, interval=interval)
+        records = _serialise_value(hist.reset_index().to_dict(orient="records"))
+        return {"ticker": ticker, "period": period, "data": records}
+    except Exception as exc:
+        logger.warning("get_prices failed for %s: %s", ticker, exc)
+        return {"ticker": ticker, "period": period, "error": str(exc), "data": []}
 
 
 @app.tool()
@@ -129,13 +198,26 @@ async def get_financials(ticker: str) -> dict:
     Returns:
         dict with keys: income_statement, balance_sheet, cash_flow, info
     """
-    stock = yf.Ticker(ticker)
-    return {
-        "income_statement": stock.financials.to_dict() if stock.financials is not None else {},
-        "balance_sheet": stock.balance_sheet.to_dict() if stock.balance_sheet is not None else {},
-        "cash_flow": stock.cashflow.to_dict() if stock.cashflow is not None else {},
-        "info": stock.info if stock.info else {},
-    }
+    try:
+        stock = yf.Ticker(ticker)
+        return _serialise_value({
+            "income_statement": stock.financials.to_dict()
+            if stock.financials is not None
+            else {},
+            "balance_sheet": stock.balance_sheet.to_dict()
+            if stock.balance_sheet is not None
+            else {},
+            "cash_flow": stock.cashflow.to_dict()
+            if stock.cashflow is not None
+            else {},
+            "info": stock.info or {},
+        })
+    except Exception as exc:
+        logger.warning("get_financials failed for %s: %s", ticker, exc)
+        return {
+            "ticker": ticker, "error": str(exc),
+            "income_statement": {}, "balance_sheet": {}, "cash_flow": {}, "info": {},
+        }
 
 
 @app.tool()
@@ -144,20 +226,23 @@ async def get_options_chain(ticker: str, expiration: str | None = None) -> dict:
 
     Args:
         ticker: Stock ticker symbol (e.g. NVDA, AAPL, MSFT)
-        expiration: Optional option expiration date string (e.g. 2025-01-17). If omitted, returns available expiration dates.
+        expiration: Option expiration date (e.g. 2025-01-17). Omit for available dates.
 
     Returns:
-        dict: If expiration provided, returns with keys: calls, puts. If no expiration, returns: expirations.
+        dict: calls + puts if expiration given, else expirations list.
     """
-    stock = yf.Ticker(ticker)
-    if expiration:
-        chain = stock.option_chain(expiration)
-        return {
-            "calls": chain.calls.to_dict(orient="records"),
-            "puts": chain.puts.to_dict(orient="records"),
-        }
-    expirations = stock.options
-    return {"expirations": list(expirations)}
+    try:
+        stock = yf.Ticker(ticker)
+        if expiration:
+            chain = stock.option_chain(expiration)
+            return _serialise_value({
+                "calls": chain.calls.to_dict(orient="records"),
+                "puts": chain.puts.to_dict(orient="records"),
+            })
+        return {"expirations": list(stock.options)}
+    except Exception as exc:
+        logger.warning("get_options_chain failed for %s: %s", ticker, exc)
+        return {"ticker": ticker, "error": str(exc)}
 
 
 # ──────────────────────────────────────────────
@@ -171,33 +256,74 @@ _SEC_HEADERS = {
 
 
 class _EdgarClient:
-    def __init__(self):
+    """Async SEC EDGAR client with shared client, cached ticker map,
+    URL encoding, and parallel array bounds checking."""
+
+    def __init__(self) -> None:
         self._client: httpx.AsyncClient | None = None
+        self._client_lock = asyncio.Lock()
         self._cik_cache: dict[str, str] = {}
+        self._ticker_map: dict[str, str] | None = None
+        self._title_map: dict[str, str] | None = None
+        self._ticker_map_lock = asyncio.Lock()
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
-            self._client = httpx.AsyncClient(headers=_SEC_HEADERS, timeout=30.0)
+            async with self._client_lock:
+                if self._client is None:
+                    self._client = httpx.AsyncClient(
+                        headers=_SEC_HEADERS, timeout=30.0
+                    )
         return self._client
+
+    async def _get_ticker_map(self) -> dict[str, str]:
+        if self._ticker_map is not None:
+            return self._ticker_map
+        async with self._ticker_map_lock:
+            if self._ticker_map is not None:
+                return self._ticker_map
+            c = await self._get_client()
+            resp = await c.get("https://www.sec.gov/files/company_tickers.json")
+            resp.raise_for_status()
+            raw = resp.json()
+            self._ticker_map = {
+                entry["ticker"]: str(entry["cik_str"]).zfill(10)
+                for entry in raw.values()
+            }
+            self._title_map = {
+                entry["ticker"]: entry.get("title", "")
+                for entry in raw.values()
+            }
+        return self._ticker_map
+
+    async def get_company_title(self, ticker: str) -> str:
+        await self._get_ticker_map()
+        return (self._title_map or {}).get(ticker.upper(), "")
 
     async def _lookup_cik(self, ticker: str) -> str:
         ticker = ticker.upper()
         if ticker in self._cik_cache:
             return self._cik_cache[ticker]
-        c = await self._get_client()
-        resp = await c.get("https://www.sec.gov/files/company_tickers.json")
-        resp.raise_for_status()
-        for entry in resp.json().values():
-            if entry["ticker"] == ticker:
-                cik = str(entry["cik_str"]).zfill(10)
-                self._cik_cache[ticker] = cik
-                return cik
-        raise ValueError(f"Ticker {ticker} not found")
+        mapping = await self._get_ticker_map()
+        if ticker not in mapping:
+            raise ValueError(f"Ticker {ticker} not found in SEC EDGAR")
+        self._cik_cache[ticker] = mapping[ticker]
+        return self._cik_cache[ticker]
 
-    async def get_company_filings(self, ticker: str, form_types: list[str] | None = None, limit: int = 10) -> dict:
-        cik = await self._lookup_cik(ticker)
+    async def get_company_filings(
+        self,
+        ticker: str,
+        form_types: list[str] | None = None,
+        limit: int = 10,
+    ) -> dict:
+        try:
+            cik = await self._lookup_cik(ticker)
+        except Exception as exc:
+            return {"ticker": ticker, "error": str(exc), "filings": []}
+
         url = f"https://data.sec.gov/submissions/CIK{cik}.json"
         c = await self._get_client()
+        data: dict = {}
         for attempt in range(3):
             try:
                 resp = await c.get(url)
@@ -207,33 +333,73 @@ class _EdgarClient:
             except Exception:
                 if attempt < 2:
                     await asyncio.sleep(2 ** attempt)
-                    c = await self._get_client()
                 else:
-                    raise
+                    logger.warning(
+                        "get_company_filings failed for %s after 3 retries", ticker
+                    )
+                    return {
+                        "ticker": ticker,
+                        "error": "Failed after 3 retries",
+                        "filings": [],
+                    }
+
         filings = data.get("filings", {}).get("recent", {})
+        forms = filings.get("form", [])
+        dates = filings.get("filingDate", [])
+        docs = filings.get("primaryDocument", [])
+        acc_nums = filings.get("accessionNumber", [])
+
+        n = min(len(forms), len(dates), len(docs), len(acc_nums))
+
+        _INDEX_ONLY_FORMS = frozenset({"3", "4", "5", "3/A", "4/A", "5/A"})
+
         result = []
-        for i in range(len(filings.get("form", []))):
-            form = filings["form"][i]
-            if form_types and form not in form_types:
+        for i in range(n):
+            if form_types and forms[i] not in form_types:
                 continue
             if len(result) >= limit:
                 break
+
+            acc_clean = acc_nums[i].replace("-", "")
+
+            if forms[i] in _INDEX_ONLY_FORMS or "/" in docs[i]:
+                edgar_url = (
+                    f"https://www.sec.gov/Archives/edgar/data/"
+                    f"{cik}/{acc_clean}/{acc_nums[i]}-index.htm"
+                )
+            else:
+                safe_doc = urlquote(docs[i], safe="")
+                edgar_url = (
+                    f"https://www.sec.gov/ix?doc=/Archives/edgar/data/"
+                    f"{cik}/{acc_clean}/{safe_doc}"
+                )
+
             result.append({
-                "form": form,
-                "filing_date": filings.get("filingDate", [""])[i],
-                "description": filings.get("primaryDocument", [""])[i],
-                "edgar_url": f"https://www.sec.gov/ix?doc=/Archives/edgar/data/{cik}/{filings.get('accessionNumber', [''])[i].replace('-', '')}/{filings.get('primaryDocument', [''])[i]}",
+                "form": forms[i],
+                "filing_date": dates[i],
+                "description": docs[i],
+                "edgar_url": edgar_url,
             })
         return {"ticker": ticker, "cik": cik, "filings": result}
 
-    async def full_text_search(self, query: str, ticker: str | None = None) -> dict:
-        params: dict = {"q": query}
-        if ticker:
-            params["cik"] = await self._lookup_cik(ticker)
-        c = await self._get_client()
-        resp = await c.get("https://efts.sec.gov/LATEST/search-index?dateRange=all", params=params)
-        resp.raise_for_status()
-        data = resp.json()
+    async def full_text_search(
+        self, query: str, ticker: str | None = None
+    ) -> dict:
+        try:
+            params: dict = {"q": query}
+            if ticker:
+                params["cik"] = await self._lookup_cik(ticker)
+            c = await self._get_client()
+            resp = await c.get(
+                "https://efts.sec.gov/LATEST/search-index?dateRange=all",
+                params=params,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception as exc:
+            logger.warning("full_text_search failed: %s", exc)
+            return {"query": query, "error": str(exc), "results": []}
+
         results = []
         for hit in data.get("hits", {}).get("hits", [])[:10]:
             src = hit.get("_source", {})
@@ -252,106 +418,179 @@ _edgar = _EdgarClient()
 
 
 @app.tool()
-async def get_company_filings(ticker: str, form_types: str = "", limit: int = 10) -> dict:
-    """Retrieve SEC filings for a publicly traded company by ticker symbol.
-
-    Fetches filings from the SEC EDGAR system including annual reports (10-K), quarterly reports (10-Q),
-    and current reports (8-K).
+async def get_company_filings(
+    ticker: str, form_types: str = "", limit: int = 10
+) -> dict:
+    """Retrieve SEC filings for a publicly traded company.
 
     Args:
         ticker: Stock ticker symbol (e.g. NVDA, AAPL, MSFT)
-        form_types: Comma-separated list of SEC form types to filter (e.g. "10-K,10-Q,8-K"). Leave empty to return all.
+        form_types: Comma-separated form types to filter (e.g. "10-K,10-Q,8-K"). Empty = all.
         limit: Maximum number of filings to return (default 10)
 
     Returns:
         dict with keys: ticker, cik, filings (list of {form, filing_date, description, edgar_url})
     """
-    types_list = [t.strip() for t in form_types.split(",") if t.strip()] if form_types else None
-    return await _edgar.get_company_filings(ticker, types_list, limit)
+    try:
+        types_list = (
+            [t.strip() for t in form_types.split(",") if t.strip()]
+            if form_types
+            else None
+        )
+        return await _edgar.get_company_filings(ticker, types_list, limit)
+    except Exception as exc:
+        logger.warning("get_company_filings tool failed for %s: %s", ticker, exc)
+        return {"ticker": ticker, "error": str(exc), "filings": []}
 
 
 @app.tool()
 async def full_text_search(query: str, ticker: str | None = None) -> dict:
-    """Search the full text of SEC EDGAR filings for matching keywords.
+    """Search full text of SEC EDGAR filings.
 
     Args:
-        query: Search query string (e.g. "revenue growth AI semiconductors")
-        ticker: Optional ticker symbol to narrow search to a specific company
+        query: Keywords (e.g. "revenue growth AI semiconductors")
+        ticker: Optional ticker to narrow to one company.
 
     Returns:
         dict with keys: query, results (list of {score, ticker, form, filing_date, description, url})
     """
-    return await _edgar.full_text_search(query, ticker)
+    try:
+        return await _edgar.full_text_search(query, ticker)
+    except Exception as exc:
+        logger.warning("full_text_search tool failed: %s", exc)
+        return {"query": query, "error": str(exc), "results": []}
 
 
 # ──────────────────────────────────────────────
 # Financial News Tools
 # ──────────────────────────────────────────────
 
-_sentiment = SentimentIntensityAnalyzer()
+_sentiment_analyzer = SentimentIntensityAnalyzer()
 
-_RSS_FEEDS = {
+_RSS_FEEDS: dict[str, str] = {
     "yahoo_finance": "https://finance.yahoo.com/news/rssindex",
-    "cnbc_top": "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114",
+    "cnbc_top": (
+        "https://search.cnbc.com/rs/search/combinedcms/view.xml"
+        "?partnerId=wrss01&id=100003114"
+    ),
     "marketwatch": "https://feeds.marketwatch.com/marketwatch/topstories",
-    "seeking_alpha": "https://seekingalpha.com/feed.xml",
 }
 
 
-async def _get_company_name(ticker: str) -> list[str]:
+async def _fetch_rss(url: str, client: httpx.AsyncClient) -> feedparser.FeedParserDict:
+    """Fetch RSS content asynchronously, then parse with feedparser."""
     try:
-        async with httpx.AsyncClient(headers=_SEC_HEADERS, timeout=10) as c:
-            r = await c.get("https://www.sec.gov/files/company_tickers.json")
-            for entry in r.json().values():
-                if entry.get("ticker", "").upper() == ticker.upper():
-                    return [ticker.lower()] + [w.lower() for w in entry.get("title", "").split() if len(w) > 2]
+        resp = await client.get(url, timeout=10.0)
+        resp.raise_for_status()
+        return feedparser.parse(resp.text)
+    except Exception as exc:
+        logger.warning("RSS fetch failed for %s: %s", url, exc)
+        return feedparser.FeedParserDict(entries=[])
+
+
+async def _resolve_company_keywords(ticker: str) -> list[str]:
+    """Build a robust keyword list for RSS headline matching.
+
+    For JPM ("JPMORGAN CHASE & CO") this produces:
+      ["jpm", "jpmorgan", "chase", "jpmorgan chase", "jp morgan"]
+    which matches "JPMorgan reports...", "JP Morgan raises...", "J.P. Morgan...",
+    "JPM stock...", after headlines are normalised by _normalise_for_match().
+    """
+    ticker_upper = ticker.upper()
+    keywords: list[str] = [ticker.lower()]
+
+    try:
+        title = await _edgar.get_company_title(ticker_upper)
     except Exception:
-        pass
-    return [ticker.lower()]
+        title = ""
+
+    if title:
+        words = [w.lower() for w in title.split() if len(w) > 2]
+        keywords.extend(words)
+        for j in range(len(words) - 1):
+            keywords.append(f"{words[j]} {words[j + 1]}")
+        for w in words:
+            if len(w) >= 5:
+                keywords.append(f"{w[:2]} {w[2:]}")
+
+    seen: set[str] = set()
+    unique: list[str] = []
+    for k in keywords:
+        if k and k not in seen:
+            seen.add(k)
+            unique.append(k)
+    return unique
+
+
+def _normalise_for_match(text: str) -> str:
+    """Normalise a headline/summary for keyword matching.
+
+    Strips punctuation and collapses single-letter tokens produced by
+    removing dots from abbreviations:
+      "J.P. Morgan" -> "jpmorgan"  (matches keyword "jpmorgan")
+      "JP Morgan"   -> "jp morgan" (matches keyword "jp morgan")
+    """
+    s = __import__("re").sub(r"[^a-z0-9 ]", " ", text.lower())
+    s = __import__("re").sub(r"\b([a-z])\b\s*", r"\1", s)
+    return __import__("re").sub(r"  +", " ", s).strip()
 
 
 @app.tool()
 async def get_news_sentiment(ticker: str, limit: int = 10) -> dict:
-    """Fetch recent financial news articles mentioning a ticker and compute VADER sentiment scores.
+    """Fetch recent financial news mentioning a ticker and compute VADER sentiment.
 
-    Aggregates news from Yahoo Finance, CNBC, MarketWatch, and Seeking Alpha RSS feeds.
+    Sources: Yahoo Finance, CNBC, MarketWatch RSS feeds.
 
     Args:
-        ticker: Stock ticker symbol to search for in news (e.g. NVDA, AAPL, MSFT)
-        limit: Maximum number of articles to return (default 10)
+        ticker: Stock ticker symbol (e.g. NVDA, AAPL, MSFT)
+        limit: Maximum articles to return (default 10)
 
     Returns:
-        dict with keys: ticker, total_articles, sentiment_score (-1 to 1), positive_articles, negative_articles, neutral_articles, articles
+        dict with keys: ticker, total_articles, sentiment_score (-1 to 1),
+        positive_articles, negative_articles, neutral_articles, articles
     """
-    keywords = await _get_company_name(ticker)
-    articles = []
-    scores = []
-    for source, url in _RSS_FEEDS.items():
-        try:
-            feed = feedparser.parse(url)
-            for entry in feed.entries[:15]:
-                title = entry.get("title", "")
-                summary = entry.get("summary", "")
-                combined = f"{title} {summary}".lower()
-                if any(k in combined for k in keywords):
-                    vs = _sentiment.polarity_scores(combined)
-                    scores.append(vs["compound"])
-                    articles.append({
-                        "source": source,
-                        "title": title,
-                        "link": entry.get("link", ""),
-                        "published": entry.get("published", ""),
-                        "sentiment": round(vs["compound"], 4),
-                    })
-        except Exception as e:
-            logger.warning("RSS feed %s failed: %s", source, e)
-    avg_sentiment = sum(scores) / len(scores) if scores else 0.0
+    keywords = await _resolve_company_keywords(ticker)
+
+    async with httpx.AsyncClient(headers=_SEC_HEADERS) as client:
+        feed_results = await asyncio.gather(
+            *[_fetch_rss(url, client) for url in _RSS_FEEDS.values()],
+            return_exceptions=True,
+        )
+
+    articles: list[dict] = []
+    scores: list[float] = []
+
+    for source, feed in zip(_RSS_FEEDS.keys(), feed_results):
+        if isinstance(feed, Exception):
+            logger.warning("Feed %s raised: %s", source, feed)
+            continue
+        for entry in feed.entries[:15]:
+            title: str = entry.get("title", "")
+            summary: str = entry.get("summary", "")
+            combined = _normalise_for_match(f"{title} {summary}")
+            if not any(k in combined for k in keywords):
+                continue
+
+            title_score = _sentiment_analyzer.polarity_scores(title)["compound"]
+            summary_score = _sentiment_analyzer.polarity_scores(summary)["compound"] if summary else title_score
+            compound = round((title_score + summary_score) / 2, 4)
+
+            scores.append(compound)
+            articles.append({
+                "source": source,
+                "title": title,
+                "link": entry.get("link", ""),
+                "published": entry.get("published", ""),
+                "sentiment": compound,
+            })
+
+    avg = round(sum(scores) / len(scores), 4) if scores else 0.0
     pos = sum(1 for s in scores if s > 0.05)
     neg = sum(1 for s in scores if s < -0.05)
     return {
         "ticker": ticker.upper(),
         "total_articles": len(articles),
-        "sentiment_score": round(avg_sentiment, 4),
+        "sentiment_score": avg,
         "positive_articles": pos,
         "negative_articles": neg,
         "neutral_articles": len(scores) - pos - neg,
@@ -361,75 +600,99 @@ async def get_news_sentiment(ticker: str, limit: int = 10) -> dict:
 
 @app.tool()
 async def get_earnings_calendar(ticker: str) -> dict:
-    """Fetch upcoming earnings report date and status for a stock ticker.
+    """Fetch upcoming earnings date for a stock ticker via yfinance.
 
     Args:
         ticker: Stock ticker symbol (e.g. NVDA, AAPL, MSFT)
 
     Returns:
-        dict with keys: ticker, source, status or error
+        dict with keys: ticker, next_earnings_date, source, or error
     """
     try:
-        async with httpx.AsyncClient(timeout=10) as c:
-            url = f"https://finance.yahoo.com/calendar/earnings?symbol={ticker}"
-            r = await c.get(url, headers={"User-Agent": "Mozilla/5.0"})
-            if r.status_code == 200:
-                return {"ticker": ticker.upper(), "source": "yahoo_finance", "status": "fetched"}
-            return {"ticker": ticker.upper(), "error": f"HTTP {r.status_code}"}
-    except Exception as e:
-        return {"ticker": ticker.upper(), "error": str(e)}
+        stock = yf.Ticker(ticker)
+        cal = stock.calendar
+        if cal and "Earnings Date" in cal:
+            raw = cal["Earnings Date"]
+            dates = raw if isinstance(raw, (list, tuple)) else [raw]
+            iso_dates = [
+                d.isoformat() if hasattr(d, "isoformat") else str(d)
+                for d in dates
+                if d is not None
+            ]
+            if iso_dates:
+                return {
+                    "ticker": ticker.upper(),
+                    "next_earnings_date": iso_dates[0],
+                    "all_dates": iso_dates,
+                    "source": "yfinance",
+                }
+    except Exception as exc:
+        logger.warning("yfinance calendar failed for %s: %s", ticker, exc)
+
+    try:
+        cik = await _edgar._lookup_cik(ticker)
+        c = await _edgar._get_client()
+        resp = await c.get(
+            f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
+        )
+        resp.raise_for_status()
+        facts = resp.json()
+        eps_data = (
+            facts.get("facts", {})
+            .get("us-gaap", {})
+            .get("EarningsPerShareBasic", {})
+            .get("units", {})
+            .get("USD/shares", [])
+        )
+        if eps_data:
+            filed_dates = sorted(
+                {e["filed"] for e in eps_data if "filed" in e}, reverse=True
+            )
+            return {
+                "ticker": ticker.upper(),
+                "last_eps_filed": filed_dates[0] if filed_dates else None,
+                "recent_eps_filings": filed_dates[:4],
+                "note": "Exact next earnings date unavailable; showing recent filing cadence.",
+                "source": "sec_edgar_xbrl",
+            }
+    except Exception as exc:
+        logger.warning("EDGAR earnings fallback failed for %s: %s", ticker, exc)
+
+    return {"ticker": ticker.upper(), "error": "Could not retrieve earnings date from any source"}
 
 
 # ──────────────────────────────────────────────
-# Python Runner Tool
+# Hardened Python Sandbox
 # ──────────────────────────────────────────────
 
-_RESTRICTED_IMPORTS = [
+_RESTRICTED_IMPORTS = frozenset([
     "os", "subprocess", "shutil", "socket", "ctypes",
-    "importlib", "pickle", "inspect", "sys",
-]
+    "importlib", "pickle", "inspect", "sys", "builtins",
+    "gc", "weakref", "atexit", "signal", "threading",
+    "multiprocessing", "pty", "tty", "termios", "fcntl",
+    "mmap", "resource", "pwd", "grp", "crypt",
+])
 
+_RESTRICTED_CALLS = frozenset([
+    "exec", "eval", "open", "__import__", "compile",
+    "globals", "locals", "vars", "dir", "delattr", "setattr",
+])
 
-def _build_script(code: str) -> str:
-    return (
-        'import json, sys, math, statistics, itertools, collections, functools, typing, datetime, random\n'
-        '_sb = {\n'
-        '    "print": print, "len": len, "range": range, "int": int, "float": float,\n'
-        '    "str": str, "bool": bool, "list": list, "dict": dict, "tuple": tuple,\n'
-        '    "set": set, "enumerate": enumerate, "zip": zip, "map": map, "filter": filter,\n'
-        '    "any": any, "all": all, "sum": sum, "min": min, "max": max, "abs": abs,\n'
-        '    "round": round, "sorted": sorted, "reversed": reversed,\n'
-        '    "isinstance": isinstance, "hasattr": hasattr, "getattr": getattr, "type": type,\n'
-        '    "True": True, "False": False, "None": None, "Exception": Exception,\n'
-        '    "ValueError": ValueError, "TypeError": TypeError, "KeyError": KeyError,\n'
-        '}\n'
-        '_sg = {\n'
-        '    "__builtins__": _sb,\n'
-        '    "pd": __import__("pandas"),\n'
-        '    "np": __import__("numpy"),\n'
-        '    "math": math, "json": json, "datetime": datetime, "random": random,\n'
-        '    "statistics": statistics, "itertools": itertools, "collections": collections,\n'
-        '    "functools": functools, "typing": typing,\n'
-        '}\n'
-        'try:\n'
-        '    _locals = {}\n'
-        f'    exec({json.dumps(code)}, _sg, _locals)\n'
-        '    _result = _locals.get("result")\n'
-        '    print("__RESULT__:" + json.dumps({\n'
-        '        "type": type(_result).__name__ if _result is not None else "NoneType",\n'
-        '        "value": repr(_result)[:1000]\n'
-        '    }))\n'
-        'except Exception:\n'
-        '    import traceback\n'
-        '    print("__ERROR__:" + traceback.format_exc(), file=sys.stderr)\n'
-    )
+_RESTRICTED_ATTRS = frozenset([
+    "system", "popen", "execv", "execve", "execl", "execvp",
+    "spawn", "spawnl", "fork", "forkpty", "exec", "eval",
+    "__class__", "__bases__", "__subclasses__", "__mro__",
+    "__globals__", "__builtins__", "__code__", "__closure__",
+    "__wrapped__",
+])
 
 
 def _check_code_safety(code: str) -> tuple[bool, str]:
     try:
         tree = ast.parse(code)
-    except SyntaxError as e:
-        return False, f"Syntax error: {e}"
+    except SyntaxError as exc:
+        return False, f"Syntax error: {exc}"
+
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -437,29 +700,116 @@ def _check_code_safety(code: str) -> tuple[bool, str]:
                 if root in _RESTRICTED_IMPORTS:
                     return False, f"Restricted import: {alias.name}"
         if isinstance(node, ast.ImportFrom):
-            root = node.module.split(".")[0] if node.module else ""
+            root = (node.module or "").split(".")[0]
             if root in _RESTRICTED_IMPORTS:
-                return False, f"Restricted import: {node.module}"
+                return False, f"Restricted import from: {node.module}"
+
         if isinstance(node, ast.Call):
             fn = node.func
-            if isinstance(fn, ast.Name) and fn.id in {"exec", "eval", "open", "__import__"}:
+            if isinstance(fn, ast.Name) and fn.id in _RESTRICTED_CALLS:
                 return False, f"Restricted function: {fn.id}"
-            if isinstance(fn, ast.Attribute) and fn.attr in {"system", "popen", "exec", "eval"}:
-                return False, f"Restricted method: {fn.attr}"
+            if isinstance(fn, ast.Attribute) and fn.attr in _RESTRICTED_ATTRS:
+                return False, f"Restricted attribute: {fn.attr}"
+
+        if isinstance(node, ast.Attribute) and node.attr in _RESTRICTED_ATTRS:
+            return False, f"Restricted attribute access: {node.attr}"
+
+        if isinstance(node, ast.Subscript):
+            slice_node = node.slice
+            if isinstance(slice_node, ast.Constant) and isinstance(
+                slice_node.value, str
+            ):
+                val = slice_node.value
+                if val in _RESTRICTED_ATTRS or (
+                    val.startswith("__") and val.endswith("__")
+                ):
+                    return False, f"Restricted subscript key: {val}"
+
+        if isinstance(node, ast.Call):
+            fn = node.func
+            if isinstance(fn, ast.Name) and fn.id == "getattr":
+                if len(node.args) >= 2:
+                    attr_arg = node.args[1]
+                    if isinstance(attr_arg, ast.Constant) and isinstance(
+                        attr_arg.value, str
+                    ) and (
+                        attr_arg.value in _RESTRICTED_ATTRS
+                        or (attr_arg.value.startswith("__") and attr_arg.value.endswith("__"))
+                    ):
+                        return False, f"Restricted getattr: {attr_arg.value}"
+
     return True, ""
+
+
+def _sandbox_preexec() -> None:
+    try:
+        resource.setrlimit(resource.RLIMIT_CPU, (25, 25))
+        resource.setrlimit(resource.RLIMIT_AS, (512 * 1024 * 1024, 512 * 1024 * 1024))
+        resource.setrlimit(resource.RLIMIT_NOFILE, (0, 0))
+    except Exception:
+        pass
+
+
+_SANDBOX_RUNNER = """\
+import sys, json, math, statistics, itertools, collections, functools, \
+       typing, datetime, random
+
+_SAFE_BUILTINS = {
+    "print": print, "len": len, "range": range,
+    "int": int, "float": float, "str": str, "bool": bool,
+    "list": list, "dict": dict, "tuple": tuple, "set": set,
+    "frozenset": frozenset, "bytes": bytes,
+    "enumerate": enumerate, "zip": zip, "map": map, "filter": filter,
+    "any": any, "all": all, "sum": sum, "min": min, "max": max,
+    "abs": abs, "round": round, "sorted": sorted, "reversed": reversed,
+    "repr": repr, "format": format, "hash": hash, "id": id,
+    "isinstance": isinstance,
+    "True": True, "False": False, "None": None,
+    "Exception": Exception, "ValueError": ValueError,
+    "TypeError": TypeError, "KeyError": KeyError,
+    "IndexError": IndexError, "StopIteration": StopIteration,
+    "NotImplementedError": NotImplementedError,
+}
+
+_GLOBALS = {
+    "__builtins__": _SAFE_BUILTINS,
+    "pd": __import__("pandas"),
+    "np": __import__("numpy"),
+    "math": math, "json": json, "datetime": datetime,
+    "random": random, "statistics": statistics,
+    "itertools": itertools, "collections": collections,
+    "functools": functools, "typing": typing,
+}
+
+code = sys.stdin.read()
+_locals = {}
+try:
+    exec(code, _GLOBALS, _locals)
+    result = _locals.get("result")
+    print("__RESULT__:" + json.dumps({
+        "type": type(result).__name__ if result is not None else "NoneType",
+        "value": repr(result)[:2000],
+    }))
+except Exception:
+    import traceback
+    print("__ERROR__:" + traceback.format_exc(), file=sys.stderr)
+"""
 
 
 @app.tool()
 async def execute_python(code: str, timeout: int = 30) -> dict:
-    """Execute Python code in a sandboxed subprocess with restricted imports.
+    """Execute Python code in a hardened sandbox subprocess.
 
-    Runs the provided Python code in an isolated subprocess with limited builtins.
-    Only safe libraries (pandas, numpy, math, json, etc.) are available.
-    Restricted imports: os, subprocess, shutil, socket, ctypes, importlib, pickle, inspect, sys.
+    Available: pandas (pd), numpy (np), math, json, datetime, random,
+    statistics, itertools, collections, functools, typing.
+    NOT available: os, sys, subprocess, open, exec, eval, and all dunder tricks.
+    Assign to `result` to get a value back.
+
+    Resource limits (Unix): 25 s CPU, 512 MB RAM, 0 open file descriptors.
 
     Args:
-        code: Python code string to execute. Use `result = <value>` to return data.
-        timeout: Maximum execution time in seconds (default 30)
+        code: Python code to execute.
+        timeout: Wall-clock timeout in seconds (default 30).
 
     Returns:
         dict with keys: success, stdout, stderr, result ({type, value})
@@ -467,58 +817,75 @@ async def execute_python(code: str, timeout: int = 30) -> dict:
     safe, reason = _check_code_safety(code)
     if not safe:
         return {"success": False, "stdout": "", "stderr": reason, "result": None}
-    script = _build_script(code)
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as f:
-        f.write(script)
-        script_path = f.name
+
+    runner_fd, runner_path = tempfile.mkstemp(suffix=".py", text=True)
     try:
+        with os.fdopen(runner_fd, "w", encoding="utf-8") as f:
+            f.write(_SANDBOX_RUNNER)
+
+        preexec = _sandbox_preexec if sys.platform != "win32" else None
+
         proc = subprocess.run(
-            [sys.executable, "-I", script_path],
-            capture_output=True, text=True, timeout=timeout,
+            [sys.executable, "-I", "-S", runner_path],
+            input=code,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            preexec_fn=preexec,
         )
-        result = None
-        clean_stdout = []
-        for line in proc.stdout.splitlines():
-            if line.startswith("__RESULT__:"):
-                try:
-                    result = json.loads(line[len("__RESULT__"):])
-                except json.JSONDecodeError:
-                    result = {"raw": line[len("__RESULT__"):]}
-            else:
-                clean_stdout.append(line)
-        error_detail = proc.stderr
-        for line in proc.stderr.splitlines():
-            if line.startswith("__ERROR__:"):
-                error_detail = line[len("__ERROR__"):]
-        return {
-            "success": proc.returncode == 0,
-            "stdout": "\n".join(clean_stdout),
-            "stderr": error_detail,
-            "result": result,
-        }
     except subprocess.TimeoutExpired:
-        return {"success": False, "stdout": "", "stderr": f"Timed out after {timeout}s", "result": None}
-    except Exception as e:
-        return {"success": False, "stdout": "", "stderr": str(e), "result": None}
+        return {
+            "success": False, "stdout": "", "stderr": f"Timed out after {timeout}s",
+            "result": None,
+        }
+    except Exception as exc:
+        return {"success": False, "stdout": "", "stderr": str(exc), "result": None}
     finally:
-        import os as _os
         try:
-            _os.unlink(script_path)
-        except Exception:
+            os.unlink(runner_path)
+        except OSError:
             pass
+
+    result: dict | None = None
+    clean_lines: list[str] = []
+    for line in proc.stdout.splitlines():
+        if line.startswith("__RESULT__:"):
+            try:
+                result = json.loads(line[len("__RESULT__:"):])
+            except json.JSONDecodeError:
+                result = {"raw": line[len("__RESULT__:"):]}
+        else:
+            clean_lines.append(line)
+
+    cleaned_stderr_lines = []
+    for line in proc.stderr.splitlines():
+        cleaned_stderr_lines.append(
+            line[len("__ERROR__:"):] if line.startswith("__ERROR__:") else line
+        )
+    stderr = "\n".join(cleaned_stderr_lines)
+
+    return {
+        "success": proc.returncode == 0,
+        "stdout": "\n".join(clean_lines),
+        "stderr": stderr,
+        "result": result,
+    }
 
 
 # ──────────────────────────────────────────────
-# Server Entrypoint
+# Thread-safe server app singleton
 # ──────────────────────────────────────────────
 
 _starlette_app = None
+_app_lock = threading.Lock()
 
 
 def get_app():
     global _starlette_app
     if _starlette_app is None:
-        _starlette_app = app.sse_app()
+        with _app_lock:
+            if _starlette_app is None:
+                _starlette_app = app.sse_app()
     return _starlette_app
 
 

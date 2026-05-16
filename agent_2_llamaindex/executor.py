@@ -1,11 +1,12 @@
 import json
 import logging
-import re
 from collections.abc import AsyncIterable
+from datetime import date, datetime, timezone
 
 from shared.base_agent import BaseAgent
 from shared.mcp_client import MCPClient, MCPServerConfig
 from shared.config import MCP_SERVER_URL
+from shared.ticker_utils import extract_ticker
 
 from .document_ingestion import DocumentIngestionPipeline
 from .index_manager import FinancialIndexManager
@@ -23,8 +24,12 @@ class RAGAgent(BaseAgent):
         self.index = FinancialIndexManager()
         self._mcp: MCPClient | None = None
         self._ingestion: DocumentIngestionPipeline | None = None
+        self._last_ingestion: dict[str, date] = {}
 
     async def _ensure_ingested(self, ticker: str) -> None:
+        today = datetime.now(timezone.utc).date()
+        if self._last_ingestion.get(ticker) == today:
+            return
         if self._mcp is None:
             self._mcp = MCPClient(configs=[MCPServerConfig(name="finsight-mcp", url=MCP_SERVER_URL)])
             try:
@@ -52,6 +57,7 @@ class RAGAgent(BaseAgent):
                         self._ingestion.ingest_sec_filings_batch(
                             ticker, data.get("filings", [])
                         )
+            self._last_ingestion[ticker] = today
         except Exception as e:
             logger.warning("Auto-ingest failed for %s: %s", ticker, e)
 
@@ -62,8 +68,7 @@ class RAGAgent(BaseAgent):
     async def stream(
         self, query: str, context_id: str, task_id: str
     ) -> AsyncIterable[dict]:
-        ticker_match = re.search(r"\b[A-Z]{2,5}\b", query)
-        ticker = ticker_match.group(0) if ticker_match else ""
+        ticker = extract_ticker(query)
 
         try:
             result = await self.query(ticker, query)
@@ -78,6 +83,7 @@ class RAGAgent(BaseAgent):
             yield {
                 "response_type": "text",
                 "is_task_complete": True,
+                "is_error": True,
                 "require_user_input": False,
                 "content": f"RAG analysis failed: {e}",
             }

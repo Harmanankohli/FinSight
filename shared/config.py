@@ -17,8 +17,6 @@ if _dotenv_path.exists():
 LLM_MODEL = os.environ.get("LLM_MODEL", "gpt-oss-20b")
 LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "http://localhost:1234/v1")
 ADK_MODEL = os.environ.get("ADK_MODEL", "openai/gpt-oss-20b")
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
-GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.1-8b-instant")
 
 # Embedding
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "all-MiniLM-L6-v2")
@@ -49,10 +47,6 @@ MCP_SERVER_PORT = int(os.environ.get("MCP_SERVER_PORT", "8010"))
 
 # Agent Registry (MCP-based discovery, hosted on the unified finsight MCP server)
 AGENT_REGISTRY_URL = os.environ.get("AGENT_REGISTRY_URL", "http://localhost:8010")
-
-# Reddit
-REDDIT_CLIENT_ID = os.environ.get("REDDIT_CLIENT_ID", "")
-REDDIT_CLIENT_SECRET = os.environ.get("REDDIT_CLIENT_SECRET", "")
 
 # SEC
 SEC_API_BASE = os.environ.get("SEC_API_BASE", "https://www.sec.gov")

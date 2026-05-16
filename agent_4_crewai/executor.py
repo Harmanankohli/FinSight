@@ -1,10 +1,10 @@
 import logging
-import re
 from collections.abc import AsyncIterable
 
 from shared.base_agent import BaseAgent
 from shared.mcp_client import MCPClient, MCPServerConfig
 from shared.config import MCP_SERVER_URL, MCP_TIMEOUT
+from shared.ticker_utils import extract_ticker
 
 from .crew import SentimentIntelligenceCrew
 from .mcp_tools import MCPClientWrapper
@@ -70,8 +70,7 @@ class SentimentAgent(BaseAgent):
     async def stream(
         self, query: str, context_id: str, task_id: str
     ) -> AsyncIterable[dict]:
-        ticker_match = re.search(r"\b[A-Z]{2,5}\b", query)
-        ticker = ticker_match.group(0) if ticker_match else ""
+        ticker = extract_ticker(query)
 
         try:
             result = await self.analyze(ticker, query)
@@ -86,6 +85,7 @@ class SentimentAgent(BaseAgent):
             yield {
                 "response_type": "text",
                 "is_task_complete": True,
+                "is_error": True,
                 "require_user_input": False,
                 "content": f"Sentiment analysis failed: {e}",
             }

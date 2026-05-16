@@ -195,6 +195,57 @@ LM Studio provides faster inference, OpenAI-compatible API, simpler setup.
 | Agent 3 (LangGraph) | `langchain-ollama` | `langchain-openai` |
 | Agent 4 (CrewAI) | `CrewLLM(model="ollama/...")` | `CrewLLM(model="gpt-oss-20b")` |
 
+## MCP Server Design
+
+The unified finsight MCP server (`finsight_server.py`) hosts agent registry + data tools on port 8010.
+
+### Lazy Agent Registry
+
+**Problem**: `sentence-transformers` downloads the embedding model (~80MB) at import time. When ADK Web UI or MCP host imports the module, model download blocks startup and may fail in restricted environments.
+
+**Solution**: Defer model loading to first tool call via `_ensure_registry()` with `asyncio.Lock` double-checked locking. Model is loaded once in a thread executor, never at module level.
+
+### Windows Compatibility
+
+**Problem**: `import resource` (Unix RLIMIT) raises `ModuleNotFoundError` on Windows.
+
+**Solution**: Guard with `if sys.platform != "win32": import resource`. Sandbox `preexec_fn` is `None` on Windows (RLIMIT is Unix-only).
+
+### Thread-Safe SSE App Singleton
+
+**Problem**: FastMCP's `sse_app()` creates a new Starlette app instance each call. Under concurrent reload or multi-worker setups, this duplicates middleware, routes, and lifecycle hooks, causing `RuntimeError: Lifespan context has already been started`.
+
+**Solution**: `get_app()` with a `threading.Lock` double-checked singleton pattern.
+
+### Inline Imports for Localised Scope
+
+**Problem**: Top-level `import re` creates a module-wide reference. In sandbox contexts or when the module is reloaded, shadowed or patched `re` can break internal normalisation logic.
+
+**Solution**: `import re as _re` inside `_resolve_company_keywords` and `_normalise_for_match` — guarantees a fresh, unpatched reference.
+
+### SEC EDGAR Caching
+
+**Problem**: Every `get_company_filings` call re-fetched the company ticker → CIK mapping (~4MB JSON from SEC.gov), adding latency and hitting SEC rate limits.
+
+**Solution**: `_EdgarClient._get_ticker_map()` with `asyncio.Lock` lazy loading. CIK results cached in `_cik_cache`, ticker→title map cached in `_title_map`. Subsequent calls are dict lookups.
+
+### Sandbox Hardening
+
+**Problem**: The Python sandbox allowed potentially dangerous imports (`builtins`, `gc`, `threading`, `multiprocessing`, etc.) that could be used to escape the subprocess.
+
+**Solution**: Expanded `_RESTRICTED_IMPORTS` and `_RESTRICTED_ATTRS` blocklists. Subprocess runs with `-I` (isolated) and `-S` (no site) flags. RLIMIT applied on Unix.
+
+## Model Change: gpt-oss-20b → qwen
+
+The LLM used by all agents was switched from **`gpt-oss-20b`** to a **qwen** model:
+
+| Model | Speed | Notes |
+|---|---|---|
+| `gpt-oss-20b` (previous) | ~40-60s per call | Large, slower inference |
+| `qwen3-30b-a3b-2507` (current) | ~5-10s per call | Much faster, sufficient quality |
+
+**Key**: The qwen model reduced per-call latency by ~5-10x while maintaining adequate output quality for all agent tasks (routing, summarisation, analysis). This was the single biggest performance improvement in the pipeline.
+
 ## RAG Agent Auto-ingest
 
 The RAG agent fetches SEC filings via MCP on first query (`_ensure_ingested`). Was fragile with `json.loads()` on potentially empty MCP responses. Fixed with proper empty-check and `try/except json.JSONDecodeError`.

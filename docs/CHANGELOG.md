@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.2 — Model Update & MCP Server Hardening
+
+- **Model change**: All agents migrated from `gpt-oss-20b` to `qwen3-30b-a3b-2507` — ~5-10x faster inference per LLM call
+- **`.env` / `.env.example`**: Updated `LLM_MODEL` and `ADK_MODEL` defaults to qwen
+
+- **Windows compatibility**: `import resource` guarded by `sys.platform != "win32"` check
+- **Lazy agent registry**: Model download deferred to first tool call (`_ensure_registry`), no blocking at import time
+- **Thread-safe SSE app**: `get_app()` with double-checked locking (`_starlette_app` singleton)
+- **Inline imports**: `import re as _re` inside `_resolve_company_keywords` and `_normalise_for_match` for localised scope
+- **NaN/Inf serialisation**: `_serialise_value` handles NaN, infinity, numpy types, datetimes
+- **EDGAR caching**: In-memory CIK/ticker/title map with lock-protected lazy loading
+- **Expanded sandbox restricted imports**: `builtins`, `gc`, `threading`, `multiprocessing`, `signal`, `mmap`, `resource`, `pwd`, `grp`, `crypt` added to blocklist
+- **SEC earnings fallback**: `get_earnings_calendar` falls back to EDGAR XBRL when yfinance lacks data
+- **Retry logic**: EDGAR company filings URL fetch uses 3-attempt exponential backoff
+- **42 tests passing**
+
 ## v1.1 — A2A Protocol Alignment
 
 - **A2A discovery**: Replaced sync raw HTTP with async `A2ACardResolver` — standard `/.well-known/agent-card.json`, protobuf `AgentCard` types, backwards compatibility

@@ -8,7 +8,7 @@ Single unified MCP server (`mcp_servers/finsight_server.py`) hosting both agent 
 |---|---|---|
 | 8010 | `get_prices`, `get_financials`, `get_options_chain`, `get_company_filings`, `full_text_search`, `get_news_sentiment`, `get_earnings_calendar`, `execute_python` | `find_agent`, `resource://agent_cards/list`, `resource://agent_cards/{name}` |
 
-No API keys required (SEC uses public API, news uses RSS feeds).
+No API keys required (SEC uses public API, news uses RSS feeds). Windows-compatible — `import resource` guarded by platform check.
 
 ## Running
 
@@ -18,7 +18,7 @@ python -m uvicorn mcp_servers.finsight_server:get_app --host 0.0.0.0 --port 8010
 
 ## Agent Registry
 
-Agent cards loaded from `agent_cards/*.json`, embedded via `sentence-transformers`, exposed as:
+Agent cards loaded lazily from `agent_cards/*.json` on first tool call (no model download at import time), embedded via `sentence-transformers`, exposed as:
 
 | Tool / Resource | Description |
 |---|---|
@@ -58,13 +58,13 @@ RSS feeds: Yahoo Finance, CNBC, MarketWatch, Seeking Alpha. VADER sentiment scor
 
 ### Python Runner Tool
 
-Sandboxed execution with AST-based import restrictions.
+Sandboxed execution with AST-based import restrictions. Runs in a separate subprocess (`-I -S` isolation mode) with optional `RLIMIT_CPU`/`RLIMIT_AS`/`RLIMIT_NOFILE` on non-Windows platforms.
 
 | Tool | Parameters | Returns |
 |---|---|---|
 | `execute_python` | `code`, `timeout` (30) | success, stdout, stderr, result |
 
-**Restricted imports**: `os`, `subprocess`, `shutil`, `socket`, `ctypes`, `importlib`, `pickle`, `inspect`, `sys`
+**Restricted imports**: `os`, `subprocess`, `shutil`, `socket`, `ctypes`, `importlib`, `pickle`, `inspect`, `sys`, `builtins`, `gc`, `threading`, `multiprocessing`, `signal`, `mmap`, `resource`, `pwd`, `grp`, `crypt`
 
 **Available**: pandas, numpy, math, json, datetime, random, statistics, itertools, collections, functools, typing
 
