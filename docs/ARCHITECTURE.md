@@ -2,7 +2,7 @@
 
 ## Overview
 
-FinSight is a multi-agent investment research system where four specialized agents communicate via the **Google A2A Protocol**. The orchestrator (ADK `LlmAgent`) discovers sub-agents at startup, generates one ADK tool per agent, and delegates tasks via A2A. Each sub-agent processes tasks internally using its own framework and tools.
+FinSight is a multi-agent investment research system where four specialized agents communicate via the **Google A2A Protocol** (Agent-to-Agent). The orchestrator (ADK `LlmAgent`) discovers sub-agents at startup via `A2ACardResolver`, delegates tasks via a single `send_message` tool, and the LLM routes to each agent sequentially. Each sub-agent processes tasks internally using its own framework and tools.
 
 ## Communication Pattern
 
@@ -15,52 +15,47 @@ FinSight is a multi-agent investment research system where four specialized agen
 │  │ ─ name, skills (id + description), interfaces         │    │
 │  └──────────────────────────────────────────────────────┘    │
 │  ┌──────────────────────────────────────────────────────┐    │
-│  │ JSON-RPC over HTTP                                    │    │
-│  │ POST /a2a  {"method":"SendMessage","params":{...}}    │    │
+│  │ JSON-RPC over HTTP (streaming)                        │    │
+│  │ POST /a2a  events: task, status_update, artifact_upd  │    │
 │  │ Headers: A2A-Version: 1.0                             │    │
 │  └──────────────────────────────────────────────────────┘    │
 │  ┌──────────────────────────────────────────────────────┐    │
 │  │ Task Lifecycle                                        │    │
-│  │ SUBMITTED → WORKING → (INPUT_REQUIRED) → COMPLETED   │    │
+│  │ SUBMITTED → WORKING → (artifacts) → COMPLETED        │    │
 │  └──────────────────────────────────────────────────────┘    │
 └──────────────────────────────────────────────────────────────┘
 ```
 
 ## Orchestrator Architecture
 
-The orchestrator (`agent_1_adk/`) uses a `SequentialAgent` workflow with `ParallelAgent` for concurrent execution:
+The orchestrator (`agent_1_adk/`) uses a single `LlmAgent` with one `send_message` tool that delegates to sub-agents via A2A:
 
 ```
-Module load → SubAgentClient.discover_sync()
-  ├── httpx.Client.get(/.well-known/agent-card.json) per seed URL
-  ├── Retries failed URLs up to 3x with 5s delay
-  └── _agent_list populated → parallel sub-agents created
+Module load → SubAgentClient.discover()
+  ├── A2ACardResolver(httpx.AsyncClient, url) per seed URL
+  ├── Returns typed AgentCard (protobuf)
+  └── self.agents populated → instruction updated
 
-SequentialAgent workflow at runtime:
-  ├── ticker_extractor (LlmAgent)
-  │     → LLM extracts ticker from user query
-  ├── research_swarm (ParallelAgent) ← ALL CONCURRENT
-  │   ├── rag_agent (LlmAgent)
-  │   │   → _get_a2a_client("Financial RAG Agent")
-  │   │   → send_message("Research and analyze PLTR")
-  │   ├── quant_agent (LlmAgent)
-  │   │   → _get_a2a_client("Quant Analysis Agent")
-  │   │   → send_message("Research and analyze PLTR")
-  │   └── sentiment_agent (LlmAgent)
-  │       → _get_a2a_client("Sentiment Intelligence Agent")
-  │       → send_message("Research and analyze PLTR")
-  └── synthesizer (LlmAgent)
-        → reads all _result keys from session state
-        → produces BUY/HOLD/SELL recommendation
+A2A Request → FinSightAgentExecutor.execute()
+  → RUNNER.run_async(user_query)
+  → LlmAgent (no pre-fetch)
+    → LLM calls send_message(agent_name, task) for each agent
+    → SubAgentClient → A2A task to sub-agent
+    → SubAgentClient → A2A response (text or data parts)
+    → LLM calls next agent
+    → LLM synthesizes BUY/HOLD/SELL
+  → COMPLETED with synthesis
 ```
 
 **Key design choices:**
 
-- **Sync discovery** (not async): Avoids `asyncio.run()` conflicts with ADK Web UI's running event loop
-- **Lazy A2A clients**: Created on first call in the correct async event loop
-- **Parallel execution**: All sub-agents run concurrently via `ParallelAgent` — no sequential LLM tool dispatch
-- **Explicit timeouts**: Both `ClientConfig` and `ClientCallContext` propagate the 300s timeout
-- **Response extraction**: Handles both `text` and `data` (protobuf Struct via `MessageToDict`) responses
+- **A2ACardResolver for discovery** — standard A2A well-known endpoint, proper protobuf AgentCard types, compatibility with legacy formats
+- **ClientFactory for A2A communication** — matches the official A2A SDK pattern, supports multiple transport protocols
+- **Single `send_message` tool** — not one tool per agent. LLM passes agent name as a parameter, matching all A2A sample projects
+- **Streaming event handling** — correctly skips intermediate SUBMITTED/WORKING events, captures `artifact_update` (data/text) and terminal `status_update` events
+- **Background async discovery** — supports both ADK Web UI (running event loop) and CLI entrypoints
+- **WindowsSelectorEventLoopPolicy** — prevents ConnectionResetError noise on Windows
+- **Programmatic AgentCards** — built in code using protobuf `AgentCard(...)` instead of static JSON files
 
 ## GenericAgentExecutor Pattern
 
@@ -144,9 +139,8 @@ Timeouts configured via `.env` with `A2A_TIMEOUT=300.0`:
 
 | Layer | Timeout | Mechanism |
 |---|---|---|
-| Sync discovery | 10s per URL | httpx.Client timeout |
+| A2A discovery | 10s per URL | httpx.AsyncClient within A2ACardResolver |
 | A2A messaging | 300s | ClientConfig + httpx.AsyncClient |
-| Per-call timeout | 300s | ClientCallContext |
 | MCP tool calls | 30s | MCPClient default |
 
 ## Error Handling
@@ -154,7 +148,7 @@ Timeouts configured via `.env` with `A2A_TIMEOUT=300.0`:
 | Failure Mode | Strategy |
 |---|---|
 | Agent discovery failure | Retries 3x with 5s delay |
-| A2A timeout | Proceed with partial results |
+| A2A timeout | Caught, returns error JSON to LLM |
 | MCP connection failure | Exponential backoff (2^attempt), max 3 retries |
 | Agent unavailable | Skipped, LLM works with what it has |
 | Response parse failure | `json.JSONDecodeError` caught, text used as-is |

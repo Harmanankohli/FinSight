@@ -1,86 +1,104 @@
-import json
+import asyncio
 import logging
 import os
+import sys
+
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 from google.adk.agents import LlmAgent
+from google.adk.tools.tool_context import ToolContext
+from google.genai import types as genai_types
 
 from shared.config import ADK_MODEL, LLM_BASE_URL
-
-from .sub_agent_client import SubAgentClient
 
 os.environ.setdefault("OPENAI_API_BASE", LLM_BASE_URL)
 os.environ.setdefault("OPENAI_API_KEY", "lmstudio")
 
 logger = logging.getLogger(__name__)
 
-# ── Discovery at module level ─────────────────────────────────────
+from .sub_agent_client import SubAgentClient
 
 _client = SubAgentClient()
-_client.discover_sync()
-_agent_list = _client.list_agents()
 
-logger.info(
-    "Discovered %d agents: %s",
-    len(_agent_list),
-    [a["name"] for a in _agent_list],
-)
 
-# ── One ADK tool per discovered A2A remote agent ──────────────────
+async def send_message(
+    agent_name: str, task: str, tool_context: ToolContext
+) -> str:
+    """Delegate a task to a specialized remote investment agent.
 
-def _make_agent_tool(agent_name: str, description: str):
-    fn_name = agent_name.lower().replace(" ", "_").replace("-", "_")
+    Call this for EACH available agent to gather their analysis,
+    then synthesize all responses into a final recommendation.
 
-    async def tool_fn(ticker: str) -> str:
-        return await _client.send_message(
-            agent_name, f"Research and analyze {ticker}"
+    Args:
+        agent_name: The exact name of the agent (e.g. "Financial RAG Agent",
+            "Quant Analysis Agent", "Sentiment Intelligence Agent").
+        task: Full description of the analysis you want the agent to perform.
+            Include the ticker and specific metrics or data requested.
+
+    Returns:
+        The agent's analysis as text.
+    """
+    result = await _client.send_message(agent_name, task)
+    return result
+
+
+def _build_instruction() -> str:
+    agent_list = _client.list_agents()
+    skill_lines = (
+        "\n".join(
+            f"  - {a['name']}: {a['description']}"
+            for a in agent_list
         )
+        if agent_list
+        else "  (none discovered yet)"
+    )
+    return f"""\
+You are an investment research orchestrator. Your job is to gather analysis
+from specialized agents and produce a BUY/HOLD/SELL recommendation.
 
-    tool_fn.__name__ = fn_name
-    tool_fn.__qualname__ = fn_name
-    tool_fn.__doc__ = description
-    return tool_fn
+Available agents:
+{skill_lines}
 
-
-_tools = [
-    _make_agent_tool(a["name"], a["description"])
-    for a in _agent_list
-]
-
-_SKILL_LINES = "\n".join(
-    f"  - {a['name']}: {a['description']}"
-    for a in _agent_list
-) if _agent_list else "  (none discovered)"
-
-_INSTRUCTION = f"""\
-You are an investment research orchestrator.
-
-Available agent tools (call ALL of them in parallel for stock queries):
-{_SKILL_LINES}
-
-When the user asks about a stock (e.g. "NVDA", "msft", "AAPL"),
-call EVERY available tool with the ticker parameter **simultaneously**
-in a single response — do NOT wait for one tool to finish before
-calling the next. Each tool provides a different type of analysis
-and you need ALL their results.
-
-After all tools return, synthesize the results into a BUY/HOLD/SELL
-recommendation.
+When the user asks about a stock (e.g. "NVDA", "msft", "AAPL"):
+1. Call `send_message` for EACH available agent with a detailed task
+   describing what analysis you need. Call them all — you need all
+   perspectives.
+2. After all agents respond, synthesize their findings into a
+   BUY/HOLD/SELL recommendation with supporting evidence.
 
 For general chat or non-stock queries, respond conversationally.
 """
 
-from google.genai import types as genai_types
+
+async def discover_background() -> None:
+    await _client.discover()
+    agent_list = _client.list_agents()
+    logger.info(
+        "Discovered %d agents: %s",
+        len(agent_list),
+        [a["name"] for a in agent_list],
+    )
+    root_agent.instruction = _build_instruction()
+
 
 root_agent = LlmAgent(
     name="orchestrator",
     model=ADK_MODEL,
     description=(
         "Coordinates specialized investment agents into a comprehensive "
-        "Investment Brief"
+        "Investment Brief via A2A protocol"
     ),
-    instruction=_INSTRUCTION,
-    tools=_tools,
+    instruction=_build_instruction(),
+    tools=[send_message],
     generate_content_config=genai_types.GenerateContentConfig(
         temperature=0.0,
     ),
 )
+root_agent._sub_agent_client = _client
+
+try:
+    loop = asyncio.get_running_loop()
+    loop.create_task(discover_background())
+except RuntimeError:
+    asyncio.run(discover_background())

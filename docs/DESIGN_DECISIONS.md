@@ -13,130 +13,156 @@
 
 We use the official Google A2A SDK (`a2a-sdk>=1.0.0`) for inter-agent communication.
 
+### A2A API Reference vs Installed SDK
+
+The A2A SDK has evolved significantly. The official A2A samples (Google, GitHub) reference APIs that may not match the installed version:
+
+| Component | GitHub Samples | Installed SDK |
+|---|---|---|
+| Client | `A2AClient(httpx, card, url)` | `ClientFactory(config).create(card)` |
+| Card resolution | `A2ACardResolver(client, url)` | `A2ACardResolver(client, url)` (same) |
+| Well-known path | `/.well-known/agent.json` | `/.well-known/agent-card.json` |
+| Server app | `A2AStarletteApplication` | Starlette + `create_agent_card_routes` + `create_jsonrpc_routes` |
+| AgentCard type | Pydantic model | Protobuf message |
+
+This project targets the **installed SDK's** API (`a2a-sdk` from PyPI), not the GitHub sample code.
+
 ### Key lessons
 
 1. **messageId is required** on every A2A Message
 2. **agentInterface must match**: `ClientFactory` requires `supported_interfaces` with `protocol_binding="JSONRPC"`
 3. **Timeout propagation**: Both `ClientConfig` + `httpx.AsyncClient` AND `ClientCallContext` must be configured
-4. **Response format**: Sub-agents return `data` (structured) not `text` — use `MessageToDict` for extraction
+4. **Response format**: Sub-agents return `data` (structured) not `text` — extract via `get_data_parts()` from `a2a.helpers`
+5. **Streaming events**: The streaming `BaseClient.send_message()` yields `StreamResponse` events. Intermediate `SUBMITTED`/`WORKING` status updates must be skipped — only process `artifact_update` events and terminal `COMPLETED`/`FAILED` states
+6. **Data > text**: Sub-agents using `GenericAgentExecutor` emit `Part(data=Value(struct_value=s))` for structured responses. `get_stream_response_text()` misses these — use `get_data_parts()` on artifact parts directly
+
+### How our A2A pattern compares to reference projects
+
+| Aspect | Google Samples | bhancockio/agent2agent | theailanguage/a2a_samples | FinSight |
+|---|---|---|---|---|
+| Client creation | `ClientFactory` | `A2AClient(httpx, card, url)` | Custom `A2AClient` (httpx POST) | `ClientFactory` (SDK current) |
+| Streaming | Streaming (events) | Non-streaming (single response) | Non-streaming (single task) | Streaming with correct event routing |
+| Host tools | `send_message(name, msg)` | `send_message(name, task)` | `delegate_task(name, msg)` | `send_message(name, task)` |
+| list_agents tool | Some have it (unused) | No | Yes | Removed — agents in prompt |
+| Sub-agent response | Parts + artifacts | Parts from JSON | Task history text | Data parts then text then fallback |
+| Discovery background | `loop.create_task()` | `asyncio.run()` at module | Not async | Both paths (loop/run) |
 
 ## Orchestrator Evolution
 
 ### v1 — REST Gateway + Planner
-Raw Starlette REST API (`gateway.py`) with regex-based `planner.py`, custom `A2AClient`, and `report_generator.py`. Three overlapping orchestrator files (`gateway.py`, `orchestrator.py`, `agents/finsight_agent/agent.py`).
+Raw Starlette REST API (`gateway.py`) with regex-based `planner.py`, custom `A2AClient`, and `report_generator.py`. Three overlapping orchestrator files.
 
 **Problems**: Duplicated logic, no A2A-native protocol handling, manual HTTP endpoints.
 
 ### v2 — Dynamic Per-skill ADK Tools
 ADK `LlmAgent` with one tool per agent skill, generated dynamically at module import. MCP + seed URL discovery.
 
-**Problem**: Module-level `asyncio.run(create_agent())` fails with "asyncio.run() cannot be called from a running event loop" when ADK Web UI imports the module (the UI already has a running event loop).
+**Problem**: Module-level `asyncio.run(create_agent())` fails when ADK Web UI imports the module.
 
 ### v3 — Thread-based Async Initialization
-Wrapped `asyncio.run(create_agent())` in a thread to bypass the running event loop restriction.
+Wrapped `asyncio.run()` in a thread to bypass the running event loop restriction.
 
-**Problem**: httpx `RuntimeError: Event loop is closed` on subsequent requests. The httpx.AsyncClient was created in the thread's short-lived event loop, then used from the main loop. Connection cleanup tried to close connections using the already-dead thread loop.
+**Problem**: httpx `RuntimeError: Event loop is closed` — connections created in thread's loop, used from main loop.
 
-### v4 — Sync Discovery + Lazy Async A2A (current)
-Sync `httpx.Client` for startup discovery (no event loop needed). A2A clients created lazily via `create_client()` on first tool call, in the correct async event loop. Cached per agent for subsequent calls.
+### v4 — Sync Discovery + Lazy Async A2A
+Sync `httpx.Client` for startup discovery (no event loop needed). A2A clients lazily via `create_client()` on first tool call.
 
-## Problems Encountered During Streamlining
+**Problem**: Sync HTTP for discovery was non-standard, didn't use `A2ACardResolver`. Each sub-agent was one ADK tool — LLM couldn't call them in parallel anyway.
+
+### v5 — A2A Sample Pattern (current)
+Background async `A2ACardResolver` discovery (standard well-known endpoint). `ClientFactory` for transport. Single `send_message` tool (LLM routes by name). Correct streaming event handling. No pre-fetch.
+
+**Key insight**: Match the pattern of ALL reference projects — one `send_message` tool, LLM routes sequentially, no `list_remote_agents` (agents are in prompt already).
+
+## Problems Encountered
 
 ### 1. `asyncio.run()` and Running Event Loops
 
-**Problem**: `root_agent = asyncio.run(create_agent())` at module level fails when ADK Web UI imports the module. The UI already has a running asyncio event loop, and `asyncio.run()` cannot be called from within one.
+**Problem**: Module-level `asyncio.run()` fails when ADK Web UI imports the module (already has a running event loop).
 
-**Attempted solutions:**
-- Thread-based init → httpx event loop conflicts (see below)
-- `nest_asyncio` → adds dependency, doesn't fix the root cause
-
-**Final solution**: Sync `httpx.Client` for discovery at module level (no event loop needed). A2A messaging uses async but is deferred to first tool call via `_get_a2a_client()` with lazy `create_client()`.
+**Final solution**: Check for an existing loop first. If one is running, use `loop.create_task()` for background discovery. Otherwise, use `asyncio.run()`.
 
 ### 2. httpx Event Loop Conflicts from Threaded Init
 
-**Problem**: When `create_agent()` ran in a thread (to bypass the running event loop restriction), the `httpx.AsyncClient` was created in the thread's event loop. On subsequent tool calls from the main loop, httpx tried to close connections from the thread's loop, which was already destroyed → `RuntimeError: Event loop is closed`.
-
-**Root cause**: httpx's connection pool stores references to the event loop that created it. Using the client from a different loop causes cleanup failures.
-
-**Solution**: `httpx.AsyncClient` is never created in a thread or at module level. It's created lazily inside `_get_a2a_client()` via `create_client()`, which runs in the main async event loop.
+See v3 above. `httpx.AsyncClient` is never created in a thread or at module level.
 
 ### 3. httpx.Timeout Constructor Ambiguity
 
-**Problem**: `httpx.Timeout(read=300.0, connect=10.0)` — this fails because `httpx.Timeout` requires either a single value (applied to all timeout types) or all four parameters explicitly (`connect`, `read`, `write`, `pool`). Passing only two caused `httpx.Timeout must either include a default, or set all four parameters explicitly`.
-
-**Fix**: Use `httpx.Timeout(300.0)` (single value applies to all timeout types).
+`httpx.Timeout(read=300.0, connect=10.0)` fails — must pass all four or a single value. Use `httpx.Timeout(300.0)`.
 
 ### 4. Sub-agent Responses in `data` Format Not Extracted
 
-**Problem**: The orchestrator was calling sub-agents but receiving empty responses. Sub-agents use `GenericAgentExecutor` which creates artifacts with `Part(data=Value(struct_value=s))` for structured responses (`"response_type": "data"`). Our `_extract_text()` only checked `part.text`, missing `part.data`.
+**Problem**: `get_stream_response_text()` only returns text. Sub-agents return structured `data` parts. Our code got empty results.
 
-**Fix**: `_extract_text()` now checks `part.data` first, converting via `MessageToDict(part.data)` for protobuf Struct serialization, then falls back to `part.text`.
+**Fix**: Check `get_data_parts(artifact.parts)` first, then fall back to `get_artifact_text(artifact)`.
 
-### 5. Local LLMs Don't Support Parallel Function Calling
+### 5. Streaming Event Handling — Early Return on WORKING
 
-**Problem**: The orchestrator's instruction told the LLM to call all three agent tools simultaneously for stock queries. However, `gpt-oss-20b` (and most local models) do not support parallel function calling — they only emit one tool call per LLM turn. Each tool call required a separate LLM inference, adding ~20-40s latency per call and making the total query time 2-3 minutes.
+**Problem**: `get_stream_response_text()` extracts text from ANY event including `WORKING` status messages. The LLM got `"Running Financial RAG Agent..."` as the "result" and called `send_message` again in an infinite loop.
 
-**Attempted solutions:**
-- Instruction prompt emphasis ("call ALL tools simultaneously") — ignored by the model
-- `parallel_tool_calls=true` in `generate_content_config` — the model doesn't support the parameter
+**Fix**: Route events by type: skip `SUBMITTED`/`WORKING` status updates, only process `artifact_update` (data or text), terminal `status_update`, and terminal `task` events.
 
-**Final solution**: Restructured the orchestrator from a single `LlmAgent` with per-agent tools to a `SequentialAgent` workflow with a `ParallelAgent`. Instead of relying on the LLM to orchestrate tool calls, ADK's `ParallelAgent` fans out all sub-agents concurrently at the framework level. Each sub-agent is its own `LlmAgent` with exactly one tool, so no parallel function calling is needed from the LLM.
+### 6. Non-terminal Task Events Returned as Result
 
-### 6. MCP Resource URI Type Mismatch
+**Problem**: The first streaming event is `task { state: SUBMITTED }`. Without checking terminal state, this was returned as `{"id": "xxx", "state": 1}`, confusing the LLM.
 
-**Problem**: `'AnyUrl' object has no attribute 'startswith'` — the `mcp` library returns resource URIs as Pydantic `AnyUrl` objects, not plain strings. Calling `.startswith()` directly failed.
+**Fix**: Check `task.status.state not in _TERMINAL_STATES` before processing a task event.
 
-**Fix**: Convert to string first with `str(uri)` before calling string methods.
+### 7. Local LLMs Don't Support Parallel Function Calling
 
-### 6. ClientConfig Has No `timeout` Parameter
+**Problem**: The LLM instruction says "call ALL agents simultaneously" but no local or low-end model supports parallel tool calling.
 
-**Problem**: `ClientConfig(timeout=300, streaming=False)` failed with `unexpected keyword argument 'timeout'`. The A2A SDK's `ClientConfig` is a dataclass with fields: `streaming`, `polling`, `httpx_client`, `grpc_channel_factory`, `supported_protocol_bindings`, `use_client_preference`, `accepted_output_modes`, `push_notification_config`. No `timeout` field.
+**Final solution**: Use a single `send_message` tool. The LLM calls agents sequentially, which matches the pattern used by ALL reference A2A projects.
 
-**Fix**: Pass a pre-configured `httpx.AsyncClient(timeout=httpx.Timeout(300))` via `ClientConfig(httpx_client=http)`. Additionally pass `ClientCallContext(timeout=300)` for each `send_message()` call.
+### 8. MCP Resource URI Type Mismatch
 
-### 7. LLM Tool Name Hallucination
+`'AnyUrl' object has no attribute 'startswith'` — convert `AnyUrl` to string with `str(uri)`.
 
-**Problem**: Local models (llama3.2:3b, deepseek-r1:7b) generated wrong tool names when presented with multiple tools. Instead of calling `financial_rag_agent`, they called `investment_orchestrator` (the agent's own name) or generic `call_function`.
+### 9. ClientConfig Has No `timeout` Parameter
 
-**Root cause**: Small local models don't reliably adhere to OpenAI function-calling definitions, especially with multiple tools.
+Pass pre-configured `httpx.AsyncClient(timeout=httpx.Timeout(300))` via `ClientConfig(httpx_client=http)`.
 
-**Solutions tested:**
-- Different model providers (`ollama/` vs `openai/`) — `openai/` prefix worked better
-- Different models — only `qwen2.5:7b` was reliable
-- Single tool approach — user rejected, wanted per-agent tools
-- Instruction prompt clarity — helped but wasn't sufficient alone
+### 10. LLM Tool Name Hallucination
 
-**Final solution**: `qwen2.5:7b` via `openai/` prefix (OpenAI-compatible endpoint on Ollama). The `ollama/` prefix caused formatting issues with LiteLLM's Ollama provider. Direct API testing confirmed `qwen2.5:7b` correctly calls multiple tools with the OpenAI format.
+Small local models generated wrong tool names. Fixed by: single `send_message` tool (no name to get wrong).
 
-### 9. Agent Name Validation Error
+### 11. Agent Name Validation Error
 
-**Problem**: `LlmAgent(name="FinSight Orchestrator")` raised `Value error: Agent name must be a valid identifier` — spaces not allowed. Agent names must start with a letter/underscore and contain only letters, digits, and underscores.
+`LlmAgent(name="FinSight Orchestrator")` — spaces not allowed. Use `name="orchestrator"`.
 
-**Fix**: Changed to `name="orchestrator"`.
+### 12. Slow-Starting Sub-agents Not Discovered
 
-### 10. Slow-Starting Sub-agents Not Discovered
+`discover()` retries each URL 3 times with 5-second delay.
 
-**Problem**: When the ADK Web UI loaded the orchestrator module, some sub-agents (especially the RAG agent, which imports llama-index) weren't fully booted yet. Discovery found 0-2 agents instead of 3.
+### 13. MCP Registry Discovery Not Ported
 
-**Fix**: `discover_sync()` now retries each failed URL up to 3 times with a 5-second delay between attempts.
+MCP resource-based agent card discovery is pending future work.
 
-### 11. MCP Registry Discovery Not Ported to Sync Path
+### 14. Windows ConnectionResetError Noise
 
-**Problem**: The original async `A2ADiscoverer` had MCP registry discovery (`_discover_via_mcp_registry`), but the streamlined `SubAgentClient` only supported seed URLs. The sync discovery path didn't include MCP resource-based agent card discovery.
+`ConnectionResetError: [WinError 10054]` on Windows after successful A2A calls. Caused by ProactorEventLoop shutting down sockets already closed by the remote side.
 
-**Status**: Not yet ported. Currently only seed URL discovery works. MCP registry discovery is pending future work.
+**Fix**: `asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())` on Windows.
 
-## Sync Discovery (Why Not Async)
+### 15. AgentCard Protobuf — No `url` Field
 
-The ADK Web UI imports the agent module synchronously. Using `asyncio.run()` at module level fails with "cannot be called from a running event loop." Using threads created httpx event loop conflicts.
+**Problem**: The SDK's `AgentCard` is a protobuf message with no `url` field. Construction like `AgentCard(url="http://...")` raises `ValueError`.
 
-**Solution**: Sync `httpx.Client` for discovery (no event loop needed). Async `create_client()` for A2A calls (lazy, correct event loop).
+**Fix**: Set `supported_interfaces=[AgentInterface(protocol_binding="JSONRPC", url=...)]` instead.
+
+## Background Async Discovery
+
+The ADK Web UI imports the agent module synchronously. Using `asyncio.run()` at module level fails if a loop is already running. Using threads caused httpx event loop conflicts.
+
+**Solution**: Detect running loop at import time:
+- Loop running → `loop.create_task(discover_background())`
+- No loop → `asyncio.run(discover_background())`
 
 ## Timeout Strategy
 
-The default `create_client()` creates an httpx client with default timeouts (~5s). Sub-agent analyses (MCP data retrieval, ChromaDB queries, CrewAI execution) routinely exceed this.
+The default `create_client()` creates an httpx client with default timeouts (~5s). Sub-agent analyses routinely exceed this.
 
-**Fix**: Pass a pre-configured `httpx.AsyncClient(timeout=httpx.Timeout(300))` via `ClientConfig(httpx_client=http)`, plus `ClientCallContext(timeout=300)` for each send call.
+**Fix**: Pass a pre-configured `httpx.AsyncClient(timeout=httpx.Timeout(300))` via `ClientConfig(httpx_client=http)`.
 
 ## Model Selection (Ollama Era)
 
@@ -146,23 +172,17 @@ The default `create_client()` creates an httpx client with default timeouts (~5s
 | `llama3.2` (3B) | ❌ | Tool calling unreliable via both `ollama/` and `openai/` providers |
 | `deepseek-r1` (7B) | ❌ | Does not support tool/function calling |
 
-**Key**: The `openai/` prefix (LiteLLM OpenAI-compatible provider) sends tool definitions in the correct format to Ollama's API. The `ollama/` prefix (LiteLLM Ollama native provider) had formatting issues. Direct API test with `curl` confirmed this — the OpenAI format works, the Ollama native format doesn't.
+**Key**: The `openai/` prefix (LiteLLM OpenAI-compatible provider) sends tool definitions in the correct format.
 
 ## Migration from Ollama to LM Studio
 
 ### Problem: Ollama was too slow
 
-Ollama's inference speed for `qwen2.5:7b` was consistently slow — 20-40 seconds per LLM call on the test machine. With the orchestrator calling all three sub-agents sequentially (each making their own LLM calls), a single query took 2-3 minutes. The RAG agent was especially slow due to combining Ollama LLM calls with ChromaDB queries.
-
-Additionally, Ollama required a separate server process (`ollama serve`) with manual model pulling (`ollama pull qwen2.5:7b`), adding friction to setup.
+Ollama's inference speed for `qwen2.5:7b` was 20-40 seconds per LLM call. With the orchestrator calling all three sub-agents sequentially, a single query took 2-3 minutes.
 
 ### Solution: LM Studio
 
-LM Studio provides:
-- **Faster inference**: `gpt-oss-20b` runs 3-5x faster than Ollama's `qwen2.5:7b` on the same hardware due to better GPU utilization and quantization
-- **OpenAI-compatible API**: No special client libraries needed — works with `openai` Python SDK, `langchain-openai`, `llama-index-llms-openai-like`, and ADK's native OpenAI provider
-- **Simpler setup**: Single GUI app, no command-line model management
-- **Built-in server**: Exposes `http://localhost:1234/v1` automatically
+LM Studio provides faster inference, OpenAI-compatible API, simpler setup.
 
 ### Changes made
 
@@ -170,17 +190,11 @@ LM Studio provides:
 |---|---|---|
 | Base URL | `http://localhost:11434/v1` | `http://localhost:1234/v1` |
 | Model name | `qwen2.5:7b` | `gpt-oss-20b` |
-| Agent 1 (ADK) | `openai/qwen2.5:7b` (via LiteLLM) | `openai/gpt-oss-20b` (via LiteLLM) |
-| Agent 2 (LlamaIndex) | `llama-index-llms-ollama` + `Ollama` class | `llama-index-llms-openai-like` + `OpenAILike` class |
-| Agent 3 (LangGraph) | `langchain-ollama` + `ChatOllama` | `langchain-openai` + `ChatOpenAI` |
-| Agent 4 (CrewAI) | `CrewLLM(model="ollama/...")` | `CrewLLM(model="gpt-oss-20b", base_url=...)` |
-| ADK env var | `OPENAI_API_BASE` for LiteLLM | Same var, but ADK uses native OpenAI provider |
-| Dependencies | `llama-index-llms-ollama`, `langchain-ollama` | `llama-index-llms-openai-like`, `langchain-openai` |
-
-### Key lesson
-
-The `openai/` provider prefix in LiteLLM/ADK proved more reliable than native Ollama providers even when Ollama was the backend. Migrating to a true OpenAI-compatible server (LM Studio) means LiteLLM communicates with a standard OpenAI API instead of Ollama's custom interface — fewer protocol mismatches and tool-calling formatting issues. Every framework (LlamaIndex, LangChain, CrewAI, ADK) has stable OpenAI support, so the migration was clean across all agents.
+| Agent 1 (ADK) | `openai/qwen2.5:7b` | `openai/gpt-oss-20b` |
+| Agent 2 (LlamaIndex) | `llama-index-llms-ollama` | `llama-index-llms-openai-like` |
+| Agent 3 (LangGraph) | `langchain-ollama` | `langchain-openai` |
+| Agent 4 (CrewAI) | `CrewLLM(model="ollama/...")` | `CrewLLM(model="gpt-oss-20b")` |
 
 ## RAG Agent Auto-ingest
 
-The RAG agent fetches SEC filings via MCP on first query (`_ensure_ingested`). This was fragile with `json.loads()` on potentially empty MCP responses. Fixed with proper empty-check and `try/except json.JSONDecodeError`.
+The RAG agent fetches SEC filings via MCP on first query (`_ensure_ingested`). Was fragile with `json.loads()` on potentially empty MCP responses. Fixed with proper empty-check and `try/except json.JSONDecodeError`.

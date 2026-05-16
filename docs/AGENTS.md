@@ -3,37 +3,51 @@
 ## Agent 1: Orchestrator (ADK)
 
 | Property | Value |
-|---|---|---|
+|---|---|
 | Framework | Google ADK |
 | Port | 8001 |
-| Agent Card | `agent_1_adk/agent_card.json` *(only used when running as standalone A2A server via `main.py`)* |
-| Discovery | Seed URLs (`AGENT_SEED_URLS`) with 3x retry |
+| Agent Card | Built programmatically in `agent_1_adk/main.py` |
+| Discovery | `A2ACardResolver` via `/.well-known/agent-card.json`, async with 3x retry |
+| A2A Endpoint | `POST /a2a` (via Starlette + `create_jsonrpc_routes`) |
 
-The orchestrator uses a `SequentialAgent` workflow with a `ParallelAgent` for concurrent sub-agent execution:
+The orchestrator uses a single `LlmAgent` with one `send_message` tool. The LLM delegates tasks to sub-agents by name and synthesizes results:
 
-1. **Discovers agents at module load** via `SubAgentClient.discover_sync()` — sync HTTP with retries
-2. **Extracts ticker** via a dedicated `LlmAgent` that parses the user query
-3. **Runs all sub-agents in parallel** via `ParallelAgent` — each sub-agent is an `LlmAgent` with a single A2A tool, executed concurrently
-4. **Synthesizes results** — a final `LlmAgent` collects all outputs and produces a BUY/HOLD/SELL recommendation
+1. **Discovers agents in background** via `SubAgentClient.discover()` — async `A2ACardResolver` with retries
+2. **LLM routes sequentially** — LLM calls `send_message(agent_name, task)` for each sub-agent, one at a time
+3. **Synthesizes results** — LLM collects all outputs and produces a BUY/HOLD/SELL recommendation
 
-A2A clients for sub-agent communication are created lazily on first call via `create_client()`, ensuring correct event loop context.
+All A2A communication uses `ClientFactory` + `BaseClient` from the official `a2a-sdk`. Streaming events are handled correctly: intermediate SUBMITTED/WORKING events are skipped, only `artifact_update` events (data or text) and terminal `status_update` events are returned to the LLM.
 
 ### Architecture
 
 ```
-Module load → SubAgentClient.discover_sync()
-  ├── GET http://localhost:8002/.well-known/agent-card.json
-  ├── GET http://localhost:8003/.well-known/agent-card.json
-  └── GET http://localhost:8004/.well-known/agent-card.json
-  → _agent_list populated → parallel sub-agents created
+Module load → SubAgentClient.discover() in background task
+  ├── A2ACardResolver(http, "http://localhost:8002")
+  ├── A2ACardResolver(http, "http://localhost:8003")
+  └── A2ACardResolver(http, "http://localhost:8004")
+  → self.agents populated → instruction updated
 
-SequentialAgent:
-  ├── ticker_extractor (LlmAgent) → extracts ticker from query
-  ├── research_swarm (ParallelAgent) ← ALL CONCURRENT
-  │   ├── rag_agent      → A2A call to port 8002
-  │   ├── quant_agent    → A2A call to port 8003
-  │   └── sentiment_agent → A2A call to port 8004
-  └── synthesizer (LlmAgent) → BUY/HOLD/SELL recommendation
+FinSightAgentExecutor:
+  A2A Request → execute()
+  → RUNNER.run_async(user_query)
+  → ADK LlmAgent (tools: [send_message])
+    → LLM decides which agents to call
+    → send_message("Financial RAG Agent", "Analyze NVDA...")
+    → send_message("Quant Analysis Agent", "Compute metrics for NVDA...")
+    → send_message("Sentiment Intelligence Agent", "Sentiment for NVDA...")
+    → LLM synthesizes BUY/HOLD/SELL
+```
+
+### Streaming Event Flow
+
+When `send_message` is called, sub-agents respond with streaming events:
+
+```
+event 1: task { state: SUBMITTED }          ← skipped (non-terminal)
+event 2: status_update { WORKING, msg }     ← skipped (non-terminal)
+event 3: artifact_update { data: {...} }    ← returned (actual result)
+    OR status_update { COMPLETED, msg }     ← returned (terminal text)
+    OR task { state: COMPLETED, artifacts } ← returned (non-streaming fallback)
 ```
 
 ### Sample Request
@@ -68,7 +82,7 @@ Body:
 | Vector Store | ChromaDB (local, persisted to `./chroma_db`) |
 | Embeddings | HuggingFace `all-MiniLM-L6-v2` (local) |
 | Port | 8002 |
-| Agent Card | `agent_cards/rag_agent.json` |
+| Agent Card | Built programmatically in `agent_2_llamaindex/server.py` |
 | A2A Endpoint | `POST /a2a` |
 
 ### Skills
@@ -103,7 +117,7 @@ Request → DefaultRequestHandler → GenericAgentExecutor(RAGAgent)
 | LLM | LM Studio via `langchain-openai` (summary node only) |
 | Data Source | MCP (finsight-mcp `get_prices`, `get_financials`) |
 | Port | 8003 |
-| Agent Card | `agent_cards/quant_agent.json` |
+| Agent Card | Built programmatically in `agent_3_langgraph/server.py` |
 | A2A Endpoint | `POST /a2a` |
 
 ### Skills
@@ -136,7 +150,7 @@ Request → DefaultRequestHandler → GenericAgentExecutor(QuantAgent)
 | LLM | LM Studio via CrewLLM |
 | Data Collection | Parallel via `asyncio.gather` |
 | Port | 8004 |
-| Agent Card | `agent_cards/sentiment_agent.json` |
+| Agent Card | Built programmatically in `agent_4_crewai/server.py` |
 | A2A Endpoint | `POST /a2a` |
 
 ### Skills

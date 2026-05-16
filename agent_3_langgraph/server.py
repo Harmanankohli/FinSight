@@ -1,7 +1,10 @@
-import json
+import asyncio
 import logging
 import os
-from pathlib import Path
+import sys
+
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 import uvicorn
 from starlette.applications import Starlette
@@ -18,32 +21,31 @@ logger = logging.getLogger(__name__)
 
 host = os.environ.get("HOST", "localhost")
 
-card_path = Path(__file__).resolve().parent.parent / "agent_cards" / "quant_agent.json"
-with card_path.open("r") as f:
-    card_data = json.load(f)
-
-skills = [
-    AgentSkill(
-        id=s["id"],
-        name=s["name"],
-        description=s["description"],
-        input_modes=["text"],
-        output_modes=["data"],
-    )
-    for s in card_data.get("skills", [])
-]
-
 agent_card = AgentCard(
-    name=card_data["name"],
-    description=card_data["description"],
-    version=card_data.get("version", "1.0.0"),
-    default_input_modes=card_data.get("defaultInputModes", ["text/plain"]),
-    default_output_modes=card_data.get("defaultOutputModes", ["text/plain"]),
-    capabilities=AgentCapabilities(streaming=card_data.get("capabilities", {}).get("streaming", True)),
+    name="Quant Analysis Agent",
+    description="Computes quantitative risk metrics and financial analysis using yfinance and LangGraph",
+    version="1.0.0",
+    capabilities=AgentCapabilities(streaming=True),
     supported_interfaces=[
-        AgentInterface(protocol_binding="JSONRPC", url=f"http://{host}:8003/a2a")
+        AgentInterface(
+            protocol_binding="JSONRPC", url=f"http://{host}:8003/a2a"
+        )
     ],
-    skills=skills,
+    default_input_modes=["text", "text/plain"],
+    default_output_modes=["text", "application/json"],
+    skills=[
+        AgentSkill(
+            id="quant_analysis",
+            name="Quantitative Analysis",
+            description="Compute Sharpe ratio, Beta, VaR, volatility, DCF valuation, stress tests, and portfolio correlation",
+            tags=["quantitative", "risk metrics", "sharpe", "beta", "dcf", "valuation"],
+            examples=[
+                "Calculate risk metrics for NVDA",
+                "Run a DCF valuation on AAPL",
+                "Stress test MSFT under different market scenarios",
+            ],
+        )
+    ],
 )
 
 request_handler = DefaultRequestHandler(

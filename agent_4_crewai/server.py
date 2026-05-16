@@ -1,7 +1,10 @@
-import json
+import asyncio
 import logging
 import os
-from pathlib import Path
+import sys
+
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 import uvicorn
 from starlette.applications import Starlette
@@ -18,32 +21,30 @@ logger = logging.getLogger(__name__)
 
 host = os.environ.get("HOST", "localhost")
 
-card_path = Path(__file__).resolve().parent.parent / "agent_cards" / "sentiment_agent.json"
-with card_path.open("r") as f:
-    card_data = json.load(f)
-
-skills = [
-    AgentSkill(
-        id=s["id"],
-        name=s["name"],
-        description=s["description"],
-        input_modes=["text"],
-        output_modes=["data"],
-    )
-    for s in card_data.get("skills", [])
-]
-
 agent_card = AgentCard(
-    name=card_data["name"],
-    description=card_data["description"],
-    version=card_data.get("version", "1.0.0"),
-    default_input_modes=card_data.get("defaultInputModes", ["text/plain"]),
-    default_output_modes=card_data.get("defaultOutputModes", ["text/plain"]),
-    capabilities=AgentCapabilities(streaming=card_data.get("capabilities", {}).get("streaming", True)),
+    name="Sentiment Intelligence Agent",
+    description="Synthesizes financial news sentiment, SEC insider trading signals, and investment narratives using CrewAI",
+    version="1.0.0",
+    capabilities=AgentCapabilities(streaming=True),
     supported_interfaces=[
-        AgentInterface(protocol_binding="JSONRPC", url=f"http://{host}:8004/a2a")
+        AgentInterface(
+            protocol_binding="JSONRPC", url=f"http://{host}:8004/a2a"
+        )
     ],
-    skills=skills,
+    default_input_modes=["text", "text/plain"],
+    default_output_modes=["text", "application/json"],
+    skills=[
+        AgentSkill(
+            id="sentiment_analysis",
+            name="Sentiment & Narrative Intelligence",
+            description="Analyze financial news sentiment, SEC filings for insider context, produce investment narrative with key risks and catalysts",
+            tags=["sentiment", "news", "insider trading", "narrative", "market sentiment"],
+            examples=[
+                "What is the market sentiment for NVDA?",
+                "Analyze insider trading activity for AAPL",
+            ],
+        )
+    ],
 )
 
 request_handler = DefaultRequestHandler(

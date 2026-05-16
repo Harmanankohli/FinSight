@@ -1,7 +1,10 @@
-import json
+import asyncio
 import logging
 import os
-from pathlib import Path
+import sys
+
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 import uvicorn
 from starlette.applications import Starlette
@@ -18,32 +21,40 @@ logger = logging.getLogger(__name__)
 
 host = os.environ.get("HOST", "localhost")
 
-card_path = Path(__file__).resolve().parent.parent / "agent_cards" / "rag_agent.json"
-with card_path.open("r") as f:
-    card_data = json.load(f)
-
-skills = [
-    AgentSkill(
-        id=s["id"],
-        name=s["name"],
-        description=s["description"],
-        input_modes=["text"],
-        output_modes=["text", "data"] if "data" in s.get("id", "") else ["text"],
-    )
-    for s in card_data.get("skills", [])
-]
-
 agent_card = AgentCard(
-    name=card_data["name"],
-    description=card_data["description"],
-    version=card_data.get("version", "1.0.0"),
-    default_input_modes=card_data.get("defaultInputModes", ["text/plain"]),
-    default_output_modes=card_data.get("defaultOutputModes", ["text/plain"]),
-    capabilities=AgentCapabilities(streaming=card_data.get("capabilities", {}).get("streaming", True)),
+    name="Financial RAG Agent",
+    description="Retrieves and analyzes financial documents using RAG with ChromaDB and LM Studio",
+    version="1.0.0",
+    capabilities=AgentCapabilities(streaming=True),
     supported_interfaces=[
-        AgentInterface(protocol_binding="JSONRPC", url=f"http://{host}:8002/a2a")
+        AgentInterface(
+            protocol_binding="JSONRPC", url=f"http://{host}:8002/a2a"
+        )
     ],
-    skills=skills,
+    default_input_modes=["text", "text/plain"],
+    default_output_modes=["text", "application/json"],
+    skills=[
+        AgentSkill(
+            id="sec_filing_retrieval",
+            name="SEC Filing Retrieval",
+            description="Retrieves and analyzes SEC 10-K, 10-Q, 8-K filings with citation-backed insights",
+            tags=["sec", "edgar", "filings", "financial documents"],
+            examples=[
+                "What are the key risks mentioned in NVDA's latest 10-K?",
+                "Summarize AAPL's latest earnings report",
+            ],
+        ),
+        AgentSkill(
+            id="earnings_summary",
+            name="Earnings Summary",
+            description="Summarizes earnings call transcripts and forward guidance",
+            tags=["earnings", "transcripts", "guidance"],
+            examples=[
+                "Summarize MSFT's latest earnings call",
+                "What was NVDA's forward guidance?",
+            ],
+        ),
+    ],
 )
 
 request_handler = DefaultRequestHandler(

@@ -1,23 +1,30 @@
-import asyncio
-import json
 import logging
-from typing import Any
 
+from a2a.helpers import (
+    new_task_from_user_message,
+    new_text_message,
+)
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events.event_queue import EventQueue
 from a2a.server.tasks import TaskUpdater
-from a2a.types import Part, TaskState, TextPart
-from a2a.utils import new_agent_text_message, new_task
+from a2a.types import TaskState
 from google.adk.runners import Runner
 from google.genai import types
 
-from .agent import _agent_list, _client
+from .agent import root_agent as _root_agent
 
 logger = logging.getLogger(__name__)
 
 
 class FinSightAgentExecutor(AgentExecutor):
-    """Executor that pre-fetches sub-agent data before LLM inference."""
+    """Executor that runs the ADK orchestrator agent directly.
+
+    The ADK agent (LlmAgent) has two tools:
+    - ``list_remote_agents``: discover available sub-agents
+    - ``send_message``: delegate tasks to sub-agents via A2A
+
+    No pre-fetching. The LLM decides when to call tools.
+    """
 
     def __init__(self, runner: Runner) -> None:
         self._runner = runner
@@ -27,28 +34,25 @@ class FinSightAgentExecutor(AgentExecutor):
     ) -> None:
         context_id = context.context_id
         user_id = _resolve_user_id(context)
-        query = context.get_user_input()
-
-        # 1. Call all sub-agents in parallel before LLM
-        research = await self._collect_research(query)
-
-        # 2. Build enriched message with research data
-        enriched = f"User query: {query}\n\nResearch data:\n{research}"
-        content = types.Content(
-            role="user",
-            parts=[types.Part.from_text(text=enriched)],
-        )
 
         await self.ensure_session(user_id, context_id)
 
         task = context.current_task
         if not task:
-            task = new_task(context.message)
+            task = new_task_from_user_message(context.message)
             await event_queue.enqueue_event(task)
 
         updater = TaskUpdater(event_queue, task.id, task.context_id)
+        await updater.update_status(
+            TaskState.TASK_STATE_WORKING,
+            new_text_message("Processing your request..."),
+        )
 
-        # 3. Run LLM with enriched context
+        content = types.Content(
+            role="user",
+            parts=[types.Part.from_text(text=context.get_user_input())],
+        )
+
         try:
             async for event in self._runner.run_async(
                 user_id=user_id,
@@ -56,86 +60,35 @@ class FinSightAgentExecutor(AgentExecutor):
                 new_message=content,
             ):
                 if event.is_final_response():
-                    await self._process_response(
-                        event, updater, task
-                    )
+                    await self._process_response(event, updater, task)
         except Exception:
             logger.exception("Error during agent execution")
-            await self._update_task_status(
-                updater,
-                TaskState.failed,
-                "An exception occurred while performing the operation",
-                task,
+            await updater.update_status(
+                TaskState.TASK_STATE_FAILED,
+                new_text_message(
+                    "An exception occurred while performing the operation"
+                ),
             )
 
-    async def _collect_research(self, query: str) -> str:
-        names = [a["name"] for a in _agent_list]
-        if not names:
-            return "No agents available."
-
-        async def _call(name: str) -> tuple[str, Any]:
-            try:
-                text = await _client.send_message(
-                    name, query
-                )
-                return name, text
-            except Exception as e:
-                logger.warning(
-                    "Agent '%s' failed: %s", name, e
-                )
-                return name, json.dumps({"error": str(e)})
-
-        results = await asyncio.gather(
-            *[_call(n) for n in names]
-        )
-        lines = []
-        for name, text in results:
-            try:
-                parsed = json.loads(text)
-                lines.append(
-                    f"--- {name} ---\n{json.dumps(parsed, indent=2)}"
-                )
-            except (json.JSONDecodeError, TypeError):
-                lines.append(f"--- {name} ---\n{text}")
-        return "\n\n".join(lines)
-
     async def _process_response(
-        self, event, updater, task
+        self, event, updater: TaskUpdater, task
     ) -> None:
         if not (
             event.content
             and event.content.parts
             and event.content.parts[0].text
         ):
-            await self._update_task_status(
-                updater,
-                TaskState.failed,
-                "[No text content]",
-                task,
+            await updater.update_status(
+                TaskState.TASK_STATE_FAILED,
+                new_text_message("[No text content]"),
             )
             return
 
         text = event.content.parts[0].text.strip()
-        await self._update_task_status(
-            updater, TaskState.completed, text, task, final=True
-        )
-
-    async def _update_task_status(
-        self,
-        updater: TaskUpdater,
-        state: TaskState,
-        message_text: str,
-        task,
-        metadata: dict | None = None,
-        final: bool = False,
-    ) -> None:
         await updater.update_status(
-            state,
-            new_agent_text_message(
-                message_text, task.context_id, task.id
-            ),
-            metadata=metadata,
-            final=final,
+            TaskState.TASK_STATE_COMPLETED,
+            new_text_message(text, task.context_id, task.id),
+            final=True,
         )
 
     async def ensure_session(

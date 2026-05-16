@@ -1,13 +1,16 @@
 import pytest
 from unittest.mock import patch
 
+from a2a.types import AgentCard, AgentSkill
+
 from agent_1_adk.sub_agent_client import SubAgentClient
 
 
-def test_discover_sync_no_seed_urls():
+@pytest.mark.asyncio
+async def test_discover_empty_seed_urls():
     with patch("agent_1_adk.sub_agent_client.AGENT_SEED_URLS", ""):
         c = SubAgentClient()
-        c.discover_sync()
+        await c.discover()
         assert c.list_agents() == []
         assert c.list_skills() == []
 
@@ -15,31 +18,29 @@ def test_discover_sync_no_seed_urls():
 def test_register_multiple_agents():
     c = SubAgentClient()
     c._register(
-        {
-            "name": "RAG Agent",
-            "url": "http://localhost:8002",
-            "skills": [
-                {
-                    "id": "sec_filing_retrieval",
-                    "name": "SEC Filing Retrieval",
-                    "description": "Retrieves SEC filings",
-                }
+        AgentCard(
+            name="RAG Agent",
+            skills=[
+                AgentSkill(
+                    id="sec_filing_retrieval",
+                    name="SEC Filing Retrieval",
+                    description="Retrieves SEC filings",
+                )
             ],
-        },
+        ),
         "http://localhost:8002",
     )
     c._register(
-        {
-            "name": "Quant Agent",
-            "url": "http://localhost:8003",
-            "skills": [
-                {
-                    "id": "quant_analysis",
-                    "name": "Quant Analysis",
-                    "description": "Computes risk metrics",
-                }
+        AgentCard(
+            name="Quant Agent",
+            skills=[
+                AgentSkill(
+                    id="quant_analysis",
+                    name="Quant Analysis",
+                    description="Computes risk metrics",
+                )
             ],
-        },
+        ),
         "http://localhost:8003",
     )
 

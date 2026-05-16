@@ -8,10 +8,10 @@ An autonomous multi-agent system that answers investment queries like *"Should I
 ┌──────────────────────────────────────────────────────────────┐
 │              ADK Web UI (port 8001)                           │
 │           Orchestrator (ADK LlmAgent)                        │
-│         Discovers agents → generates tools → delegates       │
-│         Each A2A agent = one ADK tool                        │
+│         Discovers agents → LLM routes via send_message       │
+│         Single tool: send_message(name, task)                │
 └──────────────────────┬───────────────────────────────────────┘
-                       │ A2A Protocol (JSON-RPC over HTTP)
+                       │ A2A Protocol (JSON-RPC over HTTP, streaming)
                        ▼
 ┌──────────────────────────────────────────────────────────────┐
 │  Agent Pool                                                   │
@@ -37,28 +37,28 @@ An autonomous multi-agent system that answers investment queries like *"Should I
 
 | Agent | Framework | Port | Agent Card | Executor |
 |---|---|---|---|---|
-| **Orchestrator** | Google ADK | 8001 | `agent_1_adk/agent_card.json` | ADK `LlmAgent` with tool-per-agent |
-| **RAG** | LlamaIndex + ChromaDB | 8002 | `agent_cards/rag_agent.json` | `GenericAgentExecutor(RAGAgent)` |
-| **Quant** | LangGraph + MCP | 8003 | `agent_cards/quant_agent.json` | `GenericAgentExecutor(QuantAgent)` |
-| **Sentiment** | CrewAI | 8004 | `agent_cards/sentiment_agent.json` | `GenericAgentExecutor(SentimentAgent)` |
-| **MCP Server** | FastMCP | 8010 | `mcp_servers/finsight_server.py` | Registry + all data tools |
+| **Orchestrator** | Google ADK | 8001 | Built programmatically in `main.py` | ADK `LlmAgent` with `send_message` tool |
+| **RAG** | LlamaIndex + ChromaDB | 8002 | Built programmatically in `server.py` | `GenericAgentExecutor(RAGAgent)` |
+| **Quant** | LangGraph + MCP | 8003 | Built programmatically in `server.py` | `GenericAgentExecutor(QuantAgent)` |
+| **Sentiment** | CrewAI | 8004 | Built programmatically in `server.py` | `GenericAgentExecutor(SentimentAgent)` |
+| **MCP Server** | FastMCP | 8010 | Loaded from `agent_cards/*.json` | Registry + all data tools |
 
 ### How the Orchestrator Works
 
-The orchestrator uses ADK's `SequentialAgent` + `ParallelAgent` to run sub-agents concurrently:
+The orchestrator uses a single ADK `LlmAgent` with one `send_message` tool. The LLM routes requests to sub-agents by name:
 
-1. **Discovers agents at startup** — Fetches agent cards from seed URLs via sync HTTP (no asyncio conflicts with ADK Web UI). Retries up to 3 times for slow-starting agents.
-2. **Runs all sub-agents in parallel** — A `ParallelAgent` fans out A2A calls to all discovered agents simultaneously.
-3. **Synthesizes results** — A final `LlmAgent` collects all agent responses and produces a BUY/HOLD/SELL recommendation.
+1. **Discovers agents in background** — Uses `A2ACardResolver` (standard `/.well-known/agent-card.json` endpoint) to discover sub-agents at startup. Retries up to 3 times for slow-starting agents.
+2. **LLM routes to each agent** — The LLM calls `send_message(agent_name, task)` for each agent, one at a time, with a detailed task description. The agents' names and capabilities are listed in the system prompt.
+3. **Synthesizes results** — After all agents respond, the LLM produces a BUY/HOLD/SELL recommendation with supporting evidence.
 
-A2A clients for communicating with sub-agents are created lazily on first call, ensuring they use the correct async event loop.
+All A2A communication uses `A2ACardResolver` for standard discovery and `ClientFactory` for transport. Streaming events are handled correctly: intermediate `WORKING`/`SUBMITTED` events are skipped, only actual results (`artifact_update` data or terminal `COMPLETED` status) are returned.
 
 ## Tech Stack
 
 | Layer | Technology |
 |---|---|
-| Agent Communication | Google A2A Protocol (JSON-RPC over HTTP) |
-| Orchestrator | Google ADK `SequentialAgent` + `ParallelAgent` |
+| Agent Communication | Google A2A Protocol (JSON-RPC over HTTP, streaming) |
+| Orchestrator | Google ADK `LlmAgent` with `send_message` tool |
 | Sub-agent Executor | `GenericAgentExecutor` + `BaseAgent` pattern |
 | RAG | LlamaIndex + ChromaDB (local) + HuggingFace embeddings |
 | Quant | LangChain + LangGraph (state machine, MCP data) |
@@ -67,7 +67,7 @@ A2A clients for communicating with sub-agents are created lazily on first call, 
 | LLM | LM Studio (local, OpenAI-compatible) |
 | Embeddings | sentence-transformers (all-MiniLM-L6-v2, local) |
 | Vector Store | ChromaDB (local, persisted) |
-| Agent Discovery | Seed URLs (AGENT_SEED_URLS) + MCP registry |
+| Agent Discovery | `A2ACardResolver` via `AGENT_SEED_URLS` |
 
 ## Quick Start
 
@@ -105,6 +105,9 @@ run_adk_web.bat
 Or start each service manually in separate terminals:
 
 ```bash
+# Terminal 0: LM Studio inference server
+lms server start
+
 # Terminal 1: Unified MCP Server
 uv run python -m uvicorn mcp_servers.finsight_server:get_app --host 0.0.0.0 --port 8010
 
@@ -121,7 +124,7 @@ uv run python -m uvicorn agent_4_crewai.server:app --host 0.0.0.0 --port 8004
 .venv\Scripts\activate && adk web --port 8001 agents
 ```
 
-**Startup order:** MCP Server → RAG → Quant → Sentiment → ADK Web UI
+**Startup order:** LM Studio → MCP Server → RAG → Quant → Sentiment → ADK Web UI
 
 Open http://127.0.0.1:8001 in your browser.
 
@@ -135,16 +138,15 @@ stop_servers.bat
 
 ```
 ├── agent_1_adk/              # ADK Orchestrator
-│   ├── agent.py              # LlmAgent with dynamic per-agent tools
+│   ├── agent.py              # LlmAgent with single send_message tool
 │   ├── agent_executor.py     # FinSightAgentExecutor (A2A server runtime)
-│   ├── sub_agent_client.py   # SubAgentClient — sync discovery + lazy A2A client
-│   ├── main.py               # A2A server entrypoint (click + uvicorn)
-│   └── agent_card.json       # Orchestrator's A2A agent card
+│   ├── sub_agent_client.py   # SubAgentClient — async A2ACardResolver + ClientFactory
+│   └── main.py               # A2A server entrypoint (click + uvicorn)
 │
 ├── agent_2_llamaindex/       # RAG Agent
 │   ├── server.py             # GenericAgentExecutor(RAGAgent)
 │   ├── executor.py           # RAGAgent extends BaseAgent with stream()
-│   ├── index_manager.py      # ChromaDB multi-index + Ollama LLM
+│   ├── index_manager.py      # ChromaDB multi-index + LM Studio LLM
 │   ├── hybrid_search.py      # BM25 + dense + RRF + reranker
 │   └── document_ingestion.py # MCP ingestion pipeline
 │
@@ -152,7 +154,7 @@ stop_servers.bat
 │   ├── server.py             # GenericAgentExecutor(QuantAgent)
 │   ├── executor.py           # QuantAgent extends BaseAgent with stream()
 │   ├── graph.py              # LangGraph state machine
-│   ├── nodes.py              # Nodes + Ollama LLM summary
+│   ├── nodes.py              # Nodes + LM Studio LLM summary
 │   └── state.py              # QuantAnalysisState schema
 │
 ├── agent_4_crewai/           # Sentiment Agent
@@ -165,7 +167,7 @@ stop_servers.bat
 │   ├── __init__.py           # Re-exports root_agent from agent_1_adk.agent
 │   └── agent.py              # Thin re-export wrapper
 │
-├── agent_cards/              # Declarative A2A Agent Card JSON files
+├── agent_cards/              # Declarative A2A Agent Card JSON files (MCP registry)
 │   ├── orchestrator_agent.json
 │   ├── rag_agent.json
 │   ├── quant_agent.json
@@ -184,10 +186,11 @@ stop_servers.bat
 │   ├── mcp_client.py         # MCP client with dynamic tool discovery
 │   └── models.py             # Pydantic data models
 │
-├── tests/                    # Test suite (40 tests)
+├── tests/                    # Test suite (42 tests)
 │   ├── test_a2a_communication.py
 │   ├── test_agent_cards.py
 │   ├── test_base_agent.py
+│   ├── test_orchestrator_tools.py
 │   ├── test_planner.py
 │   ├── test_quant_graph.py
 │   ├── test_rag_pipeline.py
@@ -216,6 +219,8 @@ Key environment variables in `.env`:
 ```bash
 uv run pytest -v
 ```
+
+42 tests covering: A2A discovery, agent card validation, orchestrator tools, sub-agent executors, LangGraph state graphs, RAG pipelines, CrewAI integration, and workflow state machines.
 
 ## License
 
