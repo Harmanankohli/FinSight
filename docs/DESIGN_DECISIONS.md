@@ -318,3 +318,70 @@ The RAG agent fetches SEC filings via MCP on first query (`_ensure_ingested`). W
 **Problem**: Each agent parsed MCP tool responses differently (checking for `.content`, `.text`, dict vs list, etc.), leading to fragile error handling.
 
 **Solution**: Added `parse_mcp_result(result)` utility in `shared/mcp_client.py` that handles various MCP response formats consistently — returns parsed dict/list/string or `{"error": "..."}` on failure.
+
+## DCF Null from Negative Free Cash Flow
+
+### Problem
+
+`_get_fcf_from_financials()` returned the most recent period's FCF regardless of sign. For financial companies like JPM, the latest year's FCF was negative (large capital expenditures / investment purchases), causing the `latest_fcf <= 0` guard to return `{"dcf_valuation": None}` with no explanation.
+
+### Solution
+
+Changed `_get_fcf_from_financials()` to iterate through periods and return the **first positive FCF** instead of the first period's raw value. Added comprehensive failure logging:
+
+1. **No MCP client** — logs "no MCP client" 
+2. **Empty response** — logs "MCP returned empty response"
+3. **No cash flow data** — logs "no cash flow data available"
+4. **No positive FCF** — logs actual FCF values from both `Free Cash Flow` field and `Operating Cash Flow + Capital Expenditure` calculation
+5. **Missing shares outstanding** — logs the invalid value
+6. **Missing current price** — logs the invalid value
+
+All failures return a `dcf_error` string alongside `dcf_valuation: null`, which is surfaced in the agent response.
+
+## Ticker False Positives from Financial Acronyms
+
+### Problem
+
+Pattern 4 of `extract_ticker()` (`\b([A-Z]{3,5})\b`) matched any uppercase word of 3-5 characters, including common financial acronyms like "SEC", "EPS", "CEO", "NYSE", "NASDAQ". When a user asked "Analyze General Electric SEC filings", the first match was "SEC" instead of "General Electric".
+
+Validation rejected "SEC", but the fallback `_resolve_ticker()` passed the full noisy query "Analyze General Electric SEC filings for recent financial performance" to MCP's `resolve_company_ticker`. The SEC reverse index could not reliably match against all those noise words, and Yahoo Finance occasionally returned irrelevant tickers.
+
+### Solution
+
+**Step 1 — Financial stop-word blocklist**: Added `_FINANCIAL_STOP_WORDS` in `shared/ticker_utils.py` — a curated set of 30+ financial acronyms that are never valid stock tickers. Applied to both pattern 4 (3-5 letter) and pattern 5 (2 letter) regex results.
+
+```python
+_FINANCIAL_STOP_WORDS = frozenset({
+    "SEC", "EPS", "CEO", "CFO", "NYSE", "NASDAQ",
+    "INC", "LLC", "LTD", "CORP", "GAAP", "EBIT", "EBITDA",
+    ...
+})
+```
+
+**Step 2 — Query noise cleanup**: Added `clean_query_for_resolution()` that strips:
+- Common financial analysis words ("analyze", "filings", "financial", "performance", "sec", "edgar")
+- Generic English stop words ("the", "a", "for", "about", "this", "that")
+- Words from `_FINANCIAL_STOP_WORDS` (uppercase variants like "SEC", "INC")
+
+**Step 3 — Exclude ticker from resolution**: `_resolve_ticker(query, exclude_ticker="SEC")` strips the regex-extracted false positive from the query before calling MCP. So "Analyze General Electric SEC filings" → "General Electric" after cleanup.
+
+**Key properties**:
+- ✅ No false positives from financial jargon
+- ✅ Company name resolution receives clean input
+- ✅ Failed ticker is excluded from the resolution query
+- ✅ All three agents (RAG, Quant, Sentiment) apply the same cleanup
+- ✅ Backward compatible — all existing patterns still work
+
+## Date Hallucination
+
+### Problem
+
+All LLM prompts lacked temporal context. Since the model's training data cut off before 2026, it treated 2026 filing dates as "future-dated anomalies" and instructed users to wait for "Q1 2024 earnings" — two-year-old data.
+
+### Solution
+
+Added `Today's date: {date.today().isoformat()}` as the first line of every LLM prompt:
+- **Orchestrator system prompt** — so it includes the date when constructing sub-agent tasks
+- **RAG query prompts** — so the LlamaIndex LLM knows the reference date for financial data
+- **Quant summary prompt** — so the LangGraph summary LLM frames analysis in correct temporal context
+- **Sentiment crew tasks** — so CrewAI agents know the current date when analyzing news and filings
