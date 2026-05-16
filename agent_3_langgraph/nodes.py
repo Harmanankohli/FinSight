@@ -322,8 +322,18 @@ async def format_output_node(state: QuantAnalysisState) -> dict:
         reasoning_parts.append(f"Sharpe: {metrics.get('sharpe_ratio', 'N/A')}, Vol: {metrics.get('annual_volatility', 'N/A')}, Beta: {metrics.get('beta', 'N/A')}")
     if dcf:
         reasoning_parts.append(f"DCF intrinsic value: ${dcf.get('intrinsic_value', 'N/A')} (upside: {dcf.get('upside_pct', 'N/A')}%)")
+
+    stress_test_info = None
     if stress:
         reasoning_parts.append(f"Stress test CVaR: {stress.get('cvar_95', 'N/A')}")
+        stress_test_info = stress
+    elif vol <= 0.35:
+        stress_test_info = {
+            "note": f"Stress test skipped - volatility ({vol:.1%}) below 35% threshold",
+            "volatility": vol,
+            "threshold": 0.35,
+        }
+
     reasoning = " | ".join(reasoning_parts)
 
     return {
@@ -335,7 +345,7 @@ async def format_output_node(state: QuantAnalysisState) -> dict:
             "quant_signal": recommendation,
             "signals": signals,
         },
-        "stress_test_result": stress,
+        "stress_test_result": stress_test_info,
         "dcf_valuation": dcf,
         "correlation_matrix": corr,
     }
