@@ -2,21 +2,22 @@
 
 ## Summary
 
-**39/39 tests passing — 100%**
+**42/42 tests passing — 100%**
 
 ## Test Files
 
 | File | Tests | Area |
-|---|---|---|
+|---|---|---|---|
 | `test_a2a_communication.py` | 3 | SubAgentClient discovery, registration, unknown agent |
 | `test_agent_cards.py` | 6 | Declarative JSON agent card validation |
 | `test_base_agent.py` | 2 | BaseAgent abstract class and stream contract |
-| `test_planner.py` | 6 | SubAgentClient, agent tool generation, send_message |
-| `test_workflow.py` | 7 | WorkflowGraph nodes, edges, state transitions |
+| `test_orchestrator_tools.py` | 4 | Orchestrator `send_message` tool, sub-agent client presence |
+| `test_planner.py` | 5 | SubAgentClient, agent tool generation, send_message |
+| `test_workflow.py` | 8 | WorkflowGraph nodes, edges, state transitions |
 | `test_quant_graph.py` | 4 | LangGraph conditional branching, stress test/DCF routing |
-| `test_rag_pipeline.py` | 6 | Hybrid search (BM25 + dense), RRF merge, document ingestion |
+| `test_rag_pipeline.py` | 7 | Hybrid search (BM25 + dense), RRF merge, document ingestion |
 | `test_sentiment_crew.py` | 3 | MCP tool discovery, crew builder |
-| **Total** | **39** | |
+| **Total** | **42** | |
 
 ## Running Tests
 

@@ -22,33 +22,21 @@ An autonomous multi-agent system that answers investment queries like *"Should I
          ▼            ▼                ▼
 ┌──────────────────────────────────────────────────────────────┐
 │          Unified finsight-mcp Server (port 8010)              │
-│  ┌─────────────────┐  ┌──────────────────────────────────┐   │
-│  │ Agent Registry  │  │  Data Sources                    │   │
-│  │ find_agent()    │  │  get_prices, get_financials,     │   │
-│  │ resource://cards│  │  get_company_filings,            │   │
-│  └─────────────────┘  │  full_text_search,              │   │
-│                        │  get_news_sentiment,            │   │
-│                        │  execute_python, ...            │   │
-│                        └──────────────────────────────────┘   │
+│  ┌─────────────────┐  ┌─────────────────────────────────┐   │
+│  │ Agent Registry  │  │  Data Sources                 │   │
+│  │ find_agent()    │  │  get_prices, get_financials,  │   │
+│  │ resource://cards│  │  get_options_chain,           │   │
+│  └─────────────────┘  │  get_company_filings,         │   │
+│                        │  get_financial_filings,       │   │
+│                        │  get_filing_content,          │   │
+│                        │  validate_ticker,             │   │
+│                        │  resolve_company_ticker,      │   │
+│                        │  full_text_search,            │   │
+│                        │  get_news_sentiment,          │   │
+│                        │  get_earnings_calendar,       │   │
+│                        │  execute_python, ...          │   │
+│                        └─────────────────────────────────┘   │
 └──────────────────────────────────────────────────────────────┘
-```
-
-## Agents
-
-| Agent | Framework | Port | Agent Card | Executor |
-|---|---|---|---|---|
-| **Orchestrator** | Google ADK | 8001 | Built programmatically in `main.py` | ADK `LlmAgent` with `send_message` tool |
-| **RAG** | LlamaIndex + ChromaDB | 8002 | Built programmatically in `server.py` | `GenericAgentExecutor(RAGAgent)` |
-| **Quant** | LangGraph + MCP | 8003 | Built programmatically in `server.py` | `GenericAgentExecutor(QuantAgent)` |
-| **Sentiment** | CrewAI | 8004 | Built programmatically in `server.py` | `GenericAgentExecutor(SentimentAgent)` |
-| **MCP Server** | FastMCP | 8010 | Loaded from `agent_cards/*.json` | Registry + all data tools |
-
-### How the Orchestrator Works
-
-The orchestrator uses a single ADK `LlmAgent` with one `send_message` tool. The LLM routes requests to sub-agents by name:
-
-1. **Discovers agents in background** — Uses `A2ACardResolver` (standard `/.well-known/agent-card.json` endpoint) to discover sub-agents at startup. Retries up to 3 times for slow-starting agents.
-2. **LLM routes to each agent** — The LLM calls `send_message(agent_name, task)` for each agent, one at a time, with a detailed task description. The agents' names and capabilities are listed in the system prompt.
 3. **Synthesizes results** — After all agents respond, the LLM produces a BUY/HOLD/SELL recommendation with supporting evidence.
 
 All A2A communication uses `A2ACardResolver` for standard discovery and `ClientFactory` for transport. Streaming events are handled correctly: intermediate `WORKING`/`SUBMITTED` events are skipped, only actual results (`artifact_update` data or terminal `COMPLETED` status) are returned.
@@ -66,6 +54,7 @@ All A2A communication uses `A2ACardResolver` for standard discovery and `ClientF
 | MCP Server | FastMCP (agent registry + data tools) |
 | LLM | LM Studio (local, OpenAI-compatible) |
 | Embeddings | sentence-transformers (all-MiniLM-L6-v2, local) |
+| Reranker | cross-encoder/ms-marco-MiniLM-L-6-v2 |
 | Vector Store | ChromaDB (local, persisted) |
 | Agent Discovery | `A2ACardResolver` via `AGENT_SEED_URLS` |
 
@@ -180,6 +169,7 @@ stop_servers.bat
 ├── shared/                   # Shared libraries
 │   ├── base_agent.py         # BaseAgent abstract class
 │   ├── generic_executor.py   # GenericAgentExecutor
+│   ├── ticker_utils.py       # Ticker extraction & validation
 │   ├── workflow.py           # WorkflowGraph state machine
 │   ├── types.py              # Shared Pydantic models
 │   ├── config.py             # Centralized .env configuration
@@ -213,6 +203,18 @@ Key environment variables in `.env`:
 | `AGENT_SEED_URLS` | `http://localhost:8002,http://localhost:8003,http://localhost:8004` | A2A agent discovery URLs |
 | `A2A_TIMEOUT` | `300.0` | Timeout for A2A communication (seconds) |
 | `LLM_BASE_URL` | `http://localhost:1234/v1` | LM Studio OpenAI-compatible endpoint |
+
+## Documentation
+
+| Document | Description |
+|---|---|
+| `docs/ARCHITECTURE.md` | System architecture, communication patterns, agent internals |
+| `docs/AGENTS.md` | Detailed agent reference (skills, architecture, streaming flow) |
+| `docs/MCP_SERVERS.md` | MCP server tools, registry, client usage |
+| `docs/DESIGN_DECISIONS.md` | Evolution log: why each design choice was made |
+| `docs/DEMO.md` | End-to-end walkthrough with example queries |
+| `docs/CHANGELOG.md` | Version history |
+| `docs/TESTS.md` | Test coverage, patterns, running instructions |
 
 ## Testing
 

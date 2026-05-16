@@ -6,10 +6,10 @@ This walkthrough shows the full pipeline for the query *"Should I invest in NVDA
 
 ```
 User Query → ADK Web (8001) → ADK LlmAgent
-  → LLM calls all 3 agent tools in parallel:
-    → financial_rag_agent → RAG Agent (8002) → MCP (SEC EDGAR) → ChromaDB
-    → quant_analysis_agent → Quant Agent (8003) → MCP (prices + financials) → LangGraph
-    → sentiment_intelligence_agent → Sentiment Agent (8004) → MCP (News + SEC) → CrewAI
+  → LLM calls agents via single send_message tool (parallel with qwen):
+    → send_message("Financial RAG Agent", ...) → RAG Agent (8002) → MCP (SEC EDGAR) → ChromaDB
+    → send_message("Quant Analysis Agent", ...) → Quant Agent (8003) → MCP (prices + financials) → LangGraph
+    → send_message("Sentiment Intelligence Agent", ...) → Sentiment Agent (8004) → MCP (News + SEC) → CrewAI
   → LLM synthesizes all results → BUY/HOLD/SELL recommendation
 ```
 
@@ -25,7 +25,7 @@ This starts in order: MCP Server (8010) → RAG (8002) → Quant (8003) → Sent
 
 Open http://127.0.0.1:8001 and type: *"Should I invest in NVDA?"* or just **"NVDA"**.
 
-The ADK orchestrator discovers all 3 agents at startup and generates one ADK tool per agent. The LLM calls all tools in response to stock queries.
+The ADK orchestrator discovers all 3 agents at startup. The LLM uses a single `send_message` tool, routing to each agent by name. With qwen, agents are called in parallel; with other models, sequentially. The LLM collects all responses and synthesizes a final recommendation.
 
 ## Step 3: What Happens
 

@@ -125,16 +125,19 @@ Single unified MCP server (`mcp_servers/finsight_server.py`, port 8010) hosting 
 ┌──────────────────────────────────────────────────────┐
 │              finsight-mcp (port 8010)                 │
 │                                                       │
-│  Agent Registry         │  Data Sources               │
-│  ├── find_agent()       │  ├── get_prices()           │
-│  ├── resource://cards   │  ├── get_financials()       │
-│  └── resource://{name}  │  ├── get_options_chain()    │
-│                         │  ├── get_company_filings()  │
-│                         │  ├── get_filing_content()   │
-│                         │  ├── full_text_search()     │
-│                         │  ├── get_news_sentiment()   │
-│                         │  ├── get_earnings_calendar()│
-│                         │  └── execute_python()       │
+│  Agent Registry         │  Data Sources                    │
+│  ├── find_agent()       │  ├── get_prices()                │
+│  ├── resource://cards   │  ├── get_financials()            │
+│  └── resource://{name}  │  ├── get_options_chain()         │
+│                         │  ├── get_company_filings()       │
+│                         │  ├── get_financial_filings()     │
+│                         │  ├── get_filing_content()        │
+│                         │  ├── validate_ticker()           │
+│                         │  ├── resolve_company_ticker()    │
+│                         │  ├── full_text_search()          │
+│                         │  ├── get_news_sentiment()        │
+│                         │  ├── get_earnings_calendar()     │
+│                         │  └── execute_python()            │
 └──────────────────────────────────────────────────────┘
 ```
 
@@ -166,7 +169,7 @@ All agents use LM Studio (OpenAI-compatible local API):
 
 | Agent | Model | Provider |
 |---|---|---|
-| Orchestrator (ADK) | `gpt-oss-20b` | `openai/` prefix (LM Studio endpoint) |
-| RAG (LlamaIndex) | `gpt-oss-20b` | `llama-index-llms-openai-like` |
-| Quant (LangGraph) | `gpt-oss-20b` | `langchain-openai` |
-| Sentiment (CrewAI) | `gpt-oss-20b` | CrewLLM (OpenAI-compatible) |
+| Orchestrator (ADK) | `qwen/qwen3-30b-a3b-2507` | `openai/` prefix (LM Studio endpoint) |
+| RAG (LlamaIndex) | `qwen/qwen3-30b-a3b-2507` | `llama-index-llms-openai-like` |
+| Quant (LangGraph) | `qwen/qwen3-30b-a3b-2507` | `langchain-openai` |
+| Sentiment (CrewAI) | `qwen/qwen3-30b-a3b-2507` | CrewLLM (OpenAI-compatible) |

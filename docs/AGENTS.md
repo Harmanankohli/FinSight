@@ -13,7 +13,7 @@
 The orchestrator uses a single `LlmAgent` with one `send_message` tool. The LLM delegates tasks to sub-agents by name and synthesizes results:
 
 1. **Discovers agents in background** via `SubAgentClient.discover()` — async `A2ACardResolver` with retries
-2. **LLM routes sequentially** — LLM calls `send_message(agent_name, task)` for each sub-agent, one at a time
+2. **LLM routes to agents** — LLM calls `send_message(agent_name, task)` for each sub-agent. Parallel with qwen (supports parallel tool calls); sequential with other models.
 3. **Synthesizes results** — LLM collects all outputs and produces a BUY/HOLD/SELL recommendation
 
 All A2A communication uses `ClientFactory` + `BaseClient` from the official `a2a-sdk`. Streaming events are handled correctly: intermediate SUBMITTED/WORKING events are skipped, only `artifact_update` events (data or text) and terminal `status_update` events are returned to the LLM.
@@ -31,7 +31,7 @@ FinSightAgentExecutor:
   A2A Request → execute()
   → RUNNER.run_async(user_query)
   → ADK LlmAgent (tools: [send_message])
-    → LLM decides which agents to call
+    → LLM decides which agents to call (parallel with qwen)
     → send_message("Financial RAG Agent", "Analyze NVDA...")
     → send_message("Quant Analysis Agent", "Compute metrics for NVDA...")
     → send_message("Sentiment Intelligence Agent", "Sentiment for NVDA...")
