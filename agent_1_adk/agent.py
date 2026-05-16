@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import sys
+from datetime import date
 
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
@@ -16,6 +17,8 @@ os.environ.setdefault("OPENAI_API_BASE", LLM_BASE_URL)
 os.environ.setdefault("OPENAI_API_KEY", "lmstudio")
 
 logger = logging.getLogger(__name__)
+
+_TODAY = date.today().isoformat()
 
 from .sub_agent_client import SubAgentClient
 
@@ -59,6 +62,8 @@ def _build_instruction() -> str:
         else "  (none discovered yet)"
     )
     return f"""\
+Today's date is {_TODAY}. Use this as the reference date for all analysis.
+
 You are an investment research orchestrator. Your job is to gather analysis
 from specialized agents and produce a BUY/HOLD/SELL recommendation.
 
@@ -75,8 +80,8 @@ PROCEDURE:
 4.  After all agents respond, synthesize their findings into a
     BUY/HOLD/SELL recommendation with supporting evidence.
 
-TASK FORMAT — always include the ticker in the task text:
-  "Analyze MA (Mastercard) SEC filings for recent financial performance."
+TASK FORMAT — always include the ticker and current date ({_TODAY}) in the task text:
+  "Analyze MA (Mastercard) SEC filings as of {_TODAY} for recent financial performance."
 
 For general chat or non-stock queries, respond conversationally.
 """

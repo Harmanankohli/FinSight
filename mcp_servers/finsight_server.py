@@ -273,7 +273,7 @@ class _EdgarClient:
             async with self._client_lock:
                 if self._client is None:
                     self._client = httpx.AsyncClient(
-                        headers=_SEC_HEADERS, timeout=30.0
+                        headers=_SEC_HEADERS, timeout=30.0, follow_redirects=True
                     )
         return self._client
 
@@ -354,6 +354,7 @@ class _EdgarClient:
 
         _INDEX_ONLY_FORMS = frozenset({"3", "4", "5", "3/A", "4/A", "5/A"})
 
+        cik_short = str(int(cik))
         result = []
         for i in range(n):
             if form_types and forms[i] not in form_types:
@@ -367,17 +368,17 @@ class _EdgarClient:
             if forms[i] in _INDEX_ONLY_FORMS or "/" in docs[i]:
                 edgar_url = (
                     f"https://www.sec.gov/Archives/edgar/data/"
-                    f"{cik}/{acc_clean}/{acc_nums[i]}-index.htm"
+                    f"{cik_short}/{acc_clean}/{acc_nums[i]}-index.htm"
                 )
             else:
                 edgar_url = (
                     f"https://www.sec.gov/Archives/edgar/data/"
-                    f"{cik}/{acc_clean}/{safe_doc}"
+                    f"{cik_short}/{acc_clean}/{safe_doc}"
                 )
 
             raw_url = (
                 f"https://www.sec.gov/Archives/edgar/data/"
-                f"{cik}/{acc_clean}/{safe_doc}"
+                f"{cik_short}/{acc_clean}/{safe_doc}"
             )
 
             result.append({
@@ -385,7 +386,7 @@ class _EdgarClient:
                 "filing_date": dates[i],
                 "description": docs[i],
                 "edgar_url": raw_url,
-                "ix_url": f"https://www.sec.gov/ix?doc=/Archives/edgar/data/{cik}/{acc_clean}/{safe_doc}",
+                "ix_url": f"https://www.sec.gov/ix?doc=/Archives/edgar/data/{cik_short}/{acc_clean}/{safe_doc}",
             })
         return {"ticker": ticker, "cik": cik, "filings": result}
 
@@ -442,16 +443,15 @@ class _EdgarClient:
                 if "json" in content_type.lower():
                     text = json.dumps(resp.json(), indent=2)
                 elif "xml" in content_type.lower() or url.endswith((".xml", ".xsd")):
-                    soup = BeautifulSoup(resp.text, "lxml-xml")
+                    try:
+                        soup = BeautifulSoup(resp.text, "lxml-xml")
+                    except Exception:
+                        soup = BeautifulSoup(resp.text, "html.parser")
                     for tag in soup.find_all(["script", "style", "xbrldocument"]):
                         tag.decompose()
                     text = soup.get_text(separator=" ", strip=True)
                 else:
-                    html = resp.text
-                    if "XBRL Viewer" in html or "enable JavaScript" in html:
-                        logger.info("Skipping IXBRL viewer page: %s", url)
-                        continue
-                    soup = BeautifulSoup(html, "html.parser")
+                    soup = BeautifulSoup(resp.text, "html.parser")
                     for script in soup(["script", "style"]):
                         script.decompose()
                     for tag in soup.find_all(["style", "noscript"]):
@@ -754,7 +754,7 @@ _RSS_FEEDS: dict[str, str] = {
         "https://search.cnbc.com/rs/search/combinedcms/view.xml"
         "?partnerId=wrss01&id=100003114"
     ),
-    "marketwatch": "https://feeds.marketwatch.com/marketwatch/topstories",
+    "marketwatch": "https://feeds.content.dowjones.io/public/rss/mw_topstories",
 }
 
 

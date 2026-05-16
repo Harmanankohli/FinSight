@@ -4,7 +4,7 @@ from collections.abc import AsyncIterable
 from shared.base_agent import BaseAgent
 from shared.mcp_client import MCPClient, MCPServerConfig
 from shared.config import MCP_SERVER_URL, MCP_TIMEOUT
-from shared.ticker_utils import extract_ticker, is_valid_ticker_format
+from shared.ticker_utils import clean_query_for_resolution, extract_ticker, is_valid_ticker_format
 
 from .graph import QuantAnalysisGraph
 
@@ -57,14 +57,19 @@ class QuantAgent(BaseAgent):
             logger.warning("Ticker validation via MCP failed, proceeding with regex guess: %s", e)
             return True, ticker, ""
 
-    async def _resolve_ticker(self, query: str) -> tuple[str, str]:
+    async def _resolve_ticker(self, query: str, exclude_ticker: str = "") -> tuple[str, str]:
+        cleaned = clean_query_for_resolution(query)
+        if exclude_ticker:
+            cleaned = cleaned.replace(exclude_ticker, "").strip()
+        if not cleaned:
+            cleaned = query
         try:
             await self._ensure_connected()
         except Exception as e:
             logger.warning("MCP connect failed during ticker resolution: %s", e)
             return "", ""
         try:
-            result = await self._mcp.call_tool_by_name("resolve_company_ticker", {"text": query})
+            result = await self._mcp.call_tool_by_name("resolve_company_ticker", {"text": cleaned})
             if hasattr(result, "content"):
                 for item in result.content:
                     try:
@@ -101,7 +106,7 @@ class QuantAgent(BaseAgent):
 
         valid, validated_ticker, company = await self._validate_ticker(ticker)
         if not valid and not resolved:
-            ticker, _ = await self._resolve_ticker(query)
+            ticker, _ = await self._resolve_ticker(query, exclude_ticker=ticker)
             if ticker:
                 valid, validated_ticker, company = await self._validate_ticker(ticker)
 

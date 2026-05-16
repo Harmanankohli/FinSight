@@ -1,5 +1,6 @@
 import json
 import logging
+from datetime import date
 from typing import Any
 
 from crewai import Agent, Crew, Process, Task
@@ -57,8 +58,10 @@ class SentimentIntelligenceCrew:
             **_agent_defaults,
         )
 
+        today = date.today().isoformat()
         analysis_task = Task(
             description=(
+                f"Today's date: {today}. "
                 f"Analyze the following data for {ticker} and extract:\n"
                 f"1. Sentiment signal (bullish/bearish/neutral)\n"
                 f"2. Key risks and catalysts\n"
@@ -71,6 +74,7 @@ class SentimentIntelligenceCrew:
 
         synthesis_task = Task(
             description=(
+                f"Today's date: {today}. "
                 f"Synthesize a 2-3 paragraph investment narrative for {ticker} "
                 f"with overall sentiment signal and confidence score."
             ),

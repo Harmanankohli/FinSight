@@ -1,4 +1,5 @@
 import logging
+from datetime import date
 from typing import Any
 
 from llama_index.core import (
@@ -114,12 +115,15 @@ class FinancialIndexManager:
             ).aquery,
         ]):
             try:
+                today = date.today().isoformat()
                 if attempt == 0:
                     response = await engine(
+                        f"Today's date: {today}. "
                         f"Query: {query_text}\nTicker: {ticker}\nAnswer with specific data and cite sources."
                     )
                 else:
                     response = await engine(
+                        f"Today's date: {today}. "
                         f"Research {ticker}: {query_text}\nProvide specific data with citations."
                     )
                 from llama_index.core.response import Response
@@ -163,8 +167,9 @@ class FinancialIndexManager:
         )
         index = self._get_or_create_index("sec_filings")
         engine = index.as_query_engine(similarity_top_k=5, filters=filters)
+        today = date.today().isoformat()
         response = await engine.aquery(
-            f"For {ticker}: {query_text}\nCite specific filing sections."
+            f"Today's date: {today}.\nFor {ticker}: {query_text}\nCite specific filing sections."
         )
         sources = [n.node.metadata.get("file_name", "unknown") for n in response.source_nodes]
         scores = [round(n.score, 3) for n in response.source_nodes]

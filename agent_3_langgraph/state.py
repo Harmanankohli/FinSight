@@ -16,6 +16,7 @@ class QuantAnalysisState(TypedDict):
     metrics: dict
     stress_test_result: dict | None
     dcf_valuation: dict | None
+    dcf_error: str | None
     correlation_matrix: dict
     recommendation: str
     reasoning: str

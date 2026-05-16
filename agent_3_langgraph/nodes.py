@@ -1,6 +1,6 @@
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import numpy as np
 import pandas as pd
@@ -163,12 +163,16 @@ async def stress_test_node(state: QuantAnalysisState) -> dict:
 def _get_fcf_from_financials(financials_dict: dict) -> float | None:
     for period_key, metrics in financials_dict.items():
         if "Free Cash Flow" in metrics:
-            return float(metrics["Free Cash Flow"])
+            fcf = float(metrics["Free Cash Flow"])
+            if fcf > 0:
+                return fcf
     for period_key, metrics in financials_dict.items():
         op = metrics.get("Operating Cash Flow")
         capex = metrics.get("Capital Expenditure")
         if op is not None and capex is not None:
-            return float(op) + float(capex)
+            fcf = float(op) + float(capex)
+            if fcf > 0:
+                return fcf
     return None
 
 
@@ -176,7 +180,8 @@ async def dcf_valuation_node(state: QuantAnalysisState) -> dict:
     ticker = state["ticker"]
     mcp = state.get("mcp_client")
     if not mcp:
-        return {"dcf_valuation": None}
+        logger.warning("DCF skipped for %s: no MCP client", ticker)
+        return {"dcf_valuation": None, "dcf_error": "No MCP client available"}
 
     try:
         result = await mcp.call_tool_by_name("get_financials", {"ticker": ticker})
@@ -184,16 +189,34 @@ async def dcf_valuation_node(state: QuantAnalysisState) -> dict:
         if hasattr(result, "content") and result.content:
             raw = result.content[0].text if hasattr(result.content[0], "text") else str(result.content[0])
         if not raw:
-            return {"dcf_valuation": None}
+            logger.warning("DCF skipped for %s: MCP returned empty response", ticker)
+            return {"dcf_valuation": None, "dcf_error": "MCP returned empty response"}
         data = json.loads(raw)
         info = data.get("info", {})
         cash_flow_data = data.get("cash_flow", {})
         if not cash_flow_data:
-            return {"dcf_valuation": None}
+            logger.warning("DCF skipped for %s: no cash flow data available", ticker)
+            return {"dcf_valuation": None, "dcf_error": "No cash flow data available"}
 
         latest_fcf = _get_fcf_from_financials(cash_flow_data)
         if latest_fcf is None or latest_fcf <= 0:
-            return {"dcf_valuation": None}
+            fcf_values = [float(m.get("Free Cash Flow", 0)) for m in cash_flow_data.values() if "Free Cash Flow" in m]
+            op_values = [float(m.get("Operating Cash Flow", 0)) + float(m.get("Capital Expenditure", 0)) for m in cash_flow_data.values()]
+            logger.warning(
+                "DCF skipped for %s: no positive FCF found. FCF from FCF field: %s, FCF from OCF-CAPEX: %s",
+                ticker, fcf_values, op_values
+            )
+            return {"dcf_valuation": None, "dcf_error": f"No positive FCF found. FCF values: {fcf_values}, OCF-CAPEX: {op_values}"}
+
+        shares_outstanding = info.get("sharesOutstanding", 0)
+        if not shares_outstanding or shares_outstanding <= 0:
+            logger.warning("DCF skipped for %s: missing or invalid shares outstanding (%s)", ticker, shares_outstanding)
+            return {"dcf_valuation": None, "dcf_error": f"Missing shares outstanding ({shares_outstanding})"}
+
+        current_price = info.get("currentPrice") or info.get("regularMarketPrice", 0)
+        if not current_price or current_price <= 0:
+            logger.warning("DCF skipped for %s: missing or invalid current price (%s)", ticker, current_price)
+            return {"dcf_valuation": None, "dcf_error": f"Missing current price ({current_price})"}
 
         growth_rate = 0.08
         terminal_growth = 0.025
@@ -211,11 +234,13 @@ async def dcf_valuation_node(state: QuantAnalysisState) -> dict:
         pv_terminal = terminal_value / (1 + wacc) ** num_years
         enterprise_value = pv_fcf + pv_terminal
 
-        shares_outstanding = info.get("sharesOutstanding", 0)
         intrinsic_value = enterprise_value / shares_outstanding if shares_outstanding and shares_outstanding > 0 else 0
-
-        current_price = info.get("currentPrice") or info.get("regularMarketPrice", 0)
         upside = (intrinsic_value - current_price) / current_price if current_price and intrinsic_value > 0 else 0
+
+        logger.info(
+            "DCF calculated for %s: FCF=%s, EV=%s, shares=%s, intrinsic=%s, current=%s, upside=%s%%",
+            ticker, latest_fcf, enterprise_value, shares_outstanding, intrinsic_value, current_price, upside * 100
+        )
 
         return {
             "dcf_valuation": {
@@ -226,11 +251,12 @@ async def dcf_valuation_node(state: QuantAnalysisState) -> dict:
                 "growth_rate": growth_rate,
                 "terminal_growth": terminal_growth,
                 "enterprise_value": round(enterprise_value, 2),
+                "fcf_used": latest_fcf,
             }
         }
     except Exception as e:
         logger.warning("DCF failed for %s: %s", ticker, e)
-        return {"dcf_valuation": None}
+        return {"dcf_valuation": None, "dcf_error": str(e)}
 
 
 async def correlation_node(state: QuantAnalysisState) -> dict:
@@ -362,7 +388,9 @@ async def llm_summary_node(state: QuantAnalysisState) -> dict:
     rec = state.get("recommendation", "HOLD")
     reasoning = state.get("reasoning", "")
 
+    today = date.today().isoformat()
     prompt = (
+        f"Today's date: {today}. "
         f"You are a financial analyst. Summarize the following quantitative analysis for {ticker} "
         f"in 2-3 sentences for an investor.\n\n"
         f"Recommendation: {rec}\n"
