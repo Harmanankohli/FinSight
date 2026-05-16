@@ -187,11 +187,11 @@ async def dcf_valuation_node(state: QuantAnalysisState) -> dict:
             return {"dcf_valuation": None}
         data = json.loads(raw)
         info = data.get("info", {})
-        financials = data.get("income_statement", {})
-        if not financials:
+        cash_flow_data = data.get("cash_flow", {})
+        if not cash_flow_data:
             return {"dcf_valuation": None}
 
-        latest_fcf = _get_fcf_from_financials(financials)
+        latest_fcf = _get_fcf_from_financials(cash_flow_data)
         if latest_fcf is None or latest_fcf <= 0:
             return {"dcf_valuation": None}
 

@@ -34,7 +34,11 @@ class DocumentIngestionPipeline:
         description = filing.get("description", "")
         url = filing.get("edgar_url", "")
         date = filing.get("filing_date", "")
-        text = f"SEC Filing {form} for {ticker}: {description}\nSource: {url}"
+        content = filing.get("content", "")
+        if content and len(content) > 50:
+            text = f"SEC Filing {form} for {ticker} filed {date}\n\nDescription: {description}\n\nContent:\n{content[:20000]}"
+        else:
+            text = f"SEC Filing {form} for {ticker}: {description}\nSource: {url}"
         doc = self._make_doc(text, ticker, "sec_edgar", f"{ticker}_{form}_{date}.html", date)
         return self._index.ingest_documents("sec_filings", [doc])
 

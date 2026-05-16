@@ -54,9 +54,35 @@ class RAGAgent(BaseAgent):
                     except json.JSONDecodeError:
                         continue
                     if isinstance(data, dict):
-                        self._ingestion.ingest_sec_filings_batch(
-                            ticker, data.get("filings", [])
-                        )
+                        filings = data.get("filings", [])
+                        for filing in filings:
+                            edgar_url = filing.get("edgar_url")
+                            ix_url = filing.get("ix_url")
+                            if edgar_url:
+                                try:
+                                    content_result = await self._mcp.call_tool_by_name(
+                                        "get_filing_content",
+                                        {"edgar_url": edgar_url, "ix_url": ix_url},
+                                    )
+                                    if hasattr(content_result, "content"):
+                                        content_text = ""
+                                        for citem in content_result.content:
+                                            cres = citem.text if hasattr(citem, "text") else str(citem)
+                                            try:
+                                                cdata = json.loads(cres)
+                                                content_text = cdata.get("content", "")
+                                                break
+                                            except (json.JSONDecodeError, TypeError):
+                                                continue
+                                    else:
+                                        content_text = ""
+                                except Exception as ce:
+                                    logger.warning("Failed to fetch filing content for %s: %s", edgar_url, ce)
+                                    content_text = ""
+                            else:
+                                content_text = ""
+                            filing["content"] = content_text
+                        self._ingestion.ingest_sec_filings_batch(ticker, filings)
             self._last_ingestion[ticker] = today
         except Exception as e:
             logger.warning("Auto-ingest failed for %s: %s", ticker, e)

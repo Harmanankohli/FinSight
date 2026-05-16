@@ -199,6 +199,12 @@ LM Studio provides faster inference, OpenAI-compatible API, simpler setup.
 
 The unified finsight MCP server (`finsight_server.py`) hosts agent registry + data tools on port 8010.
 
+### Docker-compose Alignment Fix
+
+**Problem**: `docker-compose.yml` referenced 4 separate MCP services (`mcp-yfinance`, `mcp-sec-edgar`, `mcp-reddit`, `mcp-python-runner`) that each ran different server files (`yfinance_server.py`, etc.). These files didn't exist — only the unified `finsight_server.py` existed in the repository.
+
+**Solution**: Replaced the 4 broken services with a single `finsight-mcp` service that runs the existing `finsight_server.py`. Updated agent environment variables to point to the unified server (`MCP_SERVER_URL=http://finsight-mcp:8010/sse`). The actual codebase was already using this pattern — docker-compose was simply out of sync.
+
 ### Lazy Agent Registry
 
 **Problem**: `sentence-transformers` downloads the embedding model (~80MB) at import time. When ADK Web UI or MCP host imports the module, model download blocks startup and may fail in restricted environments.
@@ -249,3 +255,25 @@ The LLM used by all agents was switched from **`gpt-oss-20b`** to a **qwen** mod
 ## RAG Agent Auto-ingest
 
 The RAG agent fetches SEC filings via MCP on first query (`_ensure_ingested`). Was fragile with `json.loads()` on potentially empty MCP responses. Fixed with proper empty-check and `try/except json.JSONDecodeError`.
+
+### RAG Content Ingestion Fix
+
+**Problem**: RAG agent only stored SEC filing metadata (form type, description, URL) in ChromaDB, not actual filing content. Queries returned "cannot be performed based on provided information" because the index had no meaningful text.
+
+**Solution**: 
+1. Added `get_filing_content(edgar_url, ix_url)` MCP tool to fetch and extract text from raw EDGAR documents
+2. Updated `get_company_filings` to return both raw document URL (`edgar_url`) and IXBRL viewer URL (`ix_url`)
+3. RAG agent now calls `get_filing_content()` for each filing and stores extracted text (up to 20K chars) into ChromaDB
+4. Enhanced `get_filing_content` to handle multiple content types (HTML, XML, JSON), skip XBRL viewer pages, and fallback to IX URL if raw fails
+
+### Quant DCF Null Fix
+
+**Problem**: DCF valuation always returned `null` because `_get_fcf_from_financials()` looked for "Free Cash Flow" in the `income_statement` dict, but FCF belongs in the `cash_flow` statement.
+
+**Solution**: Changed `dcf_valuation_node()` to use `data.get("cash_flow", {})` instead of `data.get("income_statement", {})`.
+
+### MCP Response Parsing Inconsistency
+
+**Problem**: Each agent parsed MCP tool responses differently (checking for `.content`, `.text`, dict vs list, etc.), leading to fragile error handling.
+
+**Solution**: Added `parse_mcp_result(result)` utility in `shared/mcp_client.py` that handles various MCP response formats consistently — returns parsed dict/list/string or `{"error": "..."}` on failure.

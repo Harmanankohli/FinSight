@@ -78,12 +78,16 @@ A2A Request → DefaultRequestHandler → GenericAgentExecutor(RAGAgent)
   → RAGAgent.stream()
     → RAGAgent._ensure_ingested(ticker)
       ├── MCPClient.connect_all()
-      └── MCPClient.call_tool_by_name("get_company_filings", {...})
+      ├── MCP: get_company_filings(ticker) → returns filings with edgar_url + ix_url
+      ├── MCP: get_filing_content(edgar_url, ix_url) for each filing → raw text
+      └── DocumentIngestionPipeline.ingest_sec_filings_batch() → ChromaDB
     → FinancialIndexManager.query(ticker, query)
       ├── Try: RouterQueryEngine
       └── Fallback: SEC filings index directly
   → Yields data response with summary + sources
 ```
+
+**Content Ingestion**: The RAG agent now fetches actual SEC filing content (10-K, 10-Q, 8-K) via `get_filing_content()`, which extracts text from raw EDGAR URLs with fallback to IXBRL viewer URLs. This enables the RAG index to contain actual filing text rather than just metadata.
 
 ### Quant Agent (LangGraph)
 
@@ -93,11 +97,13 @@ A2A Request → DefaultRequestHandler → GenericAgentExecutor(QuantAgent)
     [MCP: get_prices → parse Close data]
     → compute_metrics → conditional branch:
         high volatility → stress_test
-        low volatility  → dcf_valuation [MCP: get_financials]
+        low volatility  → dcf_valuation [MCP: get_financials → cash_flow]
     → portfolio_correlation [MCP: get_prices per holding]
     → format_output → llm_summary
   → Yields data response
 ```
+
+**DCF Fix**: The DCF valuation now correctly reads free cash flow data from the `cash_flow` financial statement (not `income_statement`). This fixes the issue where DCF valuations were returning null.
 
 ### Sentiment Agent (CrewAI)
 
@@ -124,6 +130,7 @@ Single unified MCP server (`mcp_servers/finsight_server.py`, port 8010) hosting 
 │  ├── resource://cards   │  ├── get_financials()       │
 │  └── resource://{name}  │  ├── get_options_chain()    │
 │                         │  ├── get_company_filings()  │
+│                         │  ├── get_filing_content()   │
 │                         │  ├── full_text_search()     │
 │                         │  ├── get_news_sentiment()   │
 │                         │  ├── get_earnings_calendar()│

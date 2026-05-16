@@ -22,6 +22,7 @@ import httpx
 import numpy as np
 import pandas as pd
 import yfinance as yf
+from bs4 import BeautifulSoup
 from mcp.server.fastmcp import FastMCP
 from sentence_transformers import SentenceTransformer
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
@@ -361,6 +362,7 @@ class _EdgarClient:
                 break
 
             acc_clean = acc_nums[i].replace("-", "")
+            safe_doc = urlquote(docs[i], safe="")
 
             if forms[i] in _INDEX_ONLY_FORMS or "/" in docs[i]:
                 edgar_url = (
@@ -368,17 +370,22 @@ class _EdgarClient:
                     f"{cik}/{acc_clean}/{acc_nums[i]}-index.htm"
                 )
             else:
-                safe_doc = urlquote(docs[i], safe="")
                 edgar_url = (
-                    f"https://www.sec.gov/ix?doc=/Archives/edgar/data/"
+                    f"https://www.sec.gov/Archives/edgar/data/"
                     f"{cik}/{acc_clean}/{safe_doc}"
                 )
+
+            raw_url = (
+                f"https://www.sec.gov/Archives/edgar/data/"
+                f"{cik}/{acc_clean}/{safe_doc}"
+            )
 
             result.append({
                 "form": forms[i],
                 "filing_date": dates[i],
                 "description": docs[i],
-                "edgar_url": edgar_url,
+                "edgar_url": raw_url,
+                "ix_url": f"https://www.sec.gov/ix?doc=/Archives/edgar/data/{cik}/{acc_clean}/{safe_doc}",
             })
         return {"ticker": ticker, "cik": cik, "filings": result}
 
@@ -412,6 +419,57 @@ class _EdgarClient:
                 "url": f"https://www.sec.gov{src.get('file_url', '')}",
             })
         return {"query": query, "results": results}
+
+    async def get_filing_content(self, edgar_url: str, ix_url: str | None = None) -> dict:
+        """Fetch and extract text content from an SEC EDGAR filing URL.
+
+        Tries multiple approaches to get usable content:
+        1. Raw filing document (preferred for non-XBRL filings)
+        2. Fallback to ix_url if raw fails
+        """
+        tried_urls = [edgar_url]
+        if ix_url and ix_url != edgar_url:
+            tried_urls.append(ix_url)
+
+        for url in tried_urls:
+            try:
+                c = await self._get_client()
+                resp = await c.get(url)
+                resp.raise_for_status()
+                content_type = resp.headers.get("Content-Type", "")
+
+                text = ""
+                if "json" in content_type.lower():
+                    text = json.dumps(resp.json(), indent=2)
+                elif "xml" in content_type.lower() or url.endswith((".xml", ".xsd")):
+                    soup = BeautifulSoup(resp.text, "lxml-xml")
+                    for tag in soup.find_all(["script", "style", "xbrldocument"]):
+                        tag.decompose()
+                    text = soup.get_text(separator=" ", strip=True)
+                else:
+                    html = resp.text
+                    if "XBRL Viewer" in html or "enable JavaScript" in html:
+                        logger.info("Skipping IXBRL viewer page: %s", url)
+                        continue
+                    soup = BeautifulSoup(html, "html.parser")
+                    for script in soup(["script", "style"]):
+                        script.decompose()
+                    for tag in soup.find_all(["style", "noscript"]):
+                        tag.decompose()
+                    text = soup.get_text(separator=" ", strip=True)
+
+                text = " ".join(text.split())
+                if len(text) > 50000:
+                    text = text[:50000] + "..."
+                if len(text.strip()) < 100:
+                    logger.info("Content too short, skipping: %s", url)
+                    continue
+                return {"url": url, "content": text, "length": len(text)}
+            except Exception as exc:
+                logger.info("Tried %s, got: %s", url, exc)
+                continue
+
+        return {"url": edgar_url, "error": "Could not extract content from any URL", "content": ""}
 
 
 _edgar = _EdgarClient()
@@ -459,6 +517,27 @@ async def full_text_search(query: str, ticker: str | None = None) -> dict:
     except Exception as exc:
         logger.warning("full_text_search tool failed: %s", exc)
         return {"query": query, "error": str(exc), "results": []}
+
+
+@app.tool()
+async def get_filing_content(edgar_url: str, ix_url: str | None = None) -> dict:
+    """Fetch and extract text content from an SEC EDGAR filing URL.
+
+    Use this to get the full text of a 10-K, 10-Q, 8-K, or other SEC filing
+    for detailed analysis. The content is extracted from the raw filing document.
+
+    Args:
+        edgar_url: The full EDGAR raw filing URL (from get_company_filings result's 'edgar_url' field)
+        ix_url: Optional IXBRL viewer URL (from get_company_filings result's 'ix_url' field) as fallback
+
+    Returns:
+        dict with keys: url, content (extracted text), length, or error
+    """
+    try:
+        return await _edgar.get_filing_content(edgar_url, ix_url)
+    except Exception as exc:
+        logger.warning("get_filing_content tool failed: %s", exc)
+        return {"url": edgar_url, "error": str(exc), "content": ""}
 
 
 # ──────────────────────────────────────────────

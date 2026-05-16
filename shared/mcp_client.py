@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 from dataclasses import dataclass
 from typing import Any
@@ -8,6 +9,74 @@ from mcp import ClientSession
 from mcp.client.sse import sse_client
 
 logger = logging.getLogger(__name__)
+
+
+def parse_mcp_result(result: Any) -> dict | list | str:
+    """Parse MCP tool call result into a consistent Python object.
+
+    Handles various MCP response formats:
+    - Object with .content attribute containing list of text parts
+    - Direct dict/list/string
+    - None values
+
+    Args:
+        result: The raw result from MCP tool call
+
+    Returns:
+        Parsed dict/list/string, or {"error": "..."} on failure
+    """
+    if result is None:
+        return {"error": "MCP result is None"}
+
+    if isinstance(result, dict):
+        if "error" in result:
+            return result
+        return result
+
+    if isinstance(result, (list, str, int, float, bool)):
+        return result
+
+    if hasattr(result, "content") and result.content:
+        texts = []
+        for item in result.content:
+            if hasattr(item, "text") and item.text:
+                texts.append(item.text)
+            elif hasattr(item, "data") and item.data:
+                if isinstance(item.data, dict):
+                    return item.data
+                texts.append(str(item.data))
+            elif isinstance(item, dict):
+                if "text" in item:
+                    texts.append(item["text"])
+                else:
+                    return item
+            elif hasattr(item, "json_result"):
+                try:
+                    return json.loads(item.json_result)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            else:
+                texts.append(str(item))
+
+        if not texts:
+            return {"error": "No content in MCP result"}
+
+        if len(texts) == 1:
+            txt = texts[0]
+            try:
+                return json.loads(txt)
+            except (json.JSONDecodeError, TypeError):
+                return txt
+
+        for txt in texts:
+            try:
+                return json.loads(txt)
+            except (json.JSONDecodeError, TypeError):
+                continue
+
+        return texts[0] if texts else {"error": "Could not parse MCP content"}
+
+    return {"error": f"Unexpected MCP result type: {type(result).__name__}"}
 
 
 class MCPClientError(Exception):
