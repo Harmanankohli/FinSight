@@ -147,9 +147,7 @@ async def get_agent_card(card_name: str) -> dict:
 # ──────────────────────────────────────────────
 
 def _serialise_value(v: Any) -> Any:
-    """Recursively convert non-JSON-serialisable types (Timestamp,
-    datetime, numpy scalars, NaN/Inf) so the caller never hits a
-    serialisation error."""
+    """Recursively convert non-JSON-serialisable types."""
     if isinstance(v, dict):
         return {_serialise_value(k): _serialise_value(val) for k, val in v.items()}
     if isinstance(v, (list, tuple)):
@@ -247,7 +245,7 @@ async def get_options_chain(ticker: str, expiration: str | None = None) -> dict:
 
 
 # ──────────────────────────────────────────────
-# SEC EDGAR Tools
+# SEC EDGAR Client
 # ──────────────────────────────────────────────
 
 _SEC_HEADERS = {
@@ -255,17 +253,25 @@ _SEC_HEADERS = {
     "Accept-Encoding": "gzip, deflate",
 }
 
+# Form types that contain structured financial statements.
+# Used as the default filter for get_financial_filings and RAG ingest guidance.
+FINANCIAL_FORM_TYPES: frozenset[str] = frozenset({"10-K", "10-Q", "10-K/A", "10-Q/A"})
+
+# Form types whose primaryDocument is an XSLT stylesheet path rather than
+# an HTML filing. For these, use the accession-number index URL instead.
+_INDEX_ONLY_FORMS: frozenset[str] = frozenset({"3", "4", "5", "3/A", "4/A", "5/A"})
+
 
 class _EdgarClient:
-    """Async SEC EDGAR client with shared client, cached ticker map,
-    URL encoding, and parallel array bounds checking."""
+    """Async SEC EDGAR client with shared httpx session, cached ticker/title
+    maps, URL-safe edgar_url construction, and parallel-array bounds checking."""
 
     def __init__(self) -> None:
         self._client: httpx.AsyncClient | None = None
         self._client_lock = asyncio.Lock()
         self._cik_cache: dict[str, str] = {}
-        self._ticker_map: dict[str, str] | None = None
-        self._title_map: dict[str, str] | None = None
+        self._ticker_map: dict[str, str] | None = None      # {TICKER: cik_zfill10}
+        self._title_map: dict[str, str] | None = None       # {TICKER: company title}
         self._ticker_map_lock = asyncio.Lock()
 
     async def _get_client(self) -> httpx.AsyncClient:
@@ -278,6 +284,7 @@ class _EdgarClient:
         return self._client
 
     async def _get_ticker_map(self) -> dict[str, str]:
+        """Download {TICKER: cik} and {TICKER: title} maps once, then cache."""
         if self._ticker_map is not None:
             return self._ticker_map
         async with self._ticker_map_lock:
@@ -298,6 +305,7 @@ class _EdgarClient:
         return self._ticker_map
 
     async def get_company_title(self, ticker: str) -> str:
+        """Return the SEC-registered company name for a ticker (cached)."""
         await self._get_ticker_map()
         return (self._title_map or {}).get(ticker.upper(), "")
 
@@ -311,6 +319,53 @@ class _EdgarClient:
         self._cik_cache[ticker] = mapping[ticker]
         return self._cik_cache[ticker]
 
+    def _build_filing_urls(
+        self, cik_short: str, form: str, doc: str, acc_num: str
+    ) -> tuple[str, str]:
+        """Return (edgar_url, ix_url) for a filing entry.
+
+        edgar_url  — direct link to the raw filing document (or index for Form 3/4/5).
+        ix_url     — inline XBRL viewer URL (useful for structured XBRL filings).
+        """
+        acc_clean = acc_num.replace("-", "")
+        safe_doc = urlquote(doc, safe="")
+
+        if form in _INDEX_ONLY_FORMS or "/" in doc:
+            # Form 4 etc. store an XSLT path in primaryDocument — use index page.
+            edgar_url = (
+                f"https://www.sec.gov/Archives/edgar/data/"
+                f"{cik_short}/{acc_clean}/{acc_num}-index.htm"
+            )
+        else:
+            edgar_url = (
+                f"https://www.sec.gov/Archives/edgar/data/"
+                f"{cik_short}/{acc_clean}/{safe_doc}"
+            )
+
+        ix_url = (
+            f"https://www.sec.gov/ix?doc=/Archives/edgar/data/"
+            f"{cik_short}/{acc_clean}/{safe_doc}"
+        )
+        return edgar_url, ix_url
+
+    async def _fetch_submissions(self, cik: str, ticker: str) -> dict:
+        """Fetch the submissions JSON for a CIK with 3-attempt retry."""
+        c = await self._get_client()
+        url = f"https://data.sec.gov/submissions/CIK{cik}.json"
+        for attempt in range(3):
+            try:
+                resp = await c.get(url)
+                resp.raise_for_status()
+                return resp.json()
+            except Exception:
+                if attempt < 2:
+                    await asyncio.sleep(2 ** attempt)
+                else:
+                    raise RuntimeError(
+                        f"get_company_filings failed for {ticker} after 3 retries"
+                    )
+        return {}
+
     async def get_company_filings(
         self,
         ticker: str,
@@ -322,73 +377,143 @@ class _EdgarClient:
         except Exception as exc:
             return {"ticker": ticker, "error": str(exc), "filings": []}
 
-        url = f"https://data.sec.gov/submissions/CIK{cik}.json"
-        c = await self._get_client()
-        data: dict = {}
-        for attempt in range(3):
-            try:
-                resp = await c.get(url)
-                resp.raise_for_status()
-                data = resp.json()
-                break
-            except Exception:
-                if attempt < 2:
-                    await asyncio.sleep(2 ** attempt)
-                else:
-                    logger.warning(
-                        "get_company_filings failed for %s after 3 retries", ticker
-                    )
-                    return {
-                        "ticker": ticker,
-                        "error": "Failed after 3 retries",
-                        "filings": [],
-                    }
-
-        filings = data.get("filings", {}).get("recent", {})
-        forms = filings.get("form", [])
-        dates = filings.get("filingDate", [])
-        docs = filings.get("primaryDocument", [])
-        acc_nums = filings.get("accessionNumber", [])
-
-        n = min(len(forms), len(dates), len(docs), len(acc_nums))
-
-        _INDEX_ONLY_FORMS = frozenset({"3", "4", "5", "3/A", "4/A", "5/A"})
+        try:
+            data = await self._fetch_submissions(cik, ticker)
+        except Exception as exc:
+            return {"ticker": ticker, "error": str(exc), "filings": []}
 
         cik_short = str(int(cik))
+        recent = data.get("filings", {}).get("recent", {})
+        forms    = recent.get("form", [])
+        dates    = recent.get("filingDate", [])
+        docs     = recent.get("primaryDocument", [])
+        acc_nums = recent.get("accessionNumber", [])
+        n = min(len(forms), len(dates), len(docs), len(acc_nums))
+
         result = []
         for i in range(n):
             if form_types and forms[i] not in form_types:
                 continue
             if len(result) >= limit:
                 break
-
-            acc_clean = acc_nums[i].replace("-", "")
-            safe_doc = urlquote(docs[i], safe="")
-
-            if forms[i] in _INDEX_ONLY_FORMS or "/" in docs[i]:
-                edgar_url = (
-                    f"https://www.sec.gov/Archives/edgar/data/"
-                    f"{cik_short}/{acc_clean}/{acc_nums[i]}-index.htm"
-                )
-            else:
-                edgar_url = (
-                    f"https://www.sec.gov/Archives/edgar/data/"
-                    f"{cik_short}/{acc_clean}/{safe_doc}"
-                )
-
-            raw_url = (
-                f"https://www.sec.gov/Archives/edgar/data/"
-                f"{cik_short}/{acc_clean}/{safe_doc}"
+            edgar_url, ix_url = self._build_filing_urls(
+                cik_short, forms[i], docs[i], acc_nums[i]
             )
-
             result.append({
                 "form": forms[i],
                 "filing_date": dates[i],
                 "description": docs[i],
-                "edgar_url": raw_url,
-                "ix_url": f"https://www.sec.gov/ix?doc=/Archives/edgar/data/{cik_short}/{acc_clean}/{safe_doc}",
+                "edgar_url": edgar_url,
+                "ix_url": ix_url,
             })
         return {"ticker": ticker, "cik": cik, "filings": result}
+
+    async def get_financial_filings(
+        self,
+        ticker: str,
+        annual_limit: int = 5,
+        quarterly_limit: int = 8,
+    ) -> dict:
+        """Fetch only financial statement filings (10-K and 10-Q) for a ticker.
+
+        Fetches annual (10-K) and quarterly (10-Q) filings separately to
+        guarantee a balanced result — avoids the common failure mode where
+        the default get_company_filings returns mostly 8-Ks.
+
+        Also checks the filing's older filings pages if the recent batch
+        doesn't have enough 10-Ks (large companies file many other forms).
+
+        Args:
+            ticker:          Stock ticker symbol.
+            annual_limit:    Max 10-K filings to return (default 5 = ~5 years).
+            quarterly_limit: Max 10-Q filings to return (default 8 = ~2 years of quarters).
+
+        Returns:
+            dict with keys: ticker, cik, annual (list), quarterly (list),
+            total_filings, note
+        """
+        try:
+            cik = await self._lookup_cik(ticker)
+        except Exception as exc:
+            return {"ticker": ticker, "error": str(exc), "annual": [], "quarterly": []}
+
+        try:
+            data = await self._fetch_submissions(cik, ticker)
+        except Exception as exc:
+            return {"ticker": ticker, "error": str(exc), "annual": [], "quarterly": []}
+
+        cik_short = str(int(cik))
+        annual: list[dict] = []
+        quarterly: list[dict] = []
+
+        def _process_recent(recent: dict) -> None:
+            forms    = recent.get("form", [])
+            dates    = recent.get("filingDate", [])
+            docs     = recent.get("primaryDocument", [])
+            acc_nums = recent.get("accessionNumber", [])
+            n = min(len(forms), len(dates), len(docs), len(acc_nums))
+            for i in range(n):
+                form = forms[i]
+                if form not in ("10-K", "10-K/A", "10-Q", "10-Q/A"):
+                    continue
+                edgar_url, ix_url = self._build_filing_urls(
+                    cik_short, form, docs[i], acc_nums[i]
+                )
+                entry = {
+                    "form": form,
+                    "filing_date": dates[i],
+                    "description": docs[i],
+                    "edgar_url": edgar_url,
+                    "ix_url": ix_url,
+                }
+                if form in ("10-K", "10-K/A") and len(annual) < annual_limit:
+                    annual.append(entry)
+                elif form in ("10-Q", "10-Q/A") and len(quarterly) < quarterly_limit:
+                    quarterly.append(entry)
+
+        # Process the primary recent batch
+        _process_recent(data.get("filings", {}).get("recent", {}))
+
+        # If we still need more filings, page through older filing batches.
+        # EDGAR stores older filings in separate paginated JSON files.
+        files_meta = data.get("filings", {}).get("files", [])
+        for file_meta in files_meta:
+            if len(annual) >= annual_limit and len(quarterly) >= quarterly_limit:
+                break
+            fname = file_meta.get("name", "")
+            if not fname:
+                continue
+            try:
+                c = await self._get_client()
+                resp = await c.get(
+                    f"https://data.sec.gov/submissions/{fname}"
+                )
+                resp.raise_for_status()
+                older = resp.json()
+                _process_recent(older)
+            except Exception as exc:
+                logger.warning("Failed to fetch older filings page %s: %s", fname, exc)
+
+        note_parts = []
+        if len(annual) < annual_limit:
+            note_parts.append(
+                f"Only {len(annual)} annual filing(s) found (requested {annual_limit})."
+            )
+        if len(quarterly) < quarterly_limit:
+            note_parts.append(
+                f"Only {len(quarterly)} quarterly filing(s) found (requested {quarterly_limit})."
+            )
+
+        return {
+            "ticker": ticker.upper(),
+            "cik": cik,
+            "annual": annual,
+            "quarterly": quarterly,
+            "total_filings": len(annual) + len(quarterly),
+            "note": " ".join(note_parts) if note_parts else (
+                f"Retrieved {len(annual)} annual and {len(quarterly)} quarterly filings."
+            ),
+        }
 
     async def full_text_search(
         self, query: str, ticker: str | None = None
@@ -421,13 +546,10 @@ class _EdgarClient:
             })
         return {"query": query, "results": results}
 
-    async def get_filing_content(self, edgar_url: str, ix_url: str | None = None) -> dict:
-        """Fetch and extract text content from an SEC EDGAR filing URL.
-
-        Tries multiple approaches to get usable content:
-        1. Raw filing document (preferred for non-XBRL filings)
-        2. Fallback to ix_url if raw fails
-        """
+    async def get_filing_content(
+        self, edgar_url: str, ix_url: str | None = None
+    ) -> dict:
+        """Fetch and extract text content from an SEC EDGAR filing URL."""
         tried_urls = [edgar_url]
         if ix_url and ix_url != edgar_url:
             tried_urls.append(ix_url)
@@ -439,7 +561,6 @@ class _EdgarClient:
                 resp.raise_for_status()
                 content_type = resp.headers.get("Content-Type", "")
 
-                text = ""
                 if "json" in content_type.lower():
                     text = json.dumps(resp.json(), indent=2)
                 elif "xml" in content_type.lower() or url.endswith((".xml", ".xsd")):
@@ -452,9 +573,7 @@ class _EdgarClient:
                     text = soup.get_text(separator=" ", strip=True)
                 else:
                     soup = BeautifulSoup(resp.text, "html.parser")
-                    for script in soup(["script", "style"]):
-                        script.decompose()
-                    for tag in soup.find_all(["style", "noscript"]):
+                    for tag in soup(["script", "style", "noscript"]):
                         tag.decompose()
                     text = soup.get_text(separator=" ", strip=True)
 
@@ -462,18 +581,25 @@ class _EdgarClient:
                 if len(text) > 50000:
                     text = text[:50000] + "..."
                 if len(text.strip()) < 100:
-                    logger.info("Content too short, skipping: %s", url)
                     continue
                 return {"url": url, "content": text, "length": len(text)}
             except Exception as exc:
                 logger.info("Tried %s, got: %s", url, exc)
                 continue
 
-        return {"url": edgar_url, "error": "Could not extract content from any URL", "content": ""}
+        return {
+            "url": edgar_url,
+            "error": "Could not extract content from any URL",
+            "content": "",
+        }
 
 
 _edgar = _EdgarClient()
 
+
+# ──────────────────────────────────────────────
+# SEC EDGAR MCP Tools
+# ──────────────────────────────────────────────
 
 @app.tool()
 async def get_company_filings(
@@ -481,13 +607,16 @@ async def get_company_filings(
 ) -> dict:
     """Retrieve SEC filings for a publicly traded company.
 
+    For fundamental financial analysis, prefer get_financial_filings() which
+    automatically fetches only 10-K/10-Q filings in the right quantities.
+
     Args:
         ticker: Stock ticker symbol (e.g. NVDA, AAPL, MSFT)
         form_types: Comma-separated form types to filter (e.g. "10-K,10-Q,8-K"). Empty = all.
         limit: Maximum number of filings to return (default 10)
 
     Returns:
-        dict with keys: ticker, cik, filings (list of {form, filing_date, description, edgar_url})
+        dict with keys: ticker, cik, filings (list of {form, filing_date, description, edgar_url, ix_url})
     """
     try:
         types_list = (
@@ -502,11 +631,58 @@ async def get_company_filings(
 
 
 @app.tool()
+async def get_financial_filings(
+    ticker: str,
+    annual_limit: int = 5,
+    quarterly_limit: int = 8,
+) -> dict:
+    """Retrieve financial statement filings (10-K and 10-Q only) for a ticker.
+
+    Use this instead of get_company_filings() for any fundamental analysis,
+    ratio calculation, trend analysis, or peer comparison task.
+
+    Unlike get_company_filings(), this tool:
+    - Filters to ONLY 10-K (annual) and 10-Q (quarterly) — never 8-Ks or Form 4s
+    - Paginates through older EDGAR filing batches to reach the requested depth
+    - Returns annual and quarterly filings in separate lists for clarity
+    - Provides enough history for multi-year trend analysis by default
+
+    Workflow for fundamental analysis:
+      1. Call get_financial_filings(ticker) to get 10-K/10-Q URLs
+      2. Call get_filing_content(edgar_url) on each to extract financial text
+      3. Call get_financials(ticker) for structured yfinance data (ratios, metrics)
+      4. Use execute_python() to compute derived metrics (NIM, ROE, CET1, etc.)
+
+    For peer comparison, call get_financial_filings() for each peer ticker.
+
+    Args:
+        ticker:          Stock ticker symbol (e.g. JPM, BAC, GS)
+        annual_limit:    Number of annual 10-K filings (default 5 ≈ 5 years of history)
+        quarterly_limit: Number of quarterly 10-Q filings (default 8 ≈ 2 years of quarters)
+
+    Returns:
+        dict with keys:
+          ticker, cik,
+          annual   (list of {form, filing_date, description, edgar_url, ix_url}),
+          quarterly (list of {form, filing_date, description, edgar_url, ix_url}),
+          total_filings, note
+    """
+    try:
+        return await _edgar.get_financial_filings(ticker, annual_limit, quarterly_limit)
+    except Exception as exc:
+        logger.warning("get_financial_filings tool failed for %s: %s", ticker, exc)
+        return {
+            "ticker": ticker, "error": str(exc),
+            "annual": [], "quarterly": [], "total_filings": 0,
+        }
+
+
+@app.tool()
 async def full_text_search(query: str, ticker: str | None = None) -> dict:
     """Search full text of SEC EDGAR filings.
 
     Args:
-        query: Keywords (e.g. "revenue growth AI semiconductors")
+        query: Keywords (e.g. "net interest margin loan loss provision")
         ticker: Optional ticker to narrow to one company.
 
     Returns:
@@ -523,15 +699,15 @@ async def full_text_search(query: str, ticker: str | None = None) -> dict:
 async def get_filing_content(edgar_url: str, ix_url: str | None = None) -> dict:
     """Fetch and extract text content from an SEC EDGAR filing URL.
 
-    Use this to get the full text of a 10-K, 10-Q, 8-K, or other SEC filing
-    for detailed analysis. The content is extracted from the raw filing document.
+    Use this after get_financial_filings() or get_company_filings() to read
+    the actual text of a 10-K, 10-Q, or other SEC filing.
 
     Args:
-        edgar_url: The full EDGAR raw filing URL (from get_company_filings result's 'edgar_url' field)
-        ix_url: Optional IXBRL viewer URL (from get_company_filings result's 'ix_url' field) as fallback
+        edgar_url: The EDGAR filing URL (from the 'edgar_url' field in filing results)
+        ix_url: Optional inline XBRL viewer URL ('ix_url' field) as fallback
 
     Returns:
-        dict with keys: url, content (extracted text), length, or error
+        dict with keys: url, content (extracted text up to 50k chars), length, or error
     """
     try:
         return await _edgar.get_filing_content(edgar_url, ix_url)
@@ -559,11 +735,8 @@ async def _prewarm_ticker_map() -> None:
 async def validate_ticker(ticker: str) -> dict:
     """Validate a stock ticker against SEC EDGAR database.
 
-    Use this to confirm a ticker is valid before processing. Returns company
-    name and CIK if valid, or error if not found.
-
     Args:
-        ticker: Stock ticker symbol (e.g. AAPL, MSFT, MA, V)
+        ticker: Stock ticker symbol (e.g. AAPL, MSFT, JPM)
 
     Returns:
         dict with keys: valid (bool), ticker, company_name, cik, or error
@@ -579,7 +752,11 @@ async def validate_ticker(ticker: str) -> dict:
                 "company_name": company_title,
                 "cik": cik,
             }
-        return {"valid": False, "ticker": ticker.upper(), "error": "Ticker not found in SEC database"}
+        return {
+            "valid": False,
+            "ticker": ticker.upper(),
+            "error": "Ticker not found in SEC database",
+        }
     except Exception as exc:
         return {"valid": False, "ticker": ticker.upper(), "error": str(exc)}
 
@@ -593,6 +770,7 @@ _REVERSE_INDEX_LOCK = asyncio.Lock()
 
 
 def _normalize_company_name(name: str) -> str:
+    import re as _re
     s = name.lower().strip()
     for _suffix in [
         " inc", " inc.", " incorporated", " corp", " corp.", " corporation",
@@ -603,8 +781,8 @@ def _normalize_company_name(name: str) -> str:
     ]:
         if s.endswith(_suffix):
             s = s[: -len(_suffix)].strip()
-    s = __import__("re").sub(r"[^a-z0-9 ]", "", s)
-    s = __import__("re").sub(r"\s+", " ", s).strip()
+    s = _re.sub(r"[^a-z0-9 ]", "", s)
+    s = _re.sub(r"\s+", " ", s).strip()
     return s
 
 
@@ -636,7 +814,12 @@ async def _ticker_sec_lookup(query: str) -> dict | None:
     best: tuple[int, str, str, str] | None = None
     for norm_title, ticker, title in idx:
         if norm_title == norm_query:
-            return {"ticker": ticker, "company_name": title, "source": "sec", "match": "exact"}
+            return {
+                "ticker": ticker,
+                "company_name": title,
+                "source": "sec",
+                "match": "exact",
+            }
         if norm_title.startswith(norm_query):
             score = len(norm_title)
             if best is None or score < best[0]:
@@ -651,18 +834,34 @@ async def _ticker_sec_lookup(query: str) -> dict | None:
                 best = (score, ticker, title, "word_overlap")
 
     if best:
-        return {"ticker": best[1], "company_name": best[2], "source": "sec", "match": best[3]}
+        return {
+            "ticker": best[1],
+            "company_name": best[2],
+            "source": "sec",
+            "match": best[3],
+        }
 
     for word in sorted(query_words, key=len, reverse=True):
         for norm_title, ticker, title in idx:
             if norm_title.startswith(word):
-                return {"ticker": ticker, "company_name": title, "source": "sec", "match": f"word_prefix:{word}"}
+                return {
+                    "ticker": ticker,
+                    "company_name": title,
+                    "source": "sec",
+                    "match": f"word_prefix:{word}",
+                }
             if word in norm_title.split():
-                return {"ticker": ticker, "company_name": title, "source": "sec", "match": f"word_in:{word}"}
+                return {
+                    "ticker": ticker,
+                    "company_name": title,
+                    "source": "sec",
+                    "match": f"word_in:{word}",
+                }
     return None
 
 
-_STOCK_TICKER_RE = __import__("re").compile(r"^[A-Z]{1,5}(\.[A-Z]{1,2})?$")
+import re as _re_module
+_STOCK_TICKER_RE = _re_module.compile(r"^[A-Z]{1,5}(\.[A-Z]{1,2})?$")
 
 
 def _is_plausible_ticker(symbol: str) -> bool:
@@ -677,22 +876,35 @@ async def _is_sec_ticker(symbol: str) -> bool:
 async def _ticker_yahoo_search(query: str) -> dict | None:
     try:
         c = await _edgar._get_client()
-        url = f"https://query1.finance.yahoo.com/v1/finance/search?q={urlquote(query)}&lang=en-US&region=US&quotesCount=5"
-        resp = await c.get(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+        url = (
+            f"https://query1.finance.yahoo.com/v1/finance/search"
+            f"?q={urlquote(query)}&lang=en-US&region=US&quotesCount=5"
+        )
+        resp = await c.get(
+            url,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+        )
         resp.raise_for_status()
         data = resp.json()
         quotes = data.get("quotes", [])
+
+        # Prefer quotes from major US exchanges
         for q in quotes:
             symbol = q.get("symbol", "")
             if not symbol or not _is_plausible_ticker(symbol):
                 continue
-            exch = q.get("exchange", "")
-            if exch in ("NYQ", "NMS", "NGM", "ASE", "NYQ", "PCX", "OQA", "OQB"):
+            if q.get("exchange", "") in (
+                "NYQ", "NMS", "NGM", "ASE", "PCX", "OQA", "OQB"
+            ):
                 return {
                     "ticker": symbol,
-                    "company_name": q.get("longname", q.get("shortname", q.get("symbol", ""))),
+                    "company_name": q.get(
+                        "longname", q.get("shortname", symbol)
+                    ),
                     "source": "yfinance",
                 }
+
+        # Then any SEC-registered ticker
         for q in quotes:
             symbol = q.get("symbol", "")
             if not symbol or not _is_plausible_ticker(symbol):
@@ -700,18 +912,24 @@ async def _ticker_yahoo_search(query: str) -> dict | None:
             if await _is_sec_ticker(symbol):
                 return {
                     "ticker": symbol,
-                    "company_name": q.get("longname", q.get("shortname", q.get("symbol", ""))),
+                    "company_name": q.get(
+                        "longname", q.get("shortname", symbol)
+                    ),
                     "source": "yfinance",
                 }
+
+        # Last resort: first plausible ticker
         for q in quotes:
             symbol = q.get("symbol", "")
-            if not symbol or not _is_plausible_ticker(symbol):
-                continue
-            return {
-                "ticker": symbol,
-                "company_name": q.get("longname", q.get("shortname", q.get("symbol", ""))),
-                "source": "yfinance",
-            }
+            if symbol and _is_plausible_ticker(symbol):
+                return {
+                    "ticker": symbol,
+                    "company_name": q.get(
+                        "longname", q.get("shortname", symbol)
+                    ),
+                    "source": "yfinance",
+                }
+
     except Exception as exc:
         logger.warning("Yahoo Finance search failed for %s: %s", query, exc)
     return None
@@ -721,14 +939,13 @@ async def _ticker_yahoo_search(query: str) -> dict | None:
 async def resolve_company_ticker(text: str) -> dict:
     """Resolve a company name or natural language text to a stock ticker symbol.
 
-    Tries SEC EDGAR reverse lookup first (instant, local cache), then falls back
-    to Yahoo Finance search API.
+    Tries SEC EDGAR reverse lookup first (local, instant), then Yahoo Finance.
 
     Args:
-        text: Company name or query text (e.g. \"Mastercard\", \"Apple Inc\", \"Microsoft Corporation\")
+        text: Company name (e.g. "Mastercard", "Apple Inc", "JPMorgan Chase")
 
     Returns:
-        dict with keys: ticker, company_name, source (sec/yfinance), match (exact/prefix/word_overlap), or error
+        dict with keys: ticker, company_name, source (sec/yfinance), match, or error
     """
     try:
         result = await _ticker_sec_lookup(text)
@@ -758,24 +975,92 @@ _RSS_FEEDS: dict[str, str] = {
 }
 
 
-async def _fetch_rss(url: str, client: httpx.AsyncClient) -> feedparser.FeedParserDict:
-    """Fetch RSS content asynchronously, then parse with feedparser."""
+async def _fetch_rss(url: str, client: httpx.AsyncClient) -> dict:
+    """Async RSS fetch — no blocking I/O in feedparser.
+
+    Returns a dict with:
+      entries (list): parsed feed entries, empty on failure
+      status  (str):  "ok" | "http_{code}" | "error"
+      error   (str):  error message if status != "ok", else ""
+    """
     try:
         resp = await client.get(url, timeout=10.0)
-        resp.raise_for_status()
-        return feedparser.parse(resp.text)
+        if resp.status_code != 200:
+            logger.warning("RSS %s returned HTTP %s", url, resp.status_code)
+            return {
+                "entries": [],
+                "status": f"http_{resp.status_code}",
+                "error": f"HTTP {resp.status_code}",
+            }
+        feed = feedparser.parse(resp.text)
+        if feed.bozo and not feed.entries:
+            return {
+                "entries": [],
+                "status": "parse_error",
+                "error": str(getattr(feed, "bozo_exception", "unknown parse error")),
+            }
+        return {"entries": feed.entries, "status": "ok", "error": ""}
     except Exception as exc:
         logger.warning("RSS fetch failed for %s: %s", url, exc)
-        return feedparser.FeedParserDict(entries=[])
+        return {"entries": [], "status": "error", "error": str(exc)}
+
+
+async def _fetch_yf_news(ticker: str, client: httpx.AsyncClient, limit: int = 15) -> list[dict]:
+    """Fetch news articles from Yahoo Finance search API for a ticker.
+
+    This is a structured fallback when RSS feeds fail or return 0 articles.
+    Unlike RSS, results are pre-filtered to the ticker — no keyword matching needed.
+
+    Returns a list of article dicts: {title, link, publisher, published, summary}
+    """
+    from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer as _SA
+    _sa = _SA()
+    try:
+        url = (
+            f"https://query1.finance.yahoo.com/v1/finance/search"
+            f"?q={urlquote(ticker)}&lang=en-US&region=US&newsCount={limit}&quotesCount=0"
+        )
+        resp = await client.get(
+            url,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
+            timeout=10.0,
+        )
+        if resp.status_code != 200:
+            logger.warning("YF news API returned HTTP %s for %s", resp.status_code, ticker)
+            return []
+        data = resp.json()
+        articles = []
+        for item in data.get("news", [])[:limit]:
+            title = item.get("title", "")
+            summary = item.get("summary", "") or ""
+            pub = item.get("providerPublishTime", 0)
+            try:
+                published = datetime.fromtimestamp(pub, tz=timezone.utc).isoformat() if pub else ""
+            except Exception:
+                published = ""
+            title_score   = _sa.polarity_scores(title)["compound"]
+            summary_score = _sa.polarity_scores(summary)["compound"] if summary else title_score
+            compound = round((title_score + summary_score) / 2, 4)
+            articles.append({
+                "source": "yahoo_finance_api",
+                "title": title,
+                "link": item.get("link", ""),
+                "publisher": item.get("publisher", ""),
+                "published": published,
+                "sentiment": compound,
+            })
+        return articles
+    except Exception as exc:
+        logger.warning("YF news API failed for %s: %s", ticker, exc)
+        return []
 
 
 async def _resolve_company_keywords(ticker: str) -> list[str]:
     """Build a robust keyword list for RSS headline matching.
 
-    For JPM ("JPMORGAN CHASE & CO") this produces:
+    For JPM ("JPMORGAN CHASE & CO") produces:
       ["jpm", "jpmorgan", "chase", "jpmorgan chase", "jp morgan"]
-    which matches "JPMorgan reports...", "JP Morgan raises...", "J.P. Morgan...",
-    "JPM stock...", after headlines are normalised by _normalise_for_match().
+    Covers "JPMorgan", "JP Morgan", "J.P. Morgan" after normalisation.
     """
     ticker_upper = ticker.upper()
     keywords: list[str] = [ticker.lower()]
@@ -788,8 +1073,10 @@ async def _resolve_company_keywords(ticker: str) -> list[str]:
     if title:
         words = [w.lower() for w in title.split() if len(w) > 2]
         keywords.extend(words)
+        # Bigrams: "jpmorgan" + "chase" -> "jpmorgan chase"
         for j in range(len(words) - 1):
             keywords.append(f"{words[j]} {words[j + 1]}")
+        # Split-at-2 variants: "jpmorgan" -> "jp morgan"
         for w in words:
             if len(w) >= 5:
                 keywords.append(f"{w[:2]} {w[2:]}")
@@ -804,71 +1091,125 @@ async def _resolve_company_keywords(ticker: str) -> list[str]:
 
 
 def _normalise_for_match(text: str) -> str:
-    """Normalise a headline/summary for keyword matching.
+    """Normalise a headline for keyword matching.
 
-    Strips punctuation and collapses single-letter tokens produced by
-    removing dots from abbreviations:
-      "J.P. Morgan" -> "jpmorgan"  (matches keyword "jpmorgan")
-      "JP Morgan"   -> "jp morgan" (matches keyword "jp morgan")
+    Strips punctuation and collapses single-char tokens so that
+    "J.P. Morgan" -> "jpmorgan" (matches keyword "jpmorgan").
     """
-    s = __import__("re").sub(r"[^a-z0-9 ]", " ", text.lower())
-    s = __import__("re").sub(r"\b([a-z])\b\s*", r"\1", s)
-    return __import__("re").sub(r"  +", " ", s).strip()
+    import re as _re
+    s = _re.sub(r"[^a-z0-9 ]", " ", text.lower())
+    s = _re.sub(r"\b([a-z])\b\s*", r"\1", s)
+    return _re.sub(r"  +", " ", s).strip()
+
+
+def _keyword_matches(norm_text: str, keywords: list[str]) -> bool:
+    """Word-boundary keyword match against a normalised headline.
+
+    Uses \b word boundaries for single-word keywords to avoid substring
+    false positives (e.g. "chasing" matching keyword "chase").
+    Multi-word keywords (bigrams) use substring match — they are already
+    specific enough that a boundary check isn't needed.
+    """
+    import re as _re
+    for kw in keywords:
+        if " " in kw:
+            if kw in norm_text:
+                return True
+        else:
+            if _re.search(rf"\b{_re.escape(kw)}\b", norm_text):
+                return True
+    return False
 
 
 @app.tool()
 async def get_news_sentiment(ticker: str, limit: int = 10) -> dict:
     """Fetch recent financial news mentioning a ticker and compute VADER sentiment.
 
-    Sources: Yahoo Finance, CNBC, MarketWatch RSS feeds.
+    Sources (tried in order):
+      1. RSS feeds: Yahoo Finance, CNBC, MarketWatch (concurrent)
+      2. Yahoo Finance news search API (fallback if RSS yields 0 articles)
+
+    The response always includes a feed_status field so the agent can tell the
+    difference between "no news exists" and "feeds were unreachable".
 
     Args:
-        ticker: Stock ticker symbol (e.g. NVDA, AAPL, MSFT)
-        limit: Maximum articles to return (default 10)
+        ticker: Stock ticker symbol (e.g. NVDA, AAPL, MSFT, JPM)
+        limit:  Maximum articles to return (default 10)
 
     Returns:
-        dict with keys: ticker, total_articles, sentiment_score (-1 to 1),
-        positive_articles, negative_articles, neutral_articles, articles
+        dict with keys:
+          ticker, total_articles, sentiment_score (-1 to 1),
+          positive_articles, negative_articles, neutral_articles,
+          articles, feed_status (per-source diagnostics), source_used
     """
     keywords = await _resolve_company_keywords(ticker)
+    articles: list[dict] = []
+    scores: list[float] = []
+    feed_status: dict[str, str] = {}
 
-    async with httpx.AsyncClient(headers=_SEC_HEADERS) as client:
-        feed_results = await asyncio.gather(
+    # ── Primary: RSS feeds (concurrent) ─────────────────────────────────────
+    async with httpx.AsyncClient(headers=_SEC_HEADERS, follow_redirects=True) as client:
+        rss_results = await asyncio.gather(
             *[_fetch_rss(url, client) for url in _RSS_FEEDS.values()],
             return_exceptions=True,
         )
 
-    articles: list[dict] = []
-    scores: list[float] = []
-
-    for source, feed in zip(_RSS_FEEDS.keys(), feed_results):
-        if isinstance(feed, Exception):
-            logger.warning("Feed %s raised: %s", source, feed)
-            continue
-        for entry in feed.entries[:15]:
-            title: str = entry.get("title", "")
-            summary: str = entry.get("summary", "")
-            combined = _normalise_for_match(f"{title} {summary}")
-            if not any(k in combined for k in keywords):
+        for source, result in zip(_RSS_FEEDS.keys(), rss_results):
+            if isinstance(result, Exception):
+                feed_status[source] = f"error: {result}"
                 continue
 
-            title_score = _sentiment_analyzer.polarity_scores(title)["compound"]
-            summary_score = _sentiment_analyzer.polarity_scores(summary)["compound"] if summary else title_score
-            compound = round((title_score + summary_score) / 2, 4)
+            feed_status[source] = result["status"]
+            if result["error"]:
+                feed_status[source] += f" ({result['error']})"
 
-            scores.append(compound)
-            articles.append({
-                "source": source,
-                "title": title,
-                "link": entry.get("link", ""),
-                "published": entry.get("published", ""),
-                "sentiment": compound,
-            })
+            for entry in result["entries"][:15]:
+                title: str = entry.get("title", "")
+                summary: str = entry.get("summary", "")
+                combined = _normalise_for_match(f"{title} {summary}")
+                if not _keyword_matches(combined, keywords):
+                    continue
+
+                title_score   = _sentiment_analyzer.polarity_scores(title)["compound"]
+                summary_score = (
+                    _sentiment_analyzer.polarity_scores(summary)["compound"]
+                    if summary else title_score
+                )
+                compound = round((title_score + summary_score) / 2, 4)
+                scores.append(compound)
+                articles.append({
+                    "source": source,
+                    "title": title,
+                    "link": entry.get("link", ""),
+                    "published": entry.get("published", ""),
+                    "sentiment": compound,
+                })
+
+        source_used = "rss"
+
+        # ── Fallback: Yahoo Finance news API ────────────────────────────────
+        # Triggered when ALL RSS feeds failed OR total matched articles is 0.
+        rss_ok = any(v == "ok" for v in feed_status.values())
+        if not articles:
+            reason = "rss_unreachable" if not rss_ok else "rss_no_match"
+            logger.info(
+                "RSS returned 0 articles for %s (%s), trying YF news API", ticker, reason
+            )
+            yf_articles = await _fetch_yf_news(ticker, client, limit=limit * 2)
+            if yf_articles:
+                articles = yf_articles[:limit]
+                scores   = [a["sentiment"] for a in articles]
+                feed_status["yahoo_finance_api"] = f"ok ({len(yf_articles)} articles)"
+                source_used = f"yahoo_finance_api ({reason})"
+            else:
+                feed_status["yahoo_finance_api"] = "no articles returned"
+                source_used = "none"
 
     avg = round(sum(scores) / len(scores), 4) if scores else 0.0
     pos = sum(1 for s in scores if s > 0.05)
     neg = sum(1 for s in scores if s < -0.05)
-    return {
+
+    result = {
         "ticker": ticker.upper(),
         "total_articles": len(articles),
         "sentiment_score": avg,
@@ -876,15 +1217,37 @@ async def get_news_sentiment(ticker: str, limit: int = 10) -> dict:
         "negative_articles": neg,
         "neutral_articles": len(scores) - pos - neg,
         "articles": articles[:limit],
+        "feed_status": feed_status,
+        "source_used": source_used,
     }
+
+    # Surface a clear warning when no articles were found at all, so the
+    # agent does not invent narrative to fill the gap.
+    if not articles:
+        feeds_ok   = [k for k, v in feed_status.items() if "ok" in v]
+        feeds_fail = [k for k, v in feed_status.items() if "ok" not in v]
+        if feeds_fail and not feeds_ok:
+            result["warning"] = (
+                "All news sources were unreachable. Do not invent sentiment narrative. "
+                f"Failed sources: {feeds_fail}. Retry or report as data unavailable."
+            )
+        else:
+            result["warning"] = (
+                "No news articles found for this ticker in current RSS feeds. "
+                "This may indicate low media coverage, not negative sentiment. "
+                "Do not infer sentiment from absence of data."
+            )
+    return result
 
 
 @app.tool()
 async def get_earnings_calendar(ticker: str) -> dict:
-    """Fetch upcoming earnings date for a stock ticker via yfinance.
+    """Fetch upcoming earnings date for a stock ticker.
+
+    Tries yfinance first, falls back to SEC EDGAR XBRL filing cadence.
 
     Args:
-        ticker: Stock ticker symbol (e.g. NVDA, AAPL, MSFT)
+        ticker: Stock ticker symbol (e.g. NVDA, AAPL, MSFT, JPM)
 
     Returns:
         dict with keys: ticker, next_earnings_date, source, or error
@@ -939,7 +1302,10 @@ async def get_earnings_calendar(ticker: str) -> dict:
     except Exception as exc:
         logger.warning("EDGAR earnings fallback failed for %s: %s", ticker, exc)
 
-    return {"ticker": ticker.upper(), "error": "Could not retrieve earnings date from any source"}
+    return {
+        "ticker": ticker.upper(),
+        "error": "Could not retrieve earnings date from any source",
+    }
 
 
 # ──────────────────────────────────────────────
@@ -991,6 +1357,20 @@ def _check_code_safety(code: str) -> tuple[bool, str]:
                 return False, f"Restricted function: {fn.id}"
             if isinstance(fn, ast.Attribute) and fn.attr in _RESTRICTED_ATTRS:
                 return False, f"Restricted attribute: {fn.attr}"
+            # Block getattr(obj, '__dangerous__') with string literal
+            if isinstance(fn, ast.Name) and fn.id == "getattr":
+                if len(node.args) >= 2:
+                    attr_arg = node.args[1]
+                    if isinstance(attr_arg, ast.Constant) and isinstance(
+                        attr_arg.value, str
+                    ) and (
+                        attr_arg.value in _RESTRICTED_ATTRS
+                        or (
+                            attr_arg.value.startswith("__")
+                            and attr_arg.value.endswith("__")
+                        )
+                    ):
+                        return False, f"Restricted getattr: {attr_arg.value}"
 
         if isinstance(node, ast.Attribute) and node.attr in _RESTRICTED_ATTRS:
             return False, f"Restricted attribute access: {node.attr}"
@@ -1006,23 +1386,11 @@ def _check_code_safety(code: str) -> tuple[bool, str]:
                 ):
                     return False, f"Restricted subscript key: {val}"
 
-        if isinstance(node, ast.Call):
-            fn = node.func
-            if isinstance(fn, ast.Name) and fn.id == "getattr":
-                if len(node.args) >= 2:
-                    attr_arg = node.args[1]
-                    if isinstance(attr_arg, ast.Constant) and isinstance(
-                        attr_arg.value, str
-                    ) and (
-                        attr_arg.value in _RESTRICTED_ATTRS
-                        or (attr_arg.value.startswith("__") and attr_arg.value.endswith("__"))
-                    ):
-                        return False, f"Restricted getattr: {attr_arg.value}"
-
     return True, ""
 
 
 def _sandbox_preexec() -> None:
+    """OS-level resource limits applied in the child process (Unix only)."""
     try:
         resource.setrlimit(resource.RLIMIT_CPU, (25, 25))
         resource.setrlimit(resource.RLIMIT_AS, (512 * 1024 * 1024, 512 * 1024 * 1024))
@@ -1081,15 +1449,15 @@ except Exception:
 async def execute_python(code: str, timeout: int = 30) -> dict:
     """Execute Python code in a hardened sandbox subprocess.
 
-    Available: pandas (pd), numpy (np), math, json, datetime, random,
-    statistics, itertools, collections, functools, typing.
-    NOT available: os, sys, subprocess, open, exec, eval, and all dunder tricks.
-    Assign to `result` to get a value back.
+    Available libraries: pandas (pd), numpy (np), math, json, datetime,
+    random, statistics, itertools, collections, functools, typing.
+    NOT available: os, sys, subprocess, open, exec, eval, dunder tricks.
+    Set `result = <value>` to return data.
 
     Resource limits (Unix): 25 s CPU, 512 MB RAM, 0 open file descriptors.
 
     Args:
-        code: Python code to execute.
+        code:    Python code string to execute.
         timeout: Wall-clock timeout in seconds (default 30).
 
     Returns:
@@ -1116,7 +1484,9 @@ async def execute_python(code: str, timeout: int = 30) -> dict:
         )
     except subprocess.TimeoutExpired:
         return {
-            "success": False, "stdout": "", "stderr": f"Timed out after {timeout}s",
+            "success": False,
+            "stdout": "",
+            "stderr": f"Timed out after {timeout}s",
             "result": None,
         }
     except Exception as exc:
@@ -1138,17 +1508,15 @@ async def execute_python(code: str, timeout: int = 30) -> dict:
         else:
             clean_lines.append(line)
 
-    cleaned_stderr_lines = []
-    for line in proc.stderr.splitlines():
-        cleaned_stderr_lines.append(
-            line[len("__ERROR__:"):] if line.startswith("__ERROR__:") else line
-        )
-    stderr = "\n".join(cleaned_stderr_lines)
+    cleaned_stderr = "\n".join(
+        line[len("__ERROR__:"):] if line.startswith("__ERROR__:") else line
+        for line in proc.stderr.splitlines()
+    )
 
     return {
         "success": proc.returncode == 0,
         "stdout": "\n".join(clean_lines),
-        "stderr": stderr,
+        "stderr": cleaned_stderr,
         "result": result,
     }
 

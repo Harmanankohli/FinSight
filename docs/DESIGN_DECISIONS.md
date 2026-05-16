@@ -313,6 +313,44 @@ The RAG agent fetches SEC filings via MCP on first query (`_ensure_ingested`). W
 - ✅ MCP server caches — SEC map loaded once, cached per server lifetime
 - ✅ Backward compatible — all existing patterns still work
 
+## Financial Filings Tool (get_financial_filings)
+
+### Problem
+
+`get_company_filings()` returned all recent filings in order, but for large financial companies the "recent" batch was dominated by 8-Ks (current reports filed nearly daily). A request for `limit=10` might return 0-1 actual 10-K or 10-Q statements, leaving RAG agents with no financial data to analyze.
+
+### Solution
+
+Added `get_financial_filings()` that fetches 10-K and 10-Q filings separately with independent limits:
+
+```
+annual_limit=5    → up to 5 years of 10-Ks
+quarterly_limit=8 → up to 2 years of 10-Qs
+```
+
+If the initial "recent" batch doesn't contain enough 10-Ks, it paginates to older filings pages. The response separates annual from quarterly so downstream agents can distinguish yearly trends from quarterly updates.
+
+## News System: Concurrent RSS + Yahoo Finance Fallback
+
+### Problem
+
+The original RSS pipeline had three issues:
+1. Feeds were fetched **sequentially** — if MarketWatch timed out, CNBC and Yahoo waited
+2. No failure diagnostics — a blank response looked identical to "no news for this ticker"
+3. No fallback — if all three RSS feeds returned zero matches, the agent got empty news with no explanation
+
+### Solution
+
+**Concurrent fetching**: All three RSS feeds are fetched simultaneously via `asyncio.gather()`. A slow/unreachable feed doesn't block the others.
+
+**Structured return values**: `_fetch_rss()` returns `{"entries": [...], "status": "ok" | "http_xxx" | "parse_error" | "error", "error": "..."}`. Each source gets an entry in `feed_status` so agents can see which feeds worked.
+
+**Yahoo Finance news API fallback**: When all RSS feeds are unreachable **or** return zero keyword-matched articles, `_fetch_yf_news()` queries Yahoo Finance's structured `v1/finance/search` API. Unlike RSS, results are pre-filtered to the ticker — no keyword matching needed.
+
+**Better diagnostics**: `source_used` tells the agent whether results came from RSS or the Yahoo fallback. `feed_status` shows per-source HTTP status codes. The response distinguishes:
+- `rss_unreachable` — feeds returned errors
+- `rss_no_match` — feeds returned articles but none matched the ticker
+
 ### MCP Response Parsing Inconsistency
 
 **Problem**: Each agent parsed MCP tool responses differently (checking for `.content`, `.text`, dict vs list, etc.), leading to fragile error handling.
