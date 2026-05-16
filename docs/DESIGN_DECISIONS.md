@@ -272,6 +272,47 @@ The RAG agent fetches SEC filings via MCP on first query (`_ensure_ingested`). W
 
 **Solution**: Changed `dcf_valuation_node()` to use `data.get("cash_flow", {})` instead of `data.get("income_statement", {})`.
 
+## Ticker Extraction Decoupled from SEC Validation
+
+### Problem
+
+`extract_ticker()` in `shared/ticker_utils.py` fetched the full SEC company_tickers.json (~4MB) on every call to validate candidates. This meant:
+1. Every agent query triggered a network call to SEC.gov just to extract a ticker
+2. `RAGAgent.stream()` had a broken `await self._connect()` call (method didn't exist)
+3. Validation logic was duplicated inline across three agent executors with subtle differences
+4. No graceful fallback when MCP was unavailable
+
+### Solution
+
+**Step 1 — Pure regex extraction**: `extract_ticker()` now returns the first regex match immediately with no network calls. Priority cascade: parentheses > trigger words > $ prefix > 3-5 letter words > 2 letter words.
+
+**Step 2 — MCP-based validation**: Each agent has a `_validate_ticker()` method that:
+1. Connects MCP if not already connected
+2. Calls the MCP `validate_ticker` tool (which talks to SEC EDGAR)
+3. Returns `(is_valid, ticker, company_or_error)` as a uniform `tuple[bool, str, str]`
+
+**Step 3 — First-match heuristic**: Pattern 4 (`\b([A-Z]{3,5})\b`) returns `matches[0]` (first match) rather than `matches[-1]` (last match). Rationale:
+
+- The orchestrator LLM generates task text like *"Analyze WMT (Walmart) SEC filings for..."* — the ticker appears **first**, stop words like "SEC", "EPS", "NYSE", "INC" appear **after** it
+- `matches[-1]` picked up trailing stop words: "SEC" instead of "WMT" in the task above
+- `matches[0]` prefers the ticker that was mentioned first
+- If the first match is wrong, `_validate_ticker` rejects it → `resolved` fallback → company name resolution catches the real ticker
+
+**Step 4 — Validation fallback to resolution**: When `extract_ticker` returns a candidate that `_validate_ticker` rejects (e.g. regex picks up "SEC" from task context), the agent retries with `_resolve_ticker` (company name resolution) before returning an error. This creates a three-layer defense:
+
+1. **Regex first** (instant) — catches explicit tickers: "(AAPL)", "$V", "for MA"
+2. **Company name resolution** (SEC reverse index + Yahoo fallback) — catches natural language: "Mastercard" → "MA"
+3. **Validation** (SEC EDGAR) — confirms ticker exists, used as gate for all of the above
+
+**Step 5 — Ticker format gate**: `is_valid_ticker_format()` rejects anything that doesn't match `^[A-Z]{1,5}(\.[A-Z]{1,2})?$` — prevents mutual fund identifiers ("0P0000SECP.F") and other non-equity symbols from reaching validation.
+
+**Key properties**:
+- ✅ Extraction never fails — pure regex, no network calls
+- ✅ Validation is optional — MCP validation has fallback to raw regex guess
+- ✅ No SEC API from agent side — only MCP server talks to SEC
+- ✅ MCP server caches — SEC map loaded once, cached per server lifetime
+- ✅ Backward compatible — all existing patterns still work
+
 ### MCP Response Parsing Inconsistency
 
 **Problem**: Each agent parsed MCP tool responses differently (checking for `.content`, `.text`, dict vs list, etc.), leading to fragile error handling.

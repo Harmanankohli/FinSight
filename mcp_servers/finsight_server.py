@@ -540,6 +540,208 @@ async def get_filing_content(edgar_url: str, ix_url: str | None = None) -> dict:
         return {"url": edgar_url, "error": str(exc), "content": ""}
 
 
+_prewarm_done = False
+
+
+async def _prewarm_ticker_map() -> None:
+    global _prewarm_done
+    if _prewarm_done:
+        return
+    try:
+        await _edgar._get_ticker_map()
+        _prewarm_done = True
+        logger.info("SEC ticker map pre-warmed")
+    except Exception as e:
+        logger.warning("SEC ticker map pre-warm failed: %s", e)
+
+
+@app.tool()
+async def validate_ticker(ticker: str) -> dict:
+    """Validate a stock ticker against SEC EDGAR database.
+
+    Use this to confirm a ticker is valid before processing. Returns company
+    name and CIK if valid, or error if not found.
+
+    Args:
+        ticker: Stock ticker symbol (e.g. AAPL, MSFT, MA, V)
+
+    Returns:
+        dict with keys: valid (bool), ticker, company_name, cik, or error
+    """
+    try:
+        await _prewarm_ticker_map()
+        company_title = await _edgar.get_company_title(ticker.upper())
+        if company_title:
+            cik = await _edgar._lookup_cik(ticker.upper())
+            return {
+                "valid": True,
+                "ticker": ticker.upper(),
+                "company_name": company_title,
+                "cik": cik,
+            }
+        return {"valid": False, "ticker": ticker.upper(), "error": "Ticker not found in SEC database"}
+    except Exception as exc:
+        return {"valid": False, "ticker": ticker.upper(), "error": str(exc)}
+
+
+# ──────────────────────────────────────────────
+# Ticker Resolution (company name → ticker)
+# ──────────────────────────────────────────────
+
+_REVERSE_INDEX: list[tuple[str, str, str]] | None = None
+_REVERSE_INDEX_LOCK = asyncio.Lock()
+
+
+def _normalize_company_name(name: str) -> str:
+    s = name.lower().strip()
+    for _suffix in [
+        " inc", " inc.", " incorporated", " corp", " corp.", " corporation",
+        " ltd", " ltd.", " limited", " llc", " lp", " plc",
+        " company", " co.", " co", " holdings", " holding",
+        " technologies", " technology", " group",
+        " (the)", " (new)", " (de)", " (md)", " (mn)",
+    ]:
+        if s.endswith(_suffix):
+            s = s[: -len(_suffix)].strip()
+    s = __import__("re").sub(r"[^a-z0-9 ]", "", s)
+    s = __import__("re").sub(r"\s+", " ", s).strip()
+    return s
+
+
+async def _build_reverse_index() -> list[tuple[str, str, str]]:
+    global _REVERSE_INDEX
+    if _REVERSE_INDEX is not None:
+        return _REVERSE_INDEX
+    async with _REVERSE_INDEX_LOCK:
+        if _REVERSE_INDEX is not None:
+            return _REVERSE_INDEX
+        await _prewarm_ticker_map()
+        idx: list[tuple[str, str, str]] = []
+        for ticker, title in (_edgar._title_map or {}).items():
+            norm = _normalize_company_name(title)
+            idx.append((norm, ticker, title))
+        idx.sort(key=lambda x: -len(x[0]))
+        _REVERSE_INDEX = idx
+        logger.info("Built reverse index with %d entries", len(idx))
+        return _REVERSE_INDEX
+
+
+async def _ticker_sec_lookup(query: str) -> dict | None:
+    norm_query = _normalize_company_name(query)
+    if not norm_query:
+        return None
+    idx = await _build_reverse_index()
+    query_words = set(norm_query.split())
+
+    best: tuple[int, str, str, str] | None = None
+    for norm_title, ticker, title in idx:
+        if norm_title == norm_query:
+            return {"ticker": ticker, "company_name": title, "source": "sec", "match": "exact"}
+        if norm_title.startswith(norm_query):
+            score = len(norm_title)
+            if best is None or score < best[0]:
+                best = (score, ticker, title, "prefix")
+        if not query_words:
+            continue
+        title_words = set(norm_title.split())
+        overlap = query_words & title_words
+        if overlap and overlap == query_words:
+            score = len(norm_title)
+            if best is None or score < best[0]:
+                best = (score, ticker, title, "word_overlap")
+
+    if best:
+        return {"ticker": best[1], "company_name": best[2], "source": "sec", "match": best[3]}
+
+    for word in sorted(query_words, key=len, reverse=True):
+        for norm_title, ticker, title in idx:
+            if norm_title.startswith(word):
+                return {"ticker": ticker, "company_name": title, "source": "sec", "match": f"word_prefix:{word}"}
+            if word in norm_title.split():
+                return {"ticker": ticker, "company_name": title, "source": "sec", "match": f"word_in:{word}"}
+    return None
+
+
+_STOCK_TICKER_RE = __import__("re").compile(r"^[A-Z]{1,5}(\.[A-Z]{1,2})?$")
+
+
+def _is_plausible_ticker(symbol: str) -> bool:
+    return bool(_STOCK_TICKER_RE.match(symbol))
+
+
+async def _is_sec_ticker(symbol: str) -> bool:
+    await _prewarm_ticker_map()
+    return symbol.upper() in (_edgar._title_map or {})
+
+
+async def _ticker_yahoo_search(query: str) -> dict | None:
+    try:
+        c = await _edgar._get_client()
+        url = f"https://query1.finance.yahoo.com/v1/finance/search?q={urlquote(query)}&lang=en-US&region=US&quotesCount=5"
+        resp = await c.get(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+        resp.raise_for_status()
+        data = resp.json()
+        quotes = data.get("quotes", [])
+        for q in quotes:
+            symbol = q.get("symbol", "")
+            if not symbol or not _is_plausible_ticker(symbol):
+                continue
+            exch = q.get("exchange", "")
+            if exch in ("NYQ", "NMS", "NGM", "ASE", "NYQ", "PCX", "OQA", "OQB"):
+                return {
+                    "ticker": symbol,
+                    "company_name": q.get("longname", q.get("shortname", q.get("symbol", ""))),
+                    "source": "yfinance",
+                }
+        for q in quotes:
+            symbol = q.get("symbol", "")
+            if not symbol or not _is_plausible_ticker(symbol):
+                continue
+            if await _is_sec_ticker(symbol):
+                return {
+                    "ticker": symbol,
+                    "company_name": q.get("longname", q.get("shortname", q.get("symbol", ""))),
+                    "source": "yfinance",
+                }
+        for q in quotes:
+            symbol = q.get("symbol", "")
+            if not symbol or not _is_plausible_ticker(symbol):
+                continue
+            return {
+                "ticker": symbol,
+                "company_name": q.get("longname", q.get("shortname", q.get("symbol", ""))),
+                "source": "yfinance",
+            }
+    except Exception as exc:
+        logger.warning("Yahoo Finance search failed for %s: %s", query, exc)
+    return None
+
+
+@app.tool()
+async def resolve_company_ticker(text: str) -> dict:
+    """Resolve a company name or natural language text to a stock ticker symbol.
+
+    Tries SEC EDGAR reverse lookup first (instant, local cache), then falls back
+    to Yahoo Finance search API.
+
+    Args:
+        text: Company name or query text (e.g. \"Mastercard\", \"Apple Inc\", \"Microsoft Corporation\")
+
+    Returns:
+        dict with keys: ticker, company_name, source (sec/yfinance), match (exact/prefix/word_overlap), or error
+    """
+    try:
+        result = await _ticker_sec_lookup(text)
+        if result:
+            return result
+        result = await _ticker_yahoo_search(text)
+        if result:
+            return result
+        return {"error": f"Could not resolve '{text}' to a stock ticker"}
+    except Exception as exc:
+        return {"error": f"Ticker resolution failed: {exc}"}
+
+
 # ──────────────────────────────────────────────
 # Financial News Tools
 # ──────────────────────────────────────────────

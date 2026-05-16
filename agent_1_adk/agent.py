@@ -30,11 +30,16 @@ async def send_message(
     Call this for EACH available agent to gather their analysis,
     then synthesize all responses into a final recommendation.
 
+    IMPORTANT: Use the exact same ticker in EVERY agent's task.
+    Identify the stock ticker from the user's question first, then
+    include it in all tasks you send.
+
     Args:
         agent_name: The exact name of the agent (e.g. "Financial RAG Agent",
             "Quant Analysis Agent", "Sentiment Intelligence Agent").
-        task: Full description of the analysis you want the agent to perform.
-            Include the ticker and specific metrics or data requested.
+        task: Full description of the analysis. MUST include the company's
+            ticker symbol (e.g. "MA", "AAPL", "NVDA") in ALL CAPS somewhere
+            in the task text. Use the SAME ticker for every agent.
 
     Returns:
         The agent's analysis as text.
@@ -60,12 +65,18 @@ from specialized agents and produce a BUY/HOLD/SELL recommendation.
 Available agents:
 {skill_lines}
 
-When the user asks about a stock (e.g. "NVDA", "msft", "AAPL"):
-1. Call `send_message` for EACH available agent with a detailed task
-   describing what analysis you need. Call them all — you need all
-   perspectives.
-2. After all agents respond, synthesize their findings into a
-   BUY/HOLD/SELL recommendation with supporting evidence.
+PROCEDURE:
+1.  Identify the stock ticker from the user's question. If the user mentions
+    a company name (e.g. "Mastercard", "Apple", "Microsoft"), determine its
+    ticker symbol (MA, AAPL, MSFT).
+2.  Call `send_message` for EVERY available agent. You MUST call all agents.
+3.  Each task MUST include the SAME ticker symbol in ALL CAPS (e.g. "MA").
+    Do NOT use different tickers for different agents.
+4.  After all agents respond, synthesize their findings into a
+    BUY/HOLD/SELL recommendation with supporting evidence.
+
+TASK FORMAT — always include the ticker in the task text:
+  "Analyze MA (Mastercard) SEC filings for recent financial performance."
 
 For general chat or non-stock queries, respond conversationally.
 """

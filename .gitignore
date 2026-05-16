@@ -29,7 +29,6 @@ Thumbs.db
 
 # Temp / debug files
 request.json
-run_adk_web.bat
 test_server.py
 restart_adk.ps1
 tools/

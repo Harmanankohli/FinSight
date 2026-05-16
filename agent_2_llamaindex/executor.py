@@ -6,7 +6,7 @@ from datetime import date, datetime, timezone
 from shared.base_agent import BaseAgent
 from shared.mcp_client import MCPClient, MCPServerConfig
 from shared.config import MCP_SERVER_URL
-from shared.ticker_utils import extract_ticker
+from shared.ticker_utils import extract_ticker, is_valid_ticker_format
 
 from .document_ingestion import DocumentIngestionPipeline
 from .index_manager import FinancialIndexManager
@@ -38,6 +38,7 @@ class RAGAgent(BaseAgent):
                 logger.warning("MCP connect failed (non-fatal): %s", e)
                 self._mcp = None
                 return
+        if self._ingestion is None:
             self._ingestion = DocumentIngestionPipeline(self.index)
         try:
             result = await self._mcp.call_tool_by_name(
@@ -91,10 +92,94 @@ class RAGAgent(BaseAgent):
         await self._ensure_ingested(ticker)
         return await self.index.query(ticker, query_text)
 
+    async def _validate_ticker(self, ticker: str) -> tuple[bool, str, str]:
+        if not ticker:
+            return False, "", "Could not identify a stock ticker from the query. Try using parentheses (AAPL) or $ prefix ($V)."
+        if self._mcp is None:
+            self._mcp = MCPClient(configs=[MCPServerConfig(name="finsight-mcp", url=MCP_SERVER_URL)])
+            try:
+                await self._mcp.connect_all()
+            except Exception as e:
+                logger.warning("MCP connect failed, proceeding with regex ticker guess: %s", e)
+                self._mcp = None
+                return True, ticker, ""
+        try:
+            result = await self._mcp.call_tool_by_name("validate_ticker", {"ticker": ticker})
+            if hasattr(result, "content"):
+                for item in result.content:
+                    try:
+                        v = json.loads(item.text if hasattr(item, "text") else str(item))
+                        if v.get("valid"):
+                            return True, v.get("ticker", ticker), v.get("company_name", "")
+                        return False, ticker, v.get("error", "Ticker not found in SEC database")
+                    except Exception:
+                        continue
+            return False, ticker, "Ticker not found in SEC database"
+        except Exception as e:
+            logger.warning("Ticker validation via MCP failed, proceeding with regex guess: %s", e)
+            return True, ticker, ""
+
+    async def _resolve_ticker(self, query: str) -> tuple[str, str]:
+        if self._mcp is None:
+            self._mcp = MCPClient(configs=[MCPServerConfig(name="finsight-mcp", url=MCP_SERVER_URL)])
+            try:
+                await self._mcp.connect_all()
+            except Exception as e:
+                logger.warning("MCP connect failed during ticker resolution: %s", e)
+                self._mcp = None
+                return "", ""
+        try:
+            result = await self._mcp.call_tool_by_name("resolve_company_ticker", {"text": query})
+            if hasattr(result, "content"):
+                for item in result.content:
+                    try:
+                        v = json.loads(item.text if hasattr(item, "text") else str(item))
+                        ticker = v.get("ticker", "")
+                        if ticker and is_valid_ticker_format(ticker):
+                            return ticker, v.get("company_name", "")
+                    except Exception:
+                        continue
+        except Exception as e:
+            logger.warning("MCP ticker resolution failed: %s", e)
+        return "", ""
+
     async def stream(
         self, query: str, context_id: str, task_id: str
     ) -> AsyncIterable[dict]:
         ticker = extract_ticker(query)
+        resolved = False
+
+        if not ticker:
+            ticker, _ = await self._resolve_ticker(query)
+            resolved = True
+
+        if not ticker:
+            yield {
+                "response_type": "text",
+                "is_task_complete": True,
+                "is_error": True,
+                "require_user_input": False,
+                "content": "Could not identify a stock ticker from the query. Try using parentheses (AAPL) or $ prefix ($V).",
+            }
+            return
+
+        valid, validated_ticker, company = await self._validate_ticker(ticker)
+        if not valid and not resolved:
+            ticker, _ = await self._resolve_ticker(query)
+            if ticker:
+                valid, validated_ticker, company = await self._validate_ticker(ticker)
+
+        if not valid:
+            yield {
+                "response_type": "text",
+                "is_task_complete": True,
+                "is_error": True,
+                "require_user_input": False,
+                "content": f"Ticker '{ticker}' is not valid. Error: {company}",
+            }
+            return
+
+        ticker = validated_ticker
 
         try:
             result = await self.query(ticker, query)
