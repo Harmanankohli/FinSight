@@ -5,8 +5,8 @@ Single unified MCP server (`mcp_servers/finsight_server.py`) hosting both agent 
 ## Overview
 
 | Port | Tools | Registry |
-|---|---|---|
-| 8010 | `get_prices`, `get_financials`, `get_options_chain`, `get_company_filings`, `get_filing_content`, `full_text_search`, `get_news_sentiment`, `get_earnings_calendar`, `execute_python` | `find_agent`, `resource://agent_cards/list`, `resource://agent_cards/{name}` |
+|---|---|---|---|
+| 8010 | `get_prices`, `get_financials`, `get_options_chain`, `get_company_filings`, `get_financial_filings`, `get_filing_content`, `validate_ticker`, `resolve_company_ticker`, `full_text_search`, `get_news_sentiment`, `get_earnings_calendar`, `execute_python` | `find_agent`, `resource://agent_cards/list`, `resource://agent_cards/{name}` |
 
 No API keys required (SEC uses public API, news uses RSS feeds). Windows-compatible — `import resource` guarded by platform check.
 
@@ -43,8 +43,11 @@ Public API — no key required.
 | Tool | Parameters | Returns |
 |---|---|---|
 | `get_company_filings` | `ticker`, `form_types` (optional), `limit` (10) | Filing list with form, date, `edgar_url` (raw document), `ix_url` (viewer fallback) |
-| `get_filing_content` | `edgar_url`, `ix_url` (optional) | Extracted text content from raw filing URL, with fallback to IXBRL viewer |
-| `full_text_search` | `query`, `ticker` (optional) | Relevance-scored search results |
+| `get_financial_filings` | `ticker`, `annual_limit` (5), `quarterly_limit` (8) | 10-K and 10-Q only, separated with pagination for sufficient coverage |
+| `get_filing_content` | `edgar_url`, `ix_url` (optional) | Extracted text content from raw SEC filing URL, with fallback to IXBRL viewer |
+| `full_text_search` | `query`, `ticker` (optional) | Relevance-scored SEC EDGAR search results |
+| `validate_ticker` | `ticker` | Validates ticker against SEC database (cached CIK map) |
+| `resolve_company_ticker` | `text` | Natural language company name to ticker (SEC reverse index + Yahoo fallback) |
 
 **Note**: Requires valid `User-Agent` header. Uses `"FinSight Research (contact@finsight.com)"`. The RAG agent uses `get_filing_content` to fetch and index actual SEC filing content.
 

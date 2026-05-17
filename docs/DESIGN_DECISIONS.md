@@ -112,7 +112,9 @@ See v3 above. `httpx.AsyncClient` is never created in a thread or at module leve
 
 **Problem**: The LLM instruction says "call ALL agents simultaneously" but no local or low-end model supports parallel tool calling.
 
-**Final solution**: Use a single `send_message` tool. The LLM calls agents sequentially, which matches the pattern used by ALL reference A2A projects.
+**Initial solution**: Use a single `send_message` tool. The LLM called agents sequentially.
+
+**Resolution with qwen**: The `qwen3-30b-a3b-2507` model supports parallel function calling, calling `send_message` for multiple agents simultaneously. The single `send_message` tool pattern is retained — agents marked as requiring sequential execution will be serialized by the LLM.
 
 ### 8. MCP Resource URI Type Mismatch
 
