@@ -10,8 +10,12 @@ if sys.platform == "win32":
 from google.adk.agents import LlmAgent
 from google.adk.tools.tool_context import ToolContext
 from google.genai import types as genai_types
+from langfuse import observe
 
 from shared.config import ADK_MODEL, LLM_BASE_URL
+from shared.observability import init_langfuse
+
+init_langfuse(service_name="orchestrator")
 
 os.environ.setdefault("OPENAI_API_BASE", LLM_BASE_URL)
 os.environ.setdefault("OPENAI_API_KEY", "lmstudio")
@@ -25,6 +29,7 @@ from .sub_agent_client import SubAgentClient
 _client = SubAgentClient()
 
 
+@observe(as_type="generation")
 async def send_message(
     agent_name: str, task: str, tool_context: ToolContext
 ) -> str:

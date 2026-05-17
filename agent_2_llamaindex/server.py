@@ -1,4 +1,5 @@
 import asyncio
+import atexit
 import logging
 import os
 import sys
@@ -13,6 +14,17 @@ from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
 from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
+
+from shared.observability import init_langfuse, shutdown_langfuse
+
+init_langfuse(service_name="rag_agent")
+atexit.register(shutdown_langfuse)
+from openinference.instrumentation.llama_index import LlamaIndexInstrumentor
+
+LlamaIndexInstrumentor().instrument()
+from opentelemetry.instrumentation.starlette import StarletteInstrumentor
+
+StarletteInstrumentor().instrument()
 
 from shared.generic_executor import GenericAgentExecutor
 from .executor import RAGAgent

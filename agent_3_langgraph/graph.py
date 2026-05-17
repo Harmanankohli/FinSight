@@ -54,7 +54,8 @@ class QuantAnalysisGraph:
         return builder.compile()
 
     async def run(
-        self, ticker: str, period: str = "5y", portfolio_holdings: list[str] | None = None, mcp_client: Any | None = None
+        self, ticker: str, period: str = "5y", portfolio_holdings: list[str] | None = None,
+        mcp_client: Any | None = None, langfuse_handler: Any | None = None,
     ) -> dict:
         initial: QuantAnalysisState = {
             "ticker": ticker.upper(),
@@ -73,7 +74,10 @@ class QuantAnalysisGraph:
             "mcp_client": mcp_client,
         }
 
-        result = await self._graph.ainvoke(initial)
+        config = {}
+        if langfuse_handler:
+            config["callbacks"] = [langfuse_handler]
+        result = await self._graph.ainvoke(initial, config=config)
 
         return {
             "ticker": ticker.upper(),

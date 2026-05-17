@@ -1,9 +1,12 @@
 import logging
 from collections.abc import AsyncIterable
 
+from langfuse.langchain import CallbackHandler
+
 from shared.base_agent import BaseAgent
 from shared.mcp_client import MCPClient, MCPServerConfig
 from shared.config import MCP_SERVER_URL, MCP_TIMEOUT
+from shared.observability import get_langfuse_client
 from shared.ticker_utils import clean_query_for_resolution, extract_ticker, is_valid_ticker_format
 
 from .graph import QuantAnalysisGraph
@@ -30,7 +33,11 @@ class QuantAgent(BaseAgent):
 
     async def analyze(self, ticker: str, period: str = "5y") -> dict:
         await self._ensure_connected()
-        return await self.graph.run(ticker, period=period, mcp_client=self._mcp)
+        langfuse_handler = CallbackHandler()
+        return await self.graph.run(
+            ticker, period=period, mcp_client=self._mcp,
+            langfuse_handler=langfuse_handler,
+        )
 
     async def _validate_ticker(self, ticker: str) -> tuple[bool, str, str]:
         if not ticker:
@@ -87,55 +94,65 @@ class QuantAgent(BaseAgent):
     async def stream(
         self, query: str, context_id: str, task_id: str
     ) -> AsyncIterable[dict]:
-        ticker = extract_ticker(query)
-        resolved = False
+        langfuse = get_langfuse_client()
+        with langfuse.start_as_current_observation(
+            as_type="span",
+            name="quant-agent-stream",
+            input=query,
+        ) as span:
+            ticker = extract_ticker(query)
+            resolved = False
 
-        if not ticker:
-            ticker, _ = await self._resolve_ticker(query)
-            resolved = True
+            if not ticker:
+                ticker, _ = await self._resolve_ticker(query)
+                resolved = True
 
-        if not ticker:
-            yield {
-                "response_type": "text",
-                "is_task_complete": True,
-                "is_error": True,
-                "require_user_input": False,
-                "content": "Could not identify a stock ticker from the query. Try using parentheses (AAPL) or $ prefix ($V).",
-            }
-            return
+            if not ticker:
+                span.update(output={"error": "No ticker found"})
+                yield {
+                    "response_type": "text",
+                    "is_task_complete": True,
+                    "is_error": True,
+                    "require_user_input": False,
+                    "content": "Could not identify a stock ticker from the query. Try using parentheses (AAPL) or $ prefix ($V).",
+                }
+                return
 
-        valid, validated_ticker, company = await self._validate_ticker(ticker)
-        if not valid and not resolved:
-            ticker, _ = await self._resolve_ticker(query, exclude_ticker=ticker)
-            if ticker:
-                valid, validated_ticker, company = await self._validate_ticker(ticker)
+            valid, validated_ticker, company = await self._validate_ticker(ticker)
+            if not valid and not resolved:
+                ticker, _ = await self._resolve_ticker(query, exclude_ticker=ticker)
+                if ticker:
+                    valid, validated_ticker, company = await self._validate_ticker(ticker)
 
-        if not valid:
-            yield {
-                "response_type": "text",
-                "is_task_complete": True,
-                "is_error": True,
-                "require_user_input": False,
-                "content": f"Ticker '{ticker}' is not valid. Error: {company}",
-            }
-            return
+            if not valid:
+                span.update(output={"error": f"Invalid ticker: {ticker}"})
+                yield {
+                    "response_type": "text",
+                    "is_task_complete": True,
+                    "is_error": True,
+                    "require_user_input": False,
+                    "content": f"Ticker '{ticker}' is not valid. Error: {company}",
+                }
+                return
 
-        ticker = validated_ticker
+            ticker = validated_ticker
 
-        try:
-            result = await self.analyze(ticker)
-            yield {
-                "response_type": "data",
-                "is_task_complete": True,
-                "require_user_input": False,
-                "content": result,
-            }
-        except Exception as e:
-            logger.exception("Quant analysis failed")
-            yield {
-                "response_type": "text",
-                "is_task_complete": True,
-                "is_error": True,
-                "require_user_input": False,
-                "content": f"Quant analysis failed: {e}",
-            }
+            try:
+                result = await self.analyze(ticker)
+                span.update(output={"ticker": ticker, "recommendation": result.get("recommendation")})
+                yield {
+                    "response_type": "data",
+                    "is_task_complete": True,
+                    "require_user_input": False,
+                    "content": result,
+                }
+            except Exception as e:
+                logger.exception("Quant analysis failed")
+                span.update(output={"error": str(e)})
+                yield {
+                    "response_type": "text",
+                    "is_task_complete": True,
+                    "is_error": True,
+                    "require_user_input": False,
+                    "content": f"Quant analysis failed: {e}",
+                }

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import ast
+import atexit
 import json
 import logging
 import os
@@ -23,9 +24,14 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 from bs4 import BeautifulSoup
+from langfuse import observe
 from mcp.server.fastmcp import FastMCP
 from sentence_transformers import SentenceTransformer
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+
+from shared.observability import init_langfuse, shutdown_langfuse
+init_langfuse(service_name="mcp_server")
+atexit.register(shutdown_langfuse)
 
 logger = logging.getLogger(__name__)
 app = FastMCP("finsight-mcp")
@@ -105,6 +111,7 @@ async def _ensure_registry() -> None:
     name="find_agent",
     description="Finds the most relevant agent card based on a natural language query string",
 )
+@observe()
 async def find_agent(query: str) -> str:
     await _ensure_registry()
     if _df_registry.empty or _model_embed is None:
@@ -166,6 +173,7 @@ def _serialise_value(v: Any) -> Any:
 
 
 @app.tool()
+@observe()
 async def get_prices(ticker: str, period: str = "1y", interval: str = "1d") -> dict:
     """Fetch OHLCV price history data for a stock ticker.
 
@@ -188,6 +196,7 @@ async def get_prices(ticker: str, period: str = "1y", interval: str = "1d") -> d
 
 
 @app.tool()
+@observe()
 async def get_financials(ticker: str) -> dict:
     """Fetch financial statements and company info for a stock ticker.
 
@@ -220,6 +229,7 @@ async def get_financials(ticker: str) -> dict:
 
 
 @app.tool()
+@observe()
 async def get_options_chain(ticker: str, expiration: str | None = None) -> dict:
     """Fetch options chain data for a stock ticker.
 
@@ -602,6 +612,7 @@ _edgar = _EdgarClient()
 # ──────────────────────────────────────────────
 
 @app.tool()
+@observe()
 async def get_company_filings(
     ticker: str, form_types: str = "", limit: int = 10
 ) -> dict:
@@ -631,6 +642,7 @@ async def get_company_filings(
 
 
 @app.tool()
+@observe()
 async def get_financial_filings(
     ticker: str,
     annual_limit: int = 5,
@@ -678,6 +690,7 @@ async def get_financial_filings(
 
 
 @app.tool()
+@observe()
 async def full_text_search(query: str, ticker: str | None = None) -> dict:
     """Search full text of SEC EDGAR filings.
 
@@ -696,6 +709,7 @@ async def full_text_search(query: str, ticker: str | None = None) -> dict:
 
 
 @app.tool()
+@observe()
 async def get_filing_content(edgar_url: str, ix_url: str | None = None) -> dict:
     """Fetch and extract text content from an SEC EDGAR filing URL.
 
@@ -732,6 +746,7 @@ async def _prewarm_ticker_map() -> None:
 
 
 @app.tool()
+@observe()
 async def validate_ticker(ticker: str) -> dict:
     """Validate a stock ticker against SEC EDGAR database.
 
@@ -936,6 +951,7 @@ async def _ticker_yahoo_search(query: str) -> dict | None:
 
 
 @app.tool()
+@observe()
 async def resolve_company_ticker(text: str) -> dict:
     """Resolve a company name or natural language text to a stock ticker symbol.
 
@@ -1122,6 +1138,7 @@ def _keyword_matches(norm_text: str, keywords: list[str]) -> bool:
 
 
 @app.tool()
+@observe()
 async def get_news_sentiment(ticker: str, limit: int = 10) -> dict:
     """Fetch recent financial news mentioning a ticker and compute VADER sentiment.
 
@@ -1241,6 +1258,7 @@ async def get_news_sentiment(ticker: str, limit: int = 10) -> dict:
 
 
 @app.tool()
+@observe()
 async def get_earnings_calendar(ticker: str) -> dict:
     """Fetch upcoming earnings date for a stock ticker.
 
@@ -1446,6 +1464,7 @@ except Exception:
 
 
 @app.tool()
+@observe()
 async def execute_python(code: str, timeout: int = 30) -> dict:
     """Execute Python code in a hardened sandbox subprocess.
 

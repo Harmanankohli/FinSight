@@ -48,5 +48,10 @@ MCP_SERVER_PORT = int(os.environ.get("MCP_SERVER_PORT", "8010"))
 # Agent Registry (MCP-based discovery, hosted on the unified finsight MCP server)
 AGENT_REGISTRY_URL = os.environ.get("AGENT_REGISTRY_URL", "http://localhost:8010")
 
+# Langfuse
+LANGFUSE_PUBLIC_KEY = os.environ.get("LANGFUSE_PUBLIC_KEY", "pk-lf-...")
+LANGFUSE_SECRET_KEY = os.environ.get("LANGFUSE_SECRET_KEY", "sk-lf-...")
+LANGFUSE_HOST = os.environ.get("LANGFUSE_BASE_URL") or os.environ.get("LANGFUSE_HOST", "https://cloud.langfuse.com")
+
 # SEC
 SEC_API_BASE = os.environ.get("SEC_API_BASE", "https://www.sec.gov")

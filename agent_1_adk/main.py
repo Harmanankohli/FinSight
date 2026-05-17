@@ -1,4 +1,5 @@
 import asyncio
+import atexit
 import logging
 import os
 import sys
@@ -16,6 +17,14 @@ from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
+
+from shared.observability import init_langfuse, shutdown_langfuse
+
+init_langfuse(service_name="orchestrator")
+atexit.register(shutdown_langfuse)
+from openinference.instrumentation.google_adk import GoogleADKInstrumentor
+
+GoogleADKInstrumentor().instrument()
 
 from .agent import root_agent
 from .agent_executor import FinSightAgentExecutor
