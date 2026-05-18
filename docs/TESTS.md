@@ -2,7 +2,7 @@
 
 ## Summary
 
-**42/42 tests passing — 100%**
+**50/50 tests passing — 100%**
 
 ## Test Files
 
@@ -17,7 +17,8 @@
 | `test_quant_graph.py` | 4 | LangGraph conditional branching, stress test/DCF routing |
 | `test_rag_pipeline.py` | 7 | Hybrid search (BM25 + dense), RRF merge, document ingestion |
 | `test_sentiment_crew.py` | 3 | MCP tool discovery, crew builder |
-| **Total** | **42** | |
+| `test_trace_propagation.py` | 8 | Trace context inject/extract roundtrip, `extract_trace_ids()` |
+| **Total** | **50** | |
 
 ## Running Tests
 
@@ -27,6 +28,9 @@ uv run pytest -v
 
 # Specific module
 uv run pytest tests/test_planner.py -v
+
+# Trace propagation only
+uv run pytest tests/test_trace_propagation.py -v
 
 # With timeout (prevents hanging on network calls)
 uv run pytest -v --timeout=30
@@ -43,6 +47,21 @@ uv run pytest -v --timeout=30
 | Agent cards | `test_all_cards_have_urls` | All JSON cards well-formed |
 | Quant graph | `test_graph_routes_to_stress_test_on_high_volatility` | Conditional branching logic |
 | RAG pipeline | `test_rrf_merge_deduplicates` | BM25 + dense hybrid search |
+| Trace context | `test_inject_and_extract_roundtrip` | JSON prefix inject/extract preserves trace IDs |
+| Trace IDs | `test_extract_trace_ids_roundtrip` | `extract_trace_ids()` returns `(trace_id, parent_span_id, clean_query)` |
+
+## Trace Propagation Tests
+
+| Test | What it verifies |
+|---|---|
+| `test_inject_and_extract_roundtrip` | Full inject → extract cycle preserves trace_id, parent_span_id, and original task text |
+| `test_extract_no_context_is_noop` | Task without prefix passes through unchanged |
+| `test_injected_task_preserves_multiline` | Multi-line task text preserved after roundtrip |
+| `test_malformed_prefix_returns_none` | Invalid JSON prefix → no context extracted, original text returned |
+| `test_missing_trace_fields_returns_none` | Prefix with wrong fields → returns None |
+| `test_inject_empty_ids_returns_original` | Empty trace_id/parent_span_id → no injection, original text returned |
+| `test_extract_trace_ids_roundtrip` | `extract_trace_ids()` returns correct `(trace_id, parent_span_id, clean_query)` tuple |
+| `test_extract_trace_ids_no_context` | `extract_trace_ids()` returns `(None, None, original)` when no prefix present |
 
 ## Pre-existing Test Issues
 
