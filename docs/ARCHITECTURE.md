@@ -176,3 +176,43 @@ All agents use LM Studio (OpenAI-compatible local API):
 | RAG (LlamaIndex) | `qwen/qwen3-30b-a3b-2507` | `llama-index-llms-openai-like` |
 | Quant (LangGraph) | `qwen/qwen3-30b-a3b-2507` | `langchain-openai` |
 | Sentiment (CrewAI) | `qwen/qwen3-30b-a3b-2507` | CrewLLM (OpenAI-compatible) |
+
+## Observability & Tracing
+
+Langfuse provides distributed tracing across all four agent processes. Trace context is propagated through the A2A protocol via text-based injection.
+
+### Trace Propagation Flow
+
+```
+Orchestrator (agent_1_adk)
+  ├── agent_executor.py: langfuse.trace(name="finsight-query")
+  ├── start_as_current_observation(name="orchestrator-execute")
+  ├── send_message() tool: get_current_trace_id() + get_current_observation_id()
+  └── inject_trace_context(task, trace_id, parent_span_id) → A2A text prefix
+
+A2A Protocol (JSON-RPC over HTTP)
+  └── Task text prefixed with {"_trace": {"trace_id": "...", "parent_span_id": "..."}}
+
+Sub-agents (agent_2, agent_3, agent_4)
+  ├── extract_trace_ids(query) → (trace_id, parent_span_id, clean_query)
+  ├── start_observation(trace_context={"trace_id": ..., "parent_span_id": ...})
+  └── Langfuse joins the span to the orchestrator's trace tree
+```
+
+### Trace Context Utility
+
+| Function | File | Purpose |
+|---|---|---|
+| `inject_trace_context(task, trace_id, parent_span_id)` | `shared/trace_context.py` | Serializes trace IDs as JSON prefix in task text |
+| `extract_trace_context(task)` | `shared/trace_context.py` | Returns `(trace_ctx_dict, clean_query)` |
+| `extract_trace_ids(task)` | `shared/trace_context.py` | Returns `(trace_id, parent_span_id, clean_query)` |
+
+### Per-Agent Instrumentation
+
+| Agent | Service Name | Instrumentors | Manual Spans |
+|---|---|---|---|
+| Orchestrator | `orchestrator` | GoogleADKInstrumentor, HTTPXClientInstrumentor | `orchestrator-execute` span |
+| RAG Agent | `rag_agent` | LlamaIndexInstrumentor | `rag-agent-stream` span |
+| Quant Agent | `quant_agent` | StarletteInstrumentor | `quant-agent-stream` span + CallbackHandler for LangGraph nodes |
+| Sentiment Agent | `sentiment_agent` | CrewAIInstrumentor, StarletteInstrumentor | `sentiment-agent-stream` span |
+| MCP Server | `mcp_server` | — | `@observe()` on individual tools |

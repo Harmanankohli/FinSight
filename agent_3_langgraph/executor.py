@@ -8,7 +8,7 @@ from shared.mcp_client import MCPClient, MCPServerConfig
 from shared.config import MCP_SERVER_URL, MCP_TIMEOUT
 from shared.observability import get_langfuse_client
 from shared.ticker_utils import clean_query_for_resolution, extract_ticker, is_valid_ticker_format
-from shared.trace_context import extract_trace_context
+from shared.trace_context import extract_trace_ids
 
 from .graph import QuantAnalysisGraph
 
@@ -101,12 +101,17 @@ class QuantAgent(BaseAgent):
     async def stream(
         self, query: str, context_id: str, task_id: str
     ) -> AsyncIterable[dict]:
-        trace_ctx, query = extract_trace_context(query)
+        trace_id, parent_span_id, query = extract_trace_ids(query)
 
         langfuse = get_langfuse_client()
+        trace_ctx = (
+            {"trace_id": trace_id, "parent_span_id": parent_span_id}
+            if trace_id and parent_span_id
+            else None
+        )
         span = langfuse.start_observation(
-            name="quant-agent-stream",
             as_type="span",
+            name="quant-agent-stream",
             input=query,
             trace_context=trace_ctx,
         )

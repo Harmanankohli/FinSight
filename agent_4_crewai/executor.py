@@ -6,6 +6,7 @@ from shared.mcp_client import MCPClient, MCPServerConfig
 from shared.config import MCP_SERVER_URL, MCP_TIMEOUT
 from shared.observability import get_langfuse_client
 from shared.ticker_utils import clean_query_for_resolution, extract_ticker, is_valid_ticker_format
+from shared.trace_context import extract_trace_ids
 
 from .crew import SentimentIntelligenceCrew
 from .mcp_tools import MCPClientWrapper
@@ -123,12 +124,21 @@ class SentimentAgent(BaseAgent):
     async def stream(
         self, query: str, context_id: str, task_id: str
     ) -> AsyncIterable[dict]:
+        trace_id, parent_span_id, query = extract_trace_ids(query)
+
         langfuse = get_langfuse_client()
-        with langfuse.start_as_current_observation(
+        trace_ctx = (
+            {"trace_id": trace_id, "parent_span_id": parent_span_id}
+            if trace_id and parent_span_id
+            else None
+        )
+        span = langfuse.start_observation(
             as_type="span",
             name="sentiment-agent-stream",
             input=query,
-        ) as span:
+            trace_context=trace_ctx,
+        )
+        try:
             ticker = extract_ticker(query)
             resolved = False
 
@@ -189,3 +199,5 @@ class SentimentAgent(BaseAgent):
                     "require_user_input": False,
                     "content": f"Sentiment analysis failed: {e}",
                 }
+        finally:
+            span.end()

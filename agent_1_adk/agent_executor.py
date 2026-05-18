@@ -57,9 +57,26 @@ class FinSightAgentExecutor(AgentExecutor):
 
         langfuse = get_langfuse_client()
         user_input = context.get_user_input()
+
+        from shared.ticker_utils import extract_ticker
+        ticker_hint = extract_ticker(user_input) or "unknown"
+
+        root_trace = langfuse.trace(
+            name="finsight-query",
+            session_id=context_id,
+            user_id=user_id,
+            input={"query": user_input},
+            metadata={
+                "ticker": ticker_hint,
+                "context_id": context_id,
+            },
+            tags=["finsight", "investment-query"],
+        )
+
         with langfuse.start_as_current_observation(
             as_type="span",
             name="orchestrator-execute",
+            trace_id=root_trace.id,
             input=user_input,
         ) as span:
             with propagate_attributes(session_id=context_id, user_id=user_id):
@@ -70,7 +87,7 @@ class FinSightAgentExecutor(AgentExecutor):
                         new_message=content,
                     ):
                         if event.is_final_response():
-                            await self._process_response(event, updater, task, span)
+                            await self._process_response(event, updater, task, span, root_trace)
                 except Exception:
                     logger.exception("Error during agent execution")
                     span.update(output={"error": "Agent execution failed"})
@@ -82,7 +99,7 @@ class FinSightAgentExecutor(AgentExecutor):
                 )
 
     async def _process_response(
-        self, event, updater: TaskUpdater, task, span=None
+        self, event, updater: TaskUpdater, task, span=None, root_trace=None
     ) -> None:
         if not (
             event.content
@@ -100,6 +117,11 @@ class FinSightAgentExecutor(AgentExecutor):
         text = event.content.parts[0].text.strip()
         if span:
             span.update(output={"response": text[:2000]})
+        if root_trace:
+            root_trace.update(
+                output={"synthesis": text[:2000]},
+                metadata={"completed": True},
+            )
         await updater.update_status(
             TaskState.TASK_STATE_COMPLETED,
             new_text_message(text, task.context_id, task.id),

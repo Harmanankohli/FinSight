@@ -433,6 +433,54 @@ _FINANCIAL_STOP_WORDS = frozenset({
 - ✅ All three agents (RAG, Quant, Sentiment) apply the same cleanup
 - ✅ Backward compatible — all existing patterns still work
 
+## Langfuse Distributed Tracing Across Processes
+
+### Problem
+
+Each agent runs in a separate OS process (uvicorn on its own port). When a sub-agent calls `langfuse.start_observation()` it creates a brand new root trace — Langfuse has no way to know that the sub-agent trace belongs inside the orchestrator's trace. This resulted in 4 disconnected traces per query:
+
+```
+Trace A: orchestrator-execute   [pid: 8001]
+Trace B: rag-agent-stream        [pid: 8002]   ← orphan
+Trace C: quant-agent-stream      [pid: 8003]   ← orphan
+Trace D: sentiment-agent-stream  [pid: 8004]   ← orphan
+```
+
+### Solution
+
+**Text-based trace context injection via A2A payload:**
+
+1. **Orchestrator** (`sub_agent_client.py`): Extracts `trace_id` and `parent_span_id` from the current Langfuse context via `lf.get_current_trace_id()` and `lf.get_current_observation_id()`. Serializes them as a JSON prefix: `{"_trace": {"trace_id": "...", "parent_span_id": "..."}}\n<<<TASK>>>\n{task_text}`.
+
+2. **Sub-agents** (`executor.py`): Extract the prefix via `extract_trace_ids(query)`, rebuild the `trace_context` dict, and pass it to `langfuse.start_observation(..., trace_context=trace_ctx)`. Langfuse uses the `trace_id` to join the existing trace and `parent_span_id` to set the parent observation.
+
+3. **LangGraph CallbackHandler**: Quant agent additionally passes `trace_context` to `CallbackHandler(trace_context=trace_ctx)` so all internal graph nodes are linked to the parent trace.
+
+### Why not OpenTelemetry W3C TraceContext headers?
+
+The A2A SDK controls the HTTP transport layer. Injecting custom headers would require modifying the SDK client or using httpx event hooks. The text-prefix approach is simpler, already partially implemented, and works reliably across all A2A transports (JSON-RPC, HTTP+JSON).
+
+### Why `start_observation()` not `start_as_current_observation()`?
+
+`start_as_current_observation()` is a context manager that manages OTel context tokens. In async generators, the context token is created in one async context but the generator yields control to a different context, causing `ValueError: Token was created in a different Context`. `start_observation()` creates the span manually without OTel context management, avoiding the conflict. The span's `.end()` is called in the `finally` block.
+
+### Result
+
+```
+Trace A: finsight-query [ticker=NVDA]
+├── orchestrator-execute
+│   ├── send_message → Financial RAG Agent
+│   │   └── rag-agent-stream (child of orchestrator-execute)
+│   ├── send_message → Quant Analysis Agent
+│   │   └── quant-agent-stream (child of orchestrator-execute)
+│   │       ├── fetch_prices (LangGraph node)
+│   │       ├── compute_metrics
+│   │       ├── run_dcf / run_stress_test
+│   │       └── llm_summary
+│   └── send_message → Sentiment Intelligence Agent
+│       └── sentiment-agent-stream (child of orchestrator-execute)
+```
+
 ## Date Hallucination
 
 ### Problem
