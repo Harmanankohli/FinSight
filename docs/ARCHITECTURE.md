@@ -95,15 +95,18 @@ A2A Request → DefaultRequestHandler → GenericAgentExecutor(RAGAgent)
 A2A Request → DefaultRequestHandler → GenericAgentExecutor(QuantAgent)
   → QuantAgent.stream()
     [MCP: get_prices → parse Close data]
-    → compute_metrics → conditional branch:
-        high volatility → stress_test
-        low volatility  → dcf_valuation [MCP: get_financials → cash_flow]
+    → compute_metrics → conditional branch (logged with ticker + volatility):
+        high volatility (vol > 35%) → stress_test, dcf_error set
+        low volatility  (vol ≤ 35%) → dcf_valuation [MCP: get_financials → cash_flow]
     → portfolio_correlation [MCP: get_prices per holding]
-    → format_output → llm_summary
-  → Yields data response
+    → format_output (dcf_error included in reasoning if DCF skipped)
+    → llm_summary
+  → Yields data response with dcf_error in result
 ```
 
 **DCF Fix**: The DCF valuation now correctly reads free cash flow data from the `cash_flow` financial statement (not `income_statement`). This fixes the issue where DCF valuations were returning null.
+
+**DCF Skip Messaging**: When annual volatility exceeds the 35% threshold, `compute_metrics_node` sets a descriptive `dcf_error` field (e.g. "DCF skipped: annual volatility (41.0%) exceeds 35% threshold – routed to stress test instead"). This error is propagated through the graph into the final output and LLM reasoning, providing visibility into why DCF was not computed.
 
 ### Sentiment Agent (CrewAI)
 

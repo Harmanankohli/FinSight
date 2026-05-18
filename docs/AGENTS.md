@@ -132,12 +132,15 @@ Request → DefaultRequestHandler → GenericAgentExecutor(RAGAgent)
 Request → DefaultRequestHandler → GenericAgentExecutor(QuantAgent)
   → QuantAgent.stream(query, context_id, task_id)
     → QuantAgent.analyze(ticker)
-      [MCP: get_prices → parse Close data] → compute_metrics → conditional branch
-        ├── high_volatility (annual_vol > 35%) → stress_test
-        └── low_volatility → dcf_valuation
-      → portfolio_correlation → format_output → llm_summary
+      [MCP: get_prices → parse Close data] → compute_metrics → conditional branch (logged)
+        ├── high_volatility (annual_vol > 35%) → stress_test, sets dcf_error
+        └── low_volatility (annual_vol ≤ 35%) → dcf_valuation
+      → portfolio_correlation → format_output (dcf_error in reasoning) → llm_summary
   → Yields: {response_type: "data", content: result, is_task_complete: true}
+      Result includes dcf_error field when DCF is skipped
 ```
+
+**Logging & Error Propagation**: The graph logs routing decisions, metric computation failures, DCF fallbacks, and beta calculation errors. When DCF is skipped due to high volatility, the `dcf_error` field is set and propagated through formatting and LLM summary, giving users visibility into why DCF was not computed.
 
 ---
 

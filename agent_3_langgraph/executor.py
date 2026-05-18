@@ -8,6 +8,7 @@ from shared.mcp_client import MCPClient, MCPServerConfig
 from shared.config import MCP_SERVER_URL, MCP_TIMEOUT
 from shared.observability import get_langfuse_client
 from shared.ticker_utils import clean_query_for_resolution, extract_ticker, is_valid_ticker_format
+from shared.trace_context import extract_trace_context
 
 from .graph import QuantAnalysisGraph
 
@@ -31,13 +32,19 @@ class QuantAgent(BaseAgent):
             await self._mcp.connect_all()
             self._connected = True
 
-    async def analyze(self, ticker: str, period: str = "5y") -> dict:
+    async def analyze(self, ticker: str, period: str = "5y", trace_ctx: dict | None = None) -> dict:
+        logger.info("Quant analysis starting for %s (period=%s, mcp_connected=%s)", ticker, period, self._connected)
         await self._ensure_connected()
-        langfuse_handler = CallbackHandler()
-        return await self.graph.run(
+
+        langfuse_handler = CallbackHandler(trace_context=trace_ctx)
+        result = await self.graph.run(
             ticker, period=period, mcp_client=self._mcp,
             langfuse_handler=langfuse_handler,
         )
+        logger.info("Quant analysis complete for %s: rec=%s, dcf=%s",
+                     ticker, result.get("recommendation"),
+                     "ok" if result.get("dcf_valuation") else "null")
+        return result
 
     async def _validate_ticker(self, ticker: str) -> tuple[bool, str, str]:
         if not ticker:
@@ -94,12 +101,16 @@ class QuantAgent(BaseAgent):
     async def stream(
         self, query: str, context_id: str, task_id: str
     ) -> AsyncIterable[dict]:
+        trace_ctx, query = extract_trace_context(query)
+
         langfuse = get_langfuse_client()
-        with langfuse.start_as_current_observation(
-            as_type="span",
+        span = langfuse.start_observation(
             name="quant-agent-stream",
+            as_type="span",
             input=query,
-        ) as span:
+            trace_context=trace_ctx,
+        )
+        try:
             ticker = extract_ticker(query)
             resolved = False
 
@@ -138,7 +149,7 @@ class QuantAgent(BaseAgent):
             ticker = validated_ticker
 
             try:
-                result = await self.analyze(ticker)
+                result = await self.analyze(ticker, trace_ctx=trace_ctx)
                 span.update(output={"ticker": ticker, "recommendation": result.get("recommendation")})
                 yield {
                     "response_type": "data",
@@ -156,3 +167,5 @@ class QuantAgent(BaseAgent):
                     "require_user_input": False,
                     "content": f"Quant analysis failed: {e}",
                 }
+        finally:
+            span.end()

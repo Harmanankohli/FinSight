@@ -359,6 +359,27 @@ The original RSS pipeline had three issues:
 
 **Solution**: Added `parse_mcp_result(result)` utility in `shared/mcp_client.py` that handles various MCP response formats consistently — returns parsed dict/list/string or `{"error": "..."}` on failure.
 
+## DCF Skipped from High Volatility Routing
+
+### Problem
+
+`dcf_valuation` returned `null` for tickers with annual volatility above 35% (e.g. Oracle at 41%). The graph's `_route_on_volatility` function routed these to `stress_test` and DCF was never called. The `dcf_error` field was `null` too — making it impossible to distinguish "DCF failed" from "DCF was never executed".
+
+### Solution
+
+Three changes across the graph pipeline:
+
+1. **Set `dcf_error` in `compute_metrics_node`**: When `annual_vol > 0.35` is detected, the metrics node now includes a descriptive `dcf_error` message (e.g. "DCF skipped: annual volatility (41.0%) exceeds 35% threshold – routed to stress test instead"). This is set *before* the routing decision, so it's available in state regardless of which path is taken.
+
+2. **Surface `dcf_error` in `graph.run()` output**: The result dict now includes the `dcf_error` field so callers can see why DCF is null.
+
+3. **Include `dcf_error` in reasoning**: `format_output_node` appends the error to the reasoning string when DCF is null with an error, so the LLM summary has full context.
+
+### Key properties
+- ✅ Callers can distinguish "DCF not computed" from "DCF failed to compute"
+- ✅ The error reason appears in both structured output (`dcf_error` field) and natural language summary (reasoning text)
+- ✅ No false positives — only set when volatility routing actually causes the skip
+
 ## DCF Null from Negative Free Cash Flow
 
 ### Problem
