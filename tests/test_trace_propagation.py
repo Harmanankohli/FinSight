@@ -1,4 +1,5 @@
 from shared.trace_context import inject_trace_context, extract_trace_context, extract_trace_ids
+from shared.ticker_utils import extract_holdings
 
 FAKE_TRACE_ID = "a" * 32
 FAKE_PARENT_SPAN_ID = "b" * 16
@@ -71,3 +72,40 @@ def test_extract_trace_ids_no_context():
     assert trace_id is None
     assert parent_span_id is None
     assert clean_task == raw_task
+
+
+def test_extract_holdings_portfolio_holds():
+    query = "Should I buy ORCL? My portfolio holds AAPL, MSFT, GOOGL"
+    holdings = extract_holdings(query, exclude_ticker="ORCL")
+    assert holdings == ["AAPL", "MSFT", "GOOGL"]
+
+
+def test_extract_holdings_colon_syntax():
+    query = "Analyze NVDA. My portfolio: TSLA, AMZN, META"
+    holdings = extract_holdings(query, exclude_ticker="NVDA")
+    assert holdings == ["TSLA", "AMZN", "META"]
+
+
+def test_extract_holdings_and_connector():
+    query = "Should I invest in AAPL? I own MSFT and GOOGL"
+    holdings = extract_holdings(query, exclude_ticker="AAPL")
+    assert holdings == ["MSFT", "GOOGL"]
+
+
+def test_extract_holdings_no_holdings_mentioned():
+    query = "Should I buy NVDA?"
+    holdings = extract_holdings(query)
+    assert holdings == []
+
+
+def test_extract_holdings_excludes_target_ticker():
+    query = "Analyze AAPL. My portfolio holds AAPL, MSFT"
+    holdings = extract_holdings(query, exclude_ticker="AAPL")
+    assert holdings == ["MSFT"]
+    assert "AAPL" not in holdings
+
+
+def test_extract_holdings_current_positions():
+    query = "Should I buy TSLA? My current holdings are JPM, BAC, WFC"
+    holdings = extract_holdings(query, exclude_ticker="TSLA")
+    assert holdings == ["JPM", "BAC", "WFC"]

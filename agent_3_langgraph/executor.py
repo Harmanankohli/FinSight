@@ -7,7 +7,7 @@ from shared.base_agent import BaseAgent
 from shared.mcp_client import MCPClient, MCPServerConfig
 from shared.config import MCP_SERVER_URL, MCP_TIMEOUT
 from shared.observability import get_langfuse_client
-from shared.ticker_utils import clean_query_for_resolution, extract_ticker, is_valid_ticker_format
+from shared.ticker_utils import clean_query_for_resolution, extract_ticker, extract_holdings, is_valid_ticker_format
 from shared.trace_context import extract_trace_ids
 
 from .graph import QuantAnalysisGraph
@@ -32,14 +32,14 @@ class QuantAgent(BaseAgent):
             await self._mcp.connect_all()
             self._connected = True
 
-    async def analyze(self, ticker: str, period: str = "5y", trace_ctx: dict | None = None) -> dict:
-        logger.info("Quant analysis starting for %s (period=%s, mcp_connected=%s)", ticker, period, self._connected)
+    async def analyze(self, ticker: str, period: str = "5y", portfolio_holdings: list[str] | None = None, trace_ctx: dict | None = None) -> dict:
+        logger.info("Quant analysis starting for %s (period=%s, holdings=%s, mcp_connected=%s)", ticker, period, portfolio_holdings, self._connected)
         await self._ensure_connected()
 
         langfuse_handler = CallbackHandler(trace_context=trace_ctx)
         result = await self.graph.run(
-            ticker, period=period, mcp_client=self._mcp,
-            langfuse_handler=langfuse_handler,
+            ticker, period=period, portfolio_holdings=portfolio_holdings,
+            mcp_client=self._mcp, langfuse_handler=langfuse_handler,
         )
         logger.info("Quant analysis complete for %s: rec=%s, dcf=%s",
                      ticker, result.get("recommendation"),
@@ -153,8 +153,12 @@ class QuantAgent(BaseAgent):
 
             ticker = validated_ticker
 
+            holdings = extract_holdings(query, exclude_ticker=ticker)
+            if holdings:
+                logger.info("Extracted portfolio holdings for %s: %s", ticker, holdings)
+
             try:
-                result = await self.analyze(ticker, trace_ctx=trace_ctx)
+                result = await self.analyze(ticker, portfolio_holdings=holdings, trace_ctx=trace_ctx)
                 span.update(output={"ticker": ticker, "recommendation": result.get("recommendation")})
                 yield {
                     "response_type": "data",

@@ -64,3 +64,24 @@ def extract_ticker(query: str) -> str:
         return matches[-1]
 
     return ""
+
+
+_HOLDINGS_PATTERNS = [
+    re.compile(r"(?:portfolio|holdings?)\s*(?::|holds?|contains?|includes?|consists?\s+of)\s*([A-Z]{1,5}(?:\s*,\s*[A-Z]{1,5})*(?:\s+(?:and|&)\s*[A-Z]{1,5})?)", re.IGNORECASE),
+    re.compile(r"(?:I\s+(?:own|hold|have|am\s+invested\s+in)|my\s+(?:current\s+)?(?:portfolio|holdings?|positions?))\s+(?:include|consist)\s+(?:of\s+)?(?:the\s+)?(?:following\s+)?(?:tickers?\s*:?\s*)?([A-Z]{1,5}(?:\s*,\s*[A-Z]{1,5})*(?:\s+(?:and|&)\s*[A-Z]{1,5})?)", re.IGNORECASE),
+    re.compile(r"(?:my\s+(?:current\s+)?(?:portfolio|holdings?|positions?))\s+are\s+([A-Z]{1,5}(?:\s*,\s*[A-Z]{1,5})*(?:\s+(?:and|&)\s*[A-Z]{1,5})?)", re.IGNORECASE),
+    re.compile(r"(?:currently\s+)?(?:own|hold|have)\s*:?\s*([A-Z]{1,5}(?:\s*,\s*[A-Z]{1,5})*(?:\s+(?:and|&)\s*[A-Z]{1,5})?)", re.IGNORECASE),
+]
+
+
+def extract_holdings(query: str, exclude_ticker: str = "") -> list[str]:
+    for pattern in _HOLDINGS_PATTERNS:
+        m = pattern.search(query)
+        if m:
+            raw = m.group(1)
+            tickers = re.split(r"\s*(?:,|and|&)\s*", raw, flags=re.IGNORECASE)
+            result = [t.strip().upper() for t in tickers if t.strip() and is_valid_ticker_format(t.strip().upper())]
+            if exclude_ticker:
+                result = [t for t in result if t != exclude_ticker]
+            return result
+    return []

@@ -280,7 +280,7 @@ async def correlation_node(state: QuantAnalysisState) -> dict:
     mcp = state.get("mcp_client")
 
     if not prices_dict or not holdings or not mcp:
-        return {"correlation_matrix": {}}
+        return {"correlation_matrix": {"note": "No portfolio holdings provided. Include holdings like 'My portfolio holds AAPL, MSFT' to see correlation analysis."}}
 
     ticker = state["ticker"]
     all_tickers = [ticker] + holdings
@@ -297,7 +297,7 @@ async def correlation_node(state: QuantAnalysisState) -> dict:
                                   for t, p in all_prices.items()}).sort_index()
         returns = close_df.pct_change().dropna()
         if returns.empty or len(returns.columns) < 2:
-            return {"correlation_matrix": {}}
+            return {"correlation_matrix": {"note": "Insufficient overlapping price data to compute correlations between holdings."}}
         corr = returns.corr()
 
         matrix = {}
@@ -313,7 +313,7 @@ async def correlation_node(state: QuantAnalysisState) -> dict:
         return {"correlation_matrix": matrix}
     except Exception as e:
         logger.warning("Correlation failed: %s", e)
-        return {"correlation_matrix": {}}
+        return {"correlation_matrix": {"error": str(e)}}
 
 
 async def format_output_node(state: QuantAnalysisState) -> dict:
