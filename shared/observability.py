@@ -3,6 +3,7 @@ import logging
 import os
 from typing import Any
 
+from langfuse.span_filter import is_default_export_span
 from shared.config import LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_HOST
 
 logger = logging.getLogger(__name__)
@@ -37,7 +38,7 @@ def init_langfuse(service_name: str = "finsight") -> Any:
         public_key=LANGFUSE_PUBLIC_KEY,
         secret_key=LANGFUSE_SECRET_KEY,
         base_url=LANGFUSE_HOST,
-        should_export_span=lambda span: True,
+        should_export_span=is_default_export_span,
         additional_headers={
             "x-langfuse-ingestion-version": "4",
         },
