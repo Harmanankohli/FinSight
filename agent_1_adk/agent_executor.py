@@ -10,6 +10,8 @@ from a2a.server.tasks import TaskUpdater
 from a2a.types import TaskState
 from google.adk.runners import Runner
 from google.genai import types
+from langfuse import propagate_attributes
+from shared.observability import get_langfuse_client
 
 from .agent import root_agent as _root_agent
 
@@ -53,31 +55,59 @@ class FinSightAgentExecutor(AgentExecutor):
             parts=[types.Part.from_text(text=context.get_user_input())],
         )
 
-        try:
-            async for event in self._runner.run_async(
-                user_id=user_id,
-                session_id=context_id,
-                new_message=content,
-            ):
-                if event.is_final_response():
-                    await self._process_response(event, updater, task)
-        except Exception:
-            logger.exception("Error during agent execution")
-            await updater.update_status(
-                TaskState.TASK_STATE_FAILED,
-                new_text_message(
-                    "An exception occurred while performing the operation"
-                ),
-            )
+        langfuse = get_langfuse_client()
+        user_input = context.get_user_input()
+
+        from shared.ticker_utils import extract_ticker
+        ticker_hint = extract_ticker(user_input) or "unknown"
+
+        root_trace = langfuse.trace(
+            name="finsight-query",
+            session_id=context_id,
+            user_id=user_id,
+            input={"query": user_input},
+            metadata={
+                "ticker": ticker_hint,
+                "context_id": context_id,
+            },
+            tags=["finsight", "investment-query"],
+        )
+
+        with langfuse.start_as_current_observation(
+            as_type="span",
+            name="orchestrator-execute",
+            trace_id=root_trace.id,
+            input=user_input,
+        ) as span:
+            with propagate_attributes(session_id=context_id, user_id=user_id):
+                try:
+                    async for event in self._runner.run_async(
+                        user_id=user_id,
+                        session_id=context_id,
+                        new_message=content,
+                    ):
+                        if event.is_final_response():
+                            await self._process_response(event, updater, task, span, root_trace)
+                except Exception:
+                    logger.exception("Error during agent execution")
+                    span.update(output={"error": "Agent execution failed"})
+                await updater.update_status(
+                    TaskState.TASK_STATE_FAILED,
+                    new_text_message(
+                        "An exception occurred while performing the operation"
+                    ),
+                )
 
     async def _process_response(
-        self, event, updater: TaskUpdater, task
+        self, event, updater: TaskUpdater, task, span=None, root_trace=None
     ) -> None:
         if not (
             event.content
             and event.content.parts
             and event.content.parts[0].text
         ):
+            if span:
+                span.update(output={"error": "No text content"})
             await updater.update_status(
                 TaskState.TASK_STATE_FAILED,
                 new_text_message("[No text content]"),
@@ -85,6 +115,13 @@ class FinSightAgentExecutor(AgentExecutor):
             return
 
         text = event.content.parts[0].text.strip()
+        if span:
+            span.update(output={"response": text[:2000]})
+        if root_trace:
+            root_trace.update(
+                output={"synthesis": text[:2000]},
+                metadata={"completed": True},
+            )
         await updater.update_status(
             TaskState.TASK_STATE_COMPLETED,
             new_text_message(text, task.context_id, task.id),

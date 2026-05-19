@@ -2,6 +2,15 @@
 
 An autonomous multi-agent system that answers investment queries like *"Should I invest in NVIDIA?"* by coordinating three specialized agents across different frameworks, communicating via the **Agent-to-Agent (A2A)** protocol, and using **MCP (Model Context Protocol)** servers for external tool access.
 
+## Key Features
+
+- **Multi-framework orchestration**: Google ADK orchestrator delegates to LlamaIndex (RAG), LangGraph (Quant), and CrewAI (Sentiment) agents
+- **A2A protocol**: Standard-compliant agent discovery and streaming communication via JSON-RPC over HTTP
+- **Portfolio correlation analysis**: Extract holdings from natural language (e.g. "My portfolio holds AAPL, MSFT") and compute cross-stock correlation matrices
+- **Distributed tracing**: Langfuse traces span all four agent processes in a single trace tree via text-based context propagation, with automatic filtering of noisy A2A internal spans
+- **Local LLM inference**: All agents use LM Studio (OpenAI-compatible API) — no cloud dependencies
+- **MCP data tools**: Unified server providing SEC filings, price data, financials, news sentiment, and more
+
 ## Architecture
 
 ```
@@ -169,14 +178,16 @@ stop_servers.bat
 ├── shared/                   # Shared libraries
 │   ├── base_agent.py         # BaseAgent abstract class
 │   ├── generic_executor.py   # GenericAgentExecutor
-│   ├── ticker_utils.py       # Ticker extraction & validation
+│   ├── ticker_utils.py       # Ticker extraction & holdings extraction
+│   ├── trace_context.py      # Distributed trace context injection/extraction
+│   ├── observability.py      # Langfuse singleton initialization
 │   ├── workflow.py           # WorkflowGraph state machine
 │   ├── types.py              # Shared Pydantic models
 │   ├── config.py             # Centralized .env configuration
 │   ├── mcp_client.py         # MCP client with dynamic tool discovery
 │   └── models.py             # Pydantic data models
 │
-├── tests/                    # Test suite (42 tests)
+├── tests/                    # Test suite (56 tests)
 │   ├── test_a2a_communication.py
 │   ├── test_agent_cards.py
 │   ├── test_base_agent.py
@@ -185,7 +196,8 @@ stop_servers.bat
 │   ├── test_quant_graph.py
 │   ├── test_rag_pipeline.py
 │   ├── test_sentiment_crew.py
-│   └── test_workflow.py
+│   ├── test_workflow.py
+│   └── test_trace_propagation.py  # Trace context + holdings extraction
 │
 ├── run_adk_web.bat           # Start all services
 ├── stop_servers.bat          # Stop all services
@@ -222,7 +234,7 @@ Key environment variables in `.env`:
 uv run pytest -v
 ```
 
-42 tests covering: A2A discovery, agent card validation, orchestrator tools, sub-agent executors, LangGraph state graphs, RAG pipelines, CrewAI integration, and workflow state machines.
+56 tests covering: A2A discovery, agent card validation, orchestrator tools, sub-agent executors, LangGraph state graphs, RAG pipelines, CrewAI integration, workflow state machines, distributed trace propagation, and portfolio holdings extraction.
 
 ## License
 

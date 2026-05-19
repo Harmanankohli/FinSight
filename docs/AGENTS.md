@@ -131,13 +131,22 @@ Request → DefaultRequestHandler → GenericAgentExecutor(RAGAgent)
 ```
 Request → DefaultRequestHandler → GenericAgentExecutor(QuantAgent)
   → QuantAgent.stream(query, context_id, task_id)
-    → QuantAgent.analyze(ticker)
-      [MCP: get_prices → parse Close data] → compute_metrics → conditional branch
-        ├── high_volatility (annual_vol > 35%) → stress_test
-        └── low_volatility → dcf_valuation
-      → portfolio_correlation → format_output → llm_summary
+    → extract_holdings(query, exclude_ticker=ticker) → ["AAPL", "MSFT", "GOOGL"]
+    → QuantAgent.analyze(ticker, portfolio_holdings=holdings)
+      [MCP: get_prices → parse Close data] → compute_metrics → conditional branch (logged)
+        ├── high_volatility (annual_vol > 35%) → stress_test, sets dcf_error
+        └── low_volatility (annual_vol ≤ 35%) → dcf_valuation
+      → portfolio_correlation (fetches prices for target + each holding)
+        → format_output (dcf_error in reasoning) → llm_summary
   → Yields: {response_type: "data", content: result, is_task_complete: true}
+      Result includes dcf_error field when DCF is skipped
 ```
+
+**Portfolio Holdings Extraction**: `extract_holdings()` in `shared/ticker_utils.py` uses regex patterns to extract holdings from natural language (e.g. "My portfolio holds AAPL, MSFT, GOOGL"). The orchestrator LLM is instructed to include holdings in the task text for the Quant agent. Holdings are passed through the full chain and used by `correlation_node` to compute a correlation matrix.
+
+**Correlation Matrix Notes**: When no holdings are provided, returns `{"note": "No portfolio holdings provided..."}` instead of `{}`.
+
+**Logging & Error Propagation**: The graph logs routing decisions, metric computation failures, DCF fallbacks, and beta calculation errors. When DCF is skipped due to high volatility, the `dcf_error` field is set and propagated through formatting and LLM summary, giving users visibility into why DCF was not computed.
 
 ---
 

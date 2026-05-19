@@ -19,7 +19,9 @@ logger = logging.getLogger(__name__)
 
 def _route_on_volatility(state: QuantAnalysisState) -> str:
     if state.get("is_high_volatility", False):
+        logger.info("Routing %s to stress_test (volatility=%.4f high)", state.get("ticker"), state.get("volatility", 0))
         return "stress_test"
+    logger.info("Routing %s to dcf (volatility=%.4f low)", state.get("ticker"), state.get("volatility", 0))
     return "dcf"
 
 
@@ -54,7 +56,8 @@ class QuantAnalysisGraph:
         return builder.compile()
 
     async def run(
-        self, ticker: str, period: str = "5y", portfolio_holdings: list[str] | None = None, mcp_client: Any | None = None
+        self, ticker: str, period: str = "5y", portfolio_holdings: list[str] | None = None,
+        mcp_client: Any | None = None, langfuse_handler: Any | None = None,
     ) -> dict:
         initial: QuantAnalysisState = {
             "ticker": ticker.upper(),
@@ -67,13 +70,26 @@ class QuantAnalysisGraph:
             "metrics": {},
             "stress_test_result": None,
             "dcf_valuation": None,
+            "dcf_error": None,
             "correlation_matrix": {},
             "recommendation": "",
             "reasoning": "",
             "mcp_client": mcp_client,
         }
 
-        result = await self._graph.ainvoke(initial)
+        logger.info("Starting graph execution for %s (period=%s, holdings=%d)", ticker, period, len(portfolio_holdings or []))
+        config = {}
+        if langfuse_handler:
+            config["callbacks"] = [langfuse_handler]
+        result = await self._graph.ainvoke(initial, config=config)
+
+        dcf_error = result.get("dcf_error")
+        if dcf_error:
+            logger.warning("DCF failed for %s: %s", ticker.upper(), dcf_error)
+        logger.info("Graph execution complete for %s: rec=%s, dcf=%s, stress=%s",
+                     ticker.upper(), result.get("recommendation"),
+                     "ok" if result.get("dcf_valuation") else "null",
+                     "ok" if result.get("stress_test_result") else "null")
 
         return {
             "ticker": ticker.upper(),
@@ -81,6 +97,7 @@ class QuantAnalysisGraph:
             "reasoning": result.get("reasoning", ""),
             "metrics": result.get("metrics", {}),
             "dcf_valuation": result.get("dcf_valuation"),
+            "dcf_error": dcf_error,
             "stress_test": result.get("stress_test_result"),
             "correlation_matrix": result.get("correlation_matrix", {}),
         }

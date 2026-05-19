@@ -46,7 +46,9 @@ async def fetch_price_data_node(state: QuantAnalysisState) -> dict:
 
 async def compute_metrics_node(state: QuantAnalysisState) -> dict:
     prices_dict = state.get("price_data", {})
+    ticker = state.get("ticker", "?")
     if not prices_dict:
+        logger.warning("Metrics skipped for %s: no price data available", ticker)
         return {
             "volatility": 0.0,
             "is_high_volatility": False,
@@ -65,6 +67,7 @@ async def compute_metrics_node(state: QuantAnalysisState) -> dict:
     returns = prices.pct_change().dropna()
 
     if len(returns) < 2:
+        logger.warning("Metrics skipped for %s: only %d data points (need >= 2)", ticker, len(returns))
         return {
             "volatility": 0.0,
             "is_high_volatility": False,
@@ -102,12 +105,13 @@ async def compute_metrics_node(state: QuantAnalysisState) -> dict:
                 beta = 1.0
         else:
             beta = 1.0
-    except Exception:
+    except Exception as e:
+        logger.warning("Beta calculation failed for %s: %s, defaulting to 1.0", ticker, e)
         beta = 1.0
 
     is_high = annual_vol > 0.35
 
-    return {
+    result = {
         "volatility": annual_vol,
         "is_high_volatility": is_high,
         "metrics": {
@@ -118,11 +122,19 @@ async def compute_metrics_node(state: QuantAnalysisState) -> dict:
             "max_drawdown": round(max_dd, 4),
         },
     }
+    if is_high:
+        result["dcf_error"] = (
+            f"DCF skipped: annual volatility ({annual_vol:.1%}) exceeds 35% threshold – "
+            f"routed to stress test instead"
+        )
+    return result
 
 
 async def stress_test_node(state: QuantAnalysisState) -> dict:
     prices_dict = state.get("price_data", {})
+    ticker = state.get("ticker", "?")
     if not prices_dict:
+        logger.warning("Stress test skipped for %s: no price data", ticker)
         return {"stress_test_result": None}
 
     prices = pd.Series(
@@ -164,6 +176,7 @@ def _get_fcf_from_financials(financials_dict: dict) -> float | None:
     for period_key, metrics in financials_dict.items():
         if "Free Cash Flow" in metrics:
             fcf = float(metrics["Free Cash Flow"])
+            logger.debug("FCF check %s: Free Cash Flow=%s", period_key, fcf)
             if fcf > 0:
                 return fcf
     for period_key, metrics in financials_dict.items():
@@ -171,8 +184,10 @@ def _get_fcf_from_financials(financials_dict: dict) -> float | None:
         capex = metrics.get("Capital Expenditure")
         if op is not None and capex is not None:
             fcf = float(op) + float(capex)
+            logger.debug("FCF check %s: OCF=%s, CAPEX=%s, OCF-CAPEX=%s", period_key, op, capex, fcf)
             if fcf > 0:
                 return fcf
+    logger.debug("No positive FCF found across %d periods", len(financials_dict))
     return None
 
 
@@ -181,7 +196,7 @@ async def dcf_valuation_node(state: QuantAnalysisState) -> dict:
     mcp = state.get("mcp_client")
     if not mcp:
         logger.warning("DCF skipped for %s: no MCP client", ticker)
-        return {"dcf_valuation": None, "dcf_error": "No MCP client available"}
+        return {"dcf_valuation": None, "dcf_error": "DCF skipped: MCP client not connected – the data service may be down or unreachable"}
 
     try:
         result = await mcp.call_tool_by_name("get_financials", {"ticker": ticker})
@@ -190,13 +205,13 @@ async def dcf_valuation_node(state: QuantAnalysisState) -> dict:
             raw = result.content[0].text if hasattr(result.content[0], "text") else str(result.content[0])
         if not raw:
             logger.warning("DCF skipped for %s: MCP returned empty response", ticker)
-            return {"dcf_valuation": None, "dcf_error": "MCP returned empty response"}
+            return {"dcf_valuation": None, "dcf_error": "DCF skipped: financial data server returned an empty response – ticker may not exist or server returned no data"}
         data = json.loads(raw)
         info = data.get("info", {})
         cash_flow_data = data.get("cash_flow", {})
         if not cash_flow_data:
             logger.warning("DCF skipped for %s: no cash flow data available", ticker)
-            return {"dcf_valuation": None, "dcf_error": "No cash flow data available"}
+            return {"dcf_valuation": None, "dcf_error": "DCF skipped: no cash flow data returned for this ticker – yfinance may not have cash flow statements for this security"}
 
         latest_fcf = _get_fcf_from_financials(cash_flow_data)
         if latest_fcf is None or latest_fcf <= 0:
@@ -206,17 +221,17 @@ async def dcf_valuation_node(state: QuantAnalysisState) -> dict:
                 "DCF skipped for %s: no positive FCF found. FCF from FCF field: %s, FCF from OCF-CAPEX: %s",
                 ticker, fcf_values, op_values
             )
-            return {"dcf_valuation": None, "dcf_error": f"No positive FCF found. FCF values: {fcf_values}, OCF-CAPEX: {op_values}"}
+            return {"dcf_valuation": None, "dcf_error": f"DCF skipped: no positive free cash flow for this ticker – may be pre-revenue, distressed, or FCF data not available (FCF fields: {fcf_values}, OCF-CAPEX: {op_values})"}
 
         shares_outstanding = info.get("sharesOutstanding", 0)
         if not shares_outstanding or shares_outstanding <= 0:
             logger.warning("DCF skipped for %s: missing or invalid shares outstanding (%s)", ticker, shares_outstanding)
-            return {"dcf_valuation": None, "dcf_error": f"Missing shares outstanding ({shares_outstanding})"}
+            return {"dcf_valuation": None, "dcf_error": f"DCF skipped: shares outstanding data missing or invalid (value: {shares_outstanding}) – yfinance may not have this data for the ticker"}
 
         current_price = info.get("currentPrice") or info.get("regularMarketPrice", 0)
         if not current_price or current_price <= 0:
             logger.warning("DCF skipped for %s: missing or invalid current price (%s)", ticker, current_price)
-            return {"dcf_valuation": None, "dcf_error": f"Missing current price ({current_price})"}
+            return {"dcf_valuation": None, "dcf_error": f"DCF skipped: current market price not available (value: {current_price}) – ticker may be delisted or yfinance data unavailable"}
 
         growth_rate = 0.08
         terminal_growth = 0.025
@@ -265,7 +280,7 @@ async def correlation_node(state: QuantAnalysisState) -> dict:
     mcp = state.get("mcp_client")
 
     if not prices_dict or not holdings or not mcp:
-        return {"correlation_matrix": {}}
+        return {"correlation_matrix": {"note": "No portfolio holdings provided. Include holdings like 'My portfolio holds AAPL, MSFT' to see correlation analysis."}}
 
     ticker = state["ticker"]
     all_tickers = [ticker] + holdings
@@ -282,7 +297,7 @@ async def correlation_node(state: QuantAnalysisState) -> dict:
                                   for t, p in all_prices.items()}).sort_index()
         returns = close_df.pct_change().dropna()
         if returns.empty or len(returns.columns) < 2:
-            return {"correlation_matrix": {}}
+            return {"correlation_matrix": {"note": "Insufficient overlapping price data to compute correlations between holdings."}}
         corr = returns.corr()
 
         matrix = {}
@@ -298,7 +313,7 @@ async def correlation_node(state: QuantAnalysisState) -> dict:
         return {"correlation_matrix": matrix}
     except Exception as e:
         logger.warning("Correlation failed: %s", e)
-        return {"correlation_matrix": {}}
+        return {"correlation_matrix": {"error": str(e)}}
 
 
 async def format_output_node(state: QuantAnalysisState) -> dict:
@@ -306,6 +321,12 @@ async def format_output_node(state: QuantAnalysisState) -> dict:
     stress = state.get("stress_test_result")
     dcf = state.get("dcf_valuation")
     corr = state.get("correlation_matrix", {})
+    ticker = state.get("ticker", "?")
+    dcf_error = state.get("dcf_error")
+
+    logger.info("Formatting output for %s: dcf=%s, dcf_error=%s, stress=%s, corr=%s",
+                 ticker, "ok" if dcf else "null", dcf_error,
+                 "ok" if stress else "null", "ok" if corr else "null")
 
     sharpe = metrics.get("sharpe_ratio", 0)
     vol = metrics.get("annual_volatility", 0)
@@ -348,6 +369,8 @@ async def format_output_node(state: QuantAnalysisState) -> dict:
         reasoning_parts.append(f"Sharpe: {metrics.get('sharpe_ratio', 'N/A')}, Vol: {metrics.get('annual_volatility', 'N/A')}, Beta: {metrics.get('beta', 'N/A')}")
     if dcf:
         reasoning_parts.append(f"DCF intrinsic value: ${dcf.get('intrinsic_value', 'N/A')} (upside: {dcf.get('upside_pct', 'N/A')}%)")
+    elif dcf_error:
+        reasoning_parts.append(f"DCF: {dcf_error}")
 
     stress_test_info = None
     if stress:

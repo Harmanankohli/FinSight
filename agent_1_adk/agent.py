@@ -10,8 +10,12 @@ if sys.platform == "win32":
 from google.adk.agents import LlmAgent
 from google.adk.tools.tool_context import ToolContext
 from google.genai import types as genai_types
+from langfuse import observe
 
 from shared.config import ADK_MODEL, LLM_BASE_URL
+from shared.observability import init_langfuse
+
+init_langfuse(service_name="orchestrator")
 
 os.environ.setdefault("OPENAI_API_BASE", LLM_BASE_URL)
 os.environ.setdefault("OPENAI_API_KEY", "lmstudio")
@@ -25,6 +29,7 @@ from .sub_agent_client import SubAgentClient
 _client = SubAgentClient()
 
 
+@observe(as_type="generation")
 async def send_message(
     agent_name: str, task: str, tool_context: ToolContext
 ) -> str:
@@ -77,7 +82,11 @@ PROCEDURE:
 2.  Call `send_message` for EVERY available agent. You MUST call all agents.
 3.  Each task MUST include the SAME ticker symbol in ALL CAPS (e.g. "MA").
     Do NOT use different tickers for different agents.
-4.  After all agents respond, synthesize their findings into a
+4.  If the user mentions portfolio holdings (e.g. "My portfolio holds AAPL,
+    MSFT, GOOGL"), you MUST include them in the task text for the Quant
+    Analysis Agent. Use this exact format:
+    "Analyze ORCL. My portfolio holds AAPL, MSFT, GOOGL."
+5.  After all agents respond, synthesize their findings into a
     BUY/HOLD/SELL recommendation with supporting evidence.
 
 TASK FORMAT — always include the ticker and current date ({_TODAY}) in the task text:

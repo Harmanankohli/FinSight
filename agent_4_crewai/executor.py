@@ -4,7 +4,9 @@ from collections.abc import AsyncIterable
 from shared.base_agent import BaseAgent
 from shared.mcp_client import MCPClient, MCPServerConfig
 from shared.config import MCP_SERVER_URL, MCP_TIMEOUT
+from shared.observability import get_langfuse_client
 from shared.ticker_utils import clean_query_for_resolution, extract_ticker, is_valid_ticker_format
+from shared.trace_context import extract_trace_ids
 
 from .crew import SentimentIntelligenceCrew
 from .mcp_tools import MCPClientWrapper
@@ -122,55 +124,80 @@ class SentimentAgent(BaseAgent):
     async def stream(
         self, query: str, context_id: str, task_id: str
     ) -> AsyncIterable[dict]:
-        ticker = extract_ticker(query)
-        resolved = False
+        trace_id, parent_span_id, query = extract_trace_ids(query)
 
-        if not ticker:
-            ticker, _ = await self._resolve_ticker(query)
-            resolved = True
-
-        if not ticker:
-            yield {
-                "response_type": "text",
-                "is_task_complete": True,
-                "is_error": True,
-                "require_user_input": False,
-                "content": "Could not identify a stock ticker from the query. Try using parentheses (AAPL) or $ prefix ($V).",
-            }
-            return
-
-        valid, validated_ticker, company = await self._validate_ticker(ticker)
-        if not valid and not resolved:
-            ticker, _ = await self._resolve_ticker(query, exclude_ticker=ticker)
-            if ticker:
-                valid, validated_ticker, company = await self._validate_ticker(ticker)
-
-        if not valid:
-            yield {
-                "response_type": "text",
-                "is_task_complete": True,
-                "is_error": True,
-                "require_user_input": False,
-                "content": f"Ticker '{ticker}' is not valid. Error: {company}",
-            }
-            return
-
-        ticker = validated_ticker
-
+        langfuse = get_langfuse_client()
+        trace_ctx = (
+            {"trace_id": trace_id, "parent_span_id": parent_span_id}
+            if trace_id and parent_span_id
+            else None
+        )
+        span = langfuse.start_observation(
+            as_type="span",
+            name="sentiment-agent-stream",
+            input=query,
+            trace_context=trace_ctx,
+        )
         try:
-            result = await self.analyze(ticker, query)
-            yield {
-                "response_type": "data",
-                "is_task_complete": True,
-                "require_user_input": False,
-                "content": result,
-            }
-        except Exception as e:
-            logger.exception("Sentiment analysis failed")
-            yield {
-                "response_type": "text",
-                "is_task_complete": True,
-                "is_error": True,
-                "require_user_input": False,
-                "content": f"Sentiment analysis failed: {e}",
-            }
+            ticker = extract_ticker(query)
+            resolved = False
+
+            if not ticker:
+                ticker, _ = await self._resolve_ticker(query)
+                resolved = True
+
+            if not ticker:
+                span.update(output={"error": "No ticker found"})
+                yield {
+                    "response_type": "text",
+                    "is_task_complete": True,
+                    "is_error": True,
+                    "require_user_input": False,
+                    "content": "Could not identify a stock ticker from the query. Try using parentheses (AAPL) or $ prefix ($V).",
+                }
+                return
+
+            valid, validated_ticker, company = await self._validate_ticker(ticker)
+            if not valid and not resolved:
+                ticker, _ = await self._resolve_ticker(query, exclude_ticker=ticker)
+                if ticker:
+                    valid, validated_ticker, company = await self._validate_ticker(ticker)
+
+            if not valid:
+                span.update(output={"error": f"Invalid ticker: {ticker}"})
+                yield {
+                    "response_type": "text",
+                    "is_task_complete": True,
+                    "is_error": True,
+                    "require_user_input": False,
+                    "content": f"Ticker '{ticker}' is not valid. Error: {company}",
+                }
+                return
+
+            ticker = validated_ticker
+
+            try:
+                result = await self.analyze(ticker, query)
+                span.update(output={
+                    "ticker": ticker,
+                    "signal": result.get("overall_signal"),
+                    "confidence": result.get("confidence_score"),
+                })
+                yield {
+                    "response_type": "data",
+                    "is_task_complete": True,
+                    "require_user_input": False,
+                    "content": result,
+                }
+            except Exception as e:
+                logger.exception("Sentiment analysis failed")
+                span.update(output={"error": str(e)})
+                yield {
+                    "response_type": "text",
+                    "is_task_complete": True,
+                    "is_error": True,
+                    "require_user_input": False,
+                    "content": f"Sentiment analysis failed: {e}",
+                }
+        finally:
+            span.end()

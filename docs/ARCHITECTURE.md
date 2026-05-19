@@ -94,16 +94,25 @@ A2A Request → DefaultRequestHandler → GenericAgentExecutor(RAGAgent)
 ```
 A2A Request → DefaultRequestHandler → GenericAgentExecutor(QuantAgent)
   → QuantAgent.stream()
-    [MCP: get_prices → parse Close data]
-    → compute_metrics → conditional branch:
-        high volatility → stress_test
-        low volatility  → dcf_valuation [MCP: get_financials → cash_flow]
-    → portfolio_correlation [MCP: get_prices per holding]
-    → format_output → llm_summary
-  → Yields data response
+    → extract_holdings(query) → portfolio_holdings list
+    → analyze(ticker, portfolio_holdings=holdings)
+      [MCP: get_prices → parse Close data]
+      → compute_metrics → conditional branch (logged with ticker + volatility):
+          high volatility (vol > 35%) → stress_test, dcf_error set
+          low volatility  (vol ≤ 35%) → dcf_valuation [MCP: get_financials → cash_flow]
+      → portfolio_correlation [MCP: get_prices per holding + target ticker]
+      → format_output (dcf_error included in reasoning if DCF skipped)
+      → llm_summary
+  → Yields data response with dcf_error in result
 ```
 
+**Portfolio Holdings Extraction**: `stream()` uses `extract_holdings(query, exclude_ticker=ticker)` from `shared/ticker_utils.py` to extract holdings from natural language (e.g. "My portfolio holds AAPL, MSFT, GOOGL"). The orchestrator LLM is instructed to include holdings in the task text for the Quant agent. Holdings are passed through the full chain: `stream()` → `analyze()` → `graph.run()` → `correlation_node`.
+
+**Correlation Matrix Notes**: When no holdings are provided, returns `{"note": "No portfolio holdings provided..."}` instead of `{}`. When price data is insufficient or computation fails, returns a descriptive error.
+
 **DCF Fix**: The DCF valuation now correctly reads free cash flow data from the `cash_flow` financial statement (not `income_statement`). This fixes the issue where DCF valuations were returning null.
+
+**DCF Skip Messaging**: When annual volatility exceeds the 35% threshold, `compute_metrics_node` sets a descriptive `dcf_error` field (e.g. "DCF skipped: annual volatility (41.0%) exceeds 35% threshold – routed to stress test instead"). This error is propagated through the graph into the final output and LLM reasoning, providing visibility into why DCF was not computed.
 
 ### Sentiment Agent (CrewAI)
 
@@ -173,3 +182,47 @@ All agents use LM Studio (OpenAI-compatible local API):
 | RAG (LlamaIndex) | `qwen/qwen3-30b-a3b-2507` | `llama-index-llms-openai-like` |
 | Quant (LangGraph) | `qwen/qwen3-30b-a3b-2507` | `langchain-openai` |
 | Sentiment (CrewAI) | `qwen/qwen3-30b-a3b-2507` | CrewLLM (OpenAI-compatible) |
+
+## Observability & Tracing
+
+Langfuse provides distributed tracing across all four agent processes. Trace context is propagated through the A2A protocol via text-based injection.
+
+### Trace Propagation Flow
+
+```
+Orchestrator (agent_1_adk)
+  ├── agent_executor.py: langfuse.trace(name="finsight-query")
+  ├── start_as_current_observation(name="orchestrator-execute")
+  ├── send_message() tool: get_current_trace_id() + get_current_observation_id()
+  └── inject_trace_context(task, trace_id, parent_span_id) → A2A text prefix
+
+A2A Protocol (JSON-RPC over HTTP)
+  └── Task text prefixed with {"_trace": {"trace_id": "...", "parent_span_id": "..."}}
+
+Sub-agents (agent_2, agent_3, agent_4)
+  ├── extract_trace_ids(query) → (trace_id, parent_span_id, clean_query)
+  ├── start_observation(trace_context={"trace_id": ..., "parent_span_id": ...})
+  └── Langfuse joins the span to the orchestrator's trace tree
+```
+
+### Trace Context Utility
+
+| Function | File | Purpose |
+|---|---|---|
+| `inject_trace_context(task, trace_id, parent_span_id)` | `shared/trace_context.py` | Serializes trace IDs as JSON prefix in task text |
+| `extract_trace_context(task)` | `shared/trace_context.py` | Returns `(trace_ctx_dict, clean_query)` |
+| `extract_trace_ids(task)` | `shared/trace_context.py` | Returns `(trace_id, parent_span_id, clean_query)` |
+
+### Span Noise Filtering
+
+The Langfuse client uses `is_default_export_span` to filter out noisy A2A internal spans (`a2a-python-sdk` scope) and HTTPX transport spans. Only high-level workflow spans (`langfuse-sdk` scope) and LLM spans are exported, keeping traces clean and focused.
+
+### Per-Agent Instrumentation
+
+| Agent | Service Name | Instrumentors | Manual Spans |
+|---|---|---|---|
+| Orchestrator | `orchestrator` | GoogleADKInstrumentor, HTTPXClientInstrumentor | `orchestrator-execute` span |
+| RAG Agent | `rag_agent` | LlamaIndexInstrumentor | `rag-agent-stream` span |
+| Quant Agent | `quant_agent` | StarletteInstrumentor | `quant-agent-stream` span + CallbackHandler for LangGraph nodes |
+| Sentiment Agent | `sentiment_agent` | CrewAIInstrumentor, StarletteInstrumentor | `sentiment-agent-stream` span |
+| MCP Server | `mcp_server` | — | `@observe()` on individual tools |

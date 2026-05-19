@@ -359,6 +359,27 @@ The original RSS pipeline had three issues:
 
 **Solution**: Added `parse_mcp_result(result)` utility in `shared/mcp_client.py` that handles various MCP response formats consistently — returns parsed dict/list/string or `{"error": "..."}` on failure.
 
+## DCF Skipped from High Volatility Routing
+
+### Problem
+
+`dcf_valuation` returned `null` for tickers with annual volatility above 35% (e.g. Oracle at 41%). The graph's `_route_on_volatility` function routed these to `stress_test` and DCF was never called. The `dcf_error` field was `null` too — making it impossible to distinguish "DCF failed" from "DCF was never executed".
+
+### Solution
+
+Three changes across the graph pipeline:
+
+1. **Set `dcf_error` in `compute_metrics_node`**: When `annual_vol > 0.35` is detected, the metrics node now includes a descriptive `dcf_error` message (e.g. "DCF skipped: annual volatility (41.0%) exceeds 35% threshold – routed to stress test instead"). This is set *before* the routing decision, so it's available in state regardless of which path is taken.
+
+2. **Surface `dcf_error` in `graph.run()` output**: The result dict now includes the `dcf_error` field so callers can see why DCF is null.
+
+3. **Include `dcf_error` in reasoning**: `format_output_node` appends the error to the reasoning string when DCF is null with an error, so the LLM summary has full context.
+
+### Key properties
+- ✅ Callers can distinguish "DCF not computed" from "DCF failed to compute"
+- ✅ The error reason appears in both structured output (`dcf_error` field) and natural language summary (reasoning text)
+- ✅ No false positives — only set when volatility routing actually causes the skip
+
 ## DCF Null from Negative Free Cash Flow
 
 ### Problem
@@ -411,6 +432,133 @@ _FINANCIAL_STOP_WORDS = frozenset({
 - ✅ Failed ticker is excluded from the resolution query
 - ✅ All three agents (RAG, Quant, Sentiment) apply the same cleanup
 - ✅ Backward compatible — all existing patterns still work
+
+## Portfolio Holdings Extraction for Correlation Analysis
+
+### Problem
+
+The Quant agent's `correlation_matrix` was always `{}` even when users explicitly mentioned portfolio holdings. The `correlation_node` in `nodes.py` requires `portfolio_holdings` (a list of ticker symbols) to compute correlations, but the chain never populated it:
+
+```
+stream() → analyze(ticker) → graph.run(ticker, portfolio_holdings=None)
+```
+
+The `QuantAgent.stream()` method extracted the target ticker from the query but had no logic to extract portfolio holdings. Even though `graph.run()` accepted a `portfolio_holdings` parameter, it was always passed as `None`.
+
+### Solution
+
+**Step 1 — `extract_holdings()` in `shared/ticker_utils.py`**: Four regex patterns covering natural language phrasing:
+
+```python
+_HOLDINGS_PATTERNS = [
+    # "My portfolio holds AAPL, MSFT, GOOGL"
+    # "My portfolio: TSLA, AMZN, META"
+    re.compile(r"(?:portfolio|holdings?)\s*(?::|holds?|contains?|includes?|consists\s+of)\s*..."),
+    # "I own MSFT and GOOGL"
+    # "my current portfolio includes AAPL, TSLA"
+    re.compile(r"(?:I\s+(?:own|hold|have|am\s+invested\s+in)|my\s+...portfolio...)\s+..."),
+    # "My current holdings are JPM, BAC, WFC"
+    re.compile(r"(?:my\s+...portfolio...)\s+are\s+..."),
+    # "currently own AAPL, MSFT"
+    re.compile(r"(?:currently\s+)?(?:own|hold|have)\s*:?\s*..."),
+]
+```
+
+Each pattern captures a comma-and-separated list of uppercase tickers. The `exclude_ticker` parameter removes the target stock from the holdings list.
+
+**Step 2 — Pass holdings through the chain**: `stream()` calls `extract_holdings(query, exclude_ticker=ticker)`, passes to `analyze(portfolio_holdings=holdings)`, which passes to `graph.run(portfolio_holdings=holdings)`.
+
+**Step 3 — Orchestrator LLM instruction updated**: Added step 4 to the orchestrator system prompt telling the LLM to include portfolio holdings in the task text for the Quant Analysis Agent. Without this, the LLM would drop holdings from the generated task.
+
+**Step 4 — Helpful notes instead of empty `{}`**: When no holdings are provided, `correlation_node` returns `{"note": "No portfolio holdings provided..."}`. When price data is insufficient, returns `{"note": "Insufficient overlapping price data..."}`. On exception, returns `{"error": "..."}`.
+
+### Key properties
+- ✅ Holdings extraction is pure regex — no network calls, instant execution
+- ✅ Target ticker excluded from holdings to avoid self-correlation
+- ✅ Works with comma-separated, "and"-connected, and mixed formats
+- ✅ Backward compatible — returns `[]` when no holdings mentioned
+
+## Langfuse Span Noise Filtering
+
+### Problem
+
+With `should_export_span=lambda span: True`, Langfuse exported every single span including noisy A2A internal spans. Each A2A `send_message` call generated multiple internal spans from the `a2a-python-sdk` instrumentation scope (HTTP transport, JSON-RPC serialization, event handling). As the number of agents grew, this made Langfuse traces extremely noisy and hard to debug.
+
+### Solution
+
+Use Langfuse's built-in `is_default_export_span` helper which exports spans only from:
+- `langfuse-sdk` scope (our manual `start_observation` calls — high-level workflow)
+- `gen_ai.*` attribute spans (actual LLM calls)
+- Known LLM instrumentors (`litellm`, `openinference.*`, `langsmith`, `haystack`, `agent_framework`, etc.)
+
+This filters out `a2a-python-sdk`, `opentelemetry.instrumentation.httpx`, and other infrastructure scopes automatically.
+
+### What's exported vs filtered
+
+| Span Type | Instrumentation Scope | Exported? |
+|---|---|---|
+| `finsight-query` trace | `langfuse-sdk` | ✅ |
+| `orchestrator-execute` | `langfuse-sdk` | ✅ |
+| `rag-agent-stream` | `langfuse-sdk` | ✅ |
+| `quant-agent-stream` | `langfuse-sdk` | ✅ |
+| `sentiment-agent-stream` | `langfuse-sdk` | ✅ |
+| LLM calls | `litellm`, `openinference.*` | ✅ |
+| LangGraph nodes | `langfuse-sdk` (via CallbackHandler) | ✅ |
+| A2A `send_message` internal | `a2a-python-sdk` | ❌ |
+| A2A `DefaultRequestHandler` | `a2a-python-sdk` | ❌ |
+| HTTPX transport spans | `opentelemetry.instrumentation.httpx` | ❌ |
+
+### Tradeoff
+
+If you need to **temporarily debug** and see all spans (including A2A internals), switch back to `should_export_span=lambda span: True`. The default filter is the recommended production setting per [Langfuse maintainer guidance](https://github.com/orgs/langfuse/discussions/8366).
+
+## Langfuse Distributed Tracing Across Processes
+
+### Problem
+
+Each agent runs in a separate OS process (uvicorn on its own port). When a sub-agent calls `langfuse.start_observation()` it creates a brand new root trace — Langfuse has no way to know that the sub-agent trace belongs inside the orchestrator's trace. This resulted in 4 disconnected traces per query:
+
+```
+Trace A: orchestrator-execute   [pid: 8001]
+Trace B: rag-agent-stream        [pid: 8002]   ← orphan
+Trace C: quant-agent-stream      [pid: 8003]   ← orphan
+Trace D: sentiment-agent-stream  [pid: 8004]   ← orphan
+```
+
+### Solution
+
+**Text-based trace context injection via A2A payload:**
+
+1. **Orchestrator** (`sub_agent_client.py`): Extracts `trace_id` and `parent_span_id` from the current Langfuse context via `lf.get_current_trace_id()` and `lf.get_current_observation_id()`. Serializes them as a JSON prefix: `{"_trace": {"trace_id": "...", "parent_span_id": "..."}}\n<<<TASK>>>\n{task_text}`.
+
+2. **Sub-agents** (`executor.py`): Extract the prefix via `extract_trace_ids(query)`, rebuild the `trace_context` dict, and pass it to `langfuse.start_observation(..., trace_context=trace_ctx)`. Langfuse uses the `trace_id` to join the existing trace and `parent_span_id` to set the parent observation.
+
+3. **LangGraph CallbackHandler**: Quant agent additionally passes `trace_context` to `CallbackHandler(trace_context=trace_ctx)` so all internal graph nodes are linked to the parent trace.
+
+### Why not OpenTelemetry W3C TraceContext headers?
+
+The A2A SDK controls the HTTP transport layer. Injecting custom headers would require modifying the SDK client or using httpx event hooks. The text-prefix approach is simpler, already partially implemented, and works reliably across all A2A transports (JSON-RPC, HTTP+JSON).
+
+### Why `start_observation()` not `start_as_current_observation()`?
+
+`start_as_current_observation()` is a context manager that manages OTel context tokens. In async generators, the context token is created in one async context but the generator yields control to a different context, causing `ValueError: Token was created in a different Context`. `start_observation()` creates the span manually without OTel context management, avoiding the conflict. The span's `.end()` is called in the `finally` block.
+
+### Result
+
+```
+Trace A: finsight-query [ticker=NVDA]
+├── orchestrator-execute
+│   ├── send_message → Financial RAG Agent
+│   │   └── rag-agent-stream (child of orchestrator-execute)
+│   ├── send_message → Quant Analysis Agent
+│   │   └── quant-agent-stream (child of orchestrator-execute)
+│   │       ├── fetch_prices (LangGraph node)
+│   │       ├── compute_metrics
+│   │       ├── run_dcf / run_stress_test
+│   │       └── llm_summary
+│   └── send_message → Sentiment Intelligence Agent
+│       └── sentiment-agent-stream (child of orchestrator-execute)
+```
 
 ## Date Hallucination
 

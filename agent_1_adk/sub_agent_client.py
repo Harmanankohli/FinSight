@@ -4,6 +4,9 @@ import logging
 from typing import Any
 
 import httpx
+from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+
+HTTPXClientInstrumentor().instrument()
 
 from a2a.client import (
     A2ACardResolver,
@@ -30,6 +33,8 @@ _TERMINAL_STATES = {
 }
 
 from shared.config import AGENT_SEED_URLS, A2A_TIMEOUT
+from shared.observability import get_langfuse_client
+from shared.trace_context import inject_trace_context
 
 logger = logging.getLogger(__name__)
 
@@ -175,6 +180,18 @@ class SubAgentClient:
             return json.dumps(
                 {"error": f"Failed to create client for '{agent_name}'"}
             )
+
+        # --- Inject distributed trace context ---
+        lf = get_langfuse_client()
+        trace_id = lf.get_current_trace_id()
+        parent_span_id = lf.get_current_observation_id()
+        if trace_id and parent_span_id:
+            task_str = inject_trace_context(task_str, trace_id, parent_span_id)
+            logger.debug(
+                "Injected trace context into task for '%s': trace=%s",
+                agent_name, trace_id[:8]
+            )
+        # ----------------------------------------
 
         message = new_text_message(task_str, role=1)
         req = SendMessageRequest(message=message)

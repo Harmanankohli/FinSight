@@ -51,6 +51,12 @@ dependencies = [
     "opentelemetry-api>=1.28.0",
     "opentelemetry-sdk>=1.28.0",
     "opentelemetry-exporter-otlp>=1.28.0",
+    "opentelemetry-instrumentation-starlette>=0.50b0",
+    "opentelemetry-instrumentation-httpx>=0.50b0",
+    "langfuse>=3.14.0",
+    "openinference-instrumentation-google-adk>=0.1.0",
+    "openinference-instrumentation-llama-index>=0.1.0",
+    "openinference-instrumentation-crewai>=0.1.0",
 
     # Storage
     "redis>=5.2.0",
