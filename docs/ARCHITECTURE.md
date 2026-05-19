@@ -94,15 +94,21 @@ A2A Request → DefaultRequestHandler → GenericAgentExecutor(RAGAgent)
 ```
 A2A Request → DefaultRequestHandler → GenericAgentExecutor(QuantAgent)
   → QuantAgent.stream()
-    [MCP: get_prices → parse Close data]
-    → compute_metrics → conditional branch (logged with ticker + volatility):
-        high volatility (vol > 35%) → stress_test, dcf_error set
-        low volatility  (vol ≤ 35%) → dcf_valuation [MCP: get_financials → cash_flow]
-    → portfolio_correlation [MCP: get_prices per holding]
-    → format_output (dcf_error included in reasoning if DCF skipped)
-    → llm_summary
+    → extract_holdings(query) → portfolio_holdings list
+    → analyze(ticker, portfolio_holdings=holdings)
+      [MCP: get_prices → parse Close data]
+      → compute_metrics → conditional branch (logged with ticker + volatility):
+          high volatility (vol > 35%) → stress_test, dcf_error set
+          low volatility  (vol ≤ 35%) → dcf_valuation [MCP: get_financials → cash_flow]
+      → portfolio_correlation [MCP: get_prices per holding + target ticker]
+      → format_output (dcf_error included in reasoning if DCF skipped)
+      → llm_summary
   → Yields data response with dcf_error in result
 ```
+
+**Portfolio Holdings Extraction**: `stream()` uses `extract_holdings(query, exclude_ticker=ticker)` from `shared/ticker_utils.py` to extract holdings from natural language (e.g. "My portfolio holds AAPL, MSFT, GOOGL"). The orchestrator LLM is instructed to include holdings in the task text for the Quant agent. Holdings are passed through the full chain: `stream()` → `analyze()` → `graph.run()` → `correlation_node`.
+
+**Correlation Matrix Notes**: When no holdings are provided, returns `{"note": "No portfolio holdings provided..."}` instead of `{}`. When price data is insufficient or computation fails, returns a descriptive error.
 
 **DCF Fix**: The DCF valuation now correctly reads free cash flow data from the `cash_flow` financial statement (not `income_statement`). This fixes the issue where DCF valuations were returning null.
 

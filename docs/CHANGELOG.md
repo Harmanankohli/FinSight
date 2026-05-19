@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.11 — Portfolio Holdings Extraction & Correlation Matrix Fix
+
+- **`extract_holdings()` added to `shared/ticker_utils.py`**: Extracts portfolio holdings from natural language queries using 4 regex patterns covering common phrasing: "My portfolio holds AAPL, MSFT", "I own MSFT and GOOGL", "My portfolio: TSLA, AMZN, META", "My current holdings are JPM, BAC, WFC".
+- **Holdings passed through Quant agent chain**: `stream()` → `analyze(portfolio_holdings=...)` → `graph.run(portfolio_holdings=...)` → `correlation_node`. Previously holdings were always `None` regardless of user input.
+- **Correlation matrix now returns helpful notes**: Instead of empty `{}`, returns `{"note": "No portfolio holdings provided..."}` when no holdings mentioned, and `{"error": "..."}` when correlation computation fails.
+- **Orchestrator LLM instructed to pass holdings**: Updated orchestrator system prompt (step 4) telling the LLM to include portfolio holdings in the task text for the Quant Analysis Agent.
+- **6 new tests for `extract_holdings()`**: Covers portfolio holds, colon syntax, and/or connector, no holdings mentioned, exclude target ticker, current positions phrasing.
+- **14 total tests in `test_trace_propagation.py`**: 8 trace propagation + 6 holdings extraction.
+
 ## v1.10 — Langfuse Distributed Tracing Fix
 
 - **Cross-process trace propagation fixed**: Sub-agent spans now correctly link to the orchestrator's root trace instead of creating orphan traces. Each agent process previously created its own root trace because `start_observation(trace_context=...)` was not properly linking spans across process boundaries.

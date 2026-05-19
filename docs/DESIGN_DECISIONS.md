@@ -433,6 +433,51 @@ _FINANCIAL_STOP_WORDS = frozenset({
 - ✅ All three agents (RAG, Quant, Sentiment) apply the same cleanup
 - ✅ Backward compatible — all existing patterns still work
 
+## Portfolio Holdings Extraction for Correlation Analysis
+
+### Problem
+
+The Quant agent's `correlation_matrix` was always `{}` even when users explicitly mentioned portfolio holdings. The `correlation_node` in `nodes.py` requires `portfolio_holdings` (a list of ticker symbols) to compute correlations, but the chain never populated it:
+
+```
+stream() → analyze(ticker) → graph.run(ticker, portfolio_holdings=None)
+```
+
+The `QuantAgent.stream()` method extracted the target ticker from the query but had no logic to extract portfolio holdings. Even though `graph.run()` accepted a `portfolio_holdings` parameter, it was always passed as `None`.
+
+### Solution
+
+**Step 1 — `extract_holdings()` in `shared/ticker_utils.py`**: Four regex patterns covering natural language phrasing:
+
+```python
+_HOLDINGS_PATTERNS = [
+    # "My portfolio holds AAPL, MSFT, GOOGL"
+    # "My portfolio: TSLA, AMZN, META"
+    re.compile(r"(?:portfolio|holdings?)\s*(?::|holds?|contains?|includes?|consists\s+of)\s*..."),
+    # "I own MSFT and GOOGL"
+    # "my current portfolio includes AAPL, TSLA"
+    re.compile(r"(?:I\s+(?:own|hold|have|am\s+invested\s+in)|my\s+...portfolio...)\s+..."),
+    # "My current holdings are JPM, BAC, WFC"
+    re.compile(r"(?:my\s+...portfolio...)\s+are\s+..."),
+    # "currently own AAPL, MSFT"
+    re.compile(r"(?:currently\s+)?(?:own|hold|have)\s*:?\s*..."),
+]
+```
+
+Each pattern captures a comma-and-separated list of uppercase tickers. The `exclude_ticker` parameter removes the target stock from the holdings list.
+
+**Step 2 — Pass holdings through the chain**: `stream()` calls `extract_holdings(query, exclude_ticker=ticker)`, passes to `analyze(portfolio_holdings=holdings)`, which passes to `graph.run(portfolio_holdings=holdings)`.
+
+**Step 3 — Orchestrator LLM instruction updated**: Added step 4 to the orchestrator system prompt telling the LLM to include portfolio holdings in the task text for the Quant Analysis Agent. Without this, the LLM would drop holdings from the generated task.
+
+**Step 4 — Helpful notes instead of empty `{}`**: When no holdings are provided, `correlation_node` returns `{"note": "No portfolio holdings provided..."}`. When price data is insufficient, returns `{"note": "Insufficient overlapping price data..."}`. On exception, returns `{"error": "..."}`.
+
+### Key properties
+- ✅ Holdings extraction is pure regex — no network calls, instant execution
+- ✅ Target ticker excluded from holdings to avoid self-correlation
+- ✅ Works with comma-separated, "and"-connected, and mixed formats
+- ✅ Backward compatible — returns `[]` when no holdings mentioned
+
 ## Langfuse Distributed Tracing Across Processes
 
 ### Problem

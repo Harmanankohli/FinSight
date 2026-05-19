@@ -2,7 +2,7 @@
 
 ## Summary
 
-**50/50 tests passing — 100%**
+**56/56 tests passing — 100%**
 
 ## Test Files
 
@@ -17,8 +17,8 @@
 | `test_quant_graph.py` | 4 | LangGraph conditional branching, stress test/DCF routing |
 | `test_rag_pipeline.py` | 7 | Hybrid search (BM25 + dense), RRF merge, document ingestion |
 | `test_sentiment_crew.py` | 3 | MCP tool discovery, crew builder |
-| `test_trace_propagation.py` | 8 | Trace context inject/extract roundtrip, `extract_trace_ids()` |
-| **Total** | **50** | |
+| `test_trace_propagation.py` | 14 | Trace context inject/extract (8), portfolio holdings extraction (6) |
+| **Total** | **56** | |
 
 ## Running Tests
 
@@ -49,6 +49,7 @@ uv run pytest -v --timeout=30
 | RAG pipeline | `test_rrf_merge_deduplicates` | BM25 + dense hybrid search |
 | Trace context | `test_inject_and_extract_roundtrip` | JSON prefix inject/extract preserves trace IDs |
 | Trace IDs | `test_extract_trace_ids_roundtrip` | `extract_trace_ids()` returns `(trace_id, parent_span_id, clean_query)` |
+| Holdings extraction | `test_extract_holdings_portfolio_holds` | "My portfolio holds AAPL, MSFT, GOOGL" → `["AAPL", "MSFT", "GOOGL"]` |
 
 ## Trace Propagation Tests
 
@@ -62,6 +63,17 @@ uv run pytest -v --timeout=30
 | `test_inject_empty_ids_returns_original` | Empty trace_id/parent_span_id → no injection, original text returned |
 | `test_extract_trace_ids_roundtrip` | `extract_trace_ids()` returns correct `(trace_id, parent_span_id, clean_query)` tuple |
 | `test_extract_trace_ids_no_context` | `extract_trace_ids()` returns `(None, None, original)` when no prefix present |
+
+## Holdings Extraction Tests
+
+| Test | What it verifies |
+|---|---|
+| `test_extract_holdings_portfolio_holds` | "My portfolio holds AAPL, MSFT, GOOGL" → `["AAPL", "MSFT", "GOOGL"]` |
+| `test_extract_holdings_colon_syntax` | "My portfolio: TSLA, AMZN, META" → `["TSLA", "AMZN", "META"]` |
+| `test_extract_holdings_and_connector` | "I own MSFT and GOOGL" → `["MSFT", "GOOGL"]` |
+| `test_extract_holdings_no_holdings_mentioned` | "Should I buy NVDA?" → `[]` |
+| `test_extract_holdings_excludes_target_ticker` | Target ticker excluded from holdings list |
+| `test_extract_holdings_current_positions` | "My current holdings are JPM, BAC, WFC" → `["JPM", "BAC", "WFC"]` |
 
 ## Pre-existing Test Issues
 
