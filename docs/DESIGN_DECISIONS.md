@@ -478,6 +478,40 @@ Each pattern captures a comma-and-separated list of uppercase tickers. The `excl
 - ✅ Works with comma-separated, "and"-connected, and mixed formats
 - ✅ Backward compatible — returns `[]` when no holdings mentioned
 
+## Langfuse Span Noise Filtering
+
+### Problem
+
+With `should_export_span=lambda span: True`, Langfuse exported every single span including noisy A2A internal spans. Each A2A `send_message` call generated multiple internal spans from the `a2a-python-sdk` instrumentation scope (HTTP transport, JSON-RPC serialization, event handling). As the number of agents grew, this made Langfuse traces extremely noisy and hard to debug.
+
+### Solution
+
+Use Langfuse's built-in `is_default_export_span` helper which exports spans only from:
+- `langfuse-sdk` scope (our manual `start_observation` calls — high-level workflow)
+- `gen_ai.*` attribute spans (actual LLM calls)
+- Known LLM instrumentors (`litellm`, `openinference.*`, `langsmith`, `haystack`, `agent_framework`, etc.)
+
+This filters out `a2a-python-sdk`, `opentelemetry.instrumentation.httpx`, and other infrastructure scopes automatically.
+
+### What's exported vs filtered
+
+| Span Type | Instrumentation Scope | Exported? |
+|---|---|---|
+| `finsight-query` trace | `langfuse-sdk` | ✅ |
+| `orchestrator-execute` | `langfuse-sdk` | ✅ |
+| `rag-agent-stream` | `langfuse-sdk` | ✅ |
+| `quant-agent-stream` | `langfuse-sdk` | ✅ |
+| `sentiment-agent-stream` | `langfuse-sdk` | ✅ |
+| LLM calls | `litellm`, `openinference.*` | ✅ |
+| LangGraph nodes | `langfuse-sdk` (via CallbackHandler) | ✅ |
+| A2A `send_message` internal | `a2a-python-sdk` | ❌ |
+| A2A `DefaultRequestHandler` | `a2a-python-sdk` | ❌ |
+| HTTPX transport spans | `opentelemetry.instrumentation.httpx` | ❌ |
+
+### Tradeoff
+
+If you need to **temporarily debug** and see all spans (including A2A internals), switch back to `should_export_span=lambda span: True`. The default filter is the recommended production setting per [Langfuse maintainer guidance](https://github.com/orgs/langfuse/discussions/8366).
+
 ## Langfuse Distributed Tracing Across Processes
 
 ### Problem

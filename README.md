@@ -7,7 +7,7 @@ An autonomous multi-agent system that answers investment queries like *"Should I
 - **Multi-framework orchestration**: Google ADK orchestrator delegates to LlamaIndex (RAG), LangGraph (Quant), and CrewAI (Sentiment) agents
 - **A2A protocol**: Standard-compliant agent discovery and streaming communication via JSON-RPC over HTTP
 - **Portfolio correlation analysis**: Extract holdings from natural language (e.g. "My portfolio holds AAPL, MSFT") and compute cross-stock correlation matrices
-- **Distributed tracing**: Langfuse traces span all four agent processes in a single trace tree via text-based context propagation
+- **Distributed tracing**: Langfuse traces span all four agent processes in a single trace tree via text-based context propagation, with automatic filtering of noisy A2A internal spans
 - **Local LLM inference**: All agents use LM Studio (OpenAI-compatible API) — no cloud dependencies
 - **MCP data tools**: Unified server providing SEC filings, price data, financials, news sentiment, and more
 

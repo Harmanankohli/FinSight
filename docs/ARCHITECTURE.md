@@ -213,6 +213,10 @@ Sub-agents (agent_2, agent_3, agent_4)
 | `extract_trace_context(task)` | `shared/trace_context.py` | Returns `(trace_ctx_dict, clean_query)` |
 | `extract_trace_ids(task)` | `shared/trace_context.py` | Returns `(trace_id, parent_span_id, clean_query)` |
 
+### Span Noise Filtering
+
+The Langfuse client uses `is_default_export_span` to filter out noisy A2A internal spans (`a2a-python-sdk` scope) and HTTPX transport spans. Only high-level workflow spans (`langfuse-sdk` scope) and LLM spans are exported, keeping traces clean and focused.
+
 ### Per-Agent Instrumentation
 
 | Agent | Service Name | Instrumentors | Manual Spans |
