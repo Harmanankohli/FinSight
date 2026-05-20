@@ -9,15 +9,15 @@ if sys.platform == "win32":
 
 import click
 import uvicorn
-from starlette.applications import Starlette
-
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
 from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
 from google.adk.runners import Runner
-from google.adk.sessions import InMemorySessionService
+from google.adk.sessions import DatabaseSessionService
+from starlette.applications import Starlette
 
+from shared.memory import SQLiteMemoryService, init_db
 from shared.observability import init_langfuse, shutdown_langfuse
 
 init_langfuse(service_name="orchestrator")
@@ -26,9 +26,10 @@ from openinference.instrumentation.google_adk import GoogleADKInstrumentor
 
 GoogleADKInstrumentor().instrument()
 
+from shared.config import ADK_MODEL
+
 from .agent import root_agent
 from .agent_executor import FinSightAgentExecutor
-from shared.config import ADK_MODEL
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -69,10 +70,16 @@ agent_card = AgentCard(
 
 task_store = InMemoryTaskStore()
 
+session_service = DatabaseSessionService(
+    db_url="sqlite+aiosqlite:///./finsight_memory.db"
+)
+memory_service = SQLiteMemoryService()
+
 runner = Runner(
     app_name=root_agent.name,
     agent=root_agent,
-    session_service=InMemorySessionService(),
+    session_service=session_service,
+    memory_service=memory_service,
 )
 
 request_handler = DefaultRequestHandler(
@@ -89,6 +96,12 @@ app = Starlette(routes=routes, debug=True)
 
 
 async def start_server(host: str, port: int) -> None:
+    from shared.memory.store import get_db
+    conn = await get_db()
+    await init_db(conn)
+    await conn.close()
+    logger.info("Memory layer initialized with persistent SQLite storage")
+
     config = uvicorn.Config(app, host=host, port=port, log_level="info")
     server = uvicorn.Server(config)
     await server.serve()

@@ -8,6 +8,7 @@ if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 from google.adk.agents import LlmAgent
+from google.adk.tools import load_memory
 from google.adk.tools.tool_context import ToolContext
 from google.genai import types as genai_types
 from langfuse import observe
@@ -56,6 +57,55 @@ async def send_message(
     return result
 
 
+@observe(as_type="generation")
+async def save_brief(
+    ticker: str,
+    recommendation: str,
+    confidence: float,
+    rationale: str = "",
+    tool_context: ToolContext = None,
+) -> str:
+    """Save the final investment brief for future reference.
+
+    Call this once after synthesizing all agent responses to persist
+    the recommendation so it can be referenced in future conversations.
+
+    Args:
+        ticker: The stock ticker symbol (e.g. "NVDA", "AAPL").
+        recommendation: The final recommendation (BUY, HOLD, or SELL).
+        confidence: Confidence score between 0.0 and 1.0.
+        rationale: Brief explanation of the recommendation.
+
+    Returns:
+        Confirmation message.
+    """
+    from shared.memory import PerformanceTracker, TickerMemory
+
+    session_id = tool_context.session.id if tool_context and tool_context.session else "unknown"
+    user_id = tool_context.user_id if tool_context else "default_user"
+
+    tm = TickerMemory()
+    await tm.store_minimal(
+        ticker=ticker,
+        user_id=user_id,
+        session_id=session_id,
+        query=f"Saved brief for {ticker}",
+        response_text=rationale,
+        recommendation=recommendation.upper(),
+        confidence=confidence,
+    )
+
+    pt = PerformanceTracker()
+    await pt.record_recommendation(
+        ticker=ticker,
+        user_id=user_id,
+        recommendation=recommendation.upper(),
+        confidence=confidence,
+    )
+
+    return f"Brief saved for {ticker}: {recommendation.upper()} (confidence: {confidence:.2f})"
+
+
 def _build_instruction() -> str:
     agent_list = _client.list_agents()
     skill_lines = (
@@ -88,6 +138,10 @@ PROCEDURE:
     "Analyze ORCL. My portfolio holds AAPL, MSFT, GOOGL."
 5.  After all agents respond, synthesize their findings into a
     BUY/HOLD/SELL recommendation with supporting evidence.
+6.  Call `save_brief` with your final recommendation to persist it
+    for future reference.
+7.  If the user asks about past analysis or "what did you recommend before",
+    use the `load_memory` tool to search past conversations.
 
 TASK FORMAT — always include the ticker and current date ({_TODAY}) in the task text:
   "Analyze MA (Mastercard) SEC filings as of {_TODAY} for recent financial performance."
@@ -115,7 +169,7 @@ root_agent = LlmAgent(
         "Investment Brief via A2A protocol"
     ),
     instruction=_build_instruction(),
-    tools=[send_message],
+    tools=[send_message, save_brief, load_memory],
     generate_content_config=genai_types.GenerateContentConfig(
         temperature=0.0,
     ),

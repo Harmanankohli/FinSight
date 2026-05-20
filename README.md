@@ -6,6 +6,7 @@ An autonomous multi-agent system that answers investment queries like *"Should I
 
 - **Multi-framework orchestration**: Google ADK orchestrator delegates to LlamaIndex (RAG), LangGraph (Quant), and CrewAI (Sentiment) agents
 - **A2A protocol**: Standard-compliant agent discovery and streaming communication via JSON-RPC over HTTP
+- **Persistent memory layer**: SQLite-backed session storage, cross-session memory search, ticker brief history, portfolio persistence, and recommendation tracking
 - **Portfolio correlation analysis**: Extract holdings from natural language (e.g. "My portfolio holds AAPL, MSFT") and compute cross-stock correlation matrices
 - **Distributed tracing**: Langfuse traces span all four agent processes in a single trace tree via text-based context propagation, with automatic filtering of noisy A2A internal spans
 - **Local LLM inference**: All agents use LM Studio (OpenAI-compatible API) — no cloud dependencies
@@ -57,6 +58,7 @@ All A2A communication uses `A2ACardResolver` for standard discovery and `ClientF
 | Agent Communication | Google A2A Protocol (JSON-RPC over HTTP, streaming) |
 | Orchestrator | Google ADK `LlmAgent` with `send_message` tool |
 | Sub-agent Executor | `GenericAgentExecutor` + `BaseAgent` pattern |
+| Memory Layer | SQLite (`aiosqlite`) — sessions, ticker briefs, portfolio, performance |
 | RAG | LlamaIndex + ChromaDB (local) + HuggingFace embeddings |
 | Quant | LangChain + LangGraph (state machine, MCP data) |
 | Sentiment | CrewAI (parallel data collection + synthesis) |
@@ -185,9 +187,16 @@ stop_servers.bat
 │   ├── types.py              # Shared Pydantic models
 │   ├── config.py             # Centralized .env configuration
 │   ├── mcp_client.py         # MCP client with dynamic tool discovery
-│   └── models.py             # Pydantic data models
+│   ├── models.py             # Pydantic data models
+│   └── memory/               # Persistent memory layer
+│       ├── store.py          # SQLite foundation, auto-migration
+│       ├── ticker_memory.py  # Per-ticker brief storage, format_context()
+│       ├── portfolio_store.py # User profile, holdings persistence
+│       ├── performance_tracker.py # Recommendation outcome tracking
+│       ├── memory_service.py # ADK BaseMemoryService (load_memory tool)
+│       └── __init__.py       # Exports
 │
-├── tests/                    # Test suite (56 tests)
+├── tests/                    # Test suite (72 tests)
 │   ├── test_a2a_communication.py
 │   ├── test_agent_cards.py
 │   ├── test_base_agent.py
@@ -197,7 +206,8 @@ stop_servers.bat
 │   ├── test_rag_pipeline.py
 │   ├── test_sentiment_crew.py
 │   ├── test_workflow.py
-│   └── test_trace_propagation.py  # Trace context + holdings extraction
+│   ├── test_trace_propagation.py  # Trace context + holdings extraction
+│   └── test_memory.py             # Memory layer (SQLite, ticker, portfolio, performance)
 │
 ├── run_adk_web.bat           # Start all services
 ├── stop_servers.bat          # Stop all services
@@ -234,7 +244,7 @@ Key environment variables in `.env`:
 uv run pytest -v
 ```
 
-56 tests covering: A2A discovery, agent card validation, orchestrator tools, sub-agent executors, LangGraph state graphs, RAG pipelines, CrewAI integration, workflow state machines, distributed trace propagation, and portfolio holdings extraction.
+72 tests covering: A2A discovery, agent card validation, orchestrator tools, sub-agent executors, LangGraph state graphs, RAG pipelines, CrewAI integration, workflow state machines, distributed trace propagation, portfolio holdings extraction, and persistent memory layer (SQLite store, ticker briefs, portfolio persistence, performance tracking, cross-session memory search).
 
 ## License
 

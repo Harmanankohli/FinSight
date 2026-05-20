@@ -226,3 +226,120 @@ The Langfuse client uses `is_default_export_span` to filter out noisy A2A intern
 | Quant Agent | `quant_agent` | StarletteInstrumentor | `quant-agent-stream` span + CallbackHandler for LangGraph nodes |
 | Sentiment Agent | `sentiment_agent` | CrewAIInstrumentor, StarletteInstrumentor | `sentiment-agent-stream` span |
 | MCP Server | `mcp_server` | — | `@observe()` on individual tools |
+
+## Memory Layer Architecture
+
+The memory layer provides persistent session storage and cross-session memory retrieval using SQLite. All memory components are in `shared/memory/`.
+
+### Overview
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                    Memory Layer (SQLite)                       │
+│                                                               │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌───────────────┐ │
+│  │ Session Store   │  │ Ticker Memory   │  │ Portfolio     │ │
+│  │ (ADK native)    │  │ (briefs/recs)   │  │ Store         │ │
+│  │ DatabaseSession │  │ format_context()│  │ holdings/risk │ │
+│  └─────────────────┘  └─────────────────┘  └───────────────┘ │
+│                                                               │
+│  ┌─────────────────┐  ┌─────────────────┐                    │
+│  │ Performance     │  │ Memory Service  │                    │
+│  │ Tracker         │  │ (load_memory)   │                    │
+│  │ accuracy stats  │  │ cross-session   │                    │
+│  └─────────────────┘  └─────────────────┘                    │
+└──────────────────────────────────────────────────────────────┘
+```
+
+### Session Persistence
+
+`DatabaseSessionService` (ADK native) replaces `InMemorySessionService`:
+
+```python
+DatabaseSessionService(db_url="sqlite+aiosqlite:///./finsight_memory.db")
+```
+
+All conversation events (user messages, agent responses, tool calls) are persisted to SQLite tables (`sessions`, `events`). Conversations survive server restarts.
+
+### Memory Context Injection
+
+Before each query, the executor injects memory context into the user message:
+
+```
+User Query → Executor._inject_memory_context(query)
+  ├── extract_ticker(query) → "NVDA"
+  ├── TickerMemory.get_latest("NVDA") → last recommendation
+  ├── PortfolioStore.get() → current holdings
+  └── Prepend: [MEMORY CONTEXT] ... [/MEMORY CONTEXT]
+       → Runner receives augmented query
+```
+
+The memory context is compact (~300 tokens) and includes:
+- Latest recommendation for the queried ticker (if exists)
+- Current portfolio holdings (if any)
+- Timestamp of last interaction
+
+### Component Architecture
+
+| Component | File | Purpose |
+|---|---|---|
+| `SQLiteStore` | `shared/memory/store.py` | SQLite connection, auto-migration, table creation |
+| `TickerMemory` | `shared/memory/ticker_memory.py` | Per-ticker brief storage, `format_context()` for prompt injection |
+| `PortfolioStore` | `shared/memory/portfolio_store.py` | User profile, holdings persistence, risk profile |
+| `PerformanceTracker` | `shared/memory/performance_tracker.py` | Recommendation outcome tracking, accuracy evaluation |
+| `SQLiteMemoryService` | `shared/memory/memory_service.py` | ADK `BaseMemoryService` implementation for `load_memory` tool |
+
+### SQLite Schema
+
+```sql
+sessions (id, user_id, created_at, updated_at)
+events (id, session_id, event_type, data, created_at)
+ticker_briefs (id, ticker, recommendation, confidence, response_text, created_at)
+user_profiles (id, user_id, holdings_json, risk_profile, investment_horizon, updated_at)
+recommendation_records (id, ticker, recommendation, confidence, price_at_recommendation, created_at)
+memory_entries (id, session_id, content_hash, content, created_at)
+```
+
+### Auto-Save Flow
+
+After each successful response, the executor automatically persists:
+
+```
+Response Complete → Executor._auto_save_memory(query, response)
+  ├── extract_ticker(query) → "NVDA"
+  ├── TickerMemory.store_brief(ticker, recommendation, response)
+  ├── PortfolioStore.update_holdings(extracted_holdings)
+  └── PerformanceTracker.record_recommendation(ticker, rec, confidence)
+```
+
+The LLM does not need to call any tool to persist memory — auto-save happens on every response.
+
+### Memory Search
+
+The `load_memory` tool is available to the orchestrator LLM for searching past conversations:
+
+```python
+# ADK tool injection
+memory_service = SQLiteMemoryService(store)
+runner = Runner(
+    agent=agent,
+    session_service=session_service,
+    memory_service=memory_service,  # Enables load_memory tool
+)
+```
+
+The LLM can call `load_memory(query="What did I ask about NVDA last week?")` to search across all past sessions.
+
+### Integration Points
+
+| File | Integration |
+|---|---|
+| `agent_1_adk/main.py` | Initializes `DatabaseSessionService` and `SQLiteMemoryService` |
+| `agent_1_adk/agent_executor.py` | Memory context injection, auto-save, `_add_to_memory` |
+| `agent_1_adk/agent.py` | System prompt includes memory usage instructions |
+
+### Database File
+
+- Location: `finsight_memory.db` at project root
+- Excluded from git via `.gitignore`
+- Auto-created on first use with schema migration

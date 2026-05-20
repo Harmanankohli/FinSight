@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.13 — Persistent Memory Layer
+
+- **`DatabaseSessionService` replaces `InMemorySessionService`**: ADK's built-in `DatabaseSessionService` with `sqlite+aiosqlite:///./finsight_memory.db` provides persistent session/event storage across restarts. Full conversation history (user messages, agent responses, tool calls) is saved to SQLite.
+- **`SQLiteMemoryService` for cross-session memory search**: Custom implementation of ADK's `BaseMemoryService` that persists conversation events to SQLite. The `load_memory` tool can search past conversations across sessions and restarts. Sessions are auto-ingested after each successful response.
+- **`TickerMemory` for structured brief history**: Stores per-ticker investment recommendations with ticker, recommendation (BUY/HOLD/SELL), confidence, full response text, and timestamp. Provides `format_context()` that generates a compact (~300 token) memory summary injected into the orchestrator's system prompt before each query.
+- **`PortfolioStore` for user profile persistence**: Auto-captures portfolio holdings from each query's context. Merges holdings over time — users never need to explicitly set their portfolio. Stores risk profile and investment horizon.
+- **`PerformanceTracker` for recommendation outcomes**: Records each BUY/HOLD/SELL recommendation with optional price snapshot. Can evaluate past recommendations against current market prices via yfinance. Provides accuracy stats (win rate by recommendation type).
+- **Memory context injection**: Before each query, the executor extracts the ticker, retrieves the latest recommendation from `TickerMemory`, and prepends it to the user message. This enables the LLM to answer "Has the outlook for NVDA changed since last time?"
+- **Auto-save on every response**: `agent_executor.py` automatically stores briefs, recommendations, and portfolio updates after every successful response — no LLM action required.
+- **`save_brief` tool removed**: Simplified to auto-save only. The LLM no longer needs to explicitly call a tool to persist its analysis.
+- **`load_memory` tool added to orchestrator**: The ADK `load_memory` tool is now available to the orchestrator LLM for searching past conversations.
+- **`finsight_memory.db` added to `.gitignore`**: SQLite database file excluded from version control.
+- **16 tests passing** in `tests/test_memory.py`: covers all four memory stores (TickerMemory, PortfolioStore, PerformanceTracker, SQLiteMemoryService) plus the SQLite foundation.
+
 ## v1.12 — A2A Span Noise Filtering
 
 - **Noisy A2A internal spans filtered**: Replaced `should_export_span=lambda span: True` with `is_default_export_span` from `langfuse.span_filter`. A2A SDK internal spans (`a2a-python-sdk` instrumentation scope) and HTTPX transport spans are no longer exported to Langfuse, keeping traces clean and focused on high-level workflow steps and LLM calls.
