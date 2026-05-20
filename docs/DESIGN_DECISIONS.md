@@ -619,4 +619,16 @@ This gives Mem0-like search quality without external API dependencies or per-que
 
 `adk web` creates its own runner with `InMemoryMemoryService` (default). Our `main.py` uses `SQLiteMemoryService` with BM25 + embedding search. Both work with our `_add_events_to_memory` implementation — the standard ADK pattern is compatible with any `MemoryService`.
 
-For production use with `adk web`, configure a custom memory service via `--memory-service-uri sqlite+aiosqlite:///./finsight_memory.db`.
+For production use with `adk web`, configure a custom memory service via `--memory-service-uri finsight://`.
+
+### `load_memory` Signature Mismatch Fix (v1.14)
+
+The `load_memory` tool returned empty results even after sessions were persisted. Root cause: ADK's `CallbackContext.add_events_to_memory()` calls with signature `(events=..., custom_metadata=None)`, but our `SQLiteMemoryService.add_events_to_memory()` required `(app_name=..., user_id=..., events=..., session_id=...)`.
+
+**Fix**: Made `app_name` and `user_id` optional with defaults (`"finsight"` and `"default_user"`). When called via the callback, user_id, session_id, and app_name are extracted from `custom_metadata`.
+
+**Dual persistence**: Events are persisted via two paths:
+1. **`after_agent_callback`** — invoked by ADK after each agent turn (works for `adk web` UI)
+2. **`_persist_to_memory`** — called directly in `agent_executor.py` after response processing (works for A2A requests)
+
+This ensures memory works regardless of invocation path.

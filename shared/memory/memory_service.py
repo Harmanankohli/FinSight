@@ -83,13 +83,26 @@ class SQLiteMemoryService(BaseMemoryService):
     async def add_events_to_memory(
         self,
         *,
-        app_name: str,
-        user_id: str,
-        events: list[Event],
+        app_name: Optional[str] = None,
+        user_id: Optional[str] = None,
+        events: list[Event] | None = None,
         session_id: Optional[str] = None,
         custom_metadata: Optional[dict] = None,
     ) -> None:
-        """Add a delta of events to memory without re-ingesting the full session."""
+        """Add a delta of events to memory without re-ingesting the full session.
+
+        Compatible with both ADK's Context.add_events_to_memory (events only)
+        and direct calls with full parameters.
+        """
+        if not events:
+            return
+
+        # Extract context values from custom_metadata if not provided directly
+        if custom_metadata:
+            user_id = user_id or custom_metadata.get("user_id")
+            session_id = session_id or custom_metadata.get("session_id")
+            app_name = app_name or custom_metadata.get("app_name")
+
         conn = await get_db(self._db_path)
         try:
             for event in events:
@@ -100,7 +113,7 @@ class SQLiteMemoryService(BaseMemoryService):
                 entry_id = str(uuid.uuid4())
                 content_json = json.dumps(self._event_to_dict(event))
                 metadata_json = json.dumps({
-                    "app_name": app_name,
+                    "app_name": app_name or "finsight",
                     "author": event.author,
                     **(custom_metadata or {}),
                 })
@@ -111,7 +124,7 @@ class SQLiteMemoryService(BaseMemoryService):
                        VALUES (?, ?, ?, ?, ?, ?, ?)""",
                     (
                         entry_id,
-                        user_id,
+                        user_id or "default_user",
                         session_id or "",
                         content_json,
                         metadata_json,

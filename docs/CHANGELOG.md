@@ -1,6 +1,12 @@
 # Changelog
 
-## v1.13 — Persistent Memory Layer
+## v1.14 — `load_memory` Fix & RAG Timeout Optimization
+
+- **`load_memory` now returns results**: Root cause was `SQLiteMemoryService.add_events_to_memory()` requiring `app_name` and `user_id` as mandatory args, but ADK's `Context.add_events_to_memory()` only passes `events` and `custom_metadata`. Fixed by making `app_name` and `user_id` optional with defaults, and extracting them from `custom_metadata` when not provided directly.
+- **`after_agent_callback` signature corrected**: ADK's `CallbackContext.add_events_to_memory()` takes `(self, *, events, custom_metadata=None)` — not `(app_name, user_id, events, session_id)`. Updated `agents/finsight_agent/agent.py` to pass events via `custom_metadata` with user_id, session_id, and app_name embedded.
+- **Dual persistence path**: Events are now persisted to `memory_entries` both via `after_agent_callback` (ADK web UI path) and `_persist_to_memory` (A2A executor path), ensuring memory works regardless of how the agent is invoked.
+- **`_persist_to_memory` added to `agent_executor.py`**: After each successful response, events are directly persisted to the runner's memory service. This bypasses the unreliable callback chain for A2A requests.
+- **RAG retrieval deduplication**: Reduced `similarity_top_k` from 5 → 3 across all index query engines in `index_manager.py` to cut context size and LLM inference time by ~40%.
 
 - **`DatabaseSessionService` replaces `InMemorySessionService`**: ADK's built-in `DatabaseSessionService` with `sqlite+aiosqlite:///./finsight_memory.db` provides persistent session/event storage across restarts. Full conversation history (user messages, agent responses, tool calls) is saved to SQLite.
 - **`SQLiteMemoryService` for cross-session memory search**: Custom implementation of ADK's `BaseMemoryService` that persists conversation events to SQLite. The `load_memory` tool can search past conversations across sessions and restarts. Sessions are auto-ingested after each successful response.

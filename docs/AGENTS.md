@@ -41,7 +41,12 @@ FinSightAgentExecutor:
     → LLM synthesizes BUY/HOLD/SELL
     → load_memory(query="...") — search past conversations
   → _add_events_to_memory() → get_session() → add_session_to_memory()
+  → _persist_to_memory() → direct events → SQLiteMemoryService (for load_memory)
   → _store_memory() → TickerMemory + PortfolioStore + PerformanceTracker
+
+after_agent_callback (ADK web UI path):
+  → callback_context.add_events_to_memory(events=session.events, custom_metadata={...})
+  → SQLiteMemoryService.add_events_to_memory() → memory_entries table
 ```
 
 ### Streaming Event Flow

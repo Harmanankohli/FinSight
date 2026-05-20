@@ -107,6 +107,8 @@ class FinSightAgentExecutor(AgentExecutor):
                         await self._add_events_to_memory(
                             user_id, context_id, collected_events
                         )
+                        # Also persist via memory service directly for load_memory
+                        await self._persist_to_memory(user_id, context_id, collected_events)
                     else:
                         logger.warning("No final event received from runner")
                     else:
@@ -290,6 +292,30 @@ class FinSightAgentExecutor(AgentExecutor):
             await ps.upsert_from_context(ctx)
         except Exception:
             logger.debug("Failed to update portfolio from query context", exc_info=True)
+
+    async def _persist_to_memory(
+        self, user_id: str, context_id: str, events: list
+    ) -> None:
+        """Persist events directly to SQLiteMemoryService for load_memory search.
+
+        This bypasses the unreliable after_agent_callback and ensures
+        conversation events are stored in memory_entries table.
+        """
+        if not events:
+            return
+        if not self._runner.memory_service:
+            logger.warning("No memory_service on runner, skipping memory persistence")
+            return
+        try:
+            await self._runner.memory_service.add_events_to_memory(
+                app_name=self._runner.app_name,
+                user_id=user_id,
+                events=events,
+                session_id=context_id,
+            )
+            logger.info("Persisted %d events to memory for load_memory", len(events))
+        except Exception:
+            logger.error("Failed to persist events to memory", exc_info=True)
 
 
 def _resolve_user_id(context: RequestContext) -> str:
