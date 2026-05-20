@@ -6,12 +6,24 @@ This walkthrough shows the full pipeline for the query *"Should I invest in NVDA
 
 ```
 User Query → ADK Web (8001) → ADK LlmAgent
+  → Memory context injection (latest NVDA brief + portfolio)
   → LLM calls agents via single send_message tool (parallel with qwen):
     → send_message("Financial RAG Agent", ...) → RAG Agent (8002) → MCP (SEC EDGAR) → ChromaDB
     → send_message("Quant Analysis Agent", ...) → Quant Agent (8003) → MCP (prices + financials) → LangGraph
     → send_message("Sentiment Intelligence Agent", ...) → Sentiment Agent (8004) → MCP (News + SEC) → CrewAI
   → LLM synthesizes all results → BUY/HOLD/SELL recommendation
+  → Auto-save: brief, portfolio, performance record persisted to SQLite
 ```
+
+## Memory Layer
+
+After each query, the system automatically persists:
+- **Ticker brief**: Latest recommendation for the queried ticker (BUY/HOLD/SELL + confidence + rationale)
+- **Portfolio holdings**: Extracted from user query context, merged over time
+- **Performance record**: Recommendation timestamped for future accuracy tracking
+- **Session events**: Full conversation stored for cross-session search via `load_memory` tool
+
+On subsequent queries, memory context is injected before the LLM runs, enabling the orchestrator to answer questions like *"Has the outlook for NVDA changed since last time?"*
 
 ## Step 1: Start Services
 

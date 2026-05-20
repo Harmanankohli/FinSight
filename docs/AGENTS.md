@@ -13,8 +13,10 @@
 The orchestrator uses a single `LlmAgent` with one `send_message` tool. The LLM delegates tasks to sub-agents by name and synthesizes results:
 
 1. **Discovers agents in background** via `SubAgentClient.discover()` — async `A2ACardResolver` with retries
-2. **LLM routes to agents** — LLM calls `send_message(agent_name, task)` for each sub-agent. Parallel with qwen (supports parallel tool calls); sequential with other models.
-3. **Synthesizes results** — LLM collects all outputs and produces a BUY/HOLD/SELL recommendation
+2. **Memory context injection** — Before each query, extracts ticker from user input, retrieves latest recommendation from `TickerMemory`, and prepends it to the user message (~300 token budget)
+3. **LLM routes to agents** — LLM calls `send_message(agent_name, task)` for each sub-agent. Parallel with qwen (supports parallel tool calls); sequential with other models.
+4. **Synthesizes results** — LLM collects all outputs and produces a BUY/HOLD/SELL recommendation
+5. **Auto-save** — After each response, persists ticker brief, portfolio holdings, and performance record to SQLite
 
 All A2A communication uses `ClientFactory` + `BaseClient` from the official `a2a-sdk`. Streaming events are handled correctly: intermediate SUBMITTED/WORKING events are skipped, only `artifact_update` events (data or text) and terminal `status_update` events are returned to the LLM.
 
@@ -29,13 +31,17 @@ Module load → SubAgentClient.discover() in background task
 
 FinSightAgentExecutor:
   A2A Request → execute()
+  → _build_memory_context(query) → inject [MEMORY CONTEXT] prefix
   → RUNNER.run_async(user_query)
-  → ADK LlmAgent (tools: [send_message])
+  → ADK LlmAgent (tools: [send_message, save_brief, load_memory])
     → LLM decides which agents to call (parallel with qwen)
     → send_message("Financial RAG Agent", "Analyze NVDA...")
     → send_message("Quant Analysis Agent", "Compute metrics for NVDA...")
     → send_message("Sentiment Intelligence Agent", "Sentiment for NVDA...")
     → LLM synthesizes BUY/HOLD/SELL
+    → load_memory(query="...") — search past conversations
+  → _add_events_to_memory() → get_session() → add_session_to_memory()
+  → _store_memory() → TickerMemory + PortfolioStore + PerformanceTracker
 ```
 
 ### Streaming Event Flow

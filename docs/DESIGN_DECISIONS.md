@@ -573,3 +573,50 @@ Added `Today's date: {date.today().isoformat()}` as the first line of every LLM 
 - **RAG query prompts** — so the LlamaIndex LLM knows the reference date for financial data
 - **Quant summary prompt** — so the LangGraph summary LLM frames analysis in correct temporal context
 - **Sentiment crew tasks** — so CrewAI agents know the current date when analyzing news and filings
+
+## Persistent Memory Layer
+
+### Problem
+
+ADK's default `InMemoryMemoryService` loses all conversation history on server restart. The `DatabaseSessionService` persists sessions to SQLite but doesn't expose them for cross-session search. The `load_memory` tool returned empty results because:
+
+1. `adk web` uses `InMemoryMemoryService` (in-memory, lost on restart)
+2. `InMemorySessionService.get_session()` returns a `Session` with an empty `events` list — events are stored in the DB but never loaded back into the session object
+3. Our initial `SQLiteMemoryService.add_session_to_memory(session)` iterated over `session.events`, which was always empty
+
+### Solution
+
+**Standard ADK pattern**: `run_async()` → `get_session()` → `add_session_to_memory(session)`
+
+The `DatabaseSessionService.get_session()` loads events from the database when called after `run_async()` completes. We collect events during `run_async()` as a safety net, then use the standard pattern with fallback:
+
+```python
+session = await self._runner.session_service.get_session(...)
+if session and session.events:
+    await self._runner.memory_service.add_session_to_memory(session)
+else:
+    # Fallback: use events collected during run_async
+    await self._runner.memory_service.add_events_to_memory(events=collected_events)
+```
+
+### Hybrid Search: BM25 + Embeddings
+
+Instead of Mem0 (requires external OpenAI API), we implemented local hybrid search:
+
+1. **BM25 keyword scoring** (`rank_bm25`) — exact term matching with TF-IDF weighting
+2. **Semantic similarity** (`sentence-transformers/all-MiniLM-L6-v2`) — already in dependencies, runs locally
+3. **RRF fusion** — combines both rankings, handles cases where one method fails
+
+This gives Mem0-like search quality without external API dependencies or per-query latency.
+
+### Schema Design
+
+- `search_text` column added to `memory_entries` — pre-extracted plain text for fast BM25 scoring
+- Auto-migration via `ALTER TABLE` — existing databases get the column on startup
+- `TickerMemory`, `PortfolioStore`, `PerformanceTracker` store structured data separately from conversation events
+
+### adk web vs main.py
+
+`adk web` creates its own runner with `InMemoryMemoryService` (default). Our `main.py` uses `SQLiteMemoryService` with BM25 + embedding search. Both work with our `_add_events_to_memory` implementation — the standard ADK pattern is compatible with any `MemoryService`.
+
+For production use with `adk web`, configure a custom memory service via `--memory-service-uri sqlite+aiosqlite:///./finsight_memory.db`.
