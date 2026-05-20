@@ -23,8 +23,8 @@ timeout /t 3 /nobreak >nul
 start "FinSight Sentiment" cmd /c ".venv\Scripts\activate.bat && python -m uvicorn agent_4_crewai.server:app --host 0.0.0.0 --port 8004 --log-level info"
 timeout /t 3 /nobreak >nul
 
-:: Terminal 5 - ADK Web UI
-start "ADK Web" cmd /c ".venv\Scripts\activate.bat && adk web --port 8001 agents"
+:: Terminal 5 - ADK Web UI (port 8001) with persistent memory layer
+start "ADK Web" cmd /c ".venv\Scripts\activate.bat && adk web --port 8001 --session_service_uri sqlite://./finsight_memory.db --memory_service_uri finsight:// agents"
 
 echo All services starting. Allow 30-40s for boot.
 echo LM Studio server: http://127.0.0.1:1234
