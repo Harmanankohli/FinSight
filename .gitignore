@@ -23,6 +23,11 @@ logs/
 chroma_db/
 .adk/
 
+# Memory database
+finsight_memory.db
+finsight_memory.db-wal
+finsight_memory.db-shm
+
 # OS
 .DS_Store
 Thumbs.db
@@ -32,3 +37,8 @@ request.json
 test_server.py
 restart_adk.ps1
 tools/
+
+# Docs
+AGENTS.md
+graphify-out
+.opencode

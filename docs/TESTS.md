@@ -2,7 +2,7 @@
 
 ## Summary
 
-**56/56 tests passing — 100%**
+**72/72 tests passing — 100%**
 
 ## Test Files
 
@@ -18,7 +18,8 @@
 | `test_rag_pipeline.py` | 7 | Hybrid search (BM25 + dense), RRF merge, document ingestion |
 | `test_sentiment_crew.py` | 3 | MCP tool discovery, crew builder |
 | `test_trace_propagation.py` | 14 | Trace context inject/extract (8), portfolio holdings extraction (6) |
-| **Total** | **56** | |
+| `test_memory.py` | 16 | Memory layer: SQLite store, TickerMemory, PortfolioStore, PerformanceTracker, SQLiteMemoryService |
+| **Total** | **72** | |
 
 ## Running Tests
 
@@ -74,6 +75,27 @@ uv run pytest -v --timeout=30
 | `test_extract_holdings_no_holdings_mentioned` | "Should I buy NVDA?" → `[]` |
 | `test_extract_holdings_excludes_target_ticker` | Target ticker excluded from holdings list |
 | `test_extract_holdings_current_positions` | "My current holdings are JPM, BAC, WFC" → `["JPM", "BAC", "WFC"]` |
+
+## Memory Layer Tests
+
+| Test | What it verifies |
+|---|---|
+| `test_sqlite_store_creates_tables` | SQLiteStore initializes with all 6 tables |
+| `test_sqlite_store_connection_reusable` | Connection is reusable and thread-safe |
+| `test_ticker_memory_store_and_get_latest` | Store brief → retrieve latest recommendation |
+| `test_ticker_memory_get_all_by_ticker` | Multiple briefs per ticker, ordered by date |
+| `test_ticker_memory_format_context_empty` | No history → empty context string |
+| `test_ticker_memory_format_context_with_history` | History → formatted context with ticker, rec, confidence |
+| `test_portfolio_store_update_and_get` | Store holdings → retrieve profile |
+| `test_portfolio_store_merge_holdings` | New holdings merged with existing, no duplicates |
+| `test_performance_tracker_record_and_get` | Record recommendation → retrieve stats |
+| `test_performance_tracker_evaluate_recommendation` | Evaluate past BUY rec against current price |
+| `test_memory_service_add_and_load` | SQLiteMemoryService: add session → load memory |
+| `test_memory_service_search_by_query` | Search memory entries by query string |
+| `test_memory_service_format_context` | Format memory entries for prompt injection |
+| `test_memory_service_duplicate_handling` | Duplicate content not stored twice |
+| `test_memory_service_session_isolation` | Memory entries isolated by session_id |
+| `test_memory_service_empty_search` | No matches → empty result |
 
 ## Pre-existing Test Issues
 

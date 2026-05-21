@@ -1,0 +1,29 @@
+"""Register custom memory service for FinSight.
+
+This file is automatically loaded by ADK when `adk web` starts.
+It registers our SQLiteMemoryService under the 'finsight' URI scheme.
+
+Usage:
+    adk web --memory_service_uri finsight:// agents
+"""
+
+import sys
+from pathlib import Path
+
+# Ensure project root is on sys.path so 'shared' is importable
+_project_root = Path(__file__).resolve().parent.parent
+if str(_project_root) not in sys.path:
+    sys.path.insert(0, str(_project_root))
+
+from google.adk.cli.service_registry import get_service_registry
+from shared.memory import SQLiteMemoryService
+
+registry = get_service_registry()
+
+
+def finsight_memory_factory(uri: str, **kwargs) -> SQLiteMemoryService:
+    """Create a SQLiteMemoryService instance."""
+    return SQLiteMemoryService()
+
+
+registry.register_memory_service("finsight", finsight_memory_factory)
