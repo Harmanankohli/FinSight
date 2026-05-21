@@ -184,7 +184,6 @@ stop_servers.bat
 │   ├── trace_context.py      # Distributed trace context injection/extraction
 │   ├── observability.py      # Langfuse singleton initialization
 │   ├── workflow.py           # WorkflowGraph state machine
-│   ├── types.py              # Shared Pydantic models
 │   ├── config.py             # Centralized .env configuration
 │   ├── mcp_client.py         # MCP client with dynamic tool discovery
 │   ├── models.py             # Pydantic data models

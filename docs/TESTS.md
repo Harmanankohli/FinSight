@@ -2,7 +2,7 @@
 
 ## Summary
 
-**72/72 tests passing — 100%**
+**64/64 tests passing — 100%**
 
 ## Test Files
 
@@ -13,13 +13,12 @@
 | `test_base_agent.py` | 2 | BaseAgent abstract class and stream contract |
 | `test_orchestrator_tools.py` | 4 | Orchestrator `send_message` tool, sub-agent client presence |
 | `test_planner.py` | 5 | SubAgentClient, agent tool generation, send_message |
-| `test_workflow.py` | 8 | WorkflowGraph nodes, edges, state transitions |
 | `test_quant_graph.py` | 4 | LangGraph conditional branching, stress test/DCF routing |
 | `test_rag_pipeline.py` | 7 | Hybrid search (BM25 + dense), RRF merge, document ingestion |
 | `test_sentiment_crew.py` | 3 | MCP tool discovery, crew builder |
 | `test_trace_propagation.py` | 14 | Trace context inject/extract (8), portfolio holdings extraction (6) |
 | `test_memory.py` | 16 | Memory layer: SQLite store, TickerMemory, PortfolioStore, PerformanceTracker, SQLiteMemoryService |
-| **Total** | **72** | |
+| **Total** | **64** | |
 
 ## Running Tests
 

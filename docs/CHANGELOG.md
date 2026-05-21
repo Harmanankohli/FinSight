@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.15 — Dead Code Cleanup
+
+- **`shared/types.py` removed**: Defined `ServerConfig`, `PlannerTask`, `TaskList`, `AgentResponse` — none were imported or referenced by any file in the project. These types were superseded by models in `shared/models.py`.
+- **`shared/workflow.py` removed**: Defined `WorkflowGraph`, `WorkflowNode`, `Status` — never imported by any production code. The system uses LangGraph for the quant agent's state machine instead.
+- **`tests/test_workflow.py` removed**: 8 tests for the unused `WorkflowGraph` implementation.
+- **`ui/memory_test.html` and `ui/test.html` removed**: Standalone HTML pages with zero references from any source or configuration.
+- **README updated**: Removed stale reference to `shared/types.py` from project structure diagram.
+- **TESTS.md updated**: Test count corrected from 72 → 64.
+
 ## v1.14 — `load_memory` Fix & RAG Timeout Optimization
 
 - **`load_memory` now returns results**: Root cause was `SQLiteMemoryService.add_events_to_memory()` requiring `app_name` and `user_id` as mandatory args, but ADK's `Context.add_events_to_memory()` only passes `events` and `custom_metadata`. Fixed by making `app_name` and `user_id` optional with defaults, and extracting them from `custom_metadata` when not provided directly.
