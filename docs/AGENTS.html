@@ -44,18 +44,24 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <tr><td>Framework</td><td>Google ADK</td></tr>
 <tr><td>Port</td><td>8001</td></tr>
 <tr><td>Agent Card</td><td>Built programmatically in <code>agent_1_adk/main.py</code></td></tr>
-<tr><td>Discovery</td><td><code>A2ACardResolver</code> via <code>/.well-known/agent-card.json</code>, async 3x retry</td></tr>
-<tr><td>A2A Endpoint</td><td><code>POST /a2a</code></td></tr>
+<tr><td>Discovery</td><td><code>A2ACardResolver</code> via <code>/.well-known/agent-card.json</code>, async with 3x retry</td></tr>
+<tr><td>A2A Endpoint</td><td><code>POST /a2a</code> (via Starlette + <code>create_jsonrpc_routes</code>)</td></tr>
+<tr><td>Health</td><td><code>GET /health</code> &rarr; <code>{"status":"ok","agent":"orchestrator"}</code></td></tr>
 </table>
 
-<p>The orchestrator uses a single <code>LlmAgent</code> with one <code>send_message</code> tool:</p>
+<p>The orchestrator uses a single <code>LlmAgent</code> with one <code>send_message</code> tool. The LLM delegates tasks to sub-agents by name and synthesizes results:</p>
 <ol>
 <li><strong>Discovers agents in background</strong> via <code>SubAgentClient.discover()</code> &mdash; async <code>A2ACardResolver</code> with retries</li>
-<li><strong>Memory context injection</strong> &mdash; extracts ticker, retrieves latest recommendation, prepends to user message (~300 tokens)</li>
-<li><strong>LLM routes to agents</strong> &mdash; calls <code>send_message(agent_name, task)</code>. Parallel with qwen; sequential with other models.</li>
-<li><strong>Synthesizes results</strong> &mdash; produces BUY/HOLD/SELL recommendation</li>
-<li><strong>Auto-save</strong> &mdash; persists ticker brief, portfolio, and performance record to SQLite</li>
+<li><strong>Input guardrails</strong> &mdash; Off-topic queries rejected in &lt; 100 ms via <code>_NON_INVESTMENT_RE</code>. Invalid tickers rejected in &lt; 2 s via pre-flight MCP <code>validate_ticker</code> call before any sub-agent is invoked.</li>
+<li><strong>Semantic cache</strong> &mdash; When <code>SEMANTIC_CACHE_ENABLED=true</code>, similar queries (cosine &ge; 0.95) return cached responses without running the orchestrator.</li>
+<li><strong>Memory context injection</strong> &mdash; Before each query, extracts ticker from user input, retrieves latest recommendation from <code>TickerMemory</code>, and prepends it to the user message (~300 token budget)</li>
+<li><strong>LLM routes to agents</strong> &mdash; LLM calls <code>send_message(agent_name, task)</code> for each sub-agent. Parallel with qwen; sequential with other models. Each call measured with <code>time.monotonic()</code> and emitted as a Langfuse latency span.</li>
+<li><strong>Output guardrails</strong> &mdash; Responses shorter than 50 chars trigger <code>TASK_STATE_FAILED</code>. Missing BUY/HOLD/SELL signal emits a Langfuse warning with <code>missing_signal: true</code>.</li>
+<li><strong>Synthesizes results</strong> &mdash; LLM collects all outputs and produces a BUY/HOLD/SELL recommendation</li>
+<li><strong>Auto-save</strong> &mdash; After each response, persists ticker brief, portfolio holdings, and performance record (with live price snapshot via yfinance) to SQLite. Fires background task to evaluate past recommendations.</li>
 </ol>
+
+<p>All A2A communication uses <code>ClientFactory</code> + <code>BaseClient</code> from the official <code>a2a-sdk</code>. Streaming events are handled correctly: intermediate SUBMITTED/WORKING events are skipped, only <code>artifact_update</code> events (data or text) and terminal <code>status_update</code> events are returned to the LLM.</p>
 
 <h3>Architecture</h3>
 <pre>Module load &rarr; SubAgentClient.discover() in background task
@@ -66,20 +72,22 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 
 FinSightAgentExecutor:
   A2A Request &rarr; execute()
-  &rarr; _build_memory_context(query) &rarr; inject prefix
+  &rarr; _build_memory_context(query) &rarr; inject [MEMORY CONTEXT] prefix
   &rarr; RUNNER.run_async(user_query)
-  &rarr; ADK LlmAgent (tools: [send_message, load_memory])
-    &rarr; LLM decides which agents to call
+  &rarr; ADK LlmAgent (tools: [send_message, save_brief, load_memory])
+    &rarr; LLM decides which agents to call (parallel with qwen)
     &rarr; send_message("Financial RAG Agent", "Analyze NVDA...")
-    &rarr; send_message("Quant Analysis Agent", "Compute metrics...")
-    &rarr; send_message("Sentiment Intelligence Agent", "Sentiment...")
+    &rarr; send_message("Quant Analysis Agent", "Compute metrics for NVDA...")
+    &rarr; send_message("Sentiment Intelligence Agent", "Sentiment for NVDA...")
     &rarr; LLM synthesizes BUY/HOLD/SELL
-  &rarr; _add_events_to_memory() &rarr; persist session
+    &rarr; load_memory(query="...") &mdash; search past conversations
+  &rarr; _add_events_to_memory() &rarr; get_session() &rarr; add_session_to_memory()
+  &rarr; _persist_to_memory() &rarr; direct events &rarr; SQLiteMemoryService (for load_memory)
   &rarr; _store_memory() &rarr; TickerMemory + PortfolioStore + PerformanceTracker
 
 after_agent_callback (ADK web UI path):
-  &rarr; callback_context.add_events_to_memory(events=..., custom_metadata={...})
-  &rarr; SQLiteMemoryService.add_events_to_memory()</pre>
+  &rarr; callback_context.add_events_to_memory(events=session.events, custom_metadata={...})
+  &rarr; SQLiteMemoryService.add_events_to_memory() &rarr; memory_entries table</pre>
 
 <h3>Streaming Event Flow</h3>
 <pre>event 1: task { state: SUBMITTED }          &larr; skipped (non-terminal)
@@ -113,10 +121,12 @@ Body:
 <tr><td>Framework</td><td>LlamaIndex</td></tr>
 <tr><td>Executor</td><td><code>GenericAgentExecutor(RAGAgent)</code></td></tr>
 <tr><td>LLM</td><td>LM Studio via <code>llama-index-llms-openai-like</code></td></tr>
-<tr><td>Vector Store</td><td>ChromaDB (local, persisted)</td></tr>
-<tr><td>Embeddings</td><td>HuggingFace <code>all-MiniLM-L6-v2</code></td></tr>
+<tr><td>Vector Store</td><td>ChromaDB (local, persisted to <code>./chroma_db</code>)</td></tr>
+<tr><td>Embeddings</td><td>HuggingFace <code>all-MiniLM-L6-v2</code> (local)</td></tr>
 <tr><td>Port</td><td>8002</td></tr>
+<tr><td>Agent Card</td><td>Built programmatically in <code>agent_2_llamaindex/server.py</code></td></tr>
 <tr><td>A2A Endpoint</td><td><code>POST /a2a</code></td></tr>
+<tr><td>Health</td><td><code>GET /health</code> &rarr; <code>{"status":"ok","agent":"rag"}</code></td></tr>
 </table>
 
 <h3>Skills</h3>
@@ -144,16 +154,19 @@ Body:
 <tr><th>Property</th><th>Value</th></tr>
 <tr><td>Framework</td><td>LangChain + LangGraph</td></tr>
 <tr><td>Executor</td><td><code>GenericAgentExecutor(QuantAgent)</code></td></tr>
-<tr><td>LLM</td><td>LM Studio via <code>langchain-openai</code> (summary only)</td></tr>
-<tr><td>Data Source</td><td>MCP (<code>get_prices</code>, <code>get_financials</code>)</td></tr>
+<tr><td>LLM</td><td>LM Studio via <code>langchain-openai</code> (summary node only)</td></tr>
+<tr><td>LLM Cache</td><td>LangChain <code>SQLiteCache</code> &mdash; identical inputs reuse cached LLM response</td></tr>
+<tr><td>Data Source</td><td>MCP (finsight-mcp <code>get_prices</code>, <code>get_financials</code>)</td></tr>
 <tr><td>Port</td><td>8003</td></tr>
+<tr><td>Agent Card</td><td>Built programmatically in <code>agent_3_langgraph/server.py</code></td></tr>
 <tr><td>A2A Endpoint</td><td><code>POST /a2a</code></td></tr>
+<tr><td>Health</td><td><code>GET /health</code> &rarr; <code>{"status":"ok","agent":"quant"}</code></td></tr>
 </table>
 
-<h3>Skill</h3>
+<h3>Skills</h3>
 <table>
 <tr><th>ID</th><th>Name</th><th>Description</th></tr>
-<tr><td><code>quant_analysis</code></td><td>Quantitative Analysis</td><td>Sharpe ratio, Beta, VaR, volatility, DCF valuation, stress tests</td></tr>
+<tr><td><code>quant_analysis</code></td><td>Quantitative Analysis</td><td>Compute Sharpe ratio, Beta, VaR, volatility, DCF valuation, stress tests</td></tr>
 </table>
 
 <h3>Architecture</h3>
@@ -161,14 +174,19 @@ Body:
   &rarr; QuantAgent.stream(query, context_id, task_id)
     &rarr; extract_holdings(query, exclude_ticker=ticker) &rarr; ["AAPL", "MSFT", "GOOGL"]
     &rarr; QuantAgent.analyze(ticker, portfolio_holdings=holdings)
-      [MCP: get_prices &rarr; parse Close data] &rarr; compute_metrics &rarr; branch
-        &rarr; high_volatility (&gt;35%) &rarr; stress_test, sets dcf_error
-        &rarr; low_volatility (&le;35%) &rarr; dcf_valuation
-      &rarr; portfolio_correlation
-      &rarr; format_output (dcf_error in reasoning) &rarr; llm_summary
-  &rarr; Yields: data response</pre>
+      [MCP: get_prices &rarr; parse Close data] &rarr; compute_metrics &rarr; conditional branch (logged)
+        &rarr; high_volatility (annual_vol &gt; 35%) &rarr; stress_test, sets dcf_error
+        &rarr; low_volatility (annual_vol &le; 35%) &rarr; dcf_valuation
+      &rarr; portfolio_correlation (fetches prices for target + each holding)
+        &rarr; format_output (dcf_error in reasoning) &rarr; llm_summary
+  &rarr; Yields: {response_type: "data", content: result, is_task_complete: true}
+      Result includes dcf_error field when DCF is skipped</pre>
 
-<p><strong>Portfolio Holdings Extraction</strong>: <code>extract_holdings()</code> uses regex patterns to extract holdings from natural language. The orchestrator LLM is instructed to include holdings in the task text for the Quant agent.</p>
+<p><strong>Portfolio Holdings Extraction</strong>: <code>extract_holdings()</code> in <code>shared/ticker_utils.py</code> uses regex patterns to extract holdings from natural language (e.g. &ldquo;My portfolio holds AAPL, MSFT, GOOGL&rdquo;). The orchestrator LLM is instructed to include holdings in the task text for the Quant agent. Holdings are passed through the full chain and used by <code>correlation_node</code> to compute a correlation matrix.</p>
+
+<p><strong>Correlation Matrix Notes</strong>: When no holdings are provided, returns <code>{"note": "No portfolio holdings provided..."}</code> instead of <code>{}</code>.</p>
+
+<p><strong>Logging &amp; Error Propagation</strong>: The graph logs routing decisions, metric computation failures, DCF fallbacks, and beta calculation errors. When DCF is skipped due to high volatility, the <code>dcf_error</code> field is set and propagated through formatting and LLM summary, giving users visibility into why DCF was not computed.</p>
 
 <hr>
 
@@ -180,10 +198,12 @@ Body:
 <tr><td>LLM</td><td>LM Studio via CrewLLM</td></tr>
 <tr><td>Data Collection</td><td>Parallel via <code>asyncio.gather</code></td></tr>
 <tr><td>Port</td><td>8004</td></tr>
+<tr><td>Agent Card</td><td>Built programmatically in <code>agent_4_crewai/server.py</code></td></tr>
 <tr><td>A2A Endpoint</td><td><code>POST /a2a</code></td></tr>
+<tr><td>Health</td><td><code>GET /health</code> &rarr; <code>{"status":"ok","agent":"sentiment"}</code></td></tr>
 </table>
 
-<h3>Skill</h3>
+<h3>Skills</h3>
 <table>
 <tr><th>ID</th><th>Name</th><th>Description</th></tr>
 <tr><td><code>sentiment_analysis</code></td><td>Sentiment &amp; Narrative Intelligence</td><td>Analyze news sentiment, SEC filings, produce investment narrative</td></tr>
@@ -199,8 +219,9 @@ Body:
         &rarr; call("get_company_filings", {ticker})
         &rarr; asyncio.gather
       &rarr; SentimentIntelligenceCrew.analyze(ticker, precollected_data)
-        &rarr; Analysis Agent &rarr; Synthesis Agent
-  &rarr; Yields: data response</pre>
+        &rarr; Analysis Agent
+        &rarr; Synthesis Agent
+  &rarr; Yields: {response_type: "data", content: result, is_task_complete: true}</pre>
 
 <hr>
 <p style="font-size:.85rem;color:#888"><a href="index.html">Back to docs hub</a></p>

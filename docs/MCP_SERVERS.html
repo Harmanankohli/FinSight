@@ -37,20 +37,33 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 </div>
 
 <h1>MCP Server</h1>
-<p>Single unified MCP server (<code>mcp_servers/finsight_server.py</code>) hosting both agent registry and data tools on port 8010.</p>
+<p>Single unified MCP server (<code>mcp_servers/finsight_server.py</code>) hosting both agent registry and data tools.</p>
 
 <table>
 <tr><th>Port</th><th>Tools</th><th>Registry</th></tr>
 <tr><td>8010</td><td><code>get_prices</code>, <code>get_financials</code>, <code>get_options_chain</code>, <code>get_company_filings</code>, <code>get_financial_filings</code>, <code>get_filing_content</code>, <code>validate_ticker</code>, <code>resolve_company_ticker</code>, <code>full_text_search</code>, <code>get_news_sentiment</code>, <code>get_earnings_calendar</code>, <code>execute_python</code></td><td><code>find_agent</code>, <code>resource://agent_cards/list</code>, <code>resource://agent_cards/{name}</code></td></tr>
 </table>
 
-<p>No API keys required. Windows-compatible &mdash; <code>import resource</code> guarded by platform check.</p>
+<p>No API keys required (SEC uses public API, news uses RSS feeds). Windows-compatible &mdash; <code>import resource</code> guarded by platform check.</p>
 
 <h2>Running</h2>
 <pre>python -m uvicorn mcp_servers.finsight_server:get_app --host 0.0.0.0 --port 8010</pre>
+<p>Health check: <code>GET http://localhost:8010/health</code> &rarr; <code>{"status":"ok","agent":"mcp"}</code></p>
+
+<h2>TTL Caching</h2>
+<p><code>_TTLCache</code> class (OrderedDict + <code>time.monotonic()</code>) wraps each tool with zero new dependencies:</p>
+<table>
+<tr><th>Cache</th><th>TTL</th><th>Notes</th></tr>
+<tr><td><code>get_prices</code></td><td>5 min</td><td>Key: <code>(ticker, period, interval)</code></td></tr>
+<tr><td><code>get_financials</code></td><td>24 h</td><td>Key: <code>(ticker,)</code></td></tr>
+<tr><td><code>get_news_sentiment</code></td><td>15 min</td><td>Only cached when articles found</td></tr>
+<tr><td><code>get_filing_content</code></td><td>Permanent (LRU-200)</td><td>Filings are immutable</td></tr>
+<tr><td><code>_fetch_submissions</code></td><td>6 h</td><td>Shared by <code>get_company_filings</code> + <code>get_financial_filings</code></td></tr>
+</table>
+<p>Cache hits log <code>"Cache hit for &lt;tool&gt;"</code> at DEBUG level. Cache misses fetch fresh data and store the result.</p>
 
 <h2>Agent Registry</h2>
-<p>Agent cards loaded lazily from <code>agent_cards/*.json</code> on first tool call, embedded via <code>sentence-transformers</code>:</p>
+<p>Agent cards loaded lazily from <code>agent_cards/*.json</code> on first tool call (no model download at import time), embedded via <code>sentence-transformers</code>, exposed as:</p>
 <table>
 <tr><th>Tool / Resource</th><th>Description</th></tr>
 <tr><td><code>find_agent(query)</code></td><td>Semantic search via embedding dot-product</td></tr>
@@ -69,16 +82,17 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 </table>
 
 <h3>SEC EDGAR Tools</h3>
-<p>Public API &mdash; no key required. Requires valid <code>User-Agent</code> header.</p>
+<p>Public API &mdash; no key required.</p>
 <table>
 <tr><th>Tool</th><th>Parameters</th><th>Returns</th></tr>
-<tr><td><code>get_company_filings</code></td><td><code>ticker</code>, <code>form_types</code>, <code>limit</code> (10)</td><td>Filing list with form, date, <code>edgar_url</code>, <code>ix_url</code></td></tr>
-<tr><td><code>get_financial_filings</code></td><td><code>ticker</code>, <code>annual_limit</code> (5), <code>quarterly_limit</code> (8)</td><td>10-K and 10-Q only, separated</td></tr>
-<tr><td><code>get_filing_content</code></td><td><code>edgar_url</code>, <code>ix_url</code></td><td>Extracted text from SEC filing</td></tr>
-<tr><td><code>full_text_search</code></td><td><code>query</code>, <code>ticker</code></td><td>Relevance-scored SEC search results</td></tr>
-<tr><td><code>validate_ticker</code></td><td><code>ticker</code></td><td>Validates against SEC database (cached CIK map)</td></tr>
-<tr><td><code>resolve_company_ticker</code></td><td><code>text</code></td><td>Company name &rarr; ticker (SEC reverse index + Yahoo fallback)</td></tr>
+<tr><td><code>get_company_filings</code></td><td><code>ticker</code>, <code>form_types</code> (optional), <code>limit</code> (10)</td><td>Filing list with form, date, <code>edgar_url</code> (raw document), <code>ix_url</code> (viewer fallback)</td></tr>
+<tr><td><code>get_financial_filings</code></td><td><code>ticker</code>, <code>annual_limit</code> (5), <code>quarterly_limit</code> (8)</td><td>10-K and 10-Q only, separated with pagination for sufficient coverage</td></tr>
+<tr><td><code>get_filing_content</code></td><td><code>edgar_url</code>, <code>ix_url</code> (optional)</td><td>Extracted text content from raw SEC filing URL, with fallback to IXBRL viewer</td></tr>
+<tr><td><code>full_text_search</code></td><td><code>query</code>, <code>ticker</code> (optional)</td><td>Relevance-scored SEC EDGAR search results</td></tr>
+<tr><td><code>validate_ticker</code></td><td><code>ticker</code></td><td>Validates ticker against SEC database (cached CIK map)</td></tr>
+<tr><td><code>resolve_company_ticker</code></td><td><code>text</code></td><td>Natural language company name to ticker (SEC reverse index + Yahoo fallback)</td></tr>
 </table>
+<p><strong>Note</strong>: Requires valid <code>User-Agent</code> header. Uses <code>"FinSight Research (contact@finsight.com)"</code>. The RAG agent uses <code>get_filing_content</code> to fetch and index actual SEC filing content.</p>
 
 <h3>Financial News Tools</h3>
 <p>RSS feeds: Yahoo Finance, CNBC, MarketWatch, Seeking Alpha. VADER sentiment scoring.</p>
@@ -89,7 +103,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 </table>
 
 <h3>Python Runner Tool</h3>
-<p>Sandboxed execution with AST-based import restrictions. Runs in separate subprocess with isolation flags.</p>
+<p>Sandboxed execution with AST-based import restrictions. Runs in a separate subprocess (<code>-I -S</code> isolation mode) with optional <code>RLIMIT_CPU</code>/<code>RLIMIT_AS</code>/<code>RLIMIT_NOFILE</code> on non-Windows platforms.</p>
 <table>
 <tr><th>Tool</th><th>Parameters</th><th>Returns</th></tr>
 <tr><td><code>execute_python</code></td><td><code>code</code>, <code>timeout</code> (30)</td><td>success, stdout, stderr, result</td></tr>
@@ -113,10 +127,11 @@ await mcp.connect_all()
 result = await mcp.call_tool_by_name("get_prices", {"ticker": "NVDA"})</pre>
 
 <h3>Parsing Tool Results</h3>
+<p>Use the <code>parse_mcp_result()</code> utility for consistent response handling:</p>
 <pre>from shared.mcp_client import parse_mcp_result
 
 result = await mcp.call_tool_by_name("get_company_filings", {"ticker": "NVDA"})
-data = parse_mcp_result(result)  # dict, list, str, or {"error": "..."}</pre>
+data = parse_mcp_result(result)  # Returns dict, list, str, or {"error": "..."}</pre>
 <p>Handles various MCP response formats including <code>.content</code> attributes with text parts, direct dicts, and JSON strings.</p>
 
 <hr>

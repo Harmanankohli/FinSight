@@ -130,6 +130,32 @@ uv run pytest -v --timeout=30</pre>
 <tr><td><code>test_memory_service_empty_search</code></td><td>No matches &rarr; empty result</td></tr>
 </table>
 
+<h2>RAGAS Evaluation Pipeline</h2>
+<p>Offline evaluation suite in <code>tests/evaluation/</code> &mdash; requires running services and <code>ragas&gt;=0.2.0</code>:</p>
+<pre># Install dev extras
+uv pip install -e &quot;.[dev]&quot;
+
+# RAG evaluation (Faithfulness, ResponseRelevancy, ContextPrecision, ContextRecall)
+python tests/evaluation/run_rag_eval.py --ticker NVDA
+
+# Orchestrator evaluation (ToolCallAccuracy, AgentGoalAccuracy)
+# Requires EVAL_TRACE_ENABLED=true on the orchestrator service
+python tests/evaluation/run_orchestrator_eval.py
+
+# Push all scores to Langfuse
+python tests/evaluation/push_scores.py</pre>
+
+<table>
+<tr><th>File</th><th>Purpose</th></tr>
+<tr><td><code>run_rag_eval.py</code></td><td>Runs RAGAS RAG metrics against the RAG agent</td></tr>
+<tr><td><code>run_orchestrator_eval.py</code></td><td>Reads eval traces, runs RAGAS agentic metrics</td></tr>
+<tr><td><code>financial_rubrics.py</code></td><td>Custom <code>AspectCritic</code> metrics: citation quality, risk disclosure, recommendation clarity</td></tr>
+<tr><td><code>push_scores.py</code></td><td>Pushes per-trace scores to Langfuse via <code>lf.score(trace_id=..., name=..., value=...)</code></td></tr>
+<tr><td><code>rag_dataset.json</code></td><td>10 curated Q&amp;A pairs for NVDA, AAPL, MSFT, JPM with reference contexts</td></tr>
+</table>
+
+<p>Evaluation is triggered externally &mdash; not part of the <code>pytest</code> suite.</p>
+
 <h2>Pre-existing Test Issues</h2>
 <p><code>test_rag_pipeline.py</code> tests require the full llama-index stack (ChromaDB, sentence-transformers, etc.).</p>
 

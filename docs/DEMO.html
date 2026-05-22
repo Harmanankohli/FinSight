@@ -43,41 +43,76 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <pre>User Query &rarr; ADK Web (8001) &rarr; ADK LlmAgent
   &rarr; Memory context injection (latest NVDA brief + portfolio)
   &rarr; LLM calls agents via single send_message tool (parallel with qwen):
-    &rarr; send_message("Financial RAG Agent", ...) &rarr; RAG Agent (8002) &rarr; MCP &rarr; ChromaDB
-    &rarr; send_message("Quant Analysis Agent", ...) &rarr; Quant Agent (8003) &rarr; MCP &rarr; LangGraph
-    &rarr; send_message("Sentiment Intelligence Agent", ...) &rarr; Sentiment Agent (8004) &rarr; MCP &rarr; CrewAI
+    &rarr; send_message("Financial RAG Agent", ...) &rarr; RAG Agent (8002) &rarr; MCP (SEC EDGAR) &rarr; ChromaDB
+    &rarr; send_message("Quant Analysis Agent", ...) &rarr; Quant Agent (8003) &rarr; MCP (prices + financials) &rarr; LangGraph
+    &rarr; send_message("Sentiment Intelligence Agent", ...) &rarr; Sentiment Agent (8004) &rarr; MCP (News + SEC) &rarr; CrewAI
   &rarr; LLM synthesizes all results &rarr; BUY/HOLD/SELL recommendation
   &rarr; Auto-save: brief, portfolio, performance record persisted to SQLite</pre>
 
 <h2>Memory Layer</h2>
 <p>After each query, the system automatically persists:</p>
 <ul>
-<li><strong>Ticker brief</strong>: Latest recommendation (BUY/HOLD/SELL + confidence + rationale)</li>
+<li><strong>Ticker brief</strong>: Latest recommendation for the queried ticker (BUY/HOLD/SELL + confidence + rationale)</li>
 <li><strong>Portfolio holdings</strong>: Extracted from user query context, merged over time</li>
 <li><strong>Performance record</strong>: Recommendation timestamped for future accuracy tracking</li>
-<li><strong>Session events</strong>: Full conversation stored for cross-session search via <code>load_memory</code></li>
+<li><strong>Session events</strong>: Full conversation stored for cross-session search via <code>load_memory</code> tool</li>
 </ul>
-<p>On subsequent queries, memory context is injected, enabling the orchestrator to answer questions like <em>&ldquo;Has the outlook for NVDA changed since last time?&rdquo;</em></p>
+<p>On subsequent queries, memory context is injected before the LLM runs, enabling the orchestrator to answer questions like <em>&ldquo;Has the outlook for NVDA changed since last time?&rdquo;</em></p>
 
 <h2>Step 1: Start Services</h2>
 <pre>run_adk_web.bat</pre>
-<p>Starts in order: MCP Server (8010) &rarr; RAG (8002) &rarr; Quant (8003) &rarr; Sentiment (8004) &rarr; ADK Web UI (8001)</p>
+<p>This starts in order: MCP Server (8010) &rarr; RAG (8002) &rarr; Quant (8003) &rarr; Sentiment (8004) &rarr; ADK Web UI (8001)</p>
 
 <h2>Step 2: Send Query</h2>
 <p>Open <a href="http://127.0.0.1:8001">http://127.0.0.1:8001</a> and type: <em>&ldquo;Should I invest in NVDA?&rdquo;</em> or just <strong>&ldquo;NVDA&rdquo;</strong>.</p>
+<p>The ADK orchestrator discovers all 3 agents at startup. The LLM uses a single <code>send_message</code> tool, routing to each agent by name. With qwen, agents are called in parallel; with other models, sequentially. The LLM collects all responses and synthesizes a final recommendation.</p>
 
 <h2>Step 3: What Happens</h2>
 <table>
 <tr><th>Step</th><th>Component</th><th>Action</th></tr>
 <tr><td>1</td><td>ADK LlmAgent</td><td>Receives query, decides which tools to call</td></tr>
 <tr><td>2</td><td>Agent Tool fn</td><td>Calls <code>_client.send_message(agent_name, task)</code></td></tr>
-<tr><td>3</td><td>SubAgentClient</td><td>Lazily creates A2A client, sends <code>SendMessageRequest</code></td></tr>
+<tr><td>3</td><td>SubAgentClient</td><td>Lazily creates A2A client via <code>create_client()</code>, sends <code>SendMessageRequest</code></td></tr>
 <tr><td>4</td><td>Sub-agent server</td><td><code>GenericAgentExecutor</code> runs the agent's <code>stream()</code></td></tr>
 <tr><td>5</td><td>Sub-agent logic</td><td>Each agent processes with its own tools (MCP, etc.)</td></tr>
 <tr><td>6</td><td>Response</td><td>Agent yields <code>{response_type, content, is_task_complete}</code></td></tr>
 <tr><td>7</td><td>Orchestrator</td><td><code>_extract_text</code> converts response to string</td></tr>
 <tr><td>8</td><td>LLM synthesis</td><td>All agent results returned to LLM &rarr; final recommendation</td></tr>
 </table>
+
+<h2>Running the Demo</h2>
+<pre># Terminal 1 &mdash; Unified MCP Server (port 8010)
+python -m uvicorn mcp_servers.finsight_server:get_app --host 0.0.0.0 --port 8010
+
+# Terminal 2 &mdash; RAG Agent (port 8002)
+python -m uvicorn agent_2_llamaindex.server:app --host 0.0.0.0 --port 8002
+
+# Terminal 3 &mdash; Quant Agent (port 8003)
+python -m uvicorn agent_3_langgraph.server:app --host 0.0.0.0 --port 8003
+
+# Terminal 4 &mdash; Sentiment Agent (port 8004)
+python -m uvicorn agent_4_crewai.server:app --host 0.0.0.0 --port 8004
+
+# Terminal 5 &mdash; ADK Web UI (port 8001)
+adk web --port 8001 agents</pre>
+
+<h2>Health Check Testing</h2>
+<p>Verify all services are up before running the demo:</p>
+<pre>curl http://localhost:8001/health  # {"status":"ok","agent":"orchestrator"}
+curl http://localhost:8002/health  # {"status":"ok","agent":"rag"}
+curl http://localhost:8003/health  # {"status":"ok","agent":"quant"}
+curl http://localhost:8004/health  # {"status":"ok","agent":"sentiment"}
+curl http://localhost:8010/health  # {"status":"ok","agent":"mcp"}</pre>
+
+<h2>Guardrails in Action</h2>
+<p>Off-topic queries are rejected immediately without invoking any sub-agent:</p>
+<pre># Off-topic &rarr; instant rejection
+curl http://localhost:8001/a2a -H "Content-Type: application/json" -d '...' \
+  '{"question":"what is the weather in New York?"}'
+# &rarr; "I'm specialized in investment research. Please ask about stocks..."
+
+# Invalid ticker &rarr; pre-flight rejection in &lt; 2s
+# "XXXX" fails MCP validate_ticker before RAG/Quant/Sentiment are called</pre>
 
 <h2>Direct A2A Testing</h2>
 <p>Test individual agents without the ADK Web UI:</p>

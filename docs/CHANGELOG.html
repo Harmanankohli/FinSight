@@ -36,6 +36,54 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 
 <h1>Changelog</h1>
 
+<h2>v1.18 &mdash; Caching, Guardrails, Evaluation &amp; Observability</h2>
+
+<h3 class="version">Caching</h3>
+<ul>
+<li><strong>TTL tool-result cache in MCP server</strong> (<code>mcp_servers/finsight_server.py</code>): <code>_TTLCache</code> class using <code>OrderedDict</code> + <code>time.monotonic()</code>. Cache instances per tool: <code>get_prices</code> (5 min), <code>get_financials</code> (24 h), <code>get_news_sentiment</code> (15 min), <code>get_filing_content</code> (permanent LRU-200), <code>_fetch_submissions</code> (6 h). No new dependencies.</li>
+<li><strong>LangChain SQLiteCache</strong> (<code>agent_3_langgraph/nodes.py</code>): <code>SQLiteCache(database_path=".langchain_cache.db")</code> wraps the quant agent's LLM summary call &mdash; identical ticker+metrics inputs reuse the cached LLM response. Requires <code>langchain-community&gt;=0.3.0</code>.</li>
+<li><strong>KV cache prefix optimization</strong> (<code>agent_1_adk/agent.py</code>, <code>agent_4_crewai/crew.py</code>): Static PROCEDURE block extracted to module-level <code>_STATIC_PREAMBLE</code> constant. <code>_build_instruction()</code> now only appends today's date and the dynamic agent list, keeping the large static prefix stable across requests for LM Studio KV-cache reuse. Backstory strings for CrewAI agents moved to module-level constants.</li>
+<li><strong>Semantic cache</strong> (<code>shared/semantic_cache.py</code>): ChromaDB + <code>all-MiniLM-L6-v2</code> cosine similarity cache (threshold 0.95, TTL 1 h). Wired into <code>agent_1_adk/agent_executor.py</code>: cache checked before <code>runner.run_async</code>, hit returns immediately; successful responses stored. Controlled by <code>SEMANTIC_CACHE_ENABLED=true</code> env var (off by default).</li>
+</ul>
+
+<h3 class="version">Guardrails</h3>
+<ul>
+<li><strong>Input guardrails</strong> (<code>agent_1_adk/agent_executor.py</code>): Off-topic regex filter (<code>_NON_INVESTMENT_RE</code>) rejects weather/recipe/entertainment queries with a canned message in &lt; 100 ms. Pre-flight ticker validation calls MCP <code>validate_ticker</code> before spawning sub-agents &mdash; invalid tickers rejected in &lt; 2 s with no sub-agent cost.</li>
+<li><strong>Output guardrails</strong> (<code>agent_1_adk/agent_executor.py</code>): Empty/short response (&lt; 50 chars) marked <code>TASK_STATE_FAILED</code>. Missing BUY/HOLD/SELL signal on a stock analysis query logs a Langfuse warning with <code>missing_signal: true</code> metadata.</li>
+<li><strong>Double-<code>else</code> syntax bug fixed</strong> (<code>agent_1_adk/agent_executor.py</code>): Two <code>else</code> clauses for the same <code>if final_event:</code> block collapsed into one, fixing a <code>SyntaxError</code> that prevented the service from starting.</li>
+</ul>
+
+<h3 class="version">RAG &amp; Memory</h3>
+<ul>
+<li><strong>Incremental RAG ingestion</strong> (<code>shared/memory/store.py</code>, <code>agent_2_llamaindex/executor.py</code>): New <code>ingested_filings</code> table tracks already-indexed SEC filing URLs. <code>_ensure_ingested()</code> skips URLs already in the table; marks new ones after successful batch ingest. Persists across restarts &mdash; immutable historical filings are never re-ingested.</li>
+<li><strong>Embedding model pre-warm</strong> (<code>agent_2_llamaindex/server.py</code>): <code>FinancialIndexManager</code> instantiated in a thread executor via <code>on_startup</code> hook, eliminating first-query latency caused by lazy model download.</li>
+<li><strong>Live price capture in PerformanceTracker</strong> (<code>shared/memory/performance_tracker.py</code>): <code>record_recommendation()</code> now auto-fetches current price via <code>yfinance</code> in a thread executor when <code>price=None</code>. Enables accurate <code>realized_return</code> calculation in <code>evaluate_all()</code>.</li>
+<li><strong>Automated past-recommendation evaluation</strong> (<code>agent_1_adk/agent.py</code>): <code>save_brief()</code> now fires <code>asyncio.create_task(_evaluate_past_recommendations(ticker))</code> in background &mdash; <code>PerformanceTracker.evaluate_all()</code> runs without blocking the response.</li>
+<li><strong>SQLite schema v2</strong> (<code>shared/memory/store.py</code>): <code>ingested_filings</code> table added with <code>idx_ingested_ticker</code> index. <code>SCHEMA_VERSION</code> bumped to 2 for clean migration.</li>
+</ul>
+
+<h3 class="version">Evaluation</h3>
+<ul>
+<li><strong>RAGAS evaluation pipeline</strong> (<code>tests/evaluation/</code>): <code>run_rag_eval.py</code> measures Faithfulness, ResponseRelevancy, ContextPrecision, ContextRecall, NoiseSensitivity. <code>run_orchestrator_eval.py</code> measures ToolCallAccuracy and AgentGoalAccuracy via eval traces written by sub-agent client. <code>financial_rubrics.py</code> provides custom <code>AspectCritic</code> metrics: citation quality, risk disclosure, recommendation clarity. <code>push_scores.py</code> pushes all scores to Langfuse per-trace.</li>
+<li><strong>Eval trace capture</strong> (<code>agent_1_adk/sub_agent_client.py</code>): When <code>EVAL_TRACE_ENABLED=true</code>, each sub-agent call appends <code>{agent_name, task_sent, response, latency_ms}</code> to a JSON file in <code>eval_traces/</code>.</li>
+<li><strong>Curated RAG dataset</strong> (<code>tests/evaluation/rag_dataset.json</code>): 10 Q&amp;A pairs for NVDA, AAPL, MSFT, JPM with reference contexts from real SEC filings.</li>
+</ul>
+
+<h3 class="version">Observability</h3>
+<ul>
+<li><strong>LangGraph / LangChain instrumentation</strong> (<code>agent_3_langgraph/server.py</code>): <code>LangChainInstrumentor().instrument()</code> added &mdash; quant agent LLM calls now appear in Langfuse traces. Requires <code>openinference-instrumentation-langchain&gt;=0.1.0</code>.</li>
+<li><strong>Sub-agent latency tracking</strong> (<code>agent_1_adk/sub_agent_client.py</code>): <code>send_message()</code> now records wall-clock latency per sub-agent call and emits a Langfuse span with <code>latency_ms</code> and agent name metadata.</li>
+<li><strong>Config validation</strong> (<code>shared/config.py</code>): <code>validate()</code> function checks required env vars (<code>MCP_SERVER_URL</code>) and warns on placeholder Langfuse keys. Called at startup in each server entry point.</li>
+</ul>
+
+<h3 class="version">Deployment</h3>
+<ul>
+<li><strong>Health endpoints</strong> (<code>agent_1_adk/main.py</code>, <code>agent_2_llamaindex/server.py</code>, <code>agent_3_langgraph/server.py</code>, <code>agent_4_crewai/server.py</code>, <code>mcp_servers/finsight_server.py</code>): All five services expose <code>GET /health &rarr; {"status":"ok","agent":"..."}</code>. MCP server mounts health alongside the SSE app via a Starlette wrapper.</li>
+<li><strong>docker-compose hardening</strong> (<code>docker-compose.yml</code>): All services gain <code>healthcheck</code> blocks. <code>depends_on</code> updated to <code>condition: service_healthy</code>. <code>finsight_memory</code> named volume added for the orchestrator DB. <code>SEMANTIC_CACHE_ENABLED=false</code> added to <code>agent-adk</code> env.</li>
+<li><strong>Orchestrator Dockerfile</strong> (<code>agent_1_adk/Dockerfile</code>): New container image following <code>agent_3_langgraph/Dockerfile</code> pattern &mdash; Python 3.12-slim, copies <code>agent_1_adk/</code> + <code>shared/</code>, exposes port 8001.</li>
+<li><strong><code>langchain-community&gt;=0.3.0</code></strong> and <strong><code>openinference-instrumentation-langchain&gt;=0.1.0</code></strong> added to <code>pyproject.toml</code> deps. <strong><code>ragas&gt;=0.2.0</code></strong> added to <code>[project.optional-dependencies] dev</code>.</li>
+</ul>
+
 <h2>v1.17 &mdash; Centralized File Logging</h2>
 <ul>
 <li><strong><code>shared/logging_config.py</code> added</strong>: <code>setup_file_logging(service_name)</code> configures the root logger with a <code>StreamHandler</code> (stderr) and a <code>RotatingFileHandler</code> (10 MB, 5 backups). Safe to call multiple times &mdash; duplicate handlers are skipped.</li>
