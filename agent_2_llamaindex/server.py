@@ -28,10 +28,18 @@ from opentelemetry.instrumentation.starlette import StarletteInstrumentor
 
 StarletteInstrumentor().instrument()
 
+from starlette.responses import JSONResponse
+from starlette.routing import Route
+
 from shared.generic_executor import GenericAgentExecutor
 from .executor import RAGAgent
+from .index_manager import FinancialIndexManager
 
 logger = logging.getLogger(__name__)
+
+
+async def health(request):
+    return JSONResponse({"status": "ok", "agent": "rag"})
 
 host = os.environ.get("HOST", "localhost")
 
@@ -77,11 +85,17 @@ request_handler = DefaultRequestHandler(
     agent_card=agent_card,
 )
 
-routes = []
+async def _prewarm():
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, FinancialIndexManager)
+    logger.info("Embedding model pre-warmed")
+
+
+routes = [Route("/health", health)]
 routes.extend(create_agent_card_routes(agent_card))
 routes.extend(create_jsonrpc_routes(request_handler, "/a2a"))
 
-app = Starlette(routes=routes, debug=True)
+app = Starlette(routes=routes, on_startup=[_prewarm], debug=True)
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8002)

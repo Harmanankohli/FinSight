@@ -16,6 +16,8 @@ from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
 from google.adk.runners import Runner
 from google.adk.sessions import DatabaseSessionService
 from starlette.applications import Starlette
+from starlette.responses import JSONResponse
+from starlette.routing import Route
 
 from shared.memory import SQLiteMemoryService, init_db
 from shared.observability import init_langfuse, shutdown_langfuse
@@ -89,7 +91,11 @@ request_handler = DefaultRequestHandler(
     agent_card=agent_card,
 )
 
-routes = []
+async def health(request):
+    return JSONResponse({"status": "ok", "agent": "orchestrator"})
+
+
+routes = [Route("/health", health)]
 routes.extend(create_agent_card_routes(agent_card))
 routes.extend(create_jsonrpc_routes(request_handler, "/a2a"))
 

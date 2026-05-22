@@ -14,6 +14,9 @@ from shared.config import ADK_MODEL, LLM_BASE_URL
 
 _LLM = CrewLLM(model=ADK_MODEL, base_url=LLM_BASE_URL, api_key="lmstudio", temperature=0.3)
 
+_SYNTHESIS_BACKSTORY = "Senior portfolio manager with 20 years of experience writing investment theses"
+_ANALYST_BACKSTORY = "Expert financial analyst"
+
 
 class SentimentIntelligenceCrew:
     def __init__(self, mcp_wrapper: MCPClientWrapper):
@@ -25,7 +28,7 @@ class SentimentIntelligenceCrew:
         synthesis_agent = Agent(
             role="Investment Narrative Synthesizer",
             goal=f"Produce a sentiment narrative for {ticker} based on provided data",
-            backstory="Senior portfolio manager with 20 years of experience writing investment theses",
+            backstory=_SYNTHESIS_BACKSTORY,
             **_agent_defaults,
         )
 
@@ -54,7 +57,7 @@ class SentimentIntelligenceCrew:
         analysis_agent = Agent(
             role="Sentiment Analyst",
             goal=f"Analyze sentiment for {ticker} and return key insights",
-            backstory="Expert financial analyst",
+            backstory=_ANALYST_BACKSTORY,
             **_agent_defaults,
         )
 

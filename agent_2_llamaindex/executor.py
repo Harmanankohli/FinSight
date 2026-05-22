@@ -6,6 +6,7 @@ from datetime import date, datetime, timezone
 from shared.base_agent import BaseAgent
 from shared.mcp_client import MCPClient, MCPServerConfig
 from shared.config import MCP_SERVER_URL
+from shared.memory.store import is_filing_ingested, mark_filing_ingested
 from shared.observability import get_langfuse_client
 from shared.ticker_utils import extract_ticker, validate_ticker_via_mcp, resolve_ticker_via_mcp
 from shared.trace_context import extract_trace_ids
@@ -52,9 +53,13 @@ class RAGAgent(BaseAgent):
                         continue
                     if isinstance(data, dict):
                         filings = data.get("filings", [])
+                        new_filings = []
                         for filing in filings:
                             edgar_url = filing.get("edgar_url")
                             ix_url = filing.get("ix_url")
+                            if edgar_url and await is_filing_ingested(edgar_url):
+                                logger.debug("Skipping already-ingested filing: %s", edgar_url[:80])
+                                continue
                             if edgar_url:
                                 try:
                                     content_result = await self._mcp.call_tool_by_name(
@@ -79,7 +84,15 @@ class RAGAgent(BaseAgent):
                             else:
                                 content_text = ""
                             filing["content"] = content_text
-                        self._ingestion.ingest_sec_filings_batch(ticker, filings)
+                            new_filings.append(filing)
+                        if new_filings:
+                            self._ingestion.ingest_sec_filings_batch(ticker, new_filings)
+                            for filing in new_filings:
+                                if filing.get("edgar_url"):
+                                    await mark_filing_ingested(filing["edgar_url"], ticker)
+                            logger.info("Ingested %d new filing(s) for %s", len(new_filings), ticker)
+                        else:
+                            logger.info("0 new filings to ingest for %s", ticker)
             self._last_ingestion[ticker] = today
         except Exception as e:
             logger.warning("Auto-ingest failed for %s: %s", ticker, e)

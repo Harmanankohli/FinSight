@@ -1,6 +1,9 @@
 import asyncio
 import json
 import logging
+import os
+import time
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -37,6 +40,9 @@ from shared.observability import get_langfuse_client
 from shared.trace_context import inject_trace_context
 
 logger = logging.getLogger(__name__)
+
+_EVAL_TRACE_ENABLED = os.environ.get("EVAL_TRACE_ENABLED", "false").lower() == "true"
+_EVAL_TRACES_DIR = Path(__file__).parent.parent / "tests" / "evaluation" / "eval_results" / "orchestrator_traces"
 
 
 class SubAgentClient:
@@ -196,23 +202,28 @@ class SubAgentClient:
         message = new_text_message(task_str, role=1)
         req = SendMessageRequest(message=message)
 
+        t0 = time.monotonic()
+        result_text = json.dumps({"error": "No response from agent"})
         try:
             async for event in client.send_message(req):
                 # 1. Direct message response (immediate, stateless)
                 if event.HasField("message"):
-                    return get_message_text(event.message)
+                    result_text = get_message_text(event.message)
+                    break
 
                 # 2. Artifact update — streaming result data
                 if event.HasField("artifact_update"):
                     parts = event.artifact_update.artifact.parts
                     data_parts = get_data_parts(parts)
                     if data_parts:
-                        return json.dumps(data_parts[0])
+                        result_text = json.dumps(data_parts[0])
+                        break
                     art_text = get_artifact_text(
                         event.artifact_update.artifact
                     )
                     if art_text:
-                        return art_text
+                        result_text = art_text
+                        break
                     continue
 
                 # 3. Status update — skip intermediate, handle terminal
@@ -220,21 +231,52 @@ class SubAgentClient:
                     state = event.status_update.status.state
                     if state not in _TERMINAL_STATES:
                         continue  # SUBMITTED, WORKING → skip
-                    return self._extract_terminal_result(
-                        event.status_update,
-                    )
+                    result_text = self._extract_terminal_result(event.status_update)
+                    break
 
                 # 4. Full task — only process if terminal (skip SUBMITTED/WORKING)
                 if event.HasField("task"):
                     if event.task.status.state not in _TERMINAL_STATES:
                         continue
-                    return self._extract_task_result(event.task)
+                    result_text = self._extract_task_result(event.task)
+                    break
 
         except Exception as e:
             logger.exception("Error sending message to '%s'", agent_name)
-            return json.dumps({"error": str(e)})
+            result_text = json.dumps({"error": str(e)})
 
-        return json.dumps({"error": "No response from agent"})
+        latency_ms = round((time.monotonic() - t0) * 1000)
+
+        # Emit per-agent latency as a Langfuse span
+        try:
+            lf = get_langfuse_client()
+            lf.observation(
+                as_type="span",
+                name=f"sub-agent-{agent_name}",
+                input={"task": task_str[:200]},
+                output={"response": result_text[:200]},
+                metadata={"latency_ms": latency_ms, "agent": agent_name},
+            )
+        except Exception:
+            pass
+
+        # Record trace for RAGAS evaluation when enabled
+        if _EVAL_TRACE_ENABLED:
+            try:
+                import uuid as _uuid
+                _EVAL_TRACES_DIR.mkdir(parents=True, exist_ok=True)
+                trace = {
+                    "agent_name": agent_name,
+                    "task_sent": task_str,
+                    "response": result_text,
+                    "latency_ms": latency_ms,
+                }
+                trace_path = _EVAL_TRACES_DIR / f"{_uuid.uuid4().hex}.json"
+                trace_path.write_text(json.dumps(trace, indent=2))
+            except Exception as _te:
+                logger.debug("Eval trace write failed: %s", _te)
+
+        return result_text
 
     def _extract_terminal_result(
         self, status_update: Any

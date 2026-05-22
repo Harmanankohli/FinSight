@@ -14,9 +14,33 @@ from google.adk.runners import Runner
 from google.genai import types
 from langfuse import propagate_attributes
 
+import os
+
 from shared.observability import get_langfuse_client
+from shared.ticker_utils import extract_ticker
 
 logger = logging.getLogger(__name__)
+
+_SEMANTIC_CACHE_ENABLED = os.environ.get("SEMANTIC_CACHE_ENABLED", "false").lower() == "true"
+
+_semantic_cache = None
+
+def _get_semantic_cache():
+    global _semantic_cache
+    if _SEMANTIC_CACHE_ENABLED and _semantic_cache is None:
+        try:
+            from shared.semantic_cache import SemanticCache
+            _semantic_cache = SemanticCache()
+        except Exception as exc:
+            logger.warning("SemanticCache init failed: %s", exc)
+    return _semantic_cache
+
+_NON_INVESTMENT_RE = re.compile(
+    r"\b(weather|recipe|sports score|movie|song|joke|cook(?:ing)?|weather forecast|"
+    r"horoscope|gaming|video game|celebrity|fashion|travel destination)\b",
+    re.IGNORECASE,
+)
+_SIGNAL_RE = re.compile(r"\b(BUY|HOLD|SELL)\b")
 
 
 class FinSightAgentExecutor(AgentExecutor):
@@ -55,8 +79,75 @@ class FinSightAgentExecutor(AgentExecutor):
         original_input = context.get_user_input()
         user_input = original_input
 
-        from shared.ticker_utils import extract_ticker
         ticker_hint = extract_ticker(user_input) or "unknown"
+
+        # ── Input Guardrail: off-topic filter ────────────────────────────────
+        if _NON_INVESTMENT_RE.search(original_input):
+            task = context.current_task
+            if not task:
+                task = new_task_from_user_message(context.message)
+                await event_queue.enqueue_event(task)
+            updater = TaskUpdater(event_queue, task.id, task.context_id)
+            await updater.update_status(
+                TaskState.TASK_STATE_COMPLETED,
+                new_text_message(
+                    "I'm specialized in investment research. "
+                    "Please ask about stocks, portfolios, or financial analysis."
+                ),
+                final=True,
+            )
+            return
+
+        # ── Input Guardrail: invalid ticker pre-check ────────────────────────
+        if ticker_hint != "unknown":
+            try:
+                from shared.mcp_client import MCPClient, MCPServerConfig
+                from shared.config import MCP_SERVER_URL
+                _mcp = MCPClient(configs=[MCPServerConfig(name="finsight-mcp", url=MCP_SERVER_URL)])
+                await _mcp.connect_all()
+                val_result = await _mcp.call_tool_by_name("validate_ticker", {"ticker": ticker_hint})
+                import json as _json
+                if hasattr(val_result, "content") and val_result.content:
+                    raw = val_result.content[0].text if hasattr(val_result.content[0], "text") else str(val_result.content[0])
+                    val_data = _json.loads(raw) if isinstance(raw, str) else raw
+                    if isinstance(val_data, dict) and not val_data.get("valid", True):
+                        task = context.current_task
+                        if not task:
+                            task = new_task_from_user_message(context.message)
+                            await event_queue.enqueue_event(task)
+                        updater = TaskUpdater(event_queue, task.id, task.context_id)
+                        await updater.update_status(
+                            TaskState.TASK_STATE_COMPLETED,
+                            new_text_message(
+                                f"Ticker '{ticker_hint}' was not found in SEC EDGAR. "
+                                "Please verify the ticker symbol and try again."
+                            ),
+                            final=True,
+                        )
+                        return
+            except Exception as _e:
+                logger.debug("Ticker pre-check failed (non-fatal): %s", _e)
+
+        # ── Semantic cache check ─────────────────────────────────────────────
+        sc = _get_semantic_cache()
+        if sc is not None:
+            cached_response = sc.get(original_input)
+            if cached_response:
+                task = context.current_task
+                if not task:
+                    task = new_task_from_user_message(context.message)
+                    await event_queue.enqueue_event(task)
+                updater = TaskUpdater(event_queue, task.id, task.context_id)
+                await updater.update_status(
+                    TaskState.TASK_STATE_WORKING,
+                    new_text_message("Processing your request..."),
+                )
+                await updater.update_status(
+                    TaskState.TASK_STATE_COMPLETED,
+                    new_text_message(cached_response, task.context_id, task.id),
+                    final=True,
+                )
+                return
 
         memory_context = await self._build_memory_context(user_input, user_id)
         if memory_context:
@@ -101,7 +192,7 @@ class FinSightAgentExecutor(AgentExecutor):
                     if final_event:
                         await self._process_response(
                             final_event, updater, task, span, root_trace,
-                            user_input, user_id,
+                            user_input, user_id, original_input,
                         )
                         logger.info("Collected %d events, calling _add_events_to_memory", len(collected_events))
                         await self._add_events_to_memory(
@@ -111,7 +202,6 @@ class FinSightAgentExecutor(AgentExecutor):
                         await self._persist_to_memory(user_id, context_id, collected_events)
                     else:
                         logger.warning("No final event received from runner")
-                    else:
                         await updater.update_status(
                             TaskState.TASK_STATE_FAILED,
                             new_text_message("No final response from agent"),
@@ -128,7 +218,7 @@ class FinSightAgentExecutor(AgentExecutor):
 
     async def _process_response(
         self, event, updater: TaskUpdater, task, span=None, root_trace=None,
-        user_input: str = "", user_id: str = "",
+        user_input: str = "", user_id: str = "", original_input: str = "",
     ) -> None:
         if not (
             event.content
@@ -144,6 +234,24 @@ class FinSightAgentExecutor(AgentExecutor):
             return
 
         text = event.content.parts[0].text.strip()
+
+        # ── Output Guardrail: empty / too-short response ─────────────────────
+        if len(text) < 50:
+            logger.warning("Orchestrator response too short (%d chars) — failing", len(text))
+            if span:
+                span.update(output={"error": "Response too short", "text": text})
+            await updater.update_status(
+                TaskState.TASK_STATE_FAILED,
+                new_text_message("[Incomplete response from agent — please retry]"),
+            )
+            return
+
+        # ── Output Guardrail: BUY/HOLD/SELL signal check ─────────────────────
+        if not _SIGNAL_RE.search(text) and user_input and extract_ticker(user_input):
+            logger.warning("Orchestrator response missing BUY/HOLD/SELL signal")
+            if span:
+                span.update(metadata={"missing_signal": True})
+
         if span:
             span.update(output={"response": text[:2000]})
         if root_trace:
@@ -155,6 +263,15 @@ class FinSightAgentExecutor(AgentExecutor):
         asyncio.create_task(
             self._store_memory(user_input, text, task.context_id, user_id)
         )
+
+        # Store in semantic cache for future identical/similar queries
+        if original_input:
+            sc = _get_semantic_cache()
+            if sc is not None:
+                try:
+                    sc.set(original_input, text)
+                except Exception:
+                    pass
 
         await updater.update_status(
             TaskState.TASK_STATE_COMPLETED,

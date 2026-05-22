@@ -6,6 +6,13 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
+try:
+    from langchain_community.cache import SQLiteCache
+    from langchain_core.globals import set_llm_cache
+    set_llm_cache(SQLiteCache(database_path=".langchain_cache.db"))
+except Exception:
+    logging.getLogger(__name__).warning("LangChain SQLiteCache unavailable; LLM caching disabled")
+
 from .state import QuantAnalysisState
 
 logger = logging.getLogger(__name__)

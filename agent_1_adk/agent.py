@@ -103,27 +103,26 @@ async def save_brief(
         confidence=confidence,
     )
 
+    asyncio.create_task(_evaluate_past_recommendations(ticker))
+
     return f"Brief saved for {ticker}: {recommendation.upper()} (confidence: {confidence:.2f})"
 
 
-def _build_instruction() -> str:
-    agent_list = _client.list_agents()
-    skill_lines = (
-        "\n".join(
-            f"  - {a['name']}: {a['description']}"
-            for a in agent_list
-        )
-        if agent_list
-        else "  (none discovered yet)"
-    )
-    return f"""\
-Today's date is {_TODAY}. Use this as the reference date for all analysis.
+async def _evaluate_past_recommendations(ticker: str) -> None:
+    """Background task: evaluate past recommendations against current prices."""
+    try:
+        from shared.memory import PerformanceTracker as _PT
+        pt = _PT()
+        results = await pt.evaluate_all()
+        if results:
+            logger.info("Evaluated %d past recommendations for %s", len(results), ticker)
+    except Exception:
+        logger.debug("Background evaluation failed for %s", ticker, exc_info=True)
 
+
+_STATIC_PREAMBLE = """\
 You are an investment research orchestrator. Your job is to gather analysis
 from specialized agents and produce a BUY/HOLD/SELL recommendation.
-
-Available agents:
-{skill_lines}
 
 PROCEDURE:
 1.  Identify the stock ticker from the user's question. If the user mentions
@@ -145,11 +144,29 @@ PROCEDURE:
 7.  If the user asks about past analysis or "what did you recommend before",
     use the `load_memory` tool to search past conversations.
 
-TASK FORMAT — always include the ticker and current date ({_TODAY}) in the task text:
-  "Analyze MA (Mastercard) SEC filings as of {_TODAY} for recent financial performance."
+TASK FORMAT — always include the ticker and current date in the task text:
+  "Analyze MA (Mastercard) SEC filings as of {date} for recent financial performance."
 
-For general chat or non-stock queries, respond conversationally.
+For general chat or non-stock queries, respond conversationally.\
 """
+
+
+def _build_instruction() -> str:
+    today = date.today().isoformat()
+    agent_list = _client.list_agents()
+    skill_lines = (
+        "\n".join(
+            f"  - {a['name']}: {a['description']}"
+            for a in agent_list
+        )
+        if agent_list
+        else "  (none discovered yet)"
+    )
+    return (
+        f"Today's date is {today}. Use this as the reference date for all analysis.\n\n"
+        f"{_STATIC_PREAMBLE}\n\n"
+        f"Available agents:\n{skill_lines}\n"
+    )
 
 
 async def discover_background() -> None:

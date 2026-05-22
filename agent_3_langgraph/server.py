@@ -25,10 +25,23 @@ from opentelemetry.instrumentation.starlette import StarletteInstrumentor
 
 StarletteInstrumentor().instrument()
 
+try:
+    from openinference.instrumentation.langchain import LangChainInstrumentor
+    LangChainInstrumentor().instrument()
+except Exception:
+    logger.warning("LangChainInstrumentor unavailable; LangGraph traces will not include LLM spans")
+
+from starlette.responses import JSONResponse
+from starlette.routing import Route
+
 from shared.generic_executor import GenericAgentExecutor
 from .executor import QuantAgent
 
 logger = logging.getLogger(__name__)
+
+
+async def health(request):
+    return JSONResponse({"status": "ok", "agent": "quant"})
 
 host = os.environ.get("HOST", "localhost")
 
@@ -65,7 +78,7 @@ request_handler = DefaultRequestHandler(
     agent_card=agent_card,
 )
 
-routes = []
+routes = [Route("/health", health)]
 routes.extend(create_agent_card_routes(agent_card))
 routes.extend(create_jsonrpc_routes(request_handler, "/a2a"))
 

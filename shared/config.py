@@ -46,3 +46,25 @@ LANGFUSE_HOST = os.environ.get("LANGFUSE_BASE_URL") or os.environ.get("LANGFUSE_
 
 # SEC
 SEC_API_BASE = os.environ.get("SEC_API_BASE", "https://www.sec.gov")
+
+
+def validate() -> None:
+    """Raise EnvironmentError if required configuration is missing or has placeholder values."""
+    issues = []
+
+    if not LLM_BASE_URL or LLM_BASE_URL == "http://localhost:1234/v1":
+        pass  # local default is acceptable for dev
+
+    if not MCP_SERVER_URL:
+        issues.append("MCP_SERVER_URL is not set")
+
+    if LANGFUSE_PUBLIC_KEY in ("pk-lf-...", "", None):
+        import logging
+        logging.getLogger(__name__).warning(
+            "LANGFUSE_PUBLIC_KEY is a placeholder — Langfuse traces will not be recorded"
+        )
+
+    if issues:
+        raise EnvironmentError(
+            "FinSight configuration errors:\n" + "\n".join(f"  - {i}" for i in issues)
+        )

@@ -8,11 +8,13 @@ import logging
 import os
 import sys
 import subprocess
+import time
 
 if sys.platform != "win32":
     import resource
 import tempfile
 import threading
+from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -42,6 +44,45 @@ HOST = os.environ.get("MCP_HOST", "0.0.0.0")
 PORT = int(os.environ.get("MCP_PORT", "8010"))
 AGENT_CARDS_DIR = Path(__file__).resolve().parent.parent / "agent_cards"
 EMBED_MODEL_NAME = os.environ.get("EMBED_MODEL", "all-MiniLM-L6-v2")
+
+
+# ──────────────────────────────────────────────
+# TTL Cache
+# ──────────────────────────────────────────────
+
+class _TTLCache:
+    """Thread-safe in-process TTL cache backed by an OrderedDict LRU eviction."""
+
+    def __init__(self, ttl: float | None, maxsize: int = 200):
+        self._ttl = ttl
+        self._store: OrderedDict = OrderedDict()
+        self._maxsize = maxsize
+        self._lock = threading.Lock()
+
+    def get(self, key):
+        with self._lock:
+            if key in self._store:
+                val, ts = self._store[key]
+                if self._ttl is None or time.monotonic() - ts < self._ttl:
+                    self._store.move_to_end(key)
+                    return val
+                del self._store[key]
+        return None
+
+    def set(self, key, val):
+        with self._lock:
+            if key in self._store:
+                self._store.move_to_end(key)
+            elif len(self._store) >= self._maxsize:
+                self._store.popitem(last=False)
+            self._store[key] = (val, time.monotonic())
+
+
+_cache_prices      = _TTLCache(ttl=300)        # 5 min
+_cache_financials  = _TTLCache(ttl=86400)      # 24 h
+_cache_news        = _TTLCache(ttl=900)        # 15 min
+_cache_filing      = _TTLCache(ttl=None, maxsize=200)  # permanent LRU-200
+_cache_submissions = _TTLCache(ttl=21600)      # 6 h
 
 
 # ──────────────────────────────────────────────
@@ -187,14 +228,21 @@ async def get_prices(ticker: str, period: str = "1y", interval: str = "1d") -> d
     Returns:
         dict with keys: ticker, period, data (list of OHLCV records with ISO dates)
     """
+    cache_key = (ticker.upper(), period, interval)
+    cached = _cache_prices.get(cache_key)
+    if cached is not None:
+        logger.debug("Cache hit: get_prices(%s, %s, %s)", ticker, period, interval)
+        return cached
     try:
         stock = yf.Ticker(ticker)
         hist = stock.history(period=period, interval=interval)
         records = _serialise_value(hist.reset_index().to_dict(orient="records"))
-        return {"ticker": ticker, "period": period, "data": records}
+        result = {"ticker": ticker, "period": period, "data": records}
     except Exception as exc:
         logger.warning("get_prices failed for %s: %s", ticker, exc)
-        return {"ticker": ticker, "period": period, "error": str(exc), "data": []}
+        result = {"ticker": ticker, "period": period, "error": str(exc), "data": []}
+    _cache_prices.set(cache_key, result)
+    return result
 
 
 @app.tool()
@@ -208,9 +256,14 @@ async def get_financials(ticker: str) -> dict:
     Returns:
         dict with keys: income_statement, balance_sheet, cash_flow, info
     """
+    cache_key = (ticker.upper(),)
+    cached = _cache_financials.get(cache_key)
+    if cached is not None:
+        logger.debug("Cache hit: get_financials(%s)", ticker)
+        return cached
     try:
         stock = yf.Ticker(ticker)
-        return _serialise_value({
+        result = _serialise_value({
             "income_statement": stock.financials.to_dict()
             if stock.financials is not None
             else {},
@@ -224,10 +277,12 @@ async def get_financials(ticker: str) -> dict:
         })
     except Exception as exc:
         logger.warning("get_financials failed for %s: %s", ticker, exc)
-        return {
+        result = {
             "ticker": ticker, "error": str(exc),
             "income_statement": {}, "balance_sheet": {}, "cash_flow": {}, "info": {},
         }
+    _cache_financials.set(cache_key, result)
+    return result
 
 
 @app.tool()
@@ -362,13 +417,19 @@ class _EdgarClient:
 
     async def _fetch_submissions(self, cik: str, ticker: str) -> dict:
         """Fetch the submissions JSON for a CIK with 3-attempt retry."""
+        cached = _cache_submissions.get(cik)
+        if cached is not None:
+            logger.debug("Cache hit: _fetch_submissions(%s)", cik)
+            return cached
         c = await self._get_client()
         url = f"https://data.sec.gov/submissions/CIK{cik}.json"
         for attempt in range(3):
             try:
                 resp = await c.get(url)
                 resp.raise_for_status()
-                return resp.json()
+                result = resp.json()
+                _cache_submissions.set(cik, result)
+                return result
             except Exception:
                 if attempt < 2:
                     await asyncio.sleep(2 ** attempt)
@@ -725,11 +786,18 @@ async def get_filing_content(edgar_url: str, ix_url: str | None = None) -> dict:
     Returns:
         dict with keys: url, content (extracted text up to 50k chars), length, or error
     """
+    cached = _cache_filing.get(edgar_url)
+    if cached is not None:
+        logger.debug("Cache hit: get_filing_content(%s)", edgar_url[:80])
+        return cached
     try:
-        return await _edgar.get_filing_content(edgar_url, ix_url)
+        result = await _edgar.get_filing_content(edgar_url, ix_url)
     except Exception as exc:
         logger.warning("get_filing_content tool failed: %s", exc)
-        return {"url": edgar_url, "error": str(exc), "content": ""}
+        result = {"url": edgar_url, "error": str(exc), "content": ""}
+    if result.get("content"):
+        _cache_filing.set(edgar_url, result)
+    return result
 
 
 _prewarm_done = False
@@ -1161,6 +1229,11 @@ async def get_news_sentiment(ticker: str, limit: int = 10) -> dict:
           positive_articles, negative_articles, neutral_articles,
           articles, feed_status (per-source diagnostics), source_used
     """
+    cache_key = (ticker.upper(), limit)
+    cached = _cache_news.get(cache_key)
+    if cached is not None:
+        logger.debug("Cache hit: get_news_sentiment(%s)", ticker)
+        return cached
     keywords = await _resolve_company_keywords(ticker)
     articles: list[dict] = []
     scores: list[float] = []
@@ -1256,6 +1329,8 @@ async def get_news_sentiment(ticker: str, limit: int = 10) -> dict:
                 "This may indicate low media coverage, not negative sentiment. "
                 "Do not infer sentiment from absence of data."
             )
+    if articles:
+        _cache_news.set(cache_key, result)
     return result
 
 
@@ -1550,12 +1625,35 @@ _starlette_app = None
 _app_lock = threading.Lock()
 
 
+async def _health(scope, receive, send):
+    """Minimal ASGI health endpoint mounted alongside the MCP SSE app."""
+    import json as _json
+    body = _json.dumps({"status": "ok", "agent": "mcp"}).encode()
+    await send({
+        "type": "http.response.start",
+        "status": 200,
+        "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())],
+    })
+    await send({"type": "http.response.body", "body": body})
+
+
 def get_app():
     global _starlette_app
     if _starlette_app is None:
         with _app_lock:
             if _starlette_app is None:
-                _starlette_app = app.sse_app()
+                from starlette.applications import Starlette
+                from starlette.routing import Route, Mount
+                from starlette.responses import JSONResponse
+
+                async def health(request):
+                    return JSONResponse({"status": "ok", "agent": "mcp"})
+
+                mcp_asgi = app.sse_app()
+                _starlette_app = Starlette(routes=[
+                    Route("/health", health),
+                    Mount("/", app=mcp_asgi),
+                ])
     return _starlette_app
 
 

@@ -24,7 +24,16 @@ class PerformanceTracker:
         confidence: float,
         price: Optional[float] = None,
     ) -> str:
-        """Record a new recommendation with optional price snapshot."""
+        """Record a new recommendation with a live price snapshot.
+
+        If price is not supplied, fetches from yfinance asynchronously so
+        realized_return can be computed at evaluation time.
+        """
+        if price is None:
+            import asyncio as _asyncio
+            loop = _asyncio.get_event_loop()
+            price = await loop.run_in_executor(None, self._fetch_current_price, ticker)
+
         record_id = str(uuid.uuid4())
         conn = await get_db(self._db_path)
         try:
