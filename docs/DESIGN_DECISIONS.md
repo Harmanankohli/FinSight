@@ -1,5 +1,79 @@
 # Design Decisions
 
+## Caching Strategy
+
+### Why `_TTLCache` with `OrderedDict` instead of a library?
+
+`functools.lru_cache` is synchronous and doesn't support TTL. `cachetools` and `aiocache` would be new dependencies. `OrderedDict` + `time.monotonic()` gives LRU eviction, TTL expiry, and thread-safety with a `threading.Lock` in ~30 lines. Zero new package imports.
+
+**Why per-tool instances instead of a single global cache?** Different tools have different freshness requirements. Prices change every minute, financials change quarterly, SEC filings never change. Separate instances with distinct TTLs make policy explicit and easy to adjust.
+
+**Why `_fetch_submissions` cached instead of the outer tools?** `get_company_filings` and `get_financial_filings` both call `_fetch_submissions(cik)` internally. Caching at the shared method benefits both callers — caching at the outer tool level would duplicate the cache or require coordination.
+
+**Why permanent cache for `get_filing_content`?** SEC EDGAR documents are immutable once filed. A document at `https://www.sec.gov/Archives/...` never changes. LRU-200 keeps the 200 most recently accessed filings in memory indefinitely — safe and maximally efficient.
+
+### Why LangChain SQLiteCache for LLM responses?
+
+The quant agent's `llm_summary_node` is the only LangChain LLM call in the graph. Given the same ticker + computed metrics (prices, Sharpe, VaR, DCF), the LLM should produce an equivalent summary. `SQLiteCache` is built into `langchain-community` with zero configuration beyond a `set_llm_cache()` call at module level. It uses the full prompt as the cache key, so it only fires on exact repeats — no risk of stale summaries on changed market data.
+
+### Why ChromaDB for the semantic cache instead of Redis?
+
+ChromaDB is already running in the same process for RAG. `all-MiniLM-L6-v2` is already loaded. Adding Redis would require a new container and a new driver. The semantic cache uses a separate Chroma collection (`finsight_semantic_cache`) so it doesn't pollute the RAG indexes.
+
+**Threshold 0.95**: Investment queries are precise ("analyze NVDA for long-term hold" ≠ "analyze AAPL for long-term hold"). A threshold below 0.95 risks incorrect cache hits between different tickers. 0.95 is high enough to match paraphrase variants of the same question while rejecting cross-ticker confusion.
+
+**Why opt-in (`SEMANTIC_CACHE_ENABLED=false`)?** The semantic cache is stateful — a cached stale recommendation from yesterday might mislead a user. Off by default so developers consciously enable it in environments where TTL staleness is acceptable.
+
+## Guardrails
+
+### Why a regex off-topic filter instead of an LLM classifier?
+
+An LLM classifier takes 2-5 seconds and consumes tokens. The regex fires in microseconds and costs nothing. The set of clearly off-topic domains (weather, recipes, sports, entertainment) is small and stable — regex is the right tool. Off-topic queries that slip through the regex are still handled gracefully by the orchestrator LLM.
+
+### Why ticker pre-validation before spawning sub-agents?
+
+Without pre-validation, an invalid ticker causes all three sub-agents to fail after 30-60 seconds each (~90-180 seconds total wasted time). MCP `validate_ticker` uses the cached SEC ticker map — it completes in < 100 ms and costs nothing. Failing fast with a clean error message is far better UX than three confusing simultaneous failures.
+
+### Why not retry on missing BUY/HOLD/SELL signal?
+
+The plan originally suggested retrying once with a reminder appended. After evaluation, a retry doubles latency (60+ seconds) for a marginal improvement — the LLM that omitted the signal is likely to omit it again without fundamentally different context. Instead, the missing signal is logged as a Langfuse warning so the pattern can be analyzed and the prompt improved. The user gets the response immediately rather than waiting for a retry that may not help.
+
+## Incremental RAG Ingestion
+
+### Problem
+
+The RAG agent's `_ensure_ingested()` used an in-memory `self._last_ingestion[ticker]` guard keyed by date. This prevented re-ingest within a single server run on the same day, but after a restart all filings were re-ingested from scratch. For a company with 20 historical 10-K/10-Q filings, this meant 20 `get_filing_content` MCP calls + 20 ChromaDB insertions on every cold start — taking 30-60 seconds before the first query could be answered.
+
+### Solution
+
+`ingested_filings` table in SQLite with `edgar_url` as primary key (SEC EDGAR URLs are canonical and immutable). Before fetching any filing, `_ensure_ingested()` calls `is_filing_ingested(url)` — a single indexed SQLite lookup. After successful batch ingest, `mark_filing_ingested(url, ticker)` records the URL. On the next startup, all previously indexed filings are skipped immediately.
+
+**Why not store content hash instead of URL?** The URL is the canonical identity for an SEC filing. Content could theoretically be truncated differently on different runs (network errors, timeouts), making a hash unreliable. The URL is deterministic and guaranteed unique by SEC.
+
+## Health Endpoints
+
+### Why add health endpoints now?
+
+Docker-compose `depends_on` with `condition: service_healthy` requires a healthcheck command. Without health endpoints, docker-compose would start the orchestrator before the MCP server is actually serving requests, causing startup failures. The `/health` route is 5 lines of code per service and enables proper container orchestration.
+
+### Why not use the existing A2A `/.well-known/agent-card.json` as the health signal?
+
+Agent card resolution involves async agent discovery and sub-agent connection — it's not safe to call during startup. A dedicated `/health` route returns immediately regardless of initialization state, which is the correct semantics for a liveness probe.
+
+## RAGAS Evaluation Pipeline
+
+### Why RAGAS over a custom evaluation framework?
+
+RAGAS provides well-established metrics (Faithfulness, ResponseRelevancy, ContextPrecision, ContextRecall) that are accepted in the research community and have known baselines. Writing equivalent metrics from scratch would require significant prompt engineering and validation. RAGAS also integrates with LLM judges, making it suitable for evaluating subjective quality of financial analysis.
+
+### Why custom `AspectCritic` metrics in addition to RAGAS core?
+
+RAGAS core metrics evaluate retrieval quality and factual consistency — they don't capture financial domain requirements. A response can be factually grounded but still fail to cite specific filing dates, omit risk disclosures, or give an ambiguous BUY/HOLD/SELL signal. The three custom rubrics (`citation_quality`, `risk_disclosure`, `recommendation_clarity`) evaluate the domain-specific outputs that matter most in an investment research context.
+
+### Why push scores to Langfuse?
+
+Evaluation results are only useful if they're tracked over time. Pushing scores to Langfuse per-trace links quality metrics to specific queries and model versions, enabling regression detection when the prompt or model changes. The `push_scores.py` script is intentionally decoupled from the evaluation runners so scores can be re-pushed without re-running evaluation.
+
 ## Why Four Different Agent Frameworks?
 
 | Agent | Framework | Why |

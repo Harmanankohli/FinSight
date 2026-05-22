@@ -71,6 +71,32 @@ python -m uvicorn agent_4_crewai.server:app --host 0.0.0.0 --port 8004
 adk web --port 8001 agents
 ```
 
+## Health Check Testing
+
+Verify all services are up before running the demo:
+
+```bash
+curl http://localhost:8001/health  # {"status":"ok","agent":"orchestrator"}
+curl http://localhost:8002/health  # {"status":"ok","agent":"rag"}
+curl http://localhost:8003/health  # {"status":"ok","agent":"quant"}
+curl http://localhost:8004/health  # {"status":"ok","agent":"sentiment"}
+curl http://localhost:8010/health  # {"status":"ok","agent":"mcp"}
+```
+
+## Guardrails in Action
+
+Off-topic queries are rejected immediately without invoking any sub-agent:
+
+```bash
+# Off-topic → instant rejection
+curl http://localhost:8001/a2a -H "Content-Type: application/json" -d '...' \
+  '{"question":"what is the weather in New York?"}'
+# → "I'm specialized in investment research. Please ask about stocks..."
+
+# Invalid ticker → pre-flight rejection in < 2s
+# "XXXX" fails MCP validate_ticker before RAG/Quant/Sentiment are called
+```
+
 ## Direct A2A Testing
 
 Test individual agents without the ADK Web UI:

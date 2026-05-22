@@ -96,6 +96,35 @@ uv run pytest -v --timeout=30
 | `test_memory_service_session_isolation` | Memory entries isolated by session_id |
 | `test_memory_service_empty_search` | No matches → empty result |
 
+## RAGAS Evaluation Pipeline
+
+Offline evaluation suite in `tests/evaluation/` — requires running services and `ragas>=0.2.0`:
+
+```bash
+# Install dev extras
+uv pip install -e ".[dev]"
+
+# RAG evaluation (Faithfulness, ResponseRelevancy, ContextPrecision, ContextRecall)
+python tests/evaluation/run_rag_eval.py --ticker NVDA
+
+# Orchestrator evaluation (ToolCallAccuracy, AgentGoalAccuracy)
+# Requires EVAL_TRACE_ENABLED=true on the orchestrator service
+python tests/evaluation/run_orchestrator_eval.py
+
+# Push all scores to Langfuse
+python tests/evaluation/push_scores.py
+```
+
+| File | Purpose |
+|---|---|
+| `run_rag_eval.py` | Runs RAGAS RAG metrics against the RAG agent |
+| `run_orchestrator_eval.py` | Reads eval traces, runs RAGAS agentic metrics |
+| `financial_rubrics.py` | Custom `AspectCritic` metrics: citation quality, risk disclosure, recommendation clarity |
+| `push_scores.py` | Pushes per-trace scores to Langfuse via `lf.score(trace_id=..., name=..., value=...)` |
+| `rag_dataset.json` | 10 curated Q&A pairs for NVDA, AAPL, MSFT, JPM with reference contexts |
+
+Evaluation is triggered externally — not part of the `pytest` suite.
+
 ## Pre-existing Test Issues
 
 `test_rag_pipeline.py` tests require the full llama-index stack (ChromaDB, sentence-transformers, etc.).

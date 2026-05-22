@@ -79,15 +79,21 @@ A2A Request → DefaultRequestHandler → GenericAgentExecutor(RAGAgent)
     → RAGAgent._ensure_ingested(ticker)
       ├── MCPClient.connect_all()
       ├── MCP: get_company_filings(ticker) → returns filings with edgar_url + ix_url
-      ├── MCP: get_filing_content(edgar_url, ix_url) for each filing → raw text
-      └── DocumentIngestionPipeline.ingest_sec_filings_batch() → ChromaDB
+      ├── Filter: is_filing_ingested(edgar_url) — skip already-indexed URLs
+      ├── MCP: get_filing_content(edgar_url, ix_url) for each new filing → raw text
+      ├── DocumentIngestionPipeline.ingest_sec_filings_batch() → ChromaDB
+      └── mark_filing_ingested(edgar_url, ticker) for each new filing
     → FinancialIndexManager.query(ticker, query)
       ├── Try: RouterQueryEngine
       └── Fallback: SEC filings index directly
   → Yields data response with summary + sources
 ```
 
-**Content Ingestion**: The RAG agent now fetches actual SEC filing content (10-K, 10-Q, 8-K) via `get_filing_content()`, which extracts text from raw EDGAR URLs with fallback to IXBRL viewer URLs. This enables the RAG index to contain actual filing text rather than just metadata.
+**Incremental Ingestion**: `_ensure_ingested()` checks the `ingested_filings` SQLite table before fetching any filing content. URLs already indexed in a previous run are skipped entirely — restarts and same-day re-queries do not re-ingest immutable historical filings.
+
+**Pre-warm**: `FinancialIndexManager` is instantiated at server startup in a thread executor via Starlette `on_startup`. The embedding model download is complete before the first A2A request arrives.
+
+**Content Ingestion**: Fetches actual SEC filing content (10-K, 10-Q, 8-K) via `get_filing_content()`, which extracts text from raw EDGAR URLs with fallback to IXBRL viewer URLs.
 
 ### Quant Agent (LangGraph)
 
@@ -127,6 +133,56 @@ A2A Request → DefaultRequestHandler → GenericAgentExecutor(SentimentAgent)
     → 2-agent CrewAI: Analysis → Synthesis
   → Yields data response
 ```
+
+## Caching Layer
+
+Three independent caching tiers reduce latency and external API load:
+
+### MCP Tool-Result Cache (Tier 1A)
+
+`_TTLCache` in `mcp_servers/finsight_server.py` — `OrderedDict`-backed with `time.monotonic()` expiry, no new dependencies:
+
+| Cache | TTL | Key | Notes |
+|---|---|---|---|
+| `_cache_prices` | 5 min | `(ticker, period, interval)` | yfinance OHLCV |
+| `_cache_financials` | 24 h | `(ticker,)` | income/balance/cashflow |
+| `_cache_news` | 15 min | `(ticker, limit)` | only cached when articles found |
+| `_cache_filing` | permanent (LRU-200) | `edgar_url` | filings are immutable |
+| `_cache_submissions` | 6 h | `cik` | EDGAR CIK submissions |
+
+### LangChain SQLiteCache (Tier 1B)
+
+`agent_3_langgraph/nodes.py` sets `SQLiteCache(database_path=".langchain_cache.db")` before the `ChatOpenAI` instance is used in `llm_summary_node`. Identical ticker+metrics inputs reuse cached LLM output without an LM Studio round-trip.
+
+### Semantic Cache (Tier 1D)
+
+`shared/semantic_cache.py` — ChromaDB collection `finsight_semantic_cache` + `all-MiniLM-L6-v2` embedder (already in-use). Cosine similarity threshold: 0.95; TTL: 1 h; response stored up to 4000 chars in Chroma metadata.
+
+Wired into `agent_1_adk/agent_executor.py`:
+- **Before** `runner.run_async`: `SemanticCache.get(query)` — on hit, return immediately
+- **After** successful response: `SemanticCache.set(query, text)`
+- Controlled by `SEMANTIC_CACHE_ENABLED=true` env var (off by default)
+
+### KV Cache Prefix (Tier 1C)
+
+`agent_1_adk/agent.py` splits `_build_instruction()` into a module-level `_STATIC_PREAMBLE` constant and a dynamic tail (today's date + agent list). LM Studio reuses the KV-cached static prefix across requests. Same pattern applied to CrewAI backstory strings in `agent_4_crewai/crew.py`.
+
+## Guardrails
+
+### Input Guardrails
+
+`agent_1_adk/agent_executor.py`, top of `execute()`:
+
+1. **Off-topic filter** — `_NON_INVESTMENT_RE` regex matches weather/recipes/entertainment/horoscopes. Returns canned message in < 100 ms, no sub-agents invoked.
+2. **Ticker pre-check** — when a ticker is extracted, calls MCP `validate_ticker` before spawning sub-agents. Returns clean error in < 2 s if ticker is invalid.
+3. **Semantic cache check** — if `SEMANTIC_CACHE_ENABLED`, checks cache before the orchestrator runs.
+
+### Output Guardrails
+
+`agent_1_adk/agent_executor.py`, in `_process_response()`:
+
+1. **Empty/short response guard** — `len(text.strip()) < 50` → `TASK_STATE_FAILED` with structured error.
+2. **Signal check** — if response lacks BUY/HOLD/SELL and the query was a stock analysis request, emits a Langfuse warning span with `missing_signal: true`.
 
 ## MCP Architecture
 
@@ -223,11 +279,27 @@ The Langfuse client uses `is_default_export_span` to filter out noisy A2A intern
 
 | Agent | Service Name | Instrumentors | Manual Spans |
 |---|---|---|---|
-| Orchestrator | `orchestrator` | GoogleADKInstrumentor, HTTPXClientInstrumentor | `orchestrator-execute` span |
+| Orchestrator | `orchestrator` | GoogleADKInstrumentor, HTTPXClientInstrumentor | `orchestrator-execute` span, per-sub-agent latency spans |
 | RAG Agent | `rag_agent` | LlamaIndexInstrumentor | `rag-agent-stream` span |
-| Quant Agent | `quant_agent` | StarletteInstrumentor | `quant-agent-stream` span + CallbackHandler for LangGraph nodes |
+| Quant Agent | `quant_agent` | StarletteInstrumentor, **LangChainInstrumentor** | `quant-agent-stream` span + CallbackHandler for LangGraph nodes |
 | Sentiment Agent | `sentiment_agent` | CrewAIInstrumentor, StarletteInstrumentor | `sentiment-agent-stream` span |
 | MCP Server | `mcp_server` | — | `@observe()` on individual tools |
+
+### Sub-Agent Latency Spans
+
+`agent_1_adk/sub_agent_client.py` wraps each `send_message()` call with a `time.monotonic()` stopwatch and emits a Langfuse span:
+
+```python
+lf.observation(
+    as_type="span",
+    name=f"sub-agent-{agent_name}",
+    input={"task": task_str[:200]},
+    output={"response": result_text[:200]},
+    metadata={"latency_ms": round((t1 - t0) * 1000), "agent": agent_name},
+)
+```
+
+When `EVAL_TRACE_ENABLED=true`, the same call also writes a JSON file to `eval_traces/` for use by the RAGAS orchestrator evaluation runner.
 
 ## Memory Layer Architecture
 
@@ -291,6 +363,20 @@ The memory context is compact (~300 tokens) and includes:
 | `PerformanceTracker` | `shared/memory/performance_tracker.py` | Recommendation outcome tracking, accuracy evaluation |
 | `SQLiteMemoryService` | `shared/memory/memory_service.py` | ADK `BaseMemoryService` implementation for `load_memory` tool |
 
+## Health Endpoints
+
+All five services expose `GET /health`:
+
+| Service | URL | Response |
+|---|---|---|
+| Orchestrator | `http://localhost:8001/health` | `{"status":"ok","agent":"orchestrator"}` |
+| RAG Agent | `http://localhost:8002/health` | `{"status":"ok","agent":"rag"}` |
+| Quant Agent | `http://localhost:8003/health` | `{"status":"ok","agent":"quant"}` |
+| Sentiment Agent | `http://localhost:8004/health` | `{"status":"ok","agent":"sentiment"}` |
+| MCP Server | `http://localhost:8010/health` | `{"status":"ok","agent":"mcp"}` |
+
+The MCP server mounts its health route alongside the FastMCP SSE app via a Starlette wrapper in `get_app()`. Docker-compose `healthcheck` blocks use these endpoints with `curl -f`, and `depends_on` is set to `condition: service_healthy`.
+
 ## File Logging
 
 All services write structured logs to the `logs/` directory via `shared/logging_config.py`:
@@ -318,9 +404,13 @@ sessions (id, user_id, created_at, updated_at)
 events (id, session_id, event_type, data, created_at)
 ticker_briefs (id, ticker, recommendation, confidence, response_text, created_at)
 user_profiles (id, user_id, holdings_json, risk_profile, investment_horizon, updated_at)
-recommendation_records (id, ticker, recommendation, confidence, price_at_recommendation, created_at)
-memory_entries (id, session_id, content_hash, content, created_at)
+recommendation_records (id, ticker, recommendation, confidence, price_at_rec, created_at,
+                        evaluated_at, realized_return)
+memory_entries (id, session_id, content_hash, content, search_text, created_at)
+ingested_filings (edgar_url PRIMARY KEY, ticker, ingested_at)  -- v1.18
 ```
+
+`ingested_filings` tracks which SEC EDGAR document URLs have been indexed into ChromaDB. The RAG agent checks this table before fetching filing content — already-indexed URLs are skipped, preventing redundant ingest on restart.
 
 ### Auto-Save Flow
 

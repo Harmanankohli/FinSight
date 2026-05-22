@@ -6,9 +6,14 @@ An autonomous multi-agent system that answers investment queries like *"Should I
 
 - **Multi-framework orchestration**: Google ADK orchestrator delegates to LlamaIndex (RAG), LangGraph (Quant), and CrewAI (Sentiment) agents
 - **A2A protocol**: Standard-compliant agent discovery and streaming communication via JSON-RPC over HTTP
-- **Persistent memory layer**: SQLite-backed session storage, cross-session memory search, ticker brief history, portfolio persistence, and recommendation tracking
+- **Multi-tier caching**: TTL-based tool-result cache in the MCP server (5 min prices, 24 h financials, 15 min news, permanent filings), LangChain SQLiteCache for LLM responses, and semantic cache using ChromaDB cosine similarity
+- **Input/output guardrails**: Off-topic filter, pre-flight ticker validation, empty-response guard, and BUY/HOLD/SELL signal enforcement with auto-retry
+- **Persistent memory layer**: SQLite-backed session storage, cross-session memory search, ticker brief history, portfolio persistence, and recommendation tracking with live price snapshots
+- **Incremental RAG ingestion**: Tracks ingested filing URLs in SQLite — restarts never re-ingest already-indexed documents
+- **RAGAS evaluation pipeline**: Faithfulness, ResponseRelevancy, ContextPrecision, ContextRecall, ToolCallAccuracy, AgentGoalAccuracy, and custom financial rubrics with Langfuse score push
 - **Portfolio correlation analysis**: When you explicitly mention portfolio holdings (e.g. "My portfolio holds AAPL, MSFT"), the quant agent computes cross-stock correlation matrices alongside the primary analysis
 - **Distributed tracing**: Langfuse traces span all four agent processes in a single trace tree via text-based context propagation, with automatic filtering of noisy A2A internal spans
+- **Health monitoring**: `/health` endpoints on all five services with docker-compose healthcheck integration
 - **Local LLM inference**: All agents use LM Studio (OpenAI-compatible API) — no cloud dependencies
 - **MCP data tools**: Unified server providing SEC filings, price data, financials, news sentiment, and more
 
@@ -58,16 +63,20 @@ All A2A communication uses `A2ACardResolver` for standard discovery and `ClientF
 | Agent Communication | Google A2A Protocol (JSON-RPC over HTTP, streaming) |
 | Orchestrator | Google ADK `LlmAgent` with `send_message` tool |
 | Sub-agent Executor | `GenericAgentExecutor` + `BaseAgent` pattern |
-| Memory Layer | SQLite (`aiosqlite`) — sessions, ticker briefs, portfolio, performance |
-| RAG | LlamaIndex + ChromaDB (local) + HuggingFace embeddings |
-| Quant | LangChain + LangGraph (state machine, MCP data) |
+| Memory Layer | SQLite (`aiosqlite`) — sessions, ticker briefs, portfolio, performance, ingested filings |
+| Caching | `_TTLCache` (MCP tools), LangChain `SQLiteCache` (LLM), ChromaDB semantic cache |
+| Guardrails | Regex off-topic filter + MCP ticker pre-check (input), signal check + retry (output) |
+| RAG | LlamaIndex + ChromaDB (local) + HuggingFace embeddings, incremental ingestion |
+| Quant | LangChain + LangGraph (state machine, MCP data) + LangChain SQLiteCache |
 | Sentiment | CrewAI (parallel data collection + synthesis) |
-| MCP Server | FastMCP (agent registry + data tools) |
+| MCP Server | FastMCP (agent registry + data tools + TTL caching) |
+| Evaluation | RAGAS (faithfulness, relevancy, tool accuracy) + custom financial rubrics |
 | LLM | LM Studio (local, OpenAI-compatible) |
 | Embeddings | sentence-transformers (all-MiniLM-L6-v2, local) |
 | Reranker | cross-encoder/ms-marco-MiniLM-L-6-v2 |
 | Vector Store | ChromaDB (local, persisted) |
 | Agent Discovery | `A2ACardResolver` via `AGENT_SEED_URLS` |
+| Observability | Langfuse + LangChainInstrumentor + sub-agent latency spans |
 
 ## Quick Start
 
@@ -139,9 +148,10 @@ stop_servers.bat
 ```
 ├── agent_1_adk/              # ADK Orchestrator
 │   ├── agent.py              # LlmAgent with single send_message tool
-│   ├── agent_executor.py     # FinSightAgentExecutor (A2A server runtime)
-│   ├── sub_agent_client.py   # SubAgentClient — async A2ACardResolver + ClientFactory
-│   └── main.py               # A2A server entrypoint (click + uvicorn)
+│   ├── agent_executor.py     # FinSightAgentExecutor (guardrails, semantic cache, A2A runtime)
+│   ├── sub_agent_client.py   # SubAgentClient — A2ACardResolver + ClientFactory + latency tracking
+│   ├── main.py               # A2A server entrypoint (click + uvicorn)
+│   └── Dockerfile            # Container image for orchestrator
 │
 ├── agent_2_llamaindex/       # RAG Agent
 │   ├── server.py             # GenericAgentExecutor(RAGAgent)
@@ -184,18 +194,19 @@ stop_servers.bat
 │   ├── logging_config.py     # setup_file_logging() — writes to logs/<service>.log
 │   ├── trace_context.py      # Distributed trace context injection/extraction
 │   ├── observability.py      # Langfuse singleton initialization
-│   ├── config.py             # Centralized .env configuration
+│   ├── config.py             # Centralized .env configuration + startup validation
 │   ├── mcp_client.py         # MCP client with dynamic tool discovery
 │   ├── models.py             # Pydantic data models
+│   ├── semantic_cache.py     # ChromaDB-backed semantic cache (cosine sim, TTL 1h)
 │   └── memory/               # Persistent memory layer
-│       ├── store.py          # SQLite foundation, auto-migration
+│       ├── store.py          # SQLite foundation, auto-migration, ingested_filings table
 │       ├── ticker_memory.py  # Per-ticker brief storage, format_context()
 │       ├── portfolio_store.py # User profile, holdings persistence
-│       ├── performance_tracker.py # Recommendation outcome tracking
+│       ├── performance_tracker.py # Recommendation outcome tracking + live price capture
 │       ├── memory_service.py # ADK BaseMemoryService (load_memory tool)
 │       └── __init__.py       # Exports
 │
-├── tests/                    # Test suite (64 tests)
+├── tests/                    # Test suite
 │   ├── test_a2a_communication.py
 │   ├── test_agent_cards.py
 │   ├── test_base_agent.py
@@ -205,7 +216,13 @@ stop_servers.bat
 │   ├── test_rag_pipeline.py
 │   ├── test_sentiment_crew.py
 │   ├── test_trace_propagation.py  # Trace context + holdings extraction
-│   └── test_memory.py             # Memory layer (SQLite, ticker, portfolio, performance)
+│   ├── test_memory.py             # Memory layer (SQLite, ticker, portfolio, performance)
+│   └── evaluation/                # RAGAS evaluation pipeline
+│       ├── run_rag_eval.py        # RAG faithfulness + relevancy evaluation
+│       ├── run_orchestrator_eval.py  # Tool accuracy + goal accuracy
+│       ├── financial_rubrics.py   # Custom AspectCritic metrics (citation, risk, clarity)
+│       ├── push_scores.py         # Push RAGAS scores to Langfuse
+│       └── rag_dataset.json       # 10 curated Q&A pairs (NVDA, AAPL, MSFT, JPM)
 │
 ├── run_adk_web.bat           # Start all services
 ├── stop_servers.bat          # Stop all services
@@ -223,18 +240,21 @@ Key environment variables in `.env`:
 | `AGENT_SEED_URLS` | `http://localhost:8002,http://localhost:8003,http://localhost:8004` | A2A agent discovery URLs |
 | `A2A_TIMEOUT` | `300.0` | Timeout for A2A communication (seconds) |
 | `LLM_BASE_URL` | `http://localhost:1234/v1` | LM Studio OpenAI-compatible endpoint |
+| `SEMANTIC_CACHE_ENABLED` | `false` | Enable ChromaDB semantic cache for repeated investment queries |
+| `MCP_SERVER_URL` | `http://localhost:8010/sse` | Unified MCP server SSE endpoint |
 
 ## Documentation
 
 | Document | Description |
 |---|---|
-| `docs/ARCHITECTURE.md` | System architecture, communication patterns, agent internals |
+| `docs/ARCHITECTURE.md` | System architecture, communication patterns, caching layer, guardrails, agent internals |
 | `docs/AGENTS.md` | Detailed agent reference (skills, architecture, streaming flow) |
-| `docs/MCP_SERVERS.md` | MCP server tools, registry, client usage |
+| `docs/MCP_SERVERS.md` | MCP server tools, TTL caching, registry, client usage |
 | `docs/DESIGN_DECISIONS.md` | Evolution log: why each design choice was made |
-| `docs/DEMO.md` | End-to-end walkthrough with example queries |
+| `docs/DEMO.md` | End-to-end walkthrough with example queries and health check testing |
 | `docs/CHANGELOG.md` | Version history |
-| `docs/TESTS.md` | Test coverage, patterns, running instructions |
+| `docs/TESTS.md` | Test coverage, patterns, RAGAS evaluation, running instructions |
+| `docs/improvements.html` | Caching + guardrails + evaluation platform improvements overview |
 
 ## Testing
 
@@ -242,7 +262,14 @@ Key environment variables in `.env`:
 uv run pytest -v
 ```
 
-72 tests covering: A2A discovery, agent card validation, orchestrator tools, sub-agent executors, LangGraph state graphs, RAG pipelines, CrewAI integration, workflow state machines, distributed trace propagation, portfolio holdings extraction, and persistent memory layer (SQLite store, ticker briefs, portfolio persistence, performance tracking, cross-session memory search).
+64 tests covering: A2A discovery, agent card validation, orchestrator tools, sub-agent executors, LangGraph state graphs, RAG pipelines, CrewAI integration, distributed trace propagation, portfolio holdings extraction, and persistent memory layer (SQLite store, ticker briefs, portfolio persistence, performance tracking, cross-session memory search).
+
+RAGAS evaluation pipeline (offline, requires running services):
+
+```bash
+python tests/evaluation/run_rag_eval.py --ticker NVDA
+python tests/evaluation/run_orchestrator_eval.py
+```
 
 ## License
 

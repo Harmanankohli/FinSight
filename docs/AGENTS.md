@@ -9,14 +9,18 @@
 | Agent Card | Built programmatically in `agent_1_adk/main.py` |
 | Discovery | `A2ACardResolver` via `/.well-known/agent-card.json`, async with 3x retry |
 | A2A Endpoint | `POST /a2a` (via Starlette + `create_jsonrpc_routes`) |
+| Health | `GET /health` → `{"status":"ok","agent":"orchestrator"}` |
 
 The orchestrator uses a single `LlmAgent` with one `send_message` tool. The LLM delegates tasks to sub-agents by name and synthesizes results:
 
 1. **Discovers agents in background** via `SubAgentClient.discover()` — async `A2ACardResolver` with retries
-2. **Memory context injection** — Before each query, extracts ticker from user input, retrieves latest recommendation from `TickerMemory`, and prepends it to the user message (~300 token budget)
-3. **LLM routes to agents** — LLM calls `send_message(agent_name, task)` for each sub-agent. Parallel with qwen (supports parallel tool calls); sequential with other models.
-4. **Synthesizes results** — LLM collects all outputs and produces a BUY/HOLD/SELL recommendation
-5. **Auto-save** — After each response, persists ticker brief, portfolio holdings, and performance record to SQLite
+2. **Input guardrails** — Off-topic queries rejected in < 100 ms via `_NON_INVESTMENT_RE`. Invalid tickers rejected in < 2 s via pre-flight MCP `validate_ticker` call before any sub-agent is invoked.
+3. **Semantic cache** — When `SEMANTIC_CACHE_ENABLED=true`, similar queries (cosine ≥ 0.95) return cached responses without running the orchestrator.
+4. **Memory context injection** — Before each query, extracts ticker from user input, retrieves latest recommendation from `TickerMemory`, and prepends it to the user message (~300 token budget)
+5. **LLM routes to agents** — LLM calls `send_message(agent_name, task)` for each sub-agent. Parallel with qwen; sequential with other models. Each call measured with `time.monotonic()` and emitted as a Langfuse latency span.
+6. **Output guardrails** — Responses shorter than 50 chars trigger `TASK_STATE_FAILED`. Missing BUY/HOLD/SELL signal emits a Langfuse warning with `missing_signal: true`.
+7. **Synthesizes results** — LLM collects all outputs and produces a BUY/HOLD/SELL recommendation
+8. **Auto-save** — After each response, persists ticker brief, portfolio holdings, and performance record (with live price snapshot via yfinance) to SQLite. Fires background task to evaluate past recommendations.
 
 All A2A communication uses `ClientFactory` + `BaseClient` from the official `a2a-sdk`. Streaming events are handled correctly: intermediate SUBMITTED/WORKING events are skipped, only `artifact_update` events (data or text) and terminal `status_update` events are returned to the LLM.
 
@@ -95,6 +99,7 @@ Body:
 | Port | 8002 |
 | Agent Card | Built programmatically in `agent_2_llamaindex/server.py` |
 | A2A Endpoint | `POST /a2a` |
+| Health | `GET /health` → `{"status":"ok","agent":"rag"}` |
 
 ### Skills
 
@@ -126,10 +131,12 @@ Request → DefaultRequestHandler → GenericAgentExecutor(RAGAgent)
 | Framework | LangChain + LangGraph |
 | Executor | `GenericAgentExecutor(QuantAgent)` |
 | LLM | LM Studio via `langchain-openai` (summary node only) |
+| LLM Cache | LangChain `SQLiteCache` — identical inputs reuse cached LLM response |
 | Data Source | MCP (finsight-mcp `get_prices`, `get_financials`) |
 | Port | 8003 |
 | Agent Card | Built programmatically in `agent_3_langgraph/server.py` |
 | A2A Endpoint | `POST /a2a` |
+| Health | `GET /health` → `{"status":"ok","agent":"quant"}` |
 
 ### Skills
 
@@ -172,6 +179,7 @@ Request → DefaultRequestHandler → GenericAgentExecutor(QuantAgent)
 | Port | 8004 |
 | Agent Card | Built programmatically in `agent_4_crewai/server.py` |
 | A2A Endpoint | `POST /a2a` |
+| Health | `GET /health` → `{"status":"ok","agent":"sentiment"}` |
 
 ### Skills
 

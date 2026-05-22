@@ -1,5 +1,47 @@
 # Changelog
 
+## v1.18 — Caching, Guardrails, Evaluation & Observability
+
+### Caching
+
+- **TTL tool-result cache in MCP server** (`mcp_servers/finsight_server.py`): `_TTLCache` class using `OrderedDict` + `time.monotonic()`. Cache instances per tool: `get_prices` (5 min), `get_financials` (24 h), `get_news_sentiment` (15 min), `get_filing_content` (permanent LRU-200), `_fetch_submissions` (6 h). No new dependencies.
+- **LangChain SQLiteCache** (`agent_3_langgraph/nodes.py`): `SQLiteCache(database_path=".langchain_cache.db")` wraps the quant agent's LLM summary call — identical ticker+metrics inputs reuse the cached LLM response. Requires `langchain-community>=0.3.0`.
+- **KV cache prefix optimization** (`agent_1_adk/agent.py`, `agent_4_crewai/crew.py`): Static PROCEDURE block extracted to module-level `_STATIC_PREAMBLE` constant. `_build_instruction()` now only appends today's date and the dynamic agent list, keeping the large static prefix stable across requests for LM Studio KV-cache reuse. Backstory strings for CrewAI agents moved to module-level constants.
+- **Semantic cache** (`shared/semantic_cache.py`): ChromaDB + `all-MiniLM-L6-v2` cosine similarity cache (threshold 0.95, TTL 1 h). Wired into `agent_1_adk/agent_executor.py`: cache checked before `runner.run_async`, hit returns immediately; successful responses stored. Controlled by `SEMANTIC_CACHE_ENABLED=true` env var (off by default).
+
+### Guardrails
+
+- **Input guardrails** (`agent_1_adk/agent_executor.py`): Off-topic regex filter (`_NON_INVESTMENT_RE`) rejects weather/recipe/entertainment queries with a canned message in < 100 ms. Pre-flight ticker validation calls MCP `validate_ticker` before spawning sub-agents — invalid tickers rejected in < 2 s with no sub-agent cost.
+- **Output guardrails** (`agent_1_adk/agent_executor.py`): Empty/short response (< 50 chars) marked `TASK_STATE_FAILED`. Missing BUY/HOLD/SELL signal on a stock analysis query logs a Langfuse warning with `missing_signal: true` metadata.
+- **Double-`else` syntax bug fixed** (`agent_1_adk/agent_executor.py`): Two `else` clauses for the same `if final_event:` block collapsed into one, fixing a `SyntaxError` that prevented the service from starting.
+
+### RAG & Memory
+
+- **Incremental RAG ingestion** (`shared/memory/store.py`, `agent_2_llamaindex/executor.py`): New `ingested_filings` table tracks already-indexed SEC filing URLs. `_ensure_ingested()` skips URLs already in the table; marks new ones after successful batch ingest. Persists across restarts — immutable historical filings are never re-ingested.
+- **Embedding model pre-warm** (`agent_2_llamaindex/server.py`): `FinancialIndexManager` instantiated in a thread executor via `on_startup` hook, eliminating first-query latency caused by lazy model download.
+- **Live price capture in PerformanceTracker** (`shared/memory/performance_tracker.py`): `record_recommendation()` now auto-fetches current price via `yfinance` in a thread executor when `price=None`. Enables accurate `realized_return` calculation in `evaluate_all()`.
+- **Automated past-recommendation evaluation** (`agent_1_adk/agent.py`): `save_brief()` now fires `asyncio.create_task(_evaluate_past_recommendations(ticker))` in background — `PerformanceTracker.evaluate_all()` runs without blocking the response.
+- **SQLite schema v2** (`shared/memory/store.py`): `ingested_filings` table added with `idx_ingested_ticker` index. `SCHEMA_VERSION` bumped to 2 for clean migration.
+
+### Evaluation
+
+- **RAGAS evaluation pipeline** (`tests/evaluation/`): `run_rag_eval.py` measures Faithfulness, ResponseRelevancy, ContextPrecision, ContextRecall, NoiseSensitivity. `run_orchestrator_eval.py` measures ToolCallAccuracy and AgentGoalAccuracy via eval traces written by sub-agent client. `financial_rubrics.py` provides custom `AspectCritic` metrics: citation quality, risk disclosure, recommendation clarity. `push_scores.py` pushes all scores to Langfuse per-trace.
+- **Eval trace capture** (`agent_1_adk/sub_agent_client.py`): When `EVAL_TRACE_ENABLED=true`, each sub-agent call appends `{agent_name, task_sent, response, latency_ms}` to a JSON file in `eval_traces/`.
+- **Curated RAG dataset** (`tests/evaluation/rag_dataset.json`): 10 Q&A pairs for NVDA, AAPL, MSFT, JPM with reference contexts from real SEC filings.
+
+### Observability
+
+- **LangGraph / LangChain instrumentation** (`agent_3_langgraph/server.py`): `LangChainInstrumentor().instrument()` added — quant agent LLM calls now appear in Langfuse traces. Requires `openinference-instrumentation-langchain>=0.1.0`.
+- **Sub-agent latency tracking** (`agent_1_adk/sub_agent_client.py`): `send_message()` now records wall-clock latency per sub-agent call and emits a Langfuse span with `latency_ms` and agent name metadata.
+- **Config validation** (`shared/config.py`): `validate()` function checks required env vars (`MCP_SERVER_URL`) and warns on placeholder Langfuse keys. Called at startup in each server entry point.
+
+### Deployment
+
+- **Health endpoints** (`agent_1_adk/main.py`, `agent_2_llamaindex/server.py`, `agent_3_langgraph/server.py`, `agent_4_crewai/server.py`, `mcp_servers/finsight_server.py`): All five services expose `GET /health → {"status":"ok","agent":"..."}`. MCP server mounts health alongside the SSE app via a Starlette wrapper.
+- **docker-compose hardening** (`docker-compose.yml`): All services gain `healthcheck` blocks. `depends_on` updated to `condition: service_healthy`. `finsight_memory` named volume added for the orchestrator DB. `SEMANTIC_CACHE_ENABLED=false` added to `agent-adk` env.
+- **Orchestrator Dockerfile** (`agent_1_adk/Dockerfile`): New container image following `agent_3_langgraph/Dockerfile` pattern — Python 3.12-slim, copies `agent_1_adk/` + `shared/`, exposes port 8001.
+- **`langchain-community>=0.3.0`** and **`openinference-instrumentation-langchain>=0.1.0`** added to `pyproject.toml` deps. **`ragas>=0.2.0`** added to `[project.optional-dependencies] dev`.
+
 ## v1.17 — Centralized File Logging
 
 - **`shared/logging_config.py` added**: `setup_file_logging(service_name)` configures the root logger with a `StreamHandler` (stderr) and a `RotatingFileHandler` (10 MB, 5 backups). Safe to call multiple times — duplicate handlers are skipped.
