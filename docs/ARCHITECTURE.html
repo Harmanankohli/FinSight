@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FinSight — Architecture</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:1.7;color:#2c2c2c;background:#faf8f5;padding:2rem 1rem}
+.container{max-width:740px;margin:0 auto}
+h1,h2,h3,h4{font-family:Georgia,"Times New Roman",serif;color:#1a1a1a;line-height:1.3}
+h1{font-size:2.2rem;margin-bottom:.25rem;border-bottom:2px solid #e8dcc8;padding-bottom:.5rem}
+h2{font-size:1.5rem;margin-top:2.5rem;margin-bottom:.75rem}
+h3{font-size:1.2rem;margin-top:1.5rem;margin-bottom:.5rem}
+h4{font-size:1.05rem;margin-top:1.2rem;margin-bottom:.4rem}
+p{margin-bottom:1rem;color:#444}
+a{color:#8b6f4e;text-decoration:none;font-weight:500}
+a:hover{text-decoration:underline}
+code{background:#f0ebe3;padding:.15em .4em;border-radius:3px;font-size:.875em;font-family:"SF Mono","Fira Code","Fira Mono",monospace}
+pre{background:#f0ebe3;padding:1rem;border-radius:6px;overflow-x:auto;margin-bottom:1rem;font-size:.875em;line-height:1.5}
+pre code{background:0 0;padding:0}
+table{width:100%;border-collapse:collapse;margin-bottom:1rem;font-size:.925rem}
+th,td{padding:.5rem .75rem;text-align:left;border-bottom:1px solid #e0d8cc}
+th{background:#f0ebe3;font-weight:600}
+ul,ol{margin-bottom:1rem;padding-left:1.5rem}
+li{margin-bottom:.25rem}
+hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
+.header-nav{margin-bottom:2rem;padding-bottom:1rem;border-bottom:1px solid #e0d8cc}
+.header-nav a{margin-right:1.2rem;font-size:.9rem}
+@media(max-width:600px){body{padding:1rem}h1{font-size:1.8rem}table{font-size:.85rem}}
+</style>
+</head>
+<body>
+<div class="container">
+<div class="header-nav">
+<a href="index.html">Home</a><a href="../README.html">Overview</a><a href="ARCHITECTURE.html">Architecture</a><a href="AGENTS.html">Agents</a><a href="MCP_SERVERS.html">MCP</a><a href="DESIGN_DECISIONS.html">Decisions</a><a href="DEMO.html">Demo</a><a href="CHANGELOG.html">Changelog</a><a href="TESTS.html">Tests</a>
+</div>
+
+<h1>Architecture</h1>
+
+<h2>Overview</h2>
+<p>FinSight is a multi-agent investment research system where four specialized agents communicate via the <strong>Google A2A Protocol</strong>. The orchestrator (ADK <code>LlmAgent</code>) discovers sub-agents at startup via <code>A2ACardResolver</code>, delegates tasks via a single <code>send_message</code> tool, and the LLM routes to each agent. Each sub-agent processes tasks internally using its own framework and tools.</p>
+
+<h2>Communication Pattern</h2>
+<pre>┌──────────────────────────────────────────────────────────────┐
+│                    A2A Protocol Layer                         │
+│  ┌──────────────────────────────────────────────────────┐    │
+│  │ Agent Card Discovery                                  │    │
+│  │ GET /.well-known/agent-card.json                      │    │
+│  │ &mdash; name, skills (id + description), interfaces        │    │
+│  └──────────────────────────────────────────────────────┘    │
+│  ┌──────────────────────────────────────────────────────┐    │
+│  │ JSON-RPC over HTTP (streaming)                        │    │
+│  │ POST /a2a  events: task, status_update, artifact_upd  │    │
+│  │ Headers: A2A-Version: 1.0                             │    │
+│  └──────────────────────────────────────────────────────┘    │
+│  ┌──────────────────────────────────────────────────────┐    │
+│  │ Task Lifecycle                                        │    │
+│  │ SUBMITTED &rarr; WORKING &rarr; (artifacts) &rarr; COMPLETED        │    │
+│  └──────────────────────────────────────────────────────┘    │
+└──────────────────────────────────────────────────────────────┘</pre>
+
+<h2>Orchestrator Architecture</h2>
+<p>The orchestrator (<code>agent_1_adk/</code>) uses a single <code>LlmAgent</code> with one <code>send_message</code> tool:</p>
+<pre>Module load &rarr; SubAgentClient.discover()
+  &rarr; A2ACardResolver per seed URL
+  &rarr; Returns typed AgentCard (protobuf)
+  &rarr; self.agents populated &rarr; instruction updated
+
+A2A Request &rarr; FinSightAgentExecutor.execute()
+  &rarr; RUNNER.run_async(user_query)
+  &rarr; LlmAgent (no pre-fetch)
+    &rarr; LLM calls send_message(agent_name, task)
+    &rarr; SubAgentClient &rarr; A2A task to sub-agent
+    &rarr; SubAgentClient &rarr; A2A response
+    &rarr; LLM calls next agent
+    &rarr; LLM synthesizes BUY/HOLD/SELL
+  &rarr; COMPLETED with synthesis</pre>
+
+<h3>Key Design Choices</h3>
+<ul>
+<li><strong>A2ACardResolver for discovery</strong> &mdash; standard A2A well-known endpoint, protobuf AgentCard types</li>
+<li><strong>ClientFactory for A2A communication</strong> &mdash; matches official A2A SDK pattern</li>
+<li><strong>Single <code>send_message</code> tool</strong> &mdash; not one tool per agent; LLM passes agent name as parameter</li>
+<li><strong>Streaming event handling</strong> &mdash; correctly skips SUBMITTED/WORKING, captures artifact_update and terminal events</li>
+<li><strong>Background async discovery</strong> &mdash; supports both ADK Web UI (running event loop) and CLI entrypoints</li>
+<li><strong>WindowsSelectorEventLoopPolicy</strong> &mdash; prevents ConnectionResetError on Windows</li>
+<li><strong>Programmatic AgentCards</strong> &mdash; built in code using protobuf types instead of static JSON</li>
+</ul>
+
+<h2>GenericAgentExecutor Pattern</h2>
+<p>All sub-agents extend <code>BaseAgent</code> and implement <code>stream()</code>. A shared <code>GenericAgentExecutor</code> handles A2A lifecycle:</p>
+<pre>A2A Request &rarr; DefaultRequestHandler &rarr; GenericAgentExecutor.execute()
+  &rarr; BaseAgent.stream(query, context_id, task_id)
+  &rarr; Yields: {response_type, content, is_task_complete, require_user_input}
+  &rarr; GenericAgentExecutor converts to events
+  &rarr; COMPLETED state</pre>
+
+<h2>Agent Architectures</h2>
+
+<h3>RAG Agent (LlamaIndex)</h3>
+<pre>A2A Request &rarr; DefaultRequestHandler &rarr; GenericAgentExecutor(RAGAgent)
+  &rarr; RAGAgent.stream()
+    &rarr; _ensure_ingested(ticker)
+      &rarr; MCP: get_company_filings(ticker)
+      &rarr; MCP: get_filing_content(edgar_url, ix_url) for each filing
+      &rarr; DocumentIngestionPipeline.ingest_sec_filings_batch() &rarr; ChromaDB
+    &rarr; FinancialIndexManager.query(ticker, query)
+      &rarr; Try: RouterQueryEngine
+      &rarr; Fallback: SEC filings index directly
+  &rarr; Yields data response with summary + sources</pre>
+
+<p><strong>Content Ingestion</strong>: Fetches actual SEC filing content via <code>get_filing_content()</code>, extracting text from raw EDGAR URLs with fallback to IXBRL viewer URLs.</p>
+
+<h3>Quant Agent (LangGraph)</h3>
+<pre>A2A Request &rarr; DefaultRequestHandler &rarr; GenericAgentExecutor(QuantAgent)
+  &rarr; QuantAgent.stream()
+    &rarr; extract_holdings(query) &rarr; portfolio_holdings list
+    &rarr; analyze(ticker, portfolio_holdings=holdings)
+      [MCP: get_prices &rarr; parse Close data]
+      &rarr; compute_metrics &rarr; conditional branch:
+          high volatility (&gt;35%) &rarr; stress_test, dcf_error set
+          low volatility  (&le;35%) &rarr; dcf_valuation [MCP: get_financials]
+      &rarr; portfolio_correlation
+      &rarr; format_output &rarr; llm_summary
+  &rarr; Yields data response with dcf_error in result</pre>
+
+<h3>Sentiment Agent (CrewAI)</h3>
+<pre>A2A Request &rarr; DefaultRequestHandler &rarr; GenericAgentExecutor(SentimentAgent)
+  &rarr; SentimentAgent.stream()
+    &rarr; Parallel MCP data collection (asyncio.gather):
+      &rarr; get_news_sentiment
+      &rarr; get_company_filings
+    &rarr; 2-agent CrewAI: Analysis &rarr; Synthesis
+  &rarr; Yields data response</pre>
+
+<h2>MCP Architecture</h2>
+<p>Single unified MCP server (<code>mcp_servers/finsight_server.py</code>, port 8010) hosting agent registry + all data tools:</p>
+<pre>┌──────────────────────────────────────────────────────┐
+│              finsight-mcp (port 8010)                 │
+│                                                       │
+│  Agent Registry         │  Data Sources              │
+│  &rarr; find_agent()       │  &rarr; get_prices()            │
+│  &rarr; resource://cards   │  &rarr; get_financials()        │
+│  &rarr; resource://{name}  │  &rarr; get_filing_content()    │
+│                         │  &rarr; get_news_sentiment()    │
+│                         │  &rarr; execute_python()        │
+│                         │  &rarr; validate_ticker()       │
+│                         │  &rarr; resolve_company_ticker()│
+└──────────────────────────────────────────────────────┘</pre>
+
+<h2>Timeout Architecture</h2>
+<table>
+<tr><th>Layer</th><th>Timeout</th><th>Mechanism</th></tr>
+<tr><td>A2A discovery</td><td>10s per URL</td><td>httpx.AsyncClient within A2ACardResolver</td></tr>
+<tr><td>A2A messaging</td><td>300s</td><td>ClientConfig + httpx.AsyncClient</td></tr>
+<tr><td>MCP tool calls</td><td>30s</td><td>MCPClient default</td></tr>
+</table>
+
+<h2>Error Handling</h2>
+<table>
+<tr><th>Failure Mode</th><th>Strategy</th></tr>
+<tr><td>Agent discovery failure</td><td>Retries 3x with 5s delay</td></tr>
+<tr><td>A2A timeout</td><td>Caught, returns error JSON to LLM</td></tr>
+<tr><td>MCP connection failure</td><td>Exponential backoff, max 3 retries</td></tr>
+<tr><td>Agent unavailable</td><td>Skipped, LLM works with what it has</td></tr>
+<tr><td>Response parse failure</td><td>Caught, text used as-is</td></tr>
+</table>
+
+<h2>LLM Configuration</h2>
+<table>
+<tr><th>Agent</th><th>Model</th><th>Provider</th></tr>
+<tr><td>Orchestrator (ADK)</td><td>qwen/qwen3-30b-a3b-2507</td><td>openai/ prefix (LM Studio)</td></tr>
+<tr><td>RAG (LlamaIndex)</td><td>qwen/qwen3-30b-a3b-2507</td><td>llama-index-llms-openai-like</td></tr>
+<tr><td>Quant (LangGraph)</td><td>qwen/qwen3-30b-a3b-2507</td><td>langchain-openai</td></tr>
+<tr><td>Sentiment (CrewAI)</td><td>qwen/qwen3-30b-a3b-2507</td><td>CrewLLM (OpenAI-compatible)</td></tr>
+</table>
+
+<h2>Observability &amp; Tracing</h2>
+<p>Langfuse provides distributed tracing across all four agent processes. Trace context is propagated through A2A via text-based injection:</p>
+<pre>Orchestrator
+  &rarr; langfuse.trace(name="finsight-query")
+  &rarr; get_current_trace_id() + get_current_observation_id()
+  &rarr; inject_trace_context(task, trace_id, parent_span_id)
+
+Sub-agents
+  &rarr; extract_trace_ids(query) &rarr; (trace_id, parent_span_id, clean_query)
+  &rarr; start_observation(trace_context=...)
+  &rarr; Langfuse joins the span to the orchestrator's trace tree</pre>
+
+<h3>Span Noise Filtering</h3>
+<p>Uses <code>is_default_export_span</code> to filter out noisy A2A internal spans and HTTPX transport spans. Only high-level workflow spans and LLM spans are exported.</p>
+
+<h3>Per-Agent Instrumentation</h3>
+<table>
+<tr><th>Agent</th><th>Service Name</th><th>Manual Spans</th></tr>
+<tr><td>Orchestrator</td><td><code>orchestrator</code></td><td><code>orchestrator-execute</code></td></tr>
+<tr><td>RAG Agent</td><td><code>rag_agent</code></td><td><code>rag-agent-stream</code></td></tr>
+<tr><td>Quant Agent</td><td><code>quant_agent</code></td><td><code>quant-agent-stream</code> + CallbackHandler</td></tr>
+<tr><td>Sentiment Agent</td><td><code>sentiment_agent</code></td><td><code>sentiment-agent-stream</code></td></tr>
+<tr><td>MCP Server</td><td><code>mcp_server</code></td><td><code>@observe()</code> on tools</td></tr>
+</table>
+
+<h2>Memory Layer Architecture</h2>
+<p>SQLite-backed persistent memory layer in <code>shared/memory/</code>:</p>
+<pre>┌──────────────────────────────────────────────────────────────┐
+│                    Memory Layer (SQLite)                       │
+│  Session Store    Ticker Memory    Portfolio Store            │
+│  Performance      Memory Service                              │
+│  Tracker          (load_memory)                               │
+└──────────────────────────────────────────────────────────────┘</pre>
+
+<h3>Memory Context Injection</h3>
+<p>Before each query, the executor injects memory context into the user message:</p>
+<pre>User Query &rarr; Executor._inject_memory_context(query)
+  &rarr; extract_ticker(query) &rarr; "NVDA"
+  &rarr; TickerMemory.get_latest("NVDA") &rarr; last recommendation
+  &rarr; PortfolioStore.get() &rarr; current holdings
+  &rarr; Prepend: [MEMORY CONTEXT] ... [/MEMORY CONTEXT]</pre>
+
+<h3>Database Schema</h3>
+<pre>sessions (id, user_id, created_at, updated_at)
+events (id, session_id, event_type, data, created_at)
+ticker_briefs (id, ticker, recommendation, confidence, response_text, created_at)
+user_profiles (id, user_id, holdings_json, risk_profile, investment_horizon, updated_at)
+recommendation_records (id, ticker, recommendation, confidence, price_at_recommendation, created_at)
+memory_entries (id, session_id, content_hash, content, created_at)</pre>
+
+<h3>Auto-Save Flow</h3>
+<p>After each successful response, the executor automatically persists to TickerMemory, PortfolioStore, and PerformanceTracker. No LLM tool call required.</p>
+
+<hr>
+<p style="font-size:.85rem;color:#888"><a href="index.html">Back to docs hub</a></p>
+</div>
+</body>
+</html>
