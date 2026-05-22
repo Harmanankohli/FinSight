@@ -1,3 +1,4 @@
+import json
 import re
 
 _STOCK_TICKER_RE = re.compile(r"^[A-Z]{1,5}(\.[A-Z]{1,2})?$")
@@ -72,6 +73,41 @@ _HOLDINGS_PATTERNS = [
     re.compile(r"(?:my\s+(?:current\s+)?(?:portfolio|holdings?|positions?))\s+are\s+([A-Z]{1,5}(?:\s*,\s*[A-Z]{1,5})*(?:\s+(?:and|&)\s*[A-Z]{1,5})?)", re.IGNORECASE),
     re.compile(r"(?:currently\s+)?(?:own|hold|have)\s*:?\s*([A-Z]{1,5}(?:\s*,\s*[A-Z]{1,5})*(?:\s+(?:and|&)\s*[A-Z]{1,5})?)", re.IGNORECASE),
 ]
+
+
+async def validate_ticker_via_mcp(mcp, ticker: str) -> tuple[bool, str, str]:
+    """Call MCP validate_ticker. Returns (valid, canonical_ticker, company_name_or_error). Raises on MCP failure."""
+    result = await mcp.call_tool_by_name("validate_ticker", {"ticker": ticker})
+    if hasattr(result, "content"):
+        for item in result.content:
+            try:
+                v = json.loads(item.text if hasattr(item, "text") else str(item))
+                if v.get("valid"):
+                    return True, v.get("ticker", ticker), v.get("company_name", "")
+                return False, ticker, v.get("error", "Ticker not found in SEC database")
+            except Exception:
+                continue
+    return False, ticker, "Ticker not found in SEC database"
+
+
+async def resolve_ticker_via_mcp(mcp, query: str, exclude_ticker: str = "") -> tuple[str, str]:
+    """Call MCP resolve_company_ticker. Returns (ticker, company_name). Raises on MCP failure."""
+    cleaned = clean_query_for_resolution(query)
+    if exclude_ticker:
+        cleaned = cleaned.replace(exclude_ticker, "").strip()
+    if not cleaned:
+        cleaned = query
+    result = await mcp.call_tool_by_name("resolve_company_ticker", {"text": cleaned})
+    if hasattr(result, "content"):
+        for item in result.content:
+            try:
+                v = json.loads(item.text if hasattr(item, "text") else str(item))
+                ticker = v.get("ticker", "")
+                if ticker and is_valid_ticker_format(ticker):
+                    return ticker, v.get("company_name", "")
+            except Exception:
+                continue
+    return "", ""
 
 
 def extract_holdings(query: str, exclude_ticker: str = "") -> list[str]:

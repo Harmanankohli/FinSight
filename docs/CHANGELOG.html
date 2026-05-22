@@ -36,6 +36,23 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 
 <h1>Changelog</h1>
 
+<h2>v1.17 &mdash; Centralized File Logging</h2>
+<ul>
+<li><strong><code>shared/logging_config.py</code> added</strong>: <code>setup_file_logging(service_name)</code> configures the root logger with a <code>StreamHandler</code> (stderr) and a <code>RotatingFileHandler</code> (10 MB, 5 backups). Safe to call multiple times &mdash; duplicate handlers are skipped.</li>
+<li><strong>All services write to <code>logs/</code></strong>: Orchestrator &rarr; <code>logs/orchestrator.log</code>, RAG &rarr; <code>logs/rag_agent.log</code>, Quant &rarr; <code>logs/quant.log</code>, Sentiment &rarr; <code>logs/sentiment.log</code>, MCP &rarr; <code>logs/mcp.log</code>. Directory created automatically if absent.</li>
+<li><strong><code>memory_callback.log</code> moved to <code>logs/</code></strong>: Was written to the project root; now at <code>logs/memory_callback.log</code>.</li>
+<li><strong><code>basicConfig</code> removed from all servers</strong>: Replaced by module-level <code>setup_file_logging(...)</code> so logging is configured whether the server is imported (uvicorn) or run directly.</li>
+</ul>
+
+<h2>v1.16 &mdash; Code Streamlining &amp; Bug Fixes</h2>
+<ul>
+<li><strong>Ticker validation consolidated</strong>: <code>_validate_ticker()</code> and <code>_resolve_ticker()</code> were copy-pasted verbatim (~108 LOC) across all three sub-agent executors. Extracted as <code>validate_ticker_via_mcp(mcp, ticker)</code> and <code>resolve_ticker_via_mcp(mcp, query, exclude_ticker)</code> in <code>shared/ticker_utils.py</code>. Each agent&rsquo;s methods are now ~7-line wrappers.</li>
+<li><strong>Dead config vars removed from <code>shared/config.py</code></strong>: <code>RAG_AGENT_URL</code>, <code>QUANT_AGENT_URL</code>, <code>SENTIMENT_AGENT_URL</code> (superseded by <code>AGENT_SEED_URLS</code>) and <code>ORCHESTRATOR_PORT</code>, <code>RAG_PORT</code>, <code>QUANT_PORT</code>, <code>SENTIMENT_PORT</code> (hardcoded in each server file, never imported from config).</li>
+<li><strong><code>import json</code> inside loops fixed</strong>: <code>agent_3_langgraph/executor.py</code> and <code>agent_4_crewai/executor.py</code> had <code>import json</code> inside <code>try</code> blocks inside loops; hoisted to module level.</li>
+<li><strong>RAG agent MCP connection refactored</strong>: Inline connect pattern repeated in <code>_ensure_ingested</code>, <code>_validate_ticker</code>, and <code>_resolve_ticker</code> consolidated into a single <code>_ensure_mcp_connected()</code> helper.</li>
+<li><strong>Correlation matrix auto-trigger fixed</strong>: Stored portfolio holdings from memory context were silently injected into every query, causing the quant agent to compute a full correlation matrix even for single-ticker requests. Fixed by (1) labelling the memory-context portfolio line as background reference and (2) updating the orchestrator prompt to only pass holdings to the quant agent when the user explicitly requests portfolio correlation in their current message.</li>
+</ul>
+
 <h2>v1.15 &mdash; Dead Code Cleanup</h2>
 <ul>
 <li><strong><code>shared/types.py</code> removed</strong>: <code>ServerConfig</code>, <code>PlannerTask</code>, <code>TaskList</code>, <code>AgentResponse</code> &mdash; none imported or referenced</li>

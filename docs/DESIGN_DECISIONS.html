@@ -198,6 +198,11 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <h2>Ticker Extraction Decoupled from SEC Validation</h2>
 <p>Pure regex extraction, MCP-based validation, first-match heuristic, validation fallback to resolution, ticker format gate.</p>
 
+<h3>Consolidating <code>_validate_ticker</code> / <code>_resolve_ticker</code> Across Agents (v1.16)</h3>
+<p><strong>Problem</strong>: The MCP call + JSON-parsing logic was copy-pasted verbatim (~108 LOC) across all three sub-agent executors. A bug fix had to be applied in three places with no consistency guarantee.</p>
+<p><strong>Solution</strong>: Extracted <code>validate_ticker_via_mcp(mcp, ticker)</code> and <code>resolve_ticker_via_mcp(mcp, query, exclude_ticker)</code> into <code>shared/ticker_utils.py</code>. Each agent&rsquo;s wrapper methods are now ~7 lines handling their own connection logic, then delegating the MCP call to the shared functions.</p>
+<p><strong>Why keep wrapper methods?</strong> Each agent connects to MCP differently (RAG uses <code>_ensure_mcp_connected()</code>, Quant uses <code>_ensure_connected()</code>, Sentiment uses <code>_connect()</code>). Thin wrappers preserve per-agent connection semantics and leave <code>stream()</code> unchanged.</p>
+
 <h2>Financial Filings Tool</h2>
 <p><code>get_financial_filings()</code> fetches 10-K and 10-Q separately to avoid 8-K domination.</p>
 
@@ -215,6 +220,22 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 
 <h2>Portfolio Holdings Extraction</h2>
 <p>Four regex patterns in <code>extract_holdings()</code>. Holdings passed through the chain. Orchestrator LLM instructed to include holdings. Helpful notes instead of empty <code>{}</code>.</p>
+
+<h3>Correlation Matrix Auto-Trigger via Memory Context (v1.16 Fix)</h3>
+<p><strong>Problem</strong>: <code>_build_memory_context()</code> appended stored portfolio holdings as <code>"User portfolio: GOOGL, AAPL, META, MSFT"</code> to every query. The orchestrator prompt said &ldquo;if the user mentions portfolio holdings, include them in the Quant agent task&rdquo; &mdash; the LLM treated the memory line as an explicit user mention and triggered a full correlation matrix even for single-ticker queries.</p>
+<p><strong>Root cause</strong>: No distinction between &ldquo;user said this right now&rdquo; vs &ldquo;system recalled this from memory&rdquo;. Memory context and direct user input were semantically indistinguishable to the LLM.</p>
+<p><strong>Fix (two-pronged)</strong>:</p>
+<ol>
+<li><strong>Label the memory line explicitly</strong>: Changed to <code>"Background &mdash; user's known holdings (do NOT include for portfolio correlation unless the user explicitly requests it...)"</code></li>
+<li><strong>Update the orchestrator prompt</strong>: Step 4 now says &ldquo;only if the user EXPLICITLY mentions their portfolio in their CURRENT message &mdash; do NOT include holdings from memory context background lines&rdquo;</li>
+</ol>
+<p><strong>Why two changes?</strong> The label alone relies on the LLM parsing a long inline instruction inside injected text. The prompt change alone could be overridden by the memory line&rsquo;s phrasing. Together they create redundant clarity at both data and instruction levels.</p>
+
+<h2>File Logging Design</h2>
+<p><strong>Problem</strong>: Services started via <code>uvicorn</code> never configured logging (sub-agent <code>server.py</code> files only called <code>basicConfig</code> inside <code>if __name__ == "__main__":</code>). No log files were written; <code>memory_callback.log</code> was written to the project root.</p>
+<p><strong>Solution</strong>: <code>shared/logging_config.py</code> provides <code>setup_file_logging(service_name)</code> &mdash; attaches a <code>RotatingFileHandler</code> (10 MB, 5 backups) and <code>StreamHandler</code> to the root logger, creates <code>logs/</code> if absent, guards against duplicate registration. Called at module level in each server so logging is configured regardless of how the process starts.</p>
+<p><strong>Why <code>RotatingFileHandler</code> not <code>TimedRotatingFileHandler</code>?</strong> Services generate bursts of logs during queries then go idle &mdash; time-based rotation creates many small empty files. Size-based rotation (10 MB &times; 5 = 50 MB per service) is simpler and sufficient for development usage.</p>
+<p><strong>Why not <code>logging.config.dictConfig</code>?</strong> A dict config moves complexity without removing it. A single function call with a service name is the simplest interface that solves the problem.</p>
 
 <h2>Langfuse Span Noise Filtering</h2>
 <p>Uses <code>is_default_export_span</code> helper. Filters A2A internal spans and HTTPX transport spans. Exports only high-level workflow and LLM spans.</p>

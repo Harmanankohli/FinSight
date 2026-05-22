@@ -106,7 +106,9 @@ A2A Request → DefaultRequestHandler → GenericAgentExecutor(QuantAgent)
   → Yields data response with dcf_error in result
 ```
 
-**Portfolio Holdings Extraction**: `stream()` uses `extract_holdings(query, exclude_ticker=ticker)` from `shared/ticker_utils.py` to extract holdings from natural language (e.g. "My portfolio holds AAPL, MSFT, GOOGL"). The orchestrator LLM is instructed to include holdings in the task text for the Quant agent. Holdings are passed through the full chain: `stream()` → `analyze()` → `graph.run()` → `correlation_node`.
+**Portfolio Holdings Extraction**: `stream()` uses `extract_holdings(query, exclude_ticker=ticker)` from `shared/ticker_utils.py` to extract holdings from natural language (e.g. "My portfolio holds AAPL, MSFT, GOOGL"). Holdings are passed through the full chain: `stream()` → `analyze()` → `graph.run()` → `correlation_node`.
+
+**Correlation only on explicit request**: The orchestrator prompt instructs the LLM to include holdings in the quant agent task only when the user explicitly mentions portfolio holdings or asks for correlation in their current message. Memory context portfolio lines are labelled as background reference so the LLM does not auto-include them for every single-ticker query.
 
 **Correlation Matrix Notes**: When no holdings are provided, returns `{"note": "No portfolio holdings provided..."}` instead of `{}`. When price data is insufficient or computation fails, returns a descriptive error.
 
@@ -276,7 +278,7 @@ User Query → Executor._inject_memory_context(query)
 
 The memory context is compact (~300 tokens) and includes:
 - Latest recommendation for the queried ticker (if exists)
-- Current portfolio holdings (if any)
+- Current portfolio holdings (labelled as background reference — not forwarded to sub-agents unless user explicitly requests portfolio analysis)
 - Timestamp of last interaction
 
 ### Component Architecture
@@ -288,6 +290,26 @@ The memory context is compact (~300 tokens) and includes:
 | `PortfolioStore` | `shared/memory/portfolio_store.py` | User profile, holdings persistence, risk profile |
 | `PerformanceTracker` | `shared/memory/performance_tracker.py` | Recommendation outcome tracking, accuracy evaluation |
 | `SQLiteMemoryService` | `shared/memory/memory_service.py` | ADK `BaseMemoryService` implementation for `load_memory` tool |
+
+## File Logging
+
+All services write structured logs to the `logs/` directory via `shared/logging_config.py`:
+
+```python
+from shared.logging_config import setup_file_logging
+setup_file_logging("orchestrator")  # → logs/orchestrator.log
+```
+
+`setup_file_logging(service_name)` attaches a `RotatingFileHandler` (10 MB max, 5 backups) and a `StreamHandler` to the root logger. It is called at module level in each server entry point so logging is configured whether the process is started via uvicorn or run directly. Duplicate handler registration is guarded.
+
+| Service | Log file |
+|---|---|
+| Orchestrator | `logs/orchestrator.log` |
+| RAG Agent | `logs/rag_agent.log` |
+| Quant Agent | `logs/quant.log` |
+| Sentiment Agent | `logs/sentiment.log` |
+| MCP Server | `logs/mcp.log` |
+| Memory callback | `logs/memory_callback.log` |
 
 ### SQLite Schema
 

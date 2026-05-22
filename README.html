@@ -46,7 +46,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <li><strong>Multi-framework orchestration</strong>: Google ADK orchestrator delegates to LlamaIndex (RAG), LangGraph (Quant), and CrewAI (Sentiment) agents</li>
 <li><strong>A2A protocol</strong>: Standard-compliant agent discovery and streaming communication via JSON-RPC over HTTP</li>
 <li><strong>Persistent memory layer</strong>: SQLite-backed session storage, cross-session memory search, ticker brief history, portfolio persistence, and recommendation tracking</li>
-<li><strong>Portfolio correlation analysis</strong>: Extract holdings from natural language and compute cross-stock correlation matrices</li>
+<li><strong>Portfolio correlation analysis</strong>: When you explicitly mention portfolio holdings (e.g. &ldquo;My portfolio holds AAPL, MSFT&rdquo;), the quant agent computes cross-stock correlation matrices alongside the primary analysis</li>
 <li><strong>Distributed tracing</strong>: Langfuse traces span all four agent processes in a single trace tree via text-based context propagation</li>
 <li><strong>Local LLM inference</strong>: All agents use LM Studio (OpenAI-compatible API) &mdash; no cloud dependencies</li>
 <li><strong>MCP data tools</strong>: Unified server providing SEC filings, price data, financials, news sentiment, and more</li>
@@ -166,7 +166,7 @@ uv run python -m uvicorn agent_4_crewai.server:app --host 0.0.0.0 --port 8004
 
 <h2>Testing</h2>
 <pre>uv run pytest -v</pre>
-<p>64 tests covering: A2A discovery, agent card validation, orchestrator tools, sub-agent executors, LangGraph state graphs, RAG pipelines, CrewAI integration, workflow state machines, distributed trace propagation, portfolio holdings extraction, and persistent memory layer.</p>
+<p>64 tests covering: A2A discovery, agent card validation, orchestrator tools, sub-agent executors, LangGraph state graphs, RAG pipelines, CrewAI integration, distributed trace propagation, portfolio holdings extraction, and persistent memory layer.</p>
 
 <hr>
 <p style="font-size:.85rem;color:#888">Apache 2.0 License</p>

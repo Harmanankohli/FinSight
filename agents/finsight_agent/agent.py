@@ -11,7 +11,9 @@ from agent_1_adk.agent import root_agent
 __all__ = ["root_agent"]
 
 logger = logging.getLogger(__name__)
-_LOG_FILE = Path(__file__).resolve().parent.parent.parent / "memory_callback.log"
+_LOGS_DIR = Path(__file__).resolve().parent.parent.parent / "logs"
+_LOGS_DIR.mkdir(exist_ok=True)
+_LOG_FILE = _LOGS_DIR / "memory_callback.log"
 
 
 async def _persist_memory_callback(callback_context) -> None:

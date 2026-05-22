@@ -40,5 +40,7 @@ tools/
 
 # Docs
 AGENTS.md
+AGENTS.html
+Claude.md
 graphify-out
 .opencode

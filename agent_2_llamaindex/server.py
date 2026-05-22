@@ -15,8 +15,10 @@ from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
 from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
 
+from shared.logging_config import setup_file_logging
 from shared.observability import init_langfuse, shutdown_langfuse
 
+setup_file_logging("rag_agent")
 init_langfuse(service_name="rag_agent")
 atexit.register(shutdown_langfuse)
 from openinference.instrumentation.llama_index import LlamaIndexInstrumentor
@@ -82,5 +84,4 @@ routes.extend(create_jsonrpc_routes(request_handler, "/a2a"))
 app = Starlette(routes=routes, debug=True)
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
     uvicorn.run(app, host="0.0.0.0", port=8002)

@@ -33,6 +33,8 @@ from shared.observability import init_langfuse, shutdown_langfuse
 init_langfuse(service_name="mcp_server")
 atexit.register(shutdown_langfuse)
 
+from shared.logging_config import setup_file_logging
+setup_file_logging("mcp")
 logger = logging.getLogger(__name__)
 app = FastMCP("finsight-mcp")
 
@@ -1559,5 +1561,4 @@ def get_app():
 
 if __name__ == "__main__":
     import uvicorn
-    logging.basicConfig(level=logging.INFO)
     uvicorn.run(get_app(), host=HOST, port=PORT)

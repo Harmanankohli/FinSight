@@ -31,7 +31,8 @@ from shared.config import ADK_MODEL
 from .agent import root_agent
 from .agent_executor import FinSightAgentExecutor
 
-logging.basicConfig(level=logging.INFO)
+from shared.logging_config import setup_file_logging
+setup_file_logging("orchestrator")
 logger = logging.getLogger(__name__)
 
 HOST = os.environ.get("HOST", "localhost")

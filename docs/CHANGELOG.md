@@ -1,5 +1,20 @@
 # Changelog
 
+## v1.17 — Centralized File Logging
+
+- **`shared/logging_config.py` added**: `setup_file_logging(service_name)` configures the root logger with a `StreamHandler` (stderr) and a `RotatingFileHandler` (10 MB, 5 backups). Safe to call multiple times — duplicate handlers are skipped.
+- **All services write to `logs/`**: Orchestrator → `logs/orchestrator.log`, RAG → `logs/rag_agent.log`, Quant → `logs/quant.log`, Sentiment → `logs/sentiment.log`, MCP → `logs/mcp.log`. Directory is created automatically if absent.
+- **`memory_callback.log` moved to `logs/`**: Was written to the project root; now at `logs/memory_callback.log`.
+- **`basicConfig` removed from all servers**: Stale `logging.basicConfig(level=logging.INFO)` calls replaced by module-level `setup_file_logging(...)`, so logging is configured whether the server is imported (uvicorn) or run directly.
+
+## v1.16 — Code Streamlining & Bug Fixes
+
+- **Ticker validation consolidated**: `_validate_ticker()` and `_resolve_ticker()` were copy-pasted verbatim (~108 LOC) across all three sub-agent executors. Extracted as `validate_ticker_via_mcp(mcp, ticker)` and `resolve_ticker_via_mcp(mcp, query, exclude_ticker)` in `shared/ticker_utils.py`. Each agent's methods are now ~7-line wrappers.
+- **Dead config vars removed from `shared/config.py`**: `RAG_AGENT_URL`, `QUANT_AGENT_URL`, `SENTIMENT_AGENT_URL` (superseded by `AGENT_SEED_URLS`) and `ORCHESTRATOR_PORT`, `RAG_PORT`, `QUANT_PORT`, `SENTIMENT_PORT` (hardcoded in each server file, never imported from config).
+- **`import json` inside loops fixed**: `agent_3_langgraph/executor.py` and `agent_4_crewai/executor.py` had `import json` inside `try` blocks inside loops; hoisted to module level.
+- **RAG agent MCP connection refactored**: Inline connect pattern repeated in `_ensure_ingested`, `_validate_ticker`, and `_resolve_ticker` consolidated into a single `_ensure_mcp_connected()` helper.
+- **Correlation matrix auto-trigger fixed**: Stored portfolio holdings from memory context were silently injected into every query, causing the quant agent to compute a full correlation matrix even for single-ticker requests. Fixed by (1) labelling the memory-context portfolio line as background reference and (2) updating the orchestrator prompt to only pass holdings to the quant agent when the user explicitly requests portfolio correlation in their current message.
+
 ## v1.15 — Dead Code Cleanup
 
 - **`shared/types.py` removed**: Defined `ServerConfig`, `PlannerTask`, `TaskList`, `AgentResponse` — none were imported or referenced by any file in the project. These types were superseded by models in `shared/models.py`.

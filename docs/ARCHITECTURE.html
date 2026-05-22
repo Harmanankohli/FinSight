@@ -124,6 +124,7 @@ A2A Request &rarr; FinSightAgentExecutor.execute()
       &rarr; portfolio_correlation
       &rarr; format_output &rarr; llm_summary
   &rarr; Yields data response with dcf_error in result</pre>
+<p><strong>Correlation only on explicit request</strong>: The orchestrator prompt instructs the LLM to include holdings in the quant agent task only when the user explicitly mentions portfolio holdings or asks for correlation in their current message. Memory context portfolio lines are labelled as background reference so they do not auto-trigger correlation for single-ticker queries.</p>
 
 <h3>Sentiment Agent (CrewAI)</h3>
 <pre>A2A Request &rarr; DefaultRequestHandler &rarr; GenericAgentExecutor(SentimentAgent)
@@ -215,8 +216,9 @@ Sub-agents
 <pre>User Query &rarr; Executor._inject_memory_context(query)
   &rarr; extract_ticker(query) &rarr; "NVDA"
   &rarr; TickerMemory.get_latest("NVDA") &rarr; last recommendation
-  &rarr; PortfolioStore.get() &rarr; current holdings
+  &rarr; PortfolioStore.get() &rarr; current holdings (background reference label)
   &rarr; Prepend: [MEMORY CONTEXT] ... [/MEMORY CONTEXT]</pre>
+<p>Portfolio holdings in memory context are labelled as background reference. The orchestrator LLM is instructed not to forward them to sub-agents unless the user explicitly requests portfolio analysis in their current message.</p>
 
 <h3>Database Schema</h3>
 <pre>sessions (id, user_id, created_at, updated_at)
@@ -228,6 +230,21 @@ memory_entries (id, session_id, content_hash, content, created_at)</pre>
 
 <h3>Auto-Save Flow</h3>
 <p>After each successful response, the executor automatically persists to TickerMemory, PortfolioStore, and PerformanceTracker. No LLM tool call required.</p>
+
+<h2>File Logging</h2>
+<p>All services write structured logs to the <code>logs/</code> directory via <code>shared/logging_config.py</code>:</p>
+<pre>from shared.logging_config import setup_file_logging
+setup_file_logging("orchestrator")  # &rarr; logs/orchestrator.log</pre>
+<p><code>setup_file_logging(service_name)</code> attaches a <code>RotatingFileHandler</code> (10 MB, 5 backups) and a <code>StreamHandler</code> to the root logger at module level in each server entry point. Duplicate handler registration is guarded.</p>
+<table>
+<tr><th>Service</th><th>Log file</th></tr>
+<tr><td>Orchestrator</td><td><code>logs/orchestrator.log</code></td></tr>
+<tr><td>RAG Agent</td><td><code>logs/rag_agent.log</code></td></tr>
+<tr><td>Quant Agent</td><td><code>logs/quant.log</code></td></tr>
+<tr><td>Sentiment Agent</td><td><code>logs/sentiment.log</code></td></tr>
+<tr><td>MCP Server</td><td><code>logs/mcp.log</code></td></tr>
+<tr><td>Memory callback</td><td><code>logs/memory_callback.log</code></td></tr>
+</table>
 
 <hr>
 <p style="font-size:.85rem;color:#888"><a href="index.html">Back to docs hub</a></p>

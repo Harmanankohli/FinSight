@@ -25,17 +25,8 @@ RERANKER_MODEL = os.environ.get("RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM
 # Host
 HOST = os.environ.get("HOST", "localhost")
 
-# Agent URLs
-RAG_AGENT_URL = os.environ.get("RAG_AGENT_URL", "http://localhost:8002")
-QUANT_AGENT_URL = os.environ.get("QUANT_AGENT_URL", "http://localhost:8003")
-SENTIMENT_AGENT_URL = os.environ.get("SENTIMENT_AGENT_URL", "http://localhost:8004")
+# Agent discovery
 AGENT_SEED_URLS = os.environ.get("AGENT_SEED_URLS", "http://localhost:8002,http://localhost:8003,http://localhost:8004")
-
-# Ports
-ORCHESTRATOR_PORT = int(os.environ.get("ORCHESTRATOR_PORT", "8001"))
-RAG_PORT = int(os.environ.get("RAG_PORT", "8002"))
-QUANT_PORT = int(os.environ.get("QUANT_PORT", "8003"))
-SENTIMENT_PORT = int(os.environ.get("SENTIMENT_PORT", "8004"))
 
 # MCP
 MCP_TIMEOUT = float(os.environ.get("MCP_TIMEOUT", "30.0"))
