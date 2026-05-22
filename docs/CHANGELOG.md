@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.19 — MCP Connection Cleanup & Server Script Fixes
+
+### MCP Connection Cleanup
+
+- **`_disconnect()` added to all sub-agent executors** (`agent_2_llamaindex/executor.py`, `agent_3_langgraph/executor.py`, `agent_4_crewai/executor.py`): New `async def _disconnect()` method calls `mcp.disconnect_all()` in a `try/finally` block, ensuring MCP sockets close gracefully after each analysis stream completes. Prevents `ConnectionResetError: [WinError 10054]` on Windows caused by lingering async sockets.
+- **Orchestrator temporary MCP cleanup** (`agent_1_adk/agent_executor.py`): Pre-flight ticker validation's temporary MCP connection now wrapped in `try/finally` with `await _mcp.disconnect_all()` in the `finally` block.
+- **All four agents disconnect MCP after stream**: Quant, RAG, Sentiment agents call `await self._disconnect()` in their `finally` blocks. Orchestrator cleans up the ticker-validation MCP client after use.
+
+### Server Script Fixes
+
+- **`run_adk_web.bat`**: Changed `cmd /c` to `cmd /k` for all server start commands — terminal windows stay open if a server crashes, allowing error inspection.
+- **`stop_servers.bat`**: Rewrote window-closing logic. Switched from unreliable `taskkill /fi "WINDOWTITLE eq"` to PowerShell `Get-Process cmd | Where-Object { $_.MainWindowTitle -like 'FinSight*' } | Stop-Process -Force`, which reliably closes terminal windows by title.
+
+### Bug Fixes
+
+- **Date placeholder removed from ADK prompt** (`agent_1_adk/agent.py`): Removed `{date}` template variable from the orchestrator system prompt — the date was not being populated, leaving a raw `{date}` string visible in the LLM context.
+
 ## v1.18 — Caching, Guardrails, Evaluation & Observability
 
 ### Caching

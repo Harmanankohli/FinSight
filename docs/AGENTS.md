@@ -14,7 +14,7 @@
 The orchestrator uses a single `LlmAgent` with one `send_message` tool. The LLM delegates tasks to sub-agents by name and synthesizes results:
 
 1. **Discovers agents in background** via `SubAgentClient.discover()` — async `A2ACardResolver` with retries
-2. **Input guardrails** — Off-topic queries rejected in < 100 ms via `_NON_INVESTMENT_RE`. Invalid tickers rejected in < 2 s via pre-flight MCP `validate_ticker` call before any sub-agent is invoked.
+2. **Input guardrails** — Off-topic queries rejected in < 100 ms via `_NON_INVESTMENT_RE`. Invalid tickers rejected in < 2 s via pre-flight MCP `validate_ticker` call before any sub-agent is invoked. Temporary MCP connection for validation is cleaned up in a `finally` block via `await _mcp.disconnect_all()`.
 3. **Semantic cache** — When `SEMANTIC_CACHE_ENABLED=true`, similar queries (cosine ≥ 0.95) return cached responses without running the orchestrator.
 4. **Memory context injection** — Before each query, extracts ticker from user input, retrieves latest recommendation from `TickerMemory`, and prepends it to the user message (~300 token budget)
 5. **LLM routes to agents** — LLM calls `send_message(agent_name, task)` for each sub-agent. Parallel with qwen; sequential with other models. Each call measured with `time.monotonic()` and emitted as a Langfuse latency span.
@@ -120,6 +120,7 @@ Request → DefaultRequestHandler → GenericAgentExecutor(RAGAgent)
       ├── Try: RouterQueryEngine → LM Studio LLM → response
       └── Fallback: SEC filings index directly
   → Yields: {response_type: "data", content: result, is_task_complete: true}
+  → finally: await self._disconnect() — closes MCP sockets gracefully
 ```
 
 ---
@@ -158,6 +159,7 @@ Request → DefaultRequestHandler → GenericAgentExecutor(QuantAgent)
         → format_output (dcf_error in reasoning) → llm_summary
   → Yields: {response_type: "data", content: result, is_task_complete: true}
       Result includes dcf_error field when DCF is skipped
+  → finally: await self._disconnect() — closes MCP sockets gracefully
 ```
 
 **Portfolio Holdings Extraction**: `extract_holdings()` in `shared/ticker_utils.py` uses regex patterns to extract holdings from natural language (e.g. "My portfolio holds AAPL, MSFT, GOOGL"). The orchestrator LLM is instructed to include holdings in the task text for the Quant agent. Holdings are passed through the full chain and used by `correlation_node` to compute a correlation matrix.
@@ -202,4 +204,5 @@ Request → DefaultRequestHandler → GenericAgentExecutor(SentimentAgent)
           ├── Analysis Agent
           └── Synthesis Agent
   → Yields: {response_type: "data", content: result, is_task_complete: true}
+  → finally: await self._disconnect() — closes MCP sockets gracefully
 ```

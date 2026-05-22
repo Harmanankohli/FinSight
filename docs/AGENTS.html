@@ -52,7 +52,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <p>The orchestrator uses a single <code>LlmAgent</code> with one <code>send_message</code> tool. The LLM delegates tasks to sub-agents by name and synthesizes results:</p>
 <ol>
 <li><strong>Discovers agents in background</strong> via <code>SubAgentClient.discover()</code> &mdash; async <code>A2ACardResolver</code> with retries</li>
-<li><strong>Input guardrails</strong> &mdash; Off-topic queries rejected in &lt; 100 ms via <code>_NON_INVESTMENT_RE</code>. Invalid tickers rejected in &lt; 2 s via pre-flight MCP <code>validate_ticker</code> call before any sub-agent is invoked.</li>
+<li><strong>Input guardrails</strong> &mdash; Off-topic queries rejected in &lt; 100 ms via <code>_NON_INVESTMENT_RE</code>. Invalid tickers rejected in &lt; 2 s via pre-flight MCP <code>validate_ticker</code> call before any sub-agent is invoked. Temporary MCP connection for validation is cleaned up in a <code>finally</code> block via <code>await _mcp.disconnect_all()</code>.</li>
 <li><strong>Semantic cache</strong> &mdash; When <code>SEMANTIC_CACHE_ENABLED=true</code>, similar queries (cosine &ge; 0.95) return cached responses without running the orchestrator.</li>
 <li><strong>Memory context injection</strong> &mdash; Before each query, extracts ticker from user input, retrieves latest recommendation from <code>TickerMemory</code>, and prepends it to the user message (~300 token budget)</li>
 <li><strong>LLM routes to agents</strong> &mdash; LLM calls <code>send_message(agent_name, task)</code> for each sub-agent. Parallel with qwen; sequential with other models. Each call measured with <code>time.monotonic()</code> and emitted as a Langfuse latency span.</li>
@@ -145,7 +145,8 @@ Body:
     &rarr; FinancialIndexManager.query(ticker, query)
       &rarr; Try: RouterQueryEngine &rarr; LM Studio LLM &rarr; response
       &rarr; Fallback: SEC filings index directly
-  &rarr; Yields: {response_type: "data", content: result, is_task_complete: true}</pre>
+  &rarr; Yields: {response_type: "data", content: result, is_task_complete: true}
+  &rarr; finally: await self._disconnect() &mdash; closes MCP sockets gracefully</pre>
 
 <hr>
 
@@ -180,7 +181,8 @@ Body:
       &rarr; portfolio_correlation (fetches prices for target + each holding)
         &rarr; format_output (dcf_error in reasoning) &rarr; llm_summary
   &rarr; Yields: {response_type: "data", content: result, is_task_complete: true}
-      Result includes dcf_error field when DCF is skipped</pre>
+      Result includes dcf_error field when DCF is skipped
+  &rarr; finally: await self._disconnect() &mdash; closes MCP sockets gracefully</pre>
 
 <p><strong>Portfolio Holdings Extraction</strong>: <code>extract_holdings()</code> in <code>shared/ticker_utils.py</code> uses regex patterns to extract holdings from natural language (e.g. &ldquo;My portfolio holds AAPL, MSFT, GOOGL&rdquo;). The orchestrator LLM is instructed to include holdings in the task text for the Quant agent. Holdings are passed through the full chain and used by <code>correlation_node</code> to compute a correlation matrix.</p>
 
@@ -221,7 +223,8 @@ Body:
       &rarr; SentimentIntelligenceCrew.analyze(ticker, precollected_data)
         &rarr; Analysis Agent
         &rarr; Synthesis Agent
-  &rarr; Yields: {response_type: "data", content: result, is_task_complete: true}</pre>
+  &rarr; Yields: {response_type: "data", content: result, is_task_complete: true}
+  &rarr; finally: await self._disconnect() &mdash; closes MCP sockets gracefully</pre>
 
 <hr>
 <p style="font-size:.85rem;color:#888"><a href="index.html">Back to docs hub</a></p>
