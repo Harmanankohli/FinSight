@@ -234,6 +234,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <h3>14. Windows ConnectionResetError Noise</h3>
 <p><code>ConnectionResetError: [WinError 10054]</code> on Windows after successful A2A calls. Caused by ProactorEventLoop shutting down sockets already closed by the remote side.</p>
 <p><strong>Fix</strong>: <code>asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())</code> on Windows.</p>
+<p><strong>v1.19 complement</strong>: All sub-agent executors now call <code>await self._disconnect()</code> &rarr; <code>mcp.disconnect_all()</code> in a <code>finally</code> block after each stream. This prevents lingering MCP sockets from triggering the error regardless of event loop policy.</p>
 
 <h3>15. AgentCard Protobuf &mdash; No <code>url</code> Field</h3>
 <p><strong>Problem</strong>: The SDK's <code>AgentCard</code> is a protobuf message with no <code>url</code> field. Construction like <code>AgentCard(url="http://...")</code> raises <code>ValueError</code>.</p>

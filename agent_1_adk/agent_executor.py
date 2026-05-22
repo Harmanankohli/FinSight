@@ -100,6 +100,7 @@ class FinSightAgentExecutor(AgentExecutor):
 
         # ── Input Guardrail: invalid ticker pre-check ────────────────────────
         if ticker_hint != "unknown":
+            _mcp = None
             try:
                 from shared.mcp_client import MCPClient, MCPServerConfig
                 from shared.config import MCP_SERVER_URL
@@ -127,6 +128,14 @@ class FinSightAgentExecutor(AgentExecutor):
                         return
             except Exception as _e:
                 logger.debug("Ticker pre-check failed (non-fatal): %s", _e)
+            finally:
+                # Clean up temporary MCP connection
+                if _mcp is not None:
+                    try:
+                        await _mcp.disconnect_all()
+                        logger.debug("Temporary MCP connection closed")
+                    except Exception as cleanup_err:
+                        logger.debug("MCP cleanup error (non-critical): %s", cleanup_err)
 
         # ── Semantic cache check ─────────────────────────────────────────────
         sc = _get_semantic_cache()

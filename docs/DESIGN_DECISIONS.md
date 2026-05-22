@@ -220,6 +220,8 @@ MCP resource-based agent card discovery is pending future work.
 
 **Fix**: `asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())` on Windows.
 
+**v1.19 complement**: All sub-agent executors now call `await self._disconnect()` → `mcp.disconnect_all()` in a `finally` block after each stream. This prevents lingering MCP sockets from triggering the error regardless of event loop policy.
+
 ### 15. AgentCard Protobuf — No `url` Field
 
 **Problem**: The SDK's `AgentCard` is a protobuf message with no `url` field. Construction like `AgentCard(url="http://...")` raises `ValueError`.

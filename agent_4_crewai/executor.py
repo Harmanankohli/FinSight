@@ -32,6 +32,17 @@ class SentimentAgent(BaseAgent):
             await self._mcp.connect_all()
             self._connected = True
 
+    async def _disconnect(self):
+        """Gracefully disconnect MCP client to prevent connection errors."""
+        if self._connected and self._mcp:
+            try:
+                await self._mcp.disconnect_all()
+                logger.debug("MCP client disconnected gracefully")
+            except Exception as e:
+                logger.debug("Error during MCP disconnect (non-critical): %s", e)
+            finally:
+                self._connected = False
+
     async def _collect_data_parallel(self, ticker: str) -> dict:
         results = {}
 
@@ -167,3 +178,5 @@ class SentimentAgent(BaseAgent):
                 }
         finally:
             span.end()
+            # Gracefully disconnect MCP client after stream completes
+            await self._disconnect()

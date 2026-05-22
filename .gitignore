@@ -6,6 +6,8 @@ dist/
 .venv/
 venv/
 *.egg
+.claude
+.git
 
 # Environment
 .env
@@ -27,6 +29,7 @@ chroma_db/
 finsight_memory.db
 finsight_memory.db-wal
 finsight_memory.db-shm
+.langchain_cache.db
 
 # OS
 .DS_Store
@@ -44,3 +47,10 @@ AGENTS.html
 CLAUDE.md
 graphify-out
 .opencode
+.claude/
+.mcp.json
+.langchain_cache.db
+.claude/
+.mcp.json
+.langchain_cache.db
+.mcp.json

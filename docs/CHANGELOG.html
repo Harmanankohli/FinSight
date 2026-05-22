@@ -36,6 +36,26 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 
 <h1>Changelog</h1>
 
+<h2>v1.19 &mdash; MCP Connection Cleanup &amp; Server Script Fixes</h2>
+
+<h3 class="version">MCP Connection Cleanup</h3>
+<ul>
+<li><strong><code>_disconnect()</code> added to all sub-agent executors</strong> (<code>agent_2_llamaindex/executor.py</code>, <code>agent_3_langgraph/executor.py</code>, <code>agent_4_crewai/executor.py</code>): New <code>async def _disconnect()</code> method calls <code>mcp.disconnect_all()</code> in a <code>try/finally</code> block, ensuring MCP sockets close gracefully after each analysis stream completes. Prevents <code>ConnectionResetError: [WinError 10054]</code> on Windows caused by lingering async sockets.</li>
+<li><strong>Orchestrator temporary MCP cleanup</strong> (<code>agent_1_adk/agent_executor.py</code>): Pre-flight ticker validation's temporary MCP connection now wrapped in <code>try/finally</code> with <code>await _mcp.disconnect_all()</code> in the <code>finally</code> block.</li>
+<li><strong>All four agents disconnect MCP after stream</strong>: Quant, RAG, Sentiment agents call <code>await self._disconnect()</code> in their <code>finally</code> blocks. Orchestrator cleans up the ticker-validation MCP client after use.</li>
+</ul>
+
+<h3 class="version">Server Script Fixes</h3>
+<ul>
+<li><strong><code>run_adk_web.bat</code></strong>: Changed <code>cmd /c</code> to <code>cmd /k</code> for all server start commands &mdash; terminal windows stay open if a server crashes, allowing error inspection.</li>
+<li><strong><code>stop_servers.bat</code></strong>: Rewrote window-closing logic. Switched from unreliable <code>taskkill /fi "WINDOWTITLE eq"</code> to PowerShell <code>Get-Process cmd | Where-Object { $_.MainWindowTitle -like 'FinSight*' } | Stop-Process -Force</code>, which reliably closes terminal windows by title.</li>
+</ul>
+
+<h3 class="version">Bug Fixes</h3>
+<ul>
+<li><strong>Date placeholder removed from ADK prompt</strong> (<code>agent_1_adk/agent.py</code>): Removed <code>{date}</code> template variable from the orchestrator system prompt &mdash; the date was not being populated, leaving a raw <code>{date}</code> string visible in the LLM context.</li>
+</ul>
+
 <h2>v1.18 &mdash; Caching, Guardrails, Evaluation &amp; Observability</h2>
 
 <h3 class="version">Caching</h3>
