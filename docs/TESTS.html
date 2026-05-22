@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FinSight — Tests</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:1.7;color:#2c2c2c;background:#faf8f5;padding:2rem 1rem}
+.container{max-width:740px;margin:0 auto}
+h1,h2,h3,h4{font-family:Georgia,"Times New Roman",serif;color:#1a1a1a;line-height:1.3}
+h1{font-size:2.2rem;margin-bottom:.25rem;border-bottom:2px solid #e8dcc8;padding-bottom:.5rem}
+h2{font-size:1.5rem;margin-top:2.5rem;margin-bottom:.75rem}
+h3{font-size:1.2rem;margin-top:1.5rem;margin-bottom:.5rem}
+h4{font-size:1.05rem;margin-top:1.2rem;margin-bottom:.4rem}
+p{margin-bottom:1rem;color:#444}
+a{color:#8b6f4e;text-decoration:none;font-weight:500}
+a:hover{text-decoration:underline}
+code{background:#f0ebe3;padding:.15em .4em;border-radius:3px;font-size:.875em;font-family:"SF Mono","Fira Code","Fira Mono",monospace}
+pre{background:#f0ebe3;padding:1rem;border-radius:6px;overflow-x:auto;margin-bottom:1rem;font-size:.875em;line-height:1.5}
+pre code{background:0 0;padding:0}
+table{width:100%;border-collapse:collapse;margin-bottom:1rem;font-size:.925rem}
+th,td{padding:.5rem .75rem;text-align:left;border-bottom:1px solid #e0d8cc}
+th{background:#f0ebe3;font-weight:600}
+ul,ol{margin-bottom:1rem;padding-left:1.5rem}
+li{margin-bottom:.25rem}
+hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
+.header-nav{margin-bottom:2rem;padding-bottom:1rem;border-bottom:1px solid #e0d8cc}
+.header-nav a{margin-right:1.2rem;font-size:.9rem}
+@media(max-width:600px){body{padding:1rem}h1{font-size:1.8rem}table{font-size:.85rem}}
+</style>
+</head>
+<body>
+<div class="container">
+<div class="header-nav">
+<a href="index.html">Home</a><a href="../README.html">Overview</a><a href="ARCHITECTURE.html">Architecture</a><a href="AGENTS.html">Agents</a><a href="MCP_SERVERS.html">MCP</a><a href="DESIGN_DECISIONS.html">Decisions</a><a href="DEMO.html">Demo</a><a href="CHANGELOG.html">Changelog</a><a href="TESTS.html">Tests</a>
+</div>
+
+<h1>Test Coverage</h1>
+
+<h2>Summary</h2>
+<p><strong>64/64 tests passing &mdash; 100%</strong></p>
+
+<h2>Test Files</h2>
+<table>
+<tr><th>File</th><th>Tests</th><th>Area</th></tr>
+<tr><td><code>test_a2a_communication.py</code></td><td>3</td><td>SubAgentClient discovery, registration, unknown agent</td></tr>
+<tr><td><code>test_agent_cards.py</code></td><td>6</td><td>Declarative JSON agent card validation</td></tr>
+<tr><td><code>test_base_agent.py</code></td><td>2</td><td>BaseAgent abstract class and stream contract</td></tr>
+<tr><td><code>test_orchestrator_tools.py</code></td><td>4</td><td>Orchestrator send_message tool, sub-agent client presence</td></tr>
+<tr><td><code>test_planner.py</code></td><td>5</td><td>SubAgentClient, agent tool generation, send_message</td></tr>
+<tr><td><code>test_quant_graph.py</code></td><td>4</td><td>LangGraph conditional branching, stress test/DCF routing</td></tr>
+<tr><td><code>test_rag_pipeline.py</code></td><td>7</td><td>Hybrid search (BM25 + dense), RRF merge, document ingestion</td></tr>
+<tr><td><code>test_sentiment_crew.py</code></td><td>3</td><td>MCP tool discovery, crew builder</td></tr>
+<tr><td><code>test_trace_propagation.py</code></td><td>14</td><td>Trace context inject/extract (8), portfolio holdings extraction (6)</td></tr>
+<tr><td><code>test_memory.py</code></td><td>16</td><td>Memory layer: SQLite store, TickerMemory, PortfolioStore, PerformanceTracker, SQLiteMemoryService</td></tr>
+<tr><td><strong>Total</strong></td><td><strong>64</strong></td><td></td></tr>
+</table>
+
+<h2>Running Tests</h2>
+<pre># All tests
+uv run pytest -v
+
+# Specific module
+uv run pytest tests/test_planner.py -v
+
+# Trace propagation only
+uv run pytest tests/test_trace_propagation.py -v
+
+# With timeout (prevents hanging on network calls)
+uv run pytest -v --timeout=30</pre>
+
+<h2>Key Test Patterns</h2>
+<table>
+<tr><th>Pattern</th><th>Test</th><th>What it verifies</th></tr>
+<tr><td>Sync discovery</td><td><code>test_sync_discovery_no_seed_urls</code></td><td>Empty seed URLs &rarr; no agents</td></tr>
+<tr><td>Card registration</td><td><code>test_register_card_sync_stores_metadata</code></td><td>Skill metadata persisted correctly</td></tr>
+<tr><td>Async send</td><td><code>test_send_message_unknown_agent</code></td><td>Unknown agent &rarr; error message</td></tr>
+<tr><td>Tool function</td><td><code>test_agent_tool_calls_send_message</code></td><td>Generated tools route to correct agent</td></tr>
+<tr><td>Agent cards</td><td><code>test_all_cards_have_urls</code></td><td>All JSON cards well-formed</td></tr>
+<tr><td>Quant graph</td><td><code>test_graph_routes_to_stress_test</code></td><td>Conditional branching logic</td></tr>
+<tr><td>RAG pipeline</td><td><code>test_rrf_merge_deduplicates</code></td><td>BM25 + dense hybrid search</td></tr>
+<tr><td>Trace context</td><td><code>test_inject_and_extract_roundtrip</code></td><td>JSON prefix inject/extract preserves trace IDs</td></tr>
+<tr><td>Trace IDs</td><td><code>test_extract_trace_ids_roundtrip</code></td><td><code>extract_trace_ids()</code> correct tuple</td></tr>
+<tr><td>Holdings</td><td><code>test_extract_holdings_portfolio_holds</code></td><td>Natural language &rarr; ticker list</td></tr>
+</table>
+
+<h2>Trace Propagation Tests</h2>
+<table>
+<tr><th>Test</th><th>What it verifies</th></tr>
+<tr><td><code>test_inject_and_extract_roundtrip</code></td><td>Full inject &rarr; extract cycle preserves trace_id, parent_span_id, and original task text</td></tr>
+<tr><td><code>test_extract_no_context_is_noop</code></td><td>Task without prefix passes through unchanged</td></tr>
+<tr><td><code>test_injected_task_preserves_multiline</code></td><td>Multi-line task text preserved after roundtrip</td></tr>
+<tr><td><code>test_malformed_prefix_returns_none</code></td><td>Invalid JSON prefix &rarr; no context, original text returned</td></tr>
+<tr><td><code>test_missing_trace_fields_returns_none</code></td><td>Prefix with wrong fields &rarr; None</td></tr>
+<tr><td><code>test_inject_empty_ids_returns_original</code></td><td>Empty trace_id/parent_span_id &rarr; no injection</td></tr>
+<tr><td><code>test_extract_trace_ids_roundtrip</code></td><td><code>extract_trace_ids()</code> returns correct <code>(trace_id, parent_span_id, clean_query)</code></td></tr>
+<tr><td><code>test_extract_trace_ids_no_context</code></td><td><code>extract_trace_ids()</code> returns <code>(None, None, original)</code> when no prefix</td></tr>
+</table>
+
+<h2>Holdings Extraction Tests</h2>
+<table>
+<tr><th>Test</th><th>What it verifies</th></tr>
+<tr><td><code>test_extract_holdings_portfolio_holds</code></td><td>"My portfolio holds AAPL, MSFT, GOOGL" &rarr; <code>["AAPL", "MSFT", "GOOGL"]</code></td></tr>
+<tr><td><code>test_extract_holdings_colon_syntax</code></td><td>"My portfolio: TSLA, AMZN, META" &rarr; <code>["TSLA", "AMZN", "META"]</code></td></tr>
+<tr><td><code>test_extract_holdings_and_connector</code></td><td>"I own MSFT and GOOGL" &rarr; <code>["MSFT", "GOOGL"]</code></td></tr>
+<tr><td><code>test_extract_holdings_no_holdings_mentioned</code></td><td>"Should I buy NVDA?" &rarr; <code>[]</code></td></tr>
+<tr><td><code>test_extract_holdings_excludes_target_ticker</code></td><td>Target ticker excluded from holdings list</td></tr>
+<tr><td><code>test_extract_holdings_current_positions</code></td><td>"My current holdings are JPM, BAC, WFC" &rarr; <code>["JPM", "BAC", "WFC"]</code></td></tr>
+</table>
+
+<h2>Memory Layer Tests</h2>
+<table>
+<tr><th>Test</th><th>What it verifies</th></tr>
+<tr><td><code>test_sqlite_store_creates_tables</code></td><td>SQLiteStore initializes with all 6 tables</td></tr>
+<tr><td><code>test_sqlite_store_connection_reusable</code></td><td>Connection is reusable and thread-safe</td></tr>
+<tr><td><code>test_ticker_memory_store_and_get_latest</code></td><td>Store brief &rarr; retrieve latest recommendation</td></tr>
+<tr><td><code>test_ticker_memory_get_all_by_ticker</code></td><td>Multiple briefs per ticker, ordered by date</td></tr>
+<tr><td><code>test_ticker_memory_format_context_empty</code></td><td>No history &rarr; empty context string</td></tr>
+<tr><td><code>test_ticker_memory_format_context_with_history</code></td><td>History &rarr; formatted context with ticker, rec, confidence</td></tr>
+<tr><td><code>test_portfolio_store_update_and_get</code></td><td>Store holdings &rarr; retrieve profile</td></tr>
+<tr><td><code>test_portfolio_store_merge_holdings</code></td><td>New holdings merged with existing, no duplicates</td></tr>
+<tr><td><code>test_performance_tracker_record_and_get</code></td><td>Record recommendation &rarr; retrieve stats</td></tr>
+<tr><td><code>test_performance_tracker_evaluate_recommendation</code></td><td>Evaluate past BUY rec against current price</td></tr>
+<tr><td><code>test_memory_service_add_and_load</code></td><td>SQLiteMemoryService: add session &rarr; load memory</td></tr>
+<tr><td><code>test_memory_service_search_by_query</code></td><td>Search memory entries by query string</td></tr>
+<tr><td><code>test_memory_service_format_context</code></td><td>Format memory entries for prompt injection</td></tr>
+<tr><td><code>test_memory_service_duplicate_handling</code></td><td>Duplicate content not stored twice</td></tr>
+<tr><td><code>test_memory_service_session_isolation</code></td><td>Memory entries isolated by session_id</td></tr>
+<tr><td><code>test_memory_service_empty_search</code></td><td>No matches &rarr; empty result</td></tr>
+</table>
+
+<h2>Pre-existing Test Issues</h2>
+<p><code>test_rag_pipeline.py</code> tests require the full llama-index stack (ChromaDB, sentence-transformers, etc.).</p>
+
+<hr>
+<p style="font-size:.85rem;color:#888"><a href="index.html">Back to docs hub</a></p>
+</div>
+</body>
+</html>

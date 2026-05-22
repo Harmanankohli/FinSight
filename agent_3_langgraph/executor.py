@@ -1,3 +1,4 @@
+import json
 import logging
 from collections.abc import AsyncIterable
 
@@ -7,7 +8,7 @@ from shared.base_agent import BaseAgent
 from shared.mcp_client import MCPClient, MCPServerConfig
 from shared.config import MCP_SERVER_URL, MCP_TIMEOUT
 from shared.observability import get_langfuse_client
-from shared.ticker_utils import clean_query_for_resolution, extract_ticker, extract_holdings, is_valid_ticker_format
+from shared.ticker_utils import extract_ticker, extract_holdings, validate_ticker_via_mcp, resolve_ticker_via_mcp
 from shared.trace_context import extract_trace_ids
 
 from .graph import QuantAnalysisGraph
@@ -51,52 +52,18 @@ class QuantAgent(BaseAgent):
             return False, "", "Could not identify a stock ticker from the query. Try using parentheses (AAPL) or $ prefix ($V)."
         try:
             await self._ensure_connected()
+            return await validate_ticker_via_mcp(self._mcp, ticker)
         except Exception as e:
-            logger.warning("MCP connect failed, proceeding with regex ticker guess: %s", e)
-            return True, ticker, ""
-        try:
-            result = await self._mcp.call_tool_by_name("validate_ticker", {"ticker": ticker})
-            if hasattr(result, "content"):
-                for item in result.content:
-                    try:
-                        import json
-                        v = json.loads(item.text if hasattr(item, "text") else str(item))
-                        if v.get("valid"):
-                            return True, v.get("ticker", ticker), v.get("company_name", "")
-                        return False, ticker, v.get("error", "Ticker not found in SEC database")
-                    except Exception:
-                        continue
-            return False, ticker, "Ticker not found in SEC database"
-        except Exception as e:
-            logger.warning("Ticker validation via MCP failed, proceeding with regex guess: %s", e)
+            logger.warning("MCP ticker validation failed, proceeding with regex guess: %s", e)
             return True, ticker, ""
 
     async def _resolve_ticker(self, query: str, exclude_ticker: str = "") -> tuple[str, str]:
-        cleaned = clean_query_for_resolution(query)
-        if exclude_ticker:
-            cleaned = cleaned.replace(exclude_ticker, "").strip()
-        if not cleaned:
-            cleaned = query
         try:
             await self._ensure_connected()
-        except Exception as e:
-            logger.warning("MCP connect failed during ticker resolution: %s", e)
-            return "", ""
-        try:
-            result = await self._mcp.call_tool_by_name("resolve_company_ticker", {"text": cleaned})
-            if hasattr(result, "content"):
-                for item in result.content:
-                    try:
-                        import json
-                        v = json.loads(item.text if hasattr(item, "text") else str(item))
-                        ticker = v.get("ticker", "")
-                        if ticker and is_valid_ticker_format(ticker):
-                            return ticker, v.get("company_name", "")
-                    except Exception:
-                        continue
+            return await resolve_ticker_via_mcp(self._mcp, query, exclude_ticker)
         except Exception as e:
             logger.warning("MCP ticker resolution failed: %s", e)
-        return "", ""
+            return "", ""
 
     async def stream(
         self, query: str, context_id: str, task_id: str

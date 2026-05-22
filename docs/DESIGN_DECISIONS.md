@@ -315,6 +315,14 @@ The RAG agent fetches SEC filings via MCP on first query (`_ensure_ingested`). W
 - ✅ MCP server caches — SEC map loaded once, cached per server lifetime
 - ✅ Backward compatible — all existing patterns still work
 
+### Consolidating `_validate_ticker` / `_resolve_ticker` Across Agents (v1.16)
+
+**Problem**: The MCP call + JSON-parsing logic of `_validate_ticker()` and `_resolve_ticker()` was copy-pasted verbatim (~108 LOC) across all three sub-agent executors. A bug fix or protocol change had to be applied in three places with no guarantee of consistency.
+
+**Solution**: Extracted `validate_ticker_via_mcp(mcp, ticker)` and `resolve_ticker_via_mcp(mcp, query, exclude_ticker)` into `shared/ticker_utils.py`. Each agent's `_validate_ticker` / `_resolve_ticker` methods are now ~7-line wrappers that handle their own connection logic, then delegate the actual MCP call to the shared functions.
+
+**Why keep the wrapper methods instead of calling shared functions directly from `stream()`?** Each agent connects to MCP differently — RAG agent uses lazy connect with `_ensure_mcp_connected()`, Quant uses `_ensure_connected()` (reused by `analyze()`), Sentiment uses `_connect()`. Keeping thin wrapper methods preserves per-agent connection semantics and leaves `stream()` unchanged.
+
 ## Financial Filings Tool (get_financial_filings)
 
 ### Problem
@@ -477,6 +485,46 @@ Each pattern captures a comma-and-separated list of uppercase tickers. The `excl
 - ✅ Target ticker excluded from holdings to avoid self-correlation
 - ✅ Works with comma-separated, "and"-connected, and mixed formats
 - ✅ Backward compatible — returns `[]` when no holdings mentioned
+
+### Correlation Matrix Auto-Trigger via Memory Context (v1.16 Fix)
+
+**Problem**: The orchestrator's `_build_memory_context()` appended stored portfolio holdings from `PortfolioStore` to every query as `"User portfolio: GOOGL, AAPL, META, MSFT"`. This line was injected into `[MEMORY CONTEXT]` before the user's actual message. The orchestrator system prompt said "if the user mentions portfolio holdings, include them in the Quant agent task". The LLM treated the memory line as an explicit user mention and forwarded the holdings — triggering a full correlation matrix for every single-ticker query, even when the user never asked for one.
+
+**Root cause**: No distinction between "user said this right now" vs "system recalled this from memory". The memory context and direct user input were semantically indistinguishable to the LLM.
+
+**Fix (two-pronged)**:
+1. **Label the memory line explicitly**: Changed `"User portfolio: ..."` to `"Background — user's known holdings (do NOT include for portfolio correlation unless the user explicitly requests it in their current message): ..."`. The label itself instructs the LLM how to treat the data.
+2. **Update the orchestrator prompt**: Changed step 4 from "if the user mentions portfolio holdings" to "only if the user EXPLICITLY mentions their portfolio or asks for correlation in their CURRENT message — do NOT include holdings from memory context background lines."
+
+**Why two changes instead of one?** The label alone relies on the LLM parsing a long inline instruction inside the injected text. The prompt change alone could be forgotten or overridden by conflicting signal in the memory line. Together they create redundant clarity: the data labels itself as background-only, and the instruction explicitly excludes memory-sourced holdings from auto-forwarding.
+
+## File Logging Design
+
+### Problem
+
+All five server entry points used `logging.basicConfig(level=logging.INFO)` either at module level or inside `if __name__ == "__main__":` blocks. This meant:
+1. Services started via `uvicorn` (the normal path) never called `basicConfig` — the sub-agent `server.py` files only configured logging when run directly
+2. All output went to stderr only — no log files were written
+3. `memory_callback.log` was written to the project root instead of `logs/`
+4. Each service independently configured logging with no shared format or rotation policy
+
+### Solution
+
+`shared/logging_config.py` provides a single `setup_file_logging(service_name)` function that:
+- Attaches a `RotatingFileHandler` (10 MB, 5 backups) → `logs/<service>.log`
+- Attaches a `StreamHandler` (stderr) if none is present yet
+- Creates the `logs/` directory if absent
+- Guards against duplicate handler registration (idempotent)
+
+Each server calls `setup_file_logging(...)` at module level, not inside `if __name__ == "__main__":`, so logging is configured regardless of whether the process is started via uvicorn or run directly.
+
+### Why `RotatingFileHandler` instead of `TimedRotatingFileHandler`?
+
+Size-based rotation is simpler to reason about in a development context. The services generate bursts of logs during queries then go idle — time-based rotation would create many small empty files. 10 MB per file with 5 backups gives 50 MB total per service, enough for days of normal usage without manual cleanup.
+
+### Why not configure via `logging.config.dictConfig`?
+
+A dict config would require all services to share a config file or inline the same config dict — moving complexity, not removing it. A single function call with a service name is the simplest interface that solves the problem.
 
 ## Langfuse Span Noise Filtering
 

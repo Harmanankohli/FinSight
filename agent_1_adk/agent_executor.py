@@ -243,7 +243,7 @@ class FinSightAgentExecutor(AgentExecutor):
         ps = PortfolioStore()
         holdings = await ps.get_holdings(user_id)
         if holdings:
-            parts.append(f"User portfolio: {', '.join(holdings)}")
+            parts.append(f"Background — user's known holdings (do NOT include for portfolio correlation unless the user explicitly requests it in their current message): {', '.join(holdings)}")
 
         return "\n".join(parts)
 

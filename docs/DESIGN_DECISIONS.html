@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FinSight — Design Decisions</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:1.7;color:#2c2c2c;background:#faf8f5;padding:2rem 1rem}
+.container{max-width:740px;margin:0 auto}
+h1,h2,h3,h4{font-family:Georgia,"Times New Roman",serif;color:#1a1a1a;line-height:1.3}
+h1{font-size:2.2rem;margin-bottom:.25rem;border-bottom:2px solid #e8dcc8;padding-bottom:.5rem}
+h2{font-size:1.5rem;margin-top:2.5rem;margin-bottom:.75rem}
+h3{font-size:1.2rem;margin-top:1.5rem;margin-bottom:.5rem}
+h4{font-size:1.05rem;margin-top:1.2rem;margin-bottom:.4rem}
+p{margin-bottom:1rem;color:#444}
+a{color:#8b6f4e;text-decoration:none;font-weight:500}
+a:hover{text-decoration:underline}
+code{background:#f0ebe3;padding:.15em .4em;border-radius:3px;font-size:.875em;font-family:"SF Mono","Fira Code","Fira Mono",monospace}
+pre{background:#f0ebe3;padding:1rem;border-radius:6px;overflow-x:auto;margin-bottom:1rem;font-size:.875em;line-height:1.5}
+pre code{background:0 0;padding:0}
+table{width:100%;border-collapse:collapse;margin-bottom:1rem;font-size:.925rem}
+th,td{padding:.5rem .75rem;text-align:left;border-bottom:1px solid #e0d8cc}
+th{background:#f0ebe3;font-weight:600}
+ul,ol{margin-bottom:1rem;padding-left:1.5rem}
+li{margin-bottom:.25rem}
+hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
+.header-nav{margin-bottom:2rem;padding-bottom:1rem;border-bottom:1px solid #e0d8cc}
+.header-nav a{margin-right:1.2rem;font-size:.9rem}
+@media(max-width:600px){body{padding:1rem}h1{font-size:1.8rem}table{font-size:.85rem}}
+</style>
+</head>
+<body>
+<div class="container">
+<div class="header-nav">
+<a href="index.html">Home</a><a href="../README.html">Overview</a><a href="ARCHITECTURE.html">Architecture</a><a href="AGENTS.html">Agents</a><a href="MCP_SERVERS.html">MCP</a><a href="DESIGN_DECISIONS.html">Decisions</a><a href="DEMO.html">Demo</a><a href="CHANGELOG.html">Changelog</a><a href="TESTS.html">Tests</a>
+</div>
+
+<h1>Design Decisions</h1>
+
+<h2>Why Four Different Agent Frameworks?</h2>
+<table>
+<tr><th>Agent</th><th>Framework</th><th>Why</th></tr>
+<tr><td>Orchestrator</td><td><strong>Google ADK</strong></td><td>A2A protocol built-in, agent card generation, session management</td></tr>
+<tr><td>RAG</td><td><strong>LlamaIndex</strong></td><td>Best document indexing/retrieval &mdash; hybrid search, multi-index routing</td></tr>
+<tr><td>Quant</td><td><strong>LangGraph</strong></td><td>Conditional state machine maps naturally to graph-based architecture</td></tr>
+<tr><td>Sentiment</td><td><strong>CrewAI</strong></td><td>Multi-agent role-playing (analysis + synthesis) is what CrewAI was designed for</td></tr>
+</table>
+
+<h2>A2A Communication</h2>
+<p>We use the official Google A2A SDK (<code>a2a-sdk&gt;=1.0.0</code>) for inter-agent communication.</p>
+
+<h3>A2A API Reference vs Installed SDK</h3>
+<table>
+<tr><th>Component</th><th>GitHub Samples</th><th>Installed SDK</th></tr>
+<tr><td>Client</td><td><code>A2AClient(httpx, card, url)</code></td><td><code>ClientFactory(config).create(card)</code></td></tr>
+<tr><td>Card resolution</td><td><code>A2ACardResolver(client, url)</code></td><td><code>A2ACardResolver(client, url)</code></td></tr>
+<tr><td>Well-known path</td><td><code>/.well-known/agent.json</code></td><td><code>/.well-known/agent-card.json</code></td></tr>
+<tr><td>Server app</td><td><code>A2AStarletteApplication</code></td><td>Starlette + routes</td></tr>
+<tr><td>AgentCard type</td><td>Pydantic model</td><td>Protobuf message</td></tr>
+</table>
+
+<h3>Key Lessons</h3>
+<ol>
+<li><code>messageId</code> is required on every A2A Message</li>
+<li><code>agentInterface</code> must match: <code>ClientFactory</code> requires <code>supported_interfaces</code> with <code>protocol_binding="JSONRPC"</code></li>
+<li>Timeout propagation: Both <code>ClientConfig</code> + <code>httpx.AsyncClient</code> AND <code>ClientCallContext</code> must be configured</li>
+<li>Response format: Sub-agents return <code>data</code> (structured) not <code>text</code> &mdash; extract via <code>get_data_parts()</code></li>
+<li>Streaming events: Intermediate <code>SUBMITTED</code>/<code>WORKING</code> status updates must be skipped</li>
+<li><code>Data &gt; text</code>: Sub-agents emit <code>Part(data=Value(struct_value=s))</code> for structured responses</li>
+</ol>
+
+<h3>How Our A2A Pattern Compares</h3>
+<table>
+<tr><th>Aspect</th><th>Google Samples</th><th>bhancockio</th><th>theailanguage</th><th>FinSight</th></tr>
+<tr><td>Client creation</td><td><code>ClientFactory</code></td><td><code>A2AClient(httpx, card, url)</code></td><td>Custom httpx POST</td><td><code>ClientFactory</code></td></tr>
+<tr><td>Streaming</td><td>Events</td><td>Single response</td><td>Single task</td><td>Streaming, correct routing</td></tr>
+<tr><td>Host tools</td><td><code>send_message(name, msg)</code></td><td><code>send_message(name, task)</code></td><td><code>delegate_task(name, msg)</code></td><td><code>send_message(name, task)</code></td></tr>
+<tr><td>list_agents tool</td><td>Some have it</td><td>No</td><td>Yes</td><td>Removed &mdash; in prompt</td></tr>
+<tr><td>Sub-agent response</td><td>Parts + artifacts</td><td>Parts from JSON</td><td>Task history text</td><td>Data parts then text fallback</td></tr>
+<tr><td>Discovery background</td><td><code>loop.create_task()</code></td><td><code>asyncio.run()</code></td><td>Not async</td><td>Both paths</td></tr>
+</table>
+
+<h2>Orchestrator Evolution</h2>
+<table>
+<tr><th>Version</th><th>Approach</th><th>Problem</th></tr>
+<tr><td>v1</td><td>REST Gateway + Planner</td><td>Duplicated logic, no A2A-native protocol</td></tr>
+<tr><td>v2</td><td>Dynamic Per-skill ADK Tools</td><td>Module-level <code>asyncio.run()</code> fails when ADK imports</td></tr>
+<tr><td>v3</td><td>Thread-based Async Init</td><td>httpx event loop conflicts</td></tr>
+<tr><td>v4</td><td>Sync Discovery + Lazy Async</td><td>Non-standard discovery, LLM couldn't parallelize</td></tr>
+<tr><td>v5 (current)</td><td>A2A Sample Pattern</td><td>Single <code>send_message</code> tool, background discovery</td></tr>
+</table>
+
+<h2>Problems Encountered</h2>
+
+<h3>1. <code>asyncio.run()</code> and Running Event Loops</h3>
+<p>Module-level <code>asyncio.run()</code> fails when ADK Web UI imports the module. Check for an existing loop first: use <code>loop.create_task()</code> if running, <code>asyncio.run()</code> otherwise.</p>
+
+<h3>2. httpx Event Loop Conflicts from Threaded Init</h3>
+<p><code>httpx.AsyncClient</code> is never created in a thread or at module level.</p>
+
+<h3>3. httpx.Timeout Constructor Ambiguity</h3>
+<p><code>httpx.Timeout(read=300.0, connect=10.0)</code> fails. Use <code>httpx.Timeout(300.0)</code>.</p>
+
+<h3>4. Sub-agent Responses in <code>data</code> Format Not Extracted</h3>
+<p><code>get_stream_response_text()</code> only returns text. Sub-agents return structured <code>data</code> parts. Check <code>get_data_parts(artifact.parts)</code> first.</p>
+
+<h3>5. Streaming Event Handling &mdash; Early Return on WORKING</h3>
+<p>Route events by type: skip <code>SUBMITTED</code>/<code>WORKING</code>, only process <code>artifact_update</code> and terminal events.</p>
+
+<h3>6. Non-terminal Task Events Returned as Result</h3>
+<p>Check <code>task.status.state not in _TERMINAL_STATES</code> before processing task events.</p>
+
+<h3>7. Local LLMs Don't Support Parallel Function Calling</h3>
+<p>Single <code>send_message</code> tool. Qwen model supports parallel calls; others are sequential.</p>
+
+<h3>8. MCP Resource URI Type Mismatch</h3>
+<p>Convert <code>AnyUrl</code> to string with <code>str(uri)</code>.</p>
+
+<h3>9. ClientConfig Has No <code>timeout</code> Parameter</h3>
+<p>Pass pre-configured <code>httpx.AsyncClient(timeout=httpx.Timeout(300))</code> via <code>ClientConfig(httpx_client=http)</code>.</p>
+
+<h3>10. LLM Tool Name Hallucination</h3>
+<p>Single <code>send_message</code> tool eliminates wrong tool names.</p>
+
+<h3>11. Agent Name Validation Error</h3>
+<p><code>LlmAgent(name="FinSight Orchestrator")</code> &mdash; spaces not allowed. Use <code>name="orchestrator"</code>.</p>
+
+<h3>12. Slow-Starting Sub-agents Not Discovered</h3>
+<p><code>discover()</code> retries each URL 3 times with 5-second delay.</p>
+
+<h3>13. MCP Registry Discovery Not Ported</h3>
+<p>Pending future work.</p>
+
+<h3>14. Windows ConnectionResetError Noise</h3>
+<p><code>asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())</code> on Windows.</p>
+
+<h3>15. AgentCard Protobuf &mdash; No <code>url</code> Field</h3>
+<p>Set <code>supported_interfaces=[AgentInterface(protocol_binding="JSONRPC", url=...)]</code> instead.</p>
+
+<h2>Timeout Strategy</h2>
+<p>Pass a pre-configured <code>httpx.AsyncClient(timeout=httpx.Timeout(300))</code> via <code>ClientConfig(httpx_client=http)</code>.</p>
+
+<h2>Model Selection (Ollama Era)</h2>
+<table>
+<tr><th>Model</th><th>Verdict</th><th>Reason</th></tr>
+<tr><td><code>qwen2.5:7b</code></td><td>&check;</td><td>Reliable tool calling, good instruction following, ~4.7GB</td></tr>
+<tr><td><code>llama3.2</code> (3B)</td><td>&cross;</td><td>Tool calling unreliable</td></tr>
+<tr><td><code>deepseek-r1</code> (7B)</td><td>&cross;</td><td>Does not support tool calling</td></tr>
+</table>
+
+<h2>Migration from Ollama to LM Studio</h2>
+<table>
+<tr><th>Area</th><th>Before (Ollama)</th><th>After (LM Studio)</th></tr>
+<tr><td>Base URL</td><td><code>http://localhost:11434/v1</code></td><td><code>http://localhost:1234/v1</code></td></tr>
+<tr><td>Model name</td><td><code>qwen2.5:7b</code></td><td><code>gpt-oss-20b</code> &rarr; <code>qwen3-30b-a3b-2507</code></td></tr>
+<tr><td>Agent 2 (LlamaIndex)</td><td><code>llama-index-llms-ollama</code></td><td><code>llama-index-llms-openai-like</code></td></tr>
+<tr><td>Agent 3 (LangGraph)</td><td><code>langchain-ollama</code></td><td><code>langchain-openai</code></td></tr>
+<tr><td>Agent 4 (CrewAI)</td><td><code>CrewLLM(model="ollama/...")</code></td><td><code>CrewLLM(model="gpt-oss-20b")</code></td></tr>
+</table>
+
+<h2>MCP Server Design</h2>
+
+<h3>Docker-compose Alignment Fix</h3>
+<p>Replaced 4 broken MCP services with single <code>finsight-mcp</code> service.</p>
+
+<h3>Lazy Agent Registry</h3>
+<p>Model loading deferred to first tool call via <code>_ensure_registry()</code> with <code>asyncio.Lock</code> double-checked locking.</p>
+
+<h3>Windows Compatibility</h3>
+<p><code>import resource</code> guarded with <code>if sys.platform != "win32"</code>.</p>
+
+<h3>Thread-Safe SSE App Singleton</h3>
+<p><code>get_app()</code> with <code>threading.Lock</code> double-checked singleton pattern.</p>
+
+<h3>SEC EDGAR Caching</h3>
+<p><code>_EdgarClient._get_ticker_map()</code> with <code>asyncio.Lock</code> lazy loading. CIK results cached in <code>_cik_cache</code>.</p>
+
+<h3>Sandbox Hardening</h3>
+<p>Expanded <code>_RESTRICTED_IMPORTS</code> and <code>_RESTRICTED_ATTRS</code> blocklists. Subprocess runs with <code>-I</code> and <code>-S</code> flags.</p>
+
+<h2>Model Change: gpt-oss-20b &rarr; qwen</h2>
+<table>
+<tr><th>Model</th><th>Speed</th></tr>
+<tr><td><code>gpt-oss-20b</code> (previous)</td><td>~40-60s per call</td></tr>
+<tr><td><code>qwen3-30b-a3b-2507</code> (current)</td><td>~5-10s per call</td></tr>
+</table>
+
+<h2>RAG Agent Auto-ingest</h2>
+<p>Fetches SEC filings via MCP on first query. Fixed with proper empty-check and <code>try/except json.JSONDecodeError</code>.</p>
+
+<h3>RAG Content Ingestion Fix</h3>
+<p>Added <code>get_filing_content()</code> MCP tool. RAG agent now stores actual filing text instead of just metadata.</p>
+
+<h3>Quant DCF Null Fix</h3>
+<p>Changed to read free cash flow from <code>cash_flow</code> statement instead of <code>income_statement</code>.</p>
+
+<h2>Ticker Extraction Decoupled from SEC Validation</h2>
+<p>Pure regex extraction, MCP-based validation, first-match heuristic, validation fallback to resolution, ticker format gate.</p>
+
+<h3>Consolidating <code>_validate_ticker</code> / <code>_resolve_ticker</code> Across Agents (v1.16)</h3>
+<p><strong>Problem</strong>: The MCP call + JSON-parsing logic was copy-pasted verbatim (~108 LOC) across all three sub-agent executors. A bug fix had to be applied in three places with no consistency guarantee.</p>
+<p><strong>Solution</strong>: Extracted <code>validate_ticker_via_mcp(mcp, ticker)</code> and <code>resolve_ticker_via_mcp(mcp, query, exclude_ticker)</code> into <code>shared/ticker_utils.py</code>. Each agent&rsquo;s wrapper methods are now ~7 lines handling their own connection logic, then delegating the MCP call to the shared functions.</p>
+<p><strong>Why keep wrapper methods?</strong> Each agent connects to MCP differently (RAG uses <code>_ensure_mcp_connected()</code>, Quant uses <code>_ensure_connected()</code>, Sentiment uses <code>_connect()</code>). Thin wrappers preserve per-agent connection semantics and leave <code>stream()</code> unchanged.</p>
+
+<h2>Financial Filings Tool</h2>
+<p><code>get_financial_filings()</code> fetches 10-K and 10-Q separately to avoid 8-K domination.</p>
+
+<h2>News System: Concurrent RSS + Yahoo Fallback</h2>
+<p>All three RSS feeds fetched simultaneously via <code>asyncio.gather()</code>. Yahoo Finance news API fallback when RSS fails. Structured diagnostics in response.</p>
+
+<h2>DCF Skipped from High Volatility Routing</h2>
+<p><code>dcf_error</code> set in <code>compute_metrics_node</code> before routing. Surfaced in <code>graph.run()</code> output and reasoning text.</p>
+
+<h2>DCF Null from Negative Free Cash Flow</h2>
+<p>Iterates through periods and returns <strong>first positive FCF</strong>. Comprehensive failure logging for all DCF edge cases.</p>
+
+<h2>Ticker False Positives from Financial Acronyms</h2>
+<p><code>_FINANCIAL_STOP_WORDS</code> blocklist, <code>clean_query_for_resolution()</code>, failed ticker exclusion from resolution query.</p>
+
+<h2>Portfolio Holdings Extraction</h2>
+<p>Four regex patterns in <code>extract_holdings()</code>. Holdings passed through the chain. Orchestrator LLM instructed to include holdings. Helpful notes instead of empty <code>{}</code>.</p>
+
+<h3>Correlation Matrix Auto-Trigger via Memory Context (v1.16 Fix)</h3>
+<p><strong>Problem</strong>: <code>_build_memory_context()</code> appended stored portfolio holdings as <code>"User portfolio: GOOGL, AAPL, META, MSFT"</code> to every query. The orchestrator prompt said &ldquo;if the user mentions portfolio holdings, include them in the Quant agent task&rdquo; &mdash; the LLM treated the memory line as an explicit user mention and triggered a full correlation matrix even for single-ticker queries.</p>
+<p><strong>Root cause</strong>: No distinction between &ldquo;user said this right now&rdquo; vs &ldquo;system recalled this from memory&rdquo;. Memory context and direct user input were semantically indistinguishable to the LLM.</p>
+<p><strong>Fix (two-pronged)</strong>:</p>
+<ol>
+<li><strong>Label the memory line explicitly</strong>: Changed to <code>"Background &mdash; user's known holdings (do NOT include for portfolio correlation unless the user explicitly requests it...)"</code></li>
+<li><strong>Update the orchestrator prompt</strong>: Step 4 now says &ldquo;only if the user EXPLICITLY mentions their portfolio in their CURRENT message &mdash; do NOT include holdings from memory context background lines&rdquo;</li>
+</ol>
+<p><strong>Why two changes?</strong> The label alone relies on the LLM parsing a long inline instruction inside injected text. The prompt change alone could be overridden by the memory line&rsquo;s phrasing. Together they create redundant clarity at both data and instruction levels.</p>
+
+<h2>File Logging Design</h2>
+<p><strong>Problem</strong>: Services started via <code>uvicorn</code> never configured logging (sub-agent <code>server.py</code> files only called <code>basicConfig</code> inside <code>if __name__ == "__main__":</code>). No log files were written; <code>memory_callback.log</code> was written to the project root.</p>
+<p><strong>Solution</strong>: <code>shared/logging_config.py</code> provides <code>setup_file_logging(service_name)</code> &mdash; attaches a <code>RotatingFileHandler</code> (10 MB, 5 backups) and <code>StreamHandler</code> to the root logger, creates <code>logs/</code> if absent, guards against duplicate registration. Called at module level in each server so logging is configured regardless of how the process starts.</p>
+<p><strong>Why <code>RotatingFileHandler</code> not <code>TimedRotatingFileHandler</code>?</strong> Services generate bursts of logs during queries then go idle &mdash; time-based rotation creates many small empty files. Size-based rotation (10 MB &times; 5 = 50 MB per service) is simpler and sufficient for development usage.</p>
+<p><strong>Why not <code>logging.config.dictConfig</code>?</strong> A dict config moves complexity without removing it. A single function call with a service name is the simplest interface that solves the problem.</p>
+
+<h2>Langfuse Span Noise Filtering</h2>
+<p>Uses <code>is_default_export_span</code> helper. Filters A2A internal spans and HTTPX transport spans. Exports only high-level workflow and LLM spans.</p>
+
+<h2>Langfuse Distributed Tracing</h2>
+<p>Text-based trace context injection via A2A payload JSON prefix. Sub-agents use <code>extract_trace_ids()</code> and <code>start_observation(trace_context=...)</code>. LangGraph uses <code>CallbackHandler(trace_context=...)</code>.</p>
+
+<h2>Date Hallucination</h2>
+<p>Added <code>Today's date: {date.today().isoformat()}</code> to every LLM prompt.</p>
+
+<h2>Persistent Memory Layer</h2>
+<p><code>DatabaseSessionService</code> for persistent sessions. <code>SQLiteMemoryService</code> for cross-session search. BM25 + embeddings hybrid search. Dual persistence path (<code>after_agent_callback</code> + <code>_persist_to_memory</code>).</p>
+
+<hr>
+<p style="font-size:.85rem;color:#888"><a href="index.html">Back to docs hub</a></p>
+</div>
+</body>
+</html>

@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FinSight — Documentation Hub</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:1.7;color:#2c2c2c;background:#faf8f5;padding:2rem 1rem}
+.container{max-width:740px;margin:0 auto}
+h1,h2,h3{font-family:Georgia,"Times New Roman",serif;color:#1a1a1a;line-height:1.3}
+h1{font-size:2.2rem;margin-bottom:0.25rem;border-bottom:2px solid #e8dcc8;padding-bottom:0.5rem}
+h2{font-size:1.5rem;margin-top:2.5rem;margin-bottom:0.75rem}
+h3{font-size:1.2rem;margin-top:1.5rem;margin-bottom:0.5rem}
+p{margin-bottom:1rem;color:#444}
+a{color:#8b6f4e;text-decoration:none;font-weight:500}
+a:hover{text-decoration:underline}
+.subtitle{font-size:1.05rem;color:#666;margin-top:0.5rem;margin-bottom:2rem}
+.card{background:#fff;border:1px solid #e8dcc8;border-radius:8px;padding:1.25rem 1.5rem;margin-bottom:1rem;transition:box-shadow .15s}
+.card:hover{box-shadow:0 2px 12px rgba(0,0,0,.06)}
+.card h3{margin-top:0;margin-bottom:0.3rem}
+.card .desc{color:#555;font-size:0.9rem;margin-bottom:0}
+.card .meta{color:#8b6f4e;font-size:0.8rem;margin-top:0.4rem}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-top:1.5rem}
+@media(max-width:640px){.grid{grid-template-columns:1fr}}
+.tag{display:inline-block;background:#e8dcc8;color:#5a4a3a;font-size:0.7rem;padding:0.1em 0.5em;border-radius:3px;margin-right:0.3em}
+.header-nav{margin-bottom:2rem;padding-bottom:1rem;border-bottom:1px solid #e0d8cc}
+.header-nav a{margin-right:1.2rem;font-size:0.9rem}
+</style>
+</head>
+<body>
+<div class="container">
+<div class="header-nav">
+<a href="index.html">Home</a>
+<a href="README.html">Overview</a>
+<a href="ARCHITECTURE.html">Architecture</a>
+<a href="AGENTS.html">Agents</a>
+<a href="MCP_SERVERS.html">MCP Servers</a>
+<a href="DESIGN_DECISIONS.html">Design Decisions</a>
+<a href="DEMO.html">Demo</a>
+<a href="CHANGELOG.html">Changelog</a>
+<a href="TESTS.html">Tests</a>
+</div>
+
+<h1>FinSight</h1>
+<p class="subtitle">Multi-Agent Investment Research System — documentation hub</p>
+
+<p>An autonomous multi-agent system that answers investment queries by coordinating three specialized agents across different frameworks, communicating via the <strong>Agent-to-Agent (A2A)</strong> protocol, and using <strong>MCP (Model Context Protocol)</strong> servers for external tool access.</p>
+
+<div class="grid">
+<div class="card">
+<h3><a href="README.html">Overview</a></h3>
+<p class="desc">Key features, tech stack, quick start, project structure, configuration.</p>
+<p class="meta"><span class="tag">readme</span> quick start</p>
+</div>
+<div class="card">
+<h3><a href="ARCHITECTURE.html">Architecture</a></h3>
+<p class="desc">System architecture, communication patterns, agent internals, memory layer, observability.</p>
+<p class="meta"><span class="tag">deep-dive</span> diagrams</p>
+</div>
+<div class="card">
+<h3><a href="AGENTS.html">Agents Reference</a></h3>
+<p class="desc">Detailed reference for all four agents — Orchestrator, RAG, Quant, Sentiment.</p>
+<p class="meta"><span class="tag">reference</span> internals</p>
+</div>
+<div class="card">
+<h3><a href="MCP_SERVERS.html">MCP Servers</a></h3>
+<p class="desc">Unified MCP server tools, agent registry, client usage, adding new tools.</p>
+<p class="meta"><span class="tag">reference</span> data</p>
+</div>
+<div class="card">
+<h3><a href="DESIGN_DECISIONS.html">Design Decisions</a></h3>
+<p class="desc">Evolution log: why each design choice was made, problems encountered, solutions.</p>
+<p class="meta"><span class="tag">history</span> tradeoffs</p>
+</div>
+<div class="card">
+<h3><a href="DEMO.html">Demo</a></h3>
+<p class="desc">End-to-end walkthrough with example queries and direct A2A testing commands.</p>
+<p class="meta"><span class="tag">walkthrough</span> commands</p>
+</div>
+<div class="card">
+<h3><a href="CHANGELOG.html">Changelog</a></h3>
+<p class="desc">Version history from v0.1 through v1.15 — every change documented.</p>
+<p class="meta"><span class="tag">history</span> versions</p>
+</div>
+<div class="card">
+<h3><a href="TESTS.html">Tests</a></h3>
+<p class="desc">64/64 test coverage summary, patterns, running instructions.</p>
+<p class="meta"><span class="tag">qa</span> coverage</p>
+</div>
+</div>
+
+<hr style="margin-top:2.5rem;border:none;border-top:1px solid #e0d8cc">
+<p style="font-size:0.85rem;color:#888;margin-top:1rem">FinSight &mdash; Multi-Agent Investment Research System</p>
+</div>
+</body>
+</html>

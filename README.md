@@ -7,7 +7,7 @@ An autonomous multi-agent system that answers investment queries like *"Should I
 - **Multi-framework orchestration**: Google ADK orchestrator delegates to LlamaIndex (RAG), LangGraph (Quant), and CrewAI (Sentiment) agents
 - **A2A protocol**: Standard-compliant agent discovery and streaming communication via JSON-RPC over HTTP
 - **Persistent memory layer**: SQLite-backed session storage, cross-session memory search, ticker brief history, portfolio persistence, and recommendation tracking
-- **Portfolio correlation analysis**: Extract holdings from natural language (e.g. "My portfolio holds AAPL, MSFT") and compute cross-stock correlation matrices
+- **Portfolio correlation analysis**: When you explicitly mention portfolio holdings (e.g. "My portfolio holds AAPL, MSFT"), the quant agent computes cross-stock correlation matrices alongside the primary analysis
 - **Distributed tracing**: Langfuse traces span all four agent processes in a single trace tree via text-based context propagation, with automatic filtering of noisy A2A internal spans
 - **Local LLM inference**: All agents use LM Studio (OpenAI-compatible API) — no cloud dependencies
 - **MCP data tools**: Unified server providing SEC filings, price data, financials, news sentiment, and more
@@ -180,11 +180,10 @@ stop_servers.bat
 ├── shared/                   # Shared libraries
 │   ├── base_agent.py         # BaseAgent abstract class
 │   ├── generic_executor.py   # GenericAgentExecutor
-│   ├── ticker_utils.py       # Ticker extraction & holdings extraction
+│   ├── ticker_utils.py       # Ticker extraction, holdings parsing, MCP ticker validation
+│   ├── logging_config.py     # setup_file_logging() — writes to logs/<service>.log
 │   ├── trace_context.py      # Distributed trace context injection/extraction
 │   ├── observability.py      # Langfuse singleton initialization
-│   ├── workflow.py           # WorkflowGraph state machine
-│   ├── types.py              # Shared Pydantic models
 │   ├── config.py             # Centralized .env configuration
 │   ├── mcp_client.py         # MCP client with dynamic tool discovery
 │   ├── models.py             # Pydantic data models
@@ -196,7 +195,7 @@ stop_servers.bat
 │       ├── memory_service.py # ADK BaseMemoryService (load_memory tool)
 │       └── __init__.py       # Exports
 │
-├── tests/                    # Test suite (72 tests)
+├── tests/                    # Test suite (64 tests)
 │   ├── test_a2a_communication.py
 │   ├── test_agent_cards.py
 │   ├── test_base_agent.py
@@ -205,7 +204,6 @@ stop_servers.bat
 │   ├── test_quant_graph.py
 │   ├── test_rag_pipeline.py
 │   ├── test_sentiment_crew.py
-│   ├── test_workflow.py
 │   ├── test_trace_propagation.py  # Trace context + holdings extraction
 │   └── test_memory.py             # Memory layer (SQLite, ticker, portfolio, performance)
 │

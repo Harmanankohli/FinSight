@@ -7,7 +7,7 @@ from shared.base_agent import BaseAgent
 from shared.mcp_client import MCPClient, MCPServerConfig
 from shared.config import MCP_SERVER_URL
 from shared.observability import get_langfuse_client
-from shared.ticker_utils import clean_query_for_resolution, extract_ticker, is_valid_ticker_format
+from shared.ticker_utils import extract_ticker, validate_ticker_via_mcp, resolve_ticker_via_mcp
 from shared.trace_context import extract_trace_ids
 
 from .document_ingestion import DocumentIngestionPipeline
@@ -32,14 +32,8 @@ class RAGAgent(BaseAgent):
         today = datetime.now(timezone.utc).date()
         if self._last_ingestion.get(ticker) == today:
             return
-        if self._mcp is None:
-            self._mcp = MCPClient(configs=[MCPServerConfig(name="finsight-mcp", url=MCP_SERVER_URL)])
-            try:
-                await self._mcp.connect_all()
-            except Exception as e:
-                logger.warning("MCP connect failed (non-fatal): %s", e)
-                self._mcp = None
-                return
+        if not await self._ensure_mcp_connected():
+            return
         if self._ingestion is None:
             self._ingestion = DocumentIngestionPipeline(self.index)
         try:
@@ -94,61 +88,36 @@ class RAGAgent(BaseAgent):
         await self._ensure_ingested(ticker)
         return await self.index.query(ticker, query_text)
 
-    async def _validate_ticker(self, ticker: str) -> tuple[bool, str, str]:
-        if not ticker:
-            return False, "", "Could not identify a stock ticker from the query. Try using parentheses (AAPL) or $ prefix ($V)."
+    async def _ensure_mcp_connected(self) -> bool:
         if self._mcp is None:
             self._mcp = MCPClient(configs=[MCPServerConfig(name="finsight-mcp", url=MCP_SERVER_URL)])
             try:
                 await self._mcp.connect_all()
             except Exception as e:
-                logger.warning("MCP connect failed, proceeding with regex ticker guess: %s", e)
+                logger.warning("MCP connect failed: %s", e)
                 self._mcp = None
-                return True, ticker, ""
+                return False
+        return True
+
+    async def _validate_ticker(self, ticker: str) -> tuple[bool, str, str]:
+        if not ticker:
+            return False, "", "Could not identify a stock ticker from the query. Try using parentheses (AAPL) or $ prefix ($V)."
+        if not await self._ensure_mcp_connected():
+            return True, ticker, ""
         try:
-            result = await self._mcp.call_tool_by_name("validate_ticker", {"ticker": ticker})
-            if hasattr(result, "content"):
-                for item in result.content:
-                    try:
-                        v = json.loads(item.text if hasattr(item, "text") else str(item))
-                        if v.get("valid"):
-                            return True, v.get("ticker", ticker), v.get("company_name", "")
-                        return False, ticker, v.get("error", "Ticker not found in SEC database")
-                    except Exception:
-                        continue
-            return False, ticker, "Ticker not found in SEC database"
+            return await validate_ticker_via_mcp(self._mcp, ticker)
         except Exception as e:
             logger.warning("Ticker validation via MCP failed, proceeding with regex guess: %s", e)
             return True, ticker, ""
 
     async def _resolve_ticker(self, query: str, exclude_ticker: str = "") -> tuple[str, str]:
-        cleaned = clean_query_for_resolution(query)
-        if exclude_ticker:
-            cleaned = cleaned.replace(exclude_ticker, "").strip()
-        if not cleaned:
-            cleaned = query
-        if self._mcp is None:
-            self._mcp = MCPClient(configs=[MCPServerConfig(name="finsight-mcp", url=MCP_SERVER_URL)])
-            try:
-                await self._mcp.connect_all()
-            except Exception as e:
-                logger.warning("MCP connect failed during ticker resolution: %s", e)
-                self._mcp = None
-                return "", ""
+        if not await self._ensure_mcp_connected():
+            return "", ""
         try:
-            result = await self._mcp.call_tool_by_name("resolve_company_ticker", {"text": cleaned})
-            if hasattr(result, "content"):
-                for item in result.content:
-                    try:
-                        v = json.loads(item.text if hasattr(item, "text") else str(item))
-                        ticker = v.get("ticker", "")
-                        if ticker and is_valid_ticker_format(ticker):
-                            return ticker, v.get("company_name", "")
-                    except Exception:
-                        continue
+            return await resolve_ticker_via_mcp(self._mcp, query, exclude_ticker)
         except Exception as e:
             logger.warning("MCP ticker resolution failed: %s", e)
-        return "", ""
+            return "", ""
 
     async def stream(
         self, query: str, context_id: str, task_id: str

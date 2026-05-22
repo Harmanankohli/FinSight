@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FinSight — Agents Reference</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:1.7;color:#2c2c2c;background:#faf8f5;padding:2rem 1rem}
+.container{max-width:740px;margin:0 auto}
+h1,h2,h3,h4{font-family:Georgia,"Times New Roman",serif;color:#1a1a1a;line-height:1.3}
+h1{font-size:2.2rem;margin-bottom:.25rem;border-bottom:2px solid #e8dcc8;padding-bottom:.5rem}
+h2{font-size:1.5rem;margin-top:2.5rem;margin-bottom:.75rem}
+h3{font-size:1.2rem;margin-top:1.5rem;margin-bottom:.5rem}
+h4{font-size:1.05rem;margin-top:1.2rem;margin-bottom:.4rem}
+p{margin-bottom:1rem;color:#444}
+a{color:#8b6f4e;text-decoration:none;font-weight:500}
+a:hover{text-decoration:underline}
+code{background:#f0ebe3;padding:.15em .4em;border-radius:3px;font-size:.875em;font-family:"SF Mono","Fira Code","Fira Mono",monospace}
+pre{background:#f0ebe3;padding:1rem;border-radius:6px;overflow-x:auto;margin-bottom:1rem;font-size:.875em;line-height:1.5}
+pre code{background:0 0;padding:0}
+table{width:100%;border-collapse:collapse;margin-bottom:1rem;font-size:.925rem}
+th,td{padding:.5rem .75rem;text-align:left;border-bottom:1px solid #e0d8cc}
+th{background:#f0ebe3;font-weight:600}
+ul,ol{margin-bottom:1rem;padding-left:1.5rem}
+li{margin-bottom:.25rem}
+hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
+.header-nav{margin-bottom:2rem;padding-bottom:1rem;border-bottom:1px solid #e0d8cc}
+.header-nav a{margin-right:1.2rem;font-size:.9rem}
+@media(max-width:600px){body{padding:1rem}h1{font-size:1.8rem}table{font-size:.85rem}}
+</style>
+</head>
+<body>
+<div class="container">
+<div class="header-nav">
+<a href="index.html">Home</a><a href="../README.html">Overview</a><a href="ARCHITECTURE.html">Architecture</a><a href="AGENTS.html">Agents</a><a href="MCP_SERVERS.html">MCP</a><a href="DESIGN_DECISIONS.html">Decisions</a><a href="DEMO.html">Demo</a><a href="CHANGELOG.html">Changelog</a><a href="TESTS.html">Tests</a>
+</div>
+
+<h1>Agents Reference</h1>
+
+<h2>Agent 1: Orchestrator (ADK)</h2>
+<table>
+<tr><th>Property</th><th>Value</th></tr>
+<tr><td>Framework</td><td>Google ADK</td></tr>
+<tr><td>Port</td><td>8001</td></tr>
+<tr><td>Agent Card</td><td>Built programmatically in <code>agent_1_adk/main.py</code></td></tr>
+<tr><td>Discovery</td><td><code>A2ACardResolver</code> via <code>/.well-known/agent-card.json</code>, async 3x retry</td></tr>
+<tr><td>A2A Endpoint</td><td><code>POST /a2a</code></td></tr>
+</table>
+
+<p>The orchestrator uses a single <code>LlmAgent</code> with one <code>send_message</code> tool:</p>
+<ol>
+<li><strong>Discovers agents in background</strong> via <code>SubAgentClient.discover()</code> &mdash; async <code>A2ACardResolver</code> with retries</li>
+<li><strong>Memory context injection</strong> &mdash; extracts ticker, retrieves latest recommendation, prepends to user message (~300 tokens)</li>
+<li><strong>LLM routes to agents</strong> &mdash; calls <code>send_message(agent_name, task)</code>. Parallel with qwen; sequential with other models.</li>
+<li><strong>Synthesizes results</strong> &mdash; produces BUY/HOLD/SELL recommendation</li>
+<li><strong>Auto-save</strong> &mdash; persists ticker brief, portfolio, and performance record to SQLite</li>
+</ol>
+
+<h3>Architecture</h3>
+<pre>Module load &rarr; SubAgentClient.discover() in background task
+  &rarr; A2ACardResolver(http, "http://localhost:8002")
+  &rarr; A2ACardResolver(http, "http://localhost:8003")
+  &rarr; A2ACardResolver(http, "http://localhost:8004")
+  &rarr; self.agents populated &rarr; instruction updated
+
+FinSightAgentExecutor:
+  A2A Request &rarr; execute()
+  &rarr; _build_memory_context(query) &rarr; inject prefix
+  &rarr; RUNNER.run_async(user_query)
+  &rarr; ADK LlmAgent (tools: [send_message, load_memory])
+    &rarr; LLM decides which agents to call
+    &rarr; send_message("Financial RAG Agent", "Analyze NVDA...")
+    &rarr; send_message("Quant Analysis Agent", "Compute metrics...")
+    &rarr; send_message("Sentiment Intelligence Agent", "Sentiment...")
+    &rarr; LLM synthesizes BUY/HOLD/SELL
+  &rarr; _add_events_to_memory() &rarr; persist session
+  &rarr; _store_memory() &rarr; TickerMemory + PortfolioStore + PerformanceTracker
+
+after_agent_callback (ADK web UI path):
+  &rarr; callback_context.add_events_to_memory(events=..., custom_metadata={...})
+  &rarr; SQLiteMemoryService.add_events_to_memory()</pre>
+
+<h3>Streaming Event Flow</h3>
+<pre>event 1: task { state: SUBMITTED }          &larr; skipped (non-terminal)
+event 2: status_update { WORKING, msg }     &larr; skipped (non-terminal)
+event 3: artifact_update { data: {...} }    &larr; returned (actual result)
+    OR status_update { COMPLETED, msg }     &larr; returned (terminal text)
+    OR task { state: COMPLETED, artifacts } &larr; returned (non-streaming fallback)</pre>
+
+<h3>Sample Request</h3>
+<pre>POST /a2a
+Headers: {"A2A-Version": "1.0"}
+Body:
+{
+  "jsonrpc": "2.0",
+  "method": "SendMessage",
+  "id": "abc123",
+  "params": {
+    "message": {
+      "messageId": "def456",
+      "role": "ROLE_USER",
+      "parts": [{"text": "Should I invest in NVDA?"}]
+    }
+  }
+}</pre>
+
+<hr>
+
+<h2>Agent 2: RAG (LlamaIndex)</h2>
+<table>
+<tr><th>Property</th><th>Value</th></tr>
+<tr><td>Framework</td><td>LlamaIndex</td></tr>
+<tr><td>Executor</td><td><code>GenericAgentExecutor(RAGAgent)</code></td></tr>
+<tr><td>LLM</td><td>LM Studio via <code>llama-index-llms-openai-like</code></td></tr>
+<tr><td>Vector Store</td><td>ChromaDB (local, persisted)</td></tr>
+<tr><td>Embeddings</td><td>HuggingFace <code>all-MiniLM-L6-v2</code></td></tr>
+<tr><td>Port</td><td>8002</td></tr>
+<tr><td>A2A Endpoint</td><td><code>POST /a2a</code></td></tr>
+</table>
+
+<h3>Skills</h3>
+<table>
+<tr><th>ID</th><th>Name</th><th>Description</th></tr>
+<tr><td><code>sec_filing_retrieval</code></td><td>SEC Filing Retrieval</td><td>Retrieves and analyzes SEC 10-K, 10-Q, 8-K filings</td></tr>
+<tr><td><code>earnings_summary</code></td><td>Earnings Summary</td><td>Summarizes earnings call transcripts</td></tr>
+</table>
+
+<h3>Architecture</h3>
+<pre>Request &rarr; DefaultRequestHandler &rarr; GenericAgentExecutor(RAGAgent)
+  &rarr; RAGAgent.stream(query, context_id, task_id)
+    &rarr; RAGAgent._ensure_ingested(ticker)
+      &rarr; MCPClient.connect_all()
+      &rarr; MCPClient.call_tool_by_name("get_company_filings", {...})
+    &rarr; FinancialIndexManager.query(ticker, query)
+      &rarr; Try: RouterQueryEngine &rarr; LM Studio LLM &rarr; response
+      &rarr; Fallback: SEC filings index directly
+  &rarr; Yields: {response_type: "data", content: result, is_task_complete: true}</pre>
+
+<hr>
+
+<h2>Agent 3: Quant (LangGraph)</h2>
+<table>
+<tr><th>Property</th><th>Value</th></tr>
+<tr><td>Framework</td><td>LangChain + LangGraph</td></tr>
+<tr><td>Executor</td><td><code>GenericAgentExecutor(QuantAgent)</code></td></tr>
+<tr><td>LLM</td><td>LM Studio via <code>langchain-openai</code> (summary only)</td></tr>
+<tr><td>Data Source</td><td>MCP (<code>get_prices</code>, <code>get_financials</code>)</td></tr>
+<tr><td>Port</td><td>8003</td></tr>
+<tr><td>A2A Endpoint</td><td><code>POST /a2a</code></td></tr>
+</table>
+
+<h3>Skill</h3>
+<table>
+<tr><th>ID</th><th>Name</th><th>Description</th></tr>
+<tr><td><code>quant_analysis</code></td><td>Quantitative Analysis</td><td>Sharpe ratio, Beta, VaR, volatility, DCF valuation, stress tests</td></tr>
+</table>
+
+<h3>Architecture</h3>
+<pre>Request &rarr; DefaultRequestHandler &rarr; GenericAgentExecutor(QuantAgent)
+  &rarr; QuantAgent.stream(query, context_id, task_id)
+    &rarr; extract_holdings(query, exclude_ticker=ticker) &rarr; ["AAPL", "MSFT", "GOOGL"]
+    &rarr; QuantAgent.analyze(ticker, portfolio_holdings=holdings)
+      [MCP: get_prices &rarr; parse Close data] &rarr; compute_metrics &rarr; branch
+        &rarr; high_volatility (&gt;35%) &rarr; stress_test, sets dcf_error
+        &rarr; low_volatility (&le;35%) &rarr; dcf_valuation
+      &rarr; portfolio_correlation
+      &rarr; format_output (dcf_error in reasoning) &rarr; llm_summary
+  &rarr; Yields: data response</pre>
+
+<p><strong>Portfolio Holdings Extraction</strong>: <code>extract_holdings()</code> uses regex patterns to extract holdings from natural language. The orchestrator LLM is instructed to include holdings in the task text for the Quant agent.</p>
+
+<hr>
+
+<h2>Agent 4: Sentiment (CrewAI)</h2>
+<table>
+<tr><th>Property</th><th>Value</th></tr>
+<tr><td>Framework</td><td>CrewAI</td></tr>
+<tr><td>Executor</td><td><code>GenericAgentExecutor(SentimentAgent)</code></td></tr>
+<tr><td>LLM</td><td>LM Studio via CrewLLM</td></tr>
+<tr><td>Data Collection</td><td>Parallel via <code>asyncio.gather</code></td></tr>
+<tr><td>Port</td><td>8004</td></tr>
+<tr><td>A2A Endpoint</td><td><code>POST /a2a</code></td></tr>
+</table>
+
+<h3>Skill</h3>
+<table>
+<tr><th>ID</th><th>Name</th><th>Description</th></tr>
+<tr><td><code>sentiment_analysis</code></td><td>Sentiment &amp; Narrative Intelligence</td><td>Analyze news sentiment, SEC filings, produce investment narrative</td></tr>
+</table>
+
+<h3>Architecture</h3>
+<pre>Request &rarr; DefaultRequestHandler &rarr; GenericAgentExecutor(SentimentAgent)
+  &rarr; SentimentAgent.stream(query, context_id, task_id)
+    &rarr; SentimentAgent.analyze(ticker)
+      &rarr; _connect() &rarr; MCPClient.connect_all()
+      &rarr; _collect_data_parallel(ticker)
+        &rarr; call("get_news_sentiment", {ticker})
+        &rarr; call("get_company_filings", {ticker})
+        &rarr; asyncio.gather
+      &rarr; SentimentIntelligenceCrew.analyze(ticker, precollected_data)
+        &rarr; Analysis Agent &rarr; Synthesis Agent
+  &rarr; Yields: data response</pre>
+
+<hr>
+<p style="font-size:.85rem;color:#888"><a href="index.html">Back to docs hub</a></p>
+</div>
+</body>
+</html>

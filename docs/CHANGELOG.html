@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FinSight — Changelog</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:1.7;color:#2c2c2c;background:#faf8f5;padding:2rem 1rem}
+.container{max-width:740px;margin:0 auto}
+h1,h2,h3,h4{font-family:Georgia,"Times New Roman",serif;color:#1a1a1a;line-height:1.3}
+h1{font-size:2.2rem;margin-bottom:.25rem;border-bottom:2px solid #e8dcc8;padding-bottom:.5rem}
+h2{font-size:1.5rem;margin-top:2.5rem;margin-bottom:.75rem}
+h3{font-size:1.2rem;margin-top:1.5rem;margin-bottom:.5rem}
+h4{font-size:1.05rem;margin-top:1.2rem;margin-bottom:.4rem}
+p{margin-bottom:1rem;color:#444}
+a{color:#8b6f4e;text-decoration:none;font-weight:500}
+a:hover{text-decoration:underline}
+code{background:#f0ebe3;padding:.15em .4em;border-radius:3px;font-size:.875em;font-family:"SF Mono","Fira Code","Fira Mono",monospace}
+pre{background:#f0ebe3;padding:1rem;border-radius:6px;overflow-x:auto;margin-bottom:1rem;font-size:.875em;line-height:1.5}
+pre code{background:0 0;padding:0}
+ul,ol{margin-bottom:1rem;padding-left:1.5rem}
+li{margin-bottom:.25rem}
+hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
+.header-nav{margin-bottom:2rem;padding-bottom:1rem;border-bottom:1px solid #e0d8cc}
+.header-nav a{margin-right:1.2rem;font-size:.9rem}
+.version{color:#8b6f4e;font-size:.85rem;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
+@media(max-width:600px){body{padding:1rem}h1{font-size:1.8rem}}
+</style>
+</head>
+<body>
+<div class="container">
+<div class="header-nav">
+<a href="index.html">Home</a><a href="../README.html">Overview</a><a href="ARCHITECTURE.html">Architecture</a><a href="AGENTS.html">Agents</a><a href="MCP_SERVERS.html">MCP</a><a href="DESIGN_DECISIONS.html">Decisions</a><a href="DEMO.html">Demo</a><a href="CHANGELOG.html">Changelog</a><a href="TESTS.html">Tests</a>
+</div>
+
+<h1>Changelog</h1>
+
+<h2>v1.17 &mdash; Centralized File Logging</h2>
+<ul>
+<li><strong><code>shared/logging_config.py</code> added</strong>: <code>setup_file_logging(service_name)</code> configures the root logger with a <code>StreamHandler</code> (stderr) and a <code>RotatingFileHandler</code> (10 MB, 5 backups). Safe to call multiple times &mdash; duplicate handlers are skipped.</li>
+<li><strong>All services write to <code>logs/</code></strong>: Orchestrator &rarr; <code>logs/orchestrator.log</code>, RAG &rarr; <code>logs/rag_agent.log</code>, Quant &rarr; <code>logs/quant.log</code>, Sentiment &rarr; <code>logs/sentiment.log</code>, MCP &rarr; <code>logs/mcp.log</code>. Directory created automatically if absent.</li>
+<li><strong><code>memory_callback.log</code> moved to <code>logs/</code></strong>: Was written to the project root; now at <code>logs/memory_callback.log</code>.</li>
+<li><strong><code>basicConfig</code> removed from all servers</strong>: Replaced by module-level <code>setup_file_logging(...)</code> so logging is configured whether the server is imported (uvicorn) or run directly.</li>
+</ul>
+
+<h2>v1.16 &mdash; Code Streamlining &amp; Bug Fixes</h2>
+<ul>
+<li><strong>Ticker validation consolidated</strong>: <code>_validate_ticker()</code> and <code>_resolve_ticker()</code> were copy-pasted verbatim (~108 LOC) across all three sub-agent executors. Extracted as <code>validate_ticker_via_mcp(mcp, ticker)</code> and <code>resolve_ticker_via_mcp(mcp, query, exclude_ticker)</code> in <code>shared/ticker_utils.py</code>. Each agent&rsquo;s methods are now ~7-line wrappers.</li>
+<li><strong>Dead config vars removed from <code>shared/config.py</code></strong>: <code>RAG_AGENT_URL</code>, <code>QUANT_AGENT_URL</code>, <code>SENTIMENT_AGENT_URL</code> (superseded by <code>AGENT_SEED_URLS</code>) and <code>ORCHESTRATOR_PORT</code>, <code>RAG_PORT</code>, <code>QUANT_PORT</code>, <code>SENTIMENT_PORT</code> (hardcoded in each server file, never imported from config).</li>
+<li><strong><code>import json</code> inside loops fixed</strong>: <code>agent_3_langgraph/executor.py</code> and <code>agent_4_crewai/executor.py</code> had <code>import json</code> inside <code>try</code> blocks inside loops; hoisted to module level.</li>
+<li><strong>RAG agent MCP connection refactored</strong>: Inline connect pattern repeated in <code>_ensure_ingested</code>, <code>_validate_ticker</code>, and <code>_resolve_ticker</code> consolidated into a single <code>_ensure_mcp_connected()</code> helper.</li>
+<li><strong>Correlation matrix auto-trigger fixed</strong>: Stored portfolio holdings from memory context were silently injected into every query, causing the quant agent to compute a full correlation matrix even for single-ticker requests. Fixed by (1) labelling the memory-context portfolio line as background reference and (2) updating the orchestrator prompt to only pass holdings to the quant agent when the user explicitly requests portfolio correlation in their current message.</li>
+</ul>
+
+<h2>v1.15 &mdash; Dead Code Cleanup</h2>
+<ul>
+<li><strong><code>shared/types.py</code> removed</strong>: <code>ServerConfig</code>, <code>PlannerTask</code>, <code>TaskList</code>, <code>AgentResponse</code> &mdash; none imported or referenced</li>
+<li><strong><code>shared/workflow.py</code> removed</strong>: <code>WorkflowGraph</code>, <code>WorkflowNode</code>, <code>Status</code> &mdash; never imported by production code</li>
+<li><strong><code>tests/test_workflow.py</code> removed</strong>: 8 tests for unused <code>WorkflowGraph</code></li>
+<li><strong><code>ui/memory_test.html</code> and <code>ui/test.html</code> removed</strong>: Standalone HTML pages with zero references</li>
+<li><strong>README updated</strong>: Removed stale reference to <code>shared/types.py</code></li>
+<li><strong>TESTS.md updated</strong>: Test count corrected from 72 &rarr; 64</li>
+</ul>
+
+<h2>v1.14 &mdash; <code>load_memory</code> Fix &amp; RAG Timeout Optimization</h2>
+<ul>
+<li><strong><code>load_memory</code> now returns results</strong>: Made <code>app_name</code> and <code>user_id</code> optional with defaults, extracted from <code>custom_metadata</code></li>
+<li><strong><code>after_agent_callback</code> signature corrected</strong>: ADK's <code>CallbackContext.add_events_to_memory()</code> takes <code>(self, *, events, custom_metadata=None)</code></li>
+<li><strong>Dual persistence path</strong>: Events persisted via both <code>after_agent_callback</code> and <code>_persist_to_memory</code></li>
+<li><strong><code>_persist_to_memory</code> added to <code>agent_executor.py</code></strong>: Direct persistence bypassing unreliable callback chain for A2A</li>
+<li><strong>RAG retrieval deduplication</strong>: <code>similarity_top_k</code> reduced from 5 &rarr; 3, cutting inference time ~40%</li>
+</ul>
+
+<h2>v1.13 &mdash; Persistent Memory Layer</h2>
+<ul>
+<li><strong><code>DatabaseSessionService</code> replaces <code>InMemorySessionService</code></strong>: Persistent session/event storage across restarts</li>
+<li><strong><code>SQLiteMemoryService</code> for cross-session search</strong>: Custom <code>BaseMemoryService</code> with <code>load_memory</code> tool</li>
+<li><strong><code>TickerMemory</code> for structured brief history</strong>: Per-ticker recommendations with <code>format_context()</code> (~300 tokens)</li>
+<li><strong><code>PortfolioStore</code> for user profile persistence</strong>: Auto-captures holdings from query context, merged over time</li>
+<li><strong><code>PerformanceTracker</code> for recommendation outcomes</strong>: Records and evaluates past recommendations</li>
+<li><strong>Memory context injection</strong>: Extracts ticker, retrieves latest recommendation, prepends to user message</li>
+<li><strong>Auto-save on every response</strong>: Briefs, recommendations, portfolio updates persisted automatically</li>
+<li><strong><code>save_brief</code> tool removed</strong>: Simplified to auto-save only</li>
+<li><strong><code>load_memory</code> tool added</strong>: Available to orchestrator LLM for searching past conversations</li>
+<li><strong>16 tests passing</strong> in <code>tests/test_memory.py</code></li>
+</ul>
+
+<h2>v1.12 &mdash; A2A Span Noise Filtering</h2>
+<ul>
+<li><strong>Noisy A2A internal spans filtered</strong>: Uses <code>is_default_export_span</code>, filters <code>a2a-python-sdk</code> and HTTPX transport spans</li>
+<li><strong>What's preserved</strong>: <code>finsight-query</code> traces, agent workflow spans, all LLM spans</li>
+<li><strong>What's filtered</strong>: A2A <code>send_message</code> internals, HTTPX transport spans</li>
+</ul>
+
+<h2>v1.11 &mdash; Portfolio Holdings Extraction &amp; Correlation Matrix Fix</h2>
+<ul>
+<li><strong><code>extract_holdings()</code> added</strong>: 4 regex patterns covering natural language phrasing</li>
+<li><strong>Holdings passed through Quant chain</strong>: <code>stream()</code> &rarr; <code>analyze()</code> &rarr; <code>graph.run()</code> &rarr; <code>correlation_node</code></li>
+<li><strong>Correlation matrix returns helpful notes</strong>: Instead of empty <code>{}</code></li>
+<li><strong>Orchestrator LLM instructed to pass holdings</strong>: Updated system prompt</li>
+<li><strong>6 new tests</strong> for <code>extract_holdings()</code></li>
+</ul>
+
+<h2>v1.10 &mdash; Langfuse Distributed Tracing Fix</h2>
+<ul>
+<li><strong>Cross-process trace propagation fixed</strong>: Sub-agent spans link to orchestrator's root trace</li>
+<li><strong><code>extract_trace_ids()</code> helper added</strong>: Returns <code>(trace_id, parent_span_id, clean_query)</code></li>
+<li><strong><code>start_observation()</code> with explicit <code>trace_context</code></strong>: All three sub-agents now properly link</li>
+<li><strong><code>CallbackHandler(trace_context=...)</code> for LangGraph</strong>: Internal nodes linked to parent trace</li>
+<li><strong><code>start_observation</code> over <code>start_as_current_observation</code></strong>: Avoids OTel context conflicts in async generators</li>
+<li><strong>8 trace propagation tests</strong></li>
+</ul>
+
+<h2>v1.9 &mdash; Logging Overhaul &amp; DCF Skip Messaging</h2>
+<ul>
+<li><strong>11 new <code>logger.info/warning/debug</code> calls</strong>: Across graph, nodes, and executor</li>
+<li><strong><code>dcf_error</code> now set on high-volatility route</strong>: Descriptive error when DCF skipped</li>
+<li><strong><code>dcf_error</code> included in graph output</strong>: <code>graph.run()</code> returns <code>dcf_error</code> in result dict</li>
+<li><strong><code>dcf_error</code> added to reasoning</strong>: Included in LLM summary context</li>
+<li><strong><code>quant.log</code> routing diagnostics</strong>: Logs which branch taken with ticker + volatility</li>
+<li><strong>FCF debug logging</strong>: Every FCF candidate examined per period</li>
+</ul>
+
+<h2>v1.8 &mdash; Documentation &amp; Housekeeping</h2>
+<ul>
+<li>All docs synced with codebase &mdash; README, TESTS, ARCHITECTURE, AGENTS, MCP_SERVERS, DEMO, CHANGELOG, DESIGN_DECISIONS</li>
+<li>README diagram expanded with all 13 MCP tools</li>
+<li>ARCHITECTURE.md: LLM models updated to <code>qwen/qwen3-30b-a3b-2507</code></li>
+</ul>
+
+<h2>v1.7 &mdash; MCP Server Refactoring &amp; News Fallback</h2>
+<ul>
+<li><code>_EdgarClient</code> refactored with extracted methods</li>
+<li>New <code>get_financial_filings</code> tool: 10-K/10-Q separated with balanced limits</li>
+<li>RSS fetching rewritten: structured dict, concurrent feeds, per-source diagnostics</li>
+<li>Yahoo Finance news API fallback when RSS fails</li>
+<li><code>get_news_sentiment</code> enhanced: <code>feed_status</code>, <code>source_used</code> field</li>
+</ul>
+
+<h2>v1.6 &mdash; DCF Robustness, Ticker False Positives &amp; Date Awareness</h2>
+<ul>
+<li>DCF finds first positive FCF, skips negative periods</li>
+<li><code>dcf_error</code> field in <code>QuantAnalysisState</code></li>
+<li>Financial stop-word blocklist (<code>_FINANCIAL_STOP_WORDS</code>)</li>
+<li>Query noise cleanup for ticker resolution</li>
+<li>Date hallucination fix: <code>Today's date: {current_date}</code> in all prompts</li>
+<li>MCP: 301 redirects, CIK leading-zero fix, IXBRL fallback</li>
+</ul>
+
+<h2>v1.5 &mdash; Company Name to Ticker Resolution</h2>
+<ul>
+<li>New <code>resolve_company_ticker</code> MCP tool: SEC reverse index + Yahoo fallback</li>
+<li><code>_resolve_ticker()</code> on all agents for natural language company names</li>
+<li>Fixed <code>re.IGNORECASE</code> bug &mdash; added <code>.isupper()</code> guard</li>
+<li>Pattern 4 changed from <code>matches[-1]</code> to <code>matches[0]</code> &mdash; prefers ticker over trailing stop words</li>
+<li><code>is_valid_ticker_format()</code> guard: rejects non-standard ticker formats</li>
+<li><code>_validate_ticker</code> falls back to resolution on rejection</li>
+</ul>
+
+<h2>v1.4 &mdash; Ticker Extraction Decoupled from SEC Validation</h2>
+<ul>
+<li><code>extract_ticker()</code> simplified: pure regex, no SEC API calls</li>
+<li><code>_validate_ticker()</code> added to all agents with uniform return type</li>
+<li>Fixed broken <code>_connect()</code> call in agent_2</li>
+<li>Consistent error message for missing ticker</li>
+<li>MCP <code>validate_ticker</code> pre-warming</li>
+<li>All agents handle MCP downtime gracefully</li>
+</ul>
+
+<h2>v1.3 &mdash; MCP Server Fixes &amp; RAG Content Ingestion</h2>
+<ul>
+<li>Docker-compose MCP fix: single unified <code>finsight-mcp</code> service</li>
+<li>New <code>get_filing_content</code> tool for raw SEC EDGAR content</li>
+<li>RAG content ingestion: actual filing text stored, not just metadata</li>
+<li>Quant DCF fix: reads from <code>cash_flow</code> not <code>income_statement</code></li>
+<li>MCP response parsing utility: <code>parse_mcp_result()</code></li>
+</ul>
+
+<h2>v1.2 &mdash; Model Update &amp; MCP Server Hardening</h2>
+<ul>
+<li>Model change: <code>gpt-oss-20b</code> to <code>qwen3-30b-a3b-2507</code> &mdash; ~5-10x faster</li>
+<li>Windows compatibility: <code>import resource</code> guarded</li>
+<li>Lazy agent registry, thread-safe SSE app singleton</li>
+<li>NaN/Inf serialisation, EDGAR caching, expanded sandbox</li>
+<li>SEC earnings fallback, retry logic for EDGAR</li>
+<li>42 tests passing</li>
+</ul>
+
+<h2>v1.1 &mdash; A2A Protocol Alignment</h2>
+<ul>
+<li>A2A discovery: <code>A2ACardResolver</code> with standard well-known endpoint</li>
+<li>A2A client: <code>ClientFactory</code> with proper transport negotiation</li>
+<li>Single <code>send_message</code> tool: matches all A2A sample projects</li>
+<li>Removed <code>list_remote_agents</code>: agents in prompt already</li>
+<li>Pre-fetch removed: LLM routes via <code>send_message</code></li>
+<li>Streaming event handling: correct SUBMITTED/WORKING/artifact routing</li>
+<li>Background async discovery: supports both ADK Web UI and CLI</li>
+<li>Windows event loop fix: <code>WindowsSelectorEventLoopPolicy</code></li>
+<li>Programmatic AgentCards: protobuf types, no static JSON</li>
+<li>44 tests passing</li>
+</ul>
+
+<h2>v1.0 &mdash; LM Studio Migration</h2>
+<ul>
+<li>Model change: Ollama to LM Studio (<code>gpt-oss-20b</code>)</li>
+<li>Dependencies: <code>ollama</code> providers replaced with <code>openai-like</code></li>
+<li>Agent 3: <code>yfinance</code> replaced with MCP tools</li>
+<li>Agents 2 &amp; 4: removed static <code>mcp_config.yaml</code></li>
+</ul>
+
+<h2>v0.9 &mdash; Model Migration to qwen2.5:7b</h2>
+<ul>
+<li>Model change: <code>llama3.2</code> to <code>qwen2.5:7b</code></li>
+</ul>
+
+<h2>v0.8 &mdash; Streamlined ADK Agent</h2>
+<ul>
+<li>ADK agent restructured: <code>agent.py</code> + <code>sub_agent_client.py</code> + <code>agent_executor.py</code> + <code>main.py</code></li>
+<li>39 tests passing</li>
+</ul>
+
+<h2>v0.1 &ndash; v0.7</h2>
+<p>Early iterations: model testing, MCP consolidation, initial A2A SDK integration, project scaffolding.</p>
+
+<hr>
+<p style="font-size:.85rem;color:#888"><a href="index.html">Back to docs hub</a></p>
+</div>
+</body>
+</html>
