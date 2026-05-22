@@ -145,7 +145,7 @@ PROCEDURE:
     use the `load_memory` tool to search past conversations.
 
 TASK FORMAT — always include the ticker and current date in the task text:
-  "Analyze MA (Mastercard) SEC filings as of {date} for recent financial performance."
+  "Analyze MA (Mastercard) SEC filings for recent financial performance."
 
 For general chat or non-stock queries, respond conversationally.\
 """
