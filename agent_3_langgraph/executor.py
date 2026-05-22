@@ -33,6 +33,18 @@ class QuantAgent(BaseAgent):
             await self._mcp.connect_all()
             self._connected = True
 
+    async def _disconnect(self):
+        """Gracefully disconnect MCP client to prevent connection errors."""
+        if self._connected and self._mcp:
+            try:
+                await self._mcp.disconnect_all()
+                logger.debug("MCP client disconnected gracefully")
+            except Exception as e:
+                logger.debug("Error during MCP disconnect (non-critical): %s", e)
+            finally:
+                self._connected = False
+                self._mcp = None
+
     async def analyze(self, ticker: str, period: str = "5y", portfolio_holdings: list[str] | None = None, trace_ctx: dict | None = None) -> dict:
         logger.info("Quant analysis starting for %s (period=%s, holdings=%s, mcp_connected=%s)", ticker, period, portfolio_holdings, self._connected)
         await self._ensure_connected()
@@ -145,3 +157,5 @@ class QuantAgent(BaseAgent):
                 }
         finally:
             span.end()
+            # Gracefully disconnect MCP client after stream completes
+            await self._disconnect()

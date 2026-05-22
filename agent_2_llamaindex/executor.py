@@ -112,6 +112,17 @@ class RAGAgent(BaseAgent):
                 return False
         return True
 
+    async def _disconnect(self):
+        """Gracefully disconnect MCP client to prevent connection errors."""
+        if self._mcp is not None:
+            try:
+                await self._mcp.disconnect_all()
+                logger.debug("MCP client disconnected gracefully")
+            except Exception as e:
+                logger.debug("Error during MCP disconnect (non-critical): %s", e)
+            finally:
+                self._mcp = None
+
     async def _validate_ticker(self, ticker: str) -> tuple[bool, str, str]:
         if not ticker:
             return False, "", "Could not identify a stock ticker from the query. Try using parentheses (AAPL) or $ prefix ($V)."
@@ -208,3 +219,5 @@ class RAGAgent(BaseAgent):
                 }
         finally:
             span.end()
+            # Gracefully disconnect MCP client after stream completes
+            await self._disconnect()
