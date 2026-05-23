@@ -116,10 +116,13 @@ async def _run_metrics(pairs: list) -> dict[str, float]:
     )
     scores: dict[str, float] = {}
     for (metric, _), result in zip(pairs, results):
-        if isinstance(result, Exception):
+        if isinstance(result, BaseException):
             logger.warning("RAGAS metric '%s' error: %s", metric.name, result)
         elif result is not None:
-            scores[metric.name] = round(float(result), 4)
+            try:
+                scores[metric.name] = round(float(result), 4)
+            except (TypeError, ValueError) as exc:
+                logger.warning("RAGAS metric '%s' bad result type %s: %s", metric.name, type(result).__name__, exc)
     return scores
 
 
@@ -221,7 +224,7 @@ async def score_response(
         logger.info("[orchestrator] RAGAS scores (trace=%s): %s", trace_id, scores)
         _push_scores(scores, trace_id, "orchestrator")
     else:
-        logger.debug("[orchestrator] No RAGAS scores computed")
+        logger.info("[orchestrator] No RAGAS scores computed")
 
 
 # ---------------------------------------------------------------------------
@@ -268,7 +271,7 @@ async def score_rag_response(
         logger.info("[rag] RAGAS scores (trace=%s): %s", trace_id, scores)
         _push_scores(scores, trace_id, "rag")
     else:
-        logger.debug("[rag] No RAGAS scores computed")
+        logger.info("[rag] No RAGAS scores computed")
 
 
 # ---------------------------------------------------------------------------
@@ -316,7 +319,7 @@ async def score_quant_response(
         logger.info("[quant] RAGAS scores (trace=%s): %s", trace_id, scores)
         _push_scores(scores, trace_id, "quant")
     else:
-        logger.debug("[quant] No RAGAS scores computed")
+        logger.info("[quant] No RAGAS scores computed")
 
 
 def _build_quant_reference(result: dict) -> str:
@@ -415,4 +418,4 @@ async def score_sentiment_response(
         logger.info("[sentiment] RAGAS scores (trace=%s): %s", trace_id, scores)
         _push_scores(scores, trace_id, "sentiment")
     else:
-        logger.debug("[sentiment] No RAGAS scores computed")
+        logger.info("[sentiment] No RAGAS scores computed")
