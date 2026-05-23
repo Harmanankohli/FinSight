@@ -164,10 +164,16 @@ class SentimentAgent(BaseAgent):
                     "signal": result.get("overall_signal"),
                     "confidence": result.get("confidence_score"),
                 })
+                narrative = (
+                    result.get("narrative")
+                    or result.get("investment_narrative")
+                    or result.get("analysis")
+                    or json.dumps(result, indent=2)
+                )
                 asyncio.create_task(
                     _eval_sentiment_response(
                         query,
-                        result.get("narrative", ""),
+                        narrative,
                         contexts,
                         trace_id,
                     )

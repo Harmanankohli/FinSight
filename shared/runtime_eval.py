@@ -373,51 +373,58 @@ async def score_sentiment_response(
              catalyst_identification, insider_signal_discussion (AspectCritic).
     Requires retrieved_contexts (news article titles/summaries from MCP).
     """
+    logger.info("[sentiment] Eval entered (response_len=%d, contexts=%d, trace=%s)", len(response) if response else 0, len(retrieved_contexts) if retrieved_contexts else 0, trace_id)
     if not user_input or not response or len(response) < _MIN_RESPONSE_LEN:
+        logger.warning("[sentiment] Skipping eval: response too short (len=%d, min=%d)", len(response) if response else 0, _MIN_RESPONSE_LEN)
         return
-
-    clients = await _setup_ragas_clients()
-    if clients is None:
-        return
-    ragas_llm, ragas_embedder = clients
 
     try:
-        from ragas.metrics.collections import Faithfulness, AnswerRelevancy, DomainSpecificRubrics
-    except ImportError:
-        return
+        clients = await _setup_ragas_clients()
+        if clients is None:
+            logger.warning("[sentiment] Skipping eval: no RAGAS clients")
+            return
+        ragas_llm, ragas_embedder = clients
 
-    _ui_resp = {"user_input": user_input, "response": response}
-    _ctx_kwargs = {"user_input": user_input, "response": response, "retrieved_contexts": retrieved_contexts}
-    pairs: list = [
-        (AnswerRelevancy(llm=ragas_llm, embeddings=ragas_embedder), _ui_resp),
-        (DomainSpecificRubrics(
-            name="catalyst_identification",
-            llm=ragas_llm,
-            rubrics={
-                "score1_description": "Response identifies no specific business catalysts or growth drivers.",
-                "score2_description": "Response vaguely mentions positive developments without naming specific catalysts.",
-                "score3_description": "Response identifies one specific catalyst (e.g. a product launch, earnings beat, or partnership).",
-                "score4_description": "Response identifies two or more specific catalysts from news.",
-                "score5_description": "Response comprehensively identifies and contextualises multiple specific catalysts (product launches, earnings beats, partnerships, regulatory approvals, or management changes) from the news.",
-            },
-        ), _ui_resp),
-        (DomainSpecificRubrics(
-            name="insider_signal_discussion",
-            llm=ragas_llm,
-            rubrics={
-                "score1_description": "Response makes no mention of insider trading or institutional ownership signals.",
-                "score2_description": "Response briefly mentions institutional activity without detail.",
-                "score3_description": "Response discusses one specific insider or institutional signal relevant to the thesis.",
-                "score4_description": "Response incorporates insider trading activity and institutional ownership changes with supporting detail.",
-                "score5_description": "Response thoroughly analyses insider trading patterns and significant institutional buying/selling with direct relevance to the investment thesis.",
-            },
-        ), _ui_resp),
-    ]
-    if retrieved_contexts:
-        pairs.append((Faithfulness(llm=ragas_llm), _ctx_kwargs))
+        try:
+            from ragas.metrics.collections import Faithfulness, AnswerRelevancy, DomainSpecificRubrics
+        except ImportError:
+            logger.warning("[sentiment] Skipping eval: ragas import failed")
+            return
 
-    scores = await _run_metrics(pairs, "sentiment", trace_id)
-    if scores:
-        logger.info("[sentiment] RAGAS scores summary (trace=%s): %s", trace_id, scores)
-    else:
-        logger.info("[sentiment] No RAGAS scores computed")
+        _ui_resp = {"user_input": user_input, "response": response}
+        _ctx_kwargs = {"user_input": user_input, "response": response, "retrieved_contexts": retrieved_contexts}
+        pairs: list = [
+            (AnswerRelevancy(llm=ragas_llm, embeddings=ragas_embedder), _ui_resp),
+            (DomainSpecificRubrics(
+                name="catalyst_identification",
+                llm=ragas_llm,
+                rubrics={
+                    "score1_description": "Response identifies no specific business catalysts or growth drivers.",
+                    "score2_description": "Response vaguely mentions positive developments without naming specific catalysts.",
+                    "score3_description": "Response identifies one specific catalyst (e.g. a product launch, earnings beat, or partnership).",
+                    "score4_description": "Response identifies two or more specific catalysts from news.",
+                    "score5_description": "Response comprehensively identifies and contextualises multiple specific catalysts (product launches, earnings beats, partnerships, regulatory approvals, or management changes) from the news.",
+                },
+            ), _ui_resp),
+            (DomainSpecificRubrics(
+                name="insider_signal_discussion",
+                llm=ragas_llm,
+                rubrics={
+                    "score1_description": "Response makes no mention of insider trading or institutional ownership signals.",
+                    "score2_description": "Response briefly mentions institutional activity without detail.",
+                    "score3_description": "Response discusses one specific insider or institutional signal relevant to the thesis.",
+                    "score4_description": "Response incorporates insider trading activity and institutional ownership changes with supporting detail.",
+                    "score5_description": "Response thoroughly analyses insider trading patterns and significant institutional buying/selling with direct relevance to the investment thesis.",
+                },
+            ), _ui_resp),
+        ]
+        if retrieved_contexts:
+            pairs.append((Faithfulness(llm=ragas_llm), _ctx_kwargs))
+
+        scores = await _run_metrics(pairs, "sentiment", trace_id)
+        if scores:
+            logger.info("[sentiment] RAGAS scores summary (trace=%s): %s", trace_id, scores)
+        else:
+            logger.info("[sentiment] No RAGAS scores computed")
+    except Exception:
+        logger.exception("[sentiment] Eval crashed unexpectedly")
