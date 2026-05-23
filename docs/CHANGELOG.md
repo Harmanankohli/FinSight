@@ -1,5 +1,45 @@
 # Changelog
 
+## v1.21 — Runtime RAGAS Robustness & Debuggability
+
+### RAGAS Client Caching
+
+- **`_setup_ragas_clients()` now caches** (`shared/runtime_eval.py`): Module-level `_ragas_clients` tuple stores `(InstructorLLM, _STEmbeddings)` after first call. Subsequent calls return cached clients instead of reloading `SentenceTransformer(all-MiniLM-L6-v2)` (~1-2s, ~80MB) on every agent response. Eliminates 4× model reload per query.
+
+### Per-Metric Streaming
+
+- **`_run_metrics` switched to `asyncio.wait(FIRST_COMPLETED)`** (`shared/runtime_eval.py`): Replaced `asyncio.gather` (waits for all metrics). Each metric is now logged and pushed to Langfuse the moment its `ascore` finishes. Fast metrics (AnswerRelevancy, DomainSpecificRubrics ~3-5s) appear immediately instead of waiting for slow metrics (Faithfulness ~180s timeout).
+
+### Error Handling
+
+- **`BaseException` instead of `Exception`** in `_run_metrics` result loop: `CancelledError` inherits from `BaseException`, not `Exception` — the old `isinstance(result, Exception)` check missed cancelled tasks, fell through to `round(float(result), 4)`, crashed with `TypeError`, and silently killed the entire eval via `create_task` fire-and-forget. Fixed by checking `isinstance(result, BaseException)`.
+- **`float()` conversion guarded** with `try/except (TypeError, ValueError)` — any unexpected result types are logged instead of crashing.
+- **`_score_metric` try/except** added: wraps `metric.ascore()` and logs full traceback with `exc_info=True` when a metric fails internally.
+- **All scoring functions wrapped in try/except**: Orchestrator, Sentiment eval bodies catch unexpected exceptions and log them with full traceback instead of silently disappearing.
+
+### Debuggability
+
+- **Entry logs added**: Each scoring function logs `[agent] Eval entered (response_len=..., trace=...)` at INFO level on entry, confirming the function was reached.
+- **Early-return warnings**: Silent `return` on short responses or import failures now logs `[agent] Skipping eval: ...` with reason.
+- **Fallback logs promoted**: `logger.debug("[agent] No RAGAS scores computed")` → `logger.info` — visible at default log level.
+
+### Timeout & Encoding Fixes
+
+- **HTTP timeout 60s → 180s** (`shared/runtime_eval.py`): `AsyncOpenAI(timeout=180)` — Faithfulness makes multiple sequential LLM calls (decompose claims → verify each), each taking ~20-30s on the 20B model. The old 60s timeout failed on the second call.
+- **UTF-8 stdout/stderr** (`shared/config.py`): `sys.stdout.reconfigure(encoding='utf-8')` prevents `UnicodeEncodeError` when RAGAS log messages containing curly quotes (`\u2010`, `\u2011`) hit Windows cp1252 console.
+
+### Langfuse Push Cleanup
+
+- **`_push_scores` skips when trace_id is None** (`shared/runtime_eval.py`): With placeholder Langfuse API keys (`pk-lf-...`), `create_score()` with no `trace_id` resulted in "Bad request" API errors. Now returns early when `trace_id is None`.
+
+### Sentiment Narrative Key Fallback
+
+- **`narrative` key fallback** (`agent_4_crewai/executor.py`): CrewAI LLM may return JSON with `investment_narrative` or `analysis` instead of `narrative`. The eval now tries `narrative` → `investment_narrative` → `analysis` → full JSON dump before giving up.
+
+### Gitignore
+
+- **`tests/evaluation/eval_results/` added to `.gitignore`**: Runtime-generated trace JSON artifacts excluded from version control.
+
 ## v1.20 — Runtime RAGAS Evaluation & Offline HF Model Loading
 
 ### Runtime RAGAS Evaluation

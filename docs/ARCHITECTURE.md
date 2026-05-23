@@ -427,6 +427,32 @@ After each agent produces a response, a fire-and-forget background task scores i
 | Quant | `score_quant_response()` | FactualCorrectness, ResponseRelevancy | `user_input`, `response`, `quant_result` (computed metrics dict) |
 | Sentiment | `score_sentiment_response()` | ResponseRelevancy, catalyst_identification, insider_signal_discussion, Faithfulness | `user_input`, `response`, `_retrieved_contexts` (news/filing titles) |
 
+### Per-Metric Streaming
+
+Metrics within an agent are run concurrently via `asyncio.wait(FIRST_COMPLETED)` instead of `asyncio.gather`. Each metric score is logged and pushed to Langfuse the moment its `ascore()` finishes — fast metrics (AnswerRelevancy, DomainSpecificRubrics ~3-5s) appear immediately without waiting for slow metrics (e.g., Faithfulness which runs multiple sequential LLM calls and can take ~180s).
+
+### Client Caching
+
+`_setup_ragas_clients()` caches the `(InstructorLLM, _STEmbeddings)` tuple at module level after the first call. All four agents reuse the cached `SentenceTransformer` model — the previous approach loaded a fresh model (~1-2s, ~80MB) on every agent response, multiplying latency by 4 per query.
+
+### Error Handling
+
+- **`_score_metric`**: Wraps `metric.ascore()` in try/except with `exc_info=True` logging and re-raises.
+- **`_run_metrics`**: Catches `BaseException` (including `CancelledError` which inherits from `BaseException`, not `Exception`) per-metric. Float conversion is guarded with try/except.
+- **Scoring functions**: Each function body is wrapped in try/except that logs any unexpected crash with full traceback — prevents fire-and-forget tasks from silently dying.
+
+### Debuggability
+
+Each scoring function logs `[agent] Eval entered` at INFO on entry. Early-return conditions (short response, import failure, no RAGAS clients) log a warning with the reason. The fallback `[agent] No RAGAS scores computed` is at INFO level.
+
+### Timeout & Encoding
+
+The `AsyncOpenAI` client uses a 180-second timeout (up from 60s) — Faithfulness makes multiple sequential LLM calls within a single `ascore()`, and each call can take ~20-30s on a 20B model. `sys.stdout.reconfigure(encoding='utf-8')` at import time prevents `UnicodeEncodeError` from RAGAS log messages with Unicode characters (curly quotes, em-dashes) on Windows cp1252 consoles and file handlers.
+
+### Langfuse Integration
+
+`_push_scores()` pushes each metric to `langfuse.create_score()` linked by `trace_id`. When `trace_id` is None (no active Langfuse trace), the push is skipped entirely to avoid "Bad request" errors from the cloud API with placeholder keys.
+
 ### LM Studio Compatibility
 
 RAGAS defaults to `instructor.Mode.JSON` which sends `response_format.type="json_object"` — LM Studio only supports `"json_schema"` or `"text"`. `_setup_ragas_clients()` patches with `instructor.Mode.JSON_SCHEMA`. HuggingFace embeddings are wrapped via a custom `_STEmbeddings` class (RAGAS 0.4.x `BaseRagasEmbedding`) to avoid a broken pydantic integration path.

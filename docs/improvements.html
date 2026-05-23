@@ -173,6 +173,21 @@ Offline evaluation:
 <tr><td>Sentiment</td><td><code>score_sentiment_response()</code></td><td>ResponseRelevancy, catalyst_identification, insider_signal_discussion, Faithfulness</td></tr>
 </table>
 
+<h4>Per-Metric Streaming</h4>
+<p>v1.21 replaced <code>asyncio.gather</code> with <code>asyncio.wait(FIRST_COMPLETED)</code>. Fast metrics (AnswerRelevancy, DomainSpecificRubrics ~3-5s) are logged and pushed to Langfuse immediately instead of waiting for slow metrics (Faithfulness ~180s timeout). Each score is visible in the log as it completes.</p>
+
+<h4>Client Caching</h4>
+<p><code>_setup_ragas_clients()</code> caches <code>(InstructorLLM, _STEmbeddings)</code> at module level after the first call. Subsequent agent calls reuse the cached <code>SentenceTransformer</code> model instead of reloading it (~1-2s, ~80MB) on every response, eliminating 4 redundant model loads per query.</p>
+
+<h4>Error Resilience</h4>
+<p>Three layers of error handling: (1) <code>_score_metric</code> wraps <code>ascore()</code> with <code>exc_info=True</code> logging before re-raising. (2) <code>_run_metrics</code> catches <code>BaseException</code> (including <code>CancelledError</code>) per-metric — previously crashed silently on cancelled tasks. (3) Each scoring function body is wrapped in try/except so any unexpected crash is logged with full traceback instead of disappearing into the fire-and-forget task.</p>
+
+<h4>Debuggability</h4>
+<p>Entry log at INFO level confirms the function was reached. Early-return warnings explain why eval was skipped (response too short, import failure, missing RAGAS clients). Fallback log "<code>[agent] No RAGAS scores computed</code>" promoted from DEBUG to INFO. Sentiment eval tries <code>narrative</code> → <code>investment_narrative</code> → <code>analysis</code> → full JSON dump for the response text.</p>
+
+<h4>Timeout &amp; Encoding</h4>
+<p>HTTP client timeout increased from 60s to 180s for multi-call Faithfulness decomposition. <code>sys.stdout.reconfigure(encoding='utf-8')</code> prevents <code>UnicodeEncodeError</code> from RAGAS log messages with Unicode characters on Windows cp1252. Langfuse score push is skipped when <code>trace_id</code> is None, avoiding "Bad request" errors from placeholder API keys.</p>
+
 <p>Scores are pushed to Langfuse per-trace via <code>create_score()</code>, linked by <code>trace_id</code>. LM Studio compatibility requires patching RAGAS's default <code>instructor.Mode.JSON</code> to <code>JSON_SCHEMA</code> since LM Studio only supports <code>"json_schema"</code> or <code>"text"</code> response formats. HuggingFace embeddings bypass RAGAS's broken Pydantic <code>HuggingfaceEmbeddings</code> with a custom <code>_STEmbeddings</code> using <code>SentenceTransformer</code> directly.</p>
 
 <h3>Files</h3>

@@ -70,6 +70,54 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <li><strong><code>A2A_TIMEOUT</code> default reduced</strong> (<code>shared/config.py</code>): Changed from <code>300.0</code> to <code>180.0</code> &mdash; 5 minutes was excessive for local LLM inference; 3 minutes provides sufficient margin while failing faster on genuinely stuck agents.</li>
 </ul>
 
+<h2>v1.21 &mdash; Runtime RAGAS Robustness &amp; Debuggability</h2>
+
+<h3 class="version">RAGAS Client Caching</h3>
+<ul>
+<li><strong><code>_setup_ragas_clients()</code> now caches</strong> (<code>shared/runtime_eval.py</code>): Module-level <code>_ragas_clients</code> tuple stores <code>(InstructorLLM, _STEmbeddings)</code> after first call. Subsequent calls return cached clients instead of reloading <code>SentenceTransformer(all-MiniLM-L6-v2)</code> (~1-2s, ~80MB) on every agent response. Eliminates 4&times; model reload per query.</li>
+</ul>
+
+<h3 class="version">Per-Metric Streaming</h3>
+<ul>
+<li><strong><code>_run_metrics</code> switched to <code>asyncio.wait(FIRST_COMPLETED)</code></strong> (<code>shared/runtime_eval.py</code>): Replaced <code>asyncio.gather</code> (waits for all metrics). Each metric is now logged and pushed to Langfuse the moment its <code>ascore</code> finishes. Fast metrics (AnswerRelevancy, DomainSpecificRubrics ~3-5s) appear immediately instead of waiting for slow metrics (Faithfulness ~180s timeout).</li>
+</ul>
+
+<h3 class="version">Error Handling</h3>
+<ul>
+<li><strong><code>BaseException</code> instead of <code>Exception</code></strong> in <code>_run_metrics</code> result loop: <code>CancelledError</code> inherits from <code>BaseException</code>, not <code>Exception</code> &mdash; the old <code>isinstance(result, Exception)</code> check missed cancelled tasks, fell through to <code>round(float(result), 4)</code>, crashed with <code>TypeError</code>, and silently killed the entire eval via <code>create_task</code> fire-and-forget. Fixed by checking <code>isinstance(result, BaseException)</code>.</li>
+<li><strong><code>float()</code> conversion guarded</strong> with <code>try/except (TypeError, ValueError)</code> &mdash; any unexpected result types are logged instead of crashing.</li>
+<li><strong><code>_score_metric</code> try/except</strong> added: wraps <code>metric.ascore()</code> and logs full traceback with <code>exc_info=True</code> when a metric fails internally.</li>
+<li><strong>All scoring functions wrapped in try/except</strong>: Orchestrator and Sentiment eval bodies catch unexpected exceptions and log them with full traceback instead of silently disappearing.</li>
+</ul>
+
+<h3 class="version">Debuggability</h3>
+<ul>
+<li><strong>Entry logs added</strong>: Each scoring function logs <code>[agent] Eval entered (response_len=..., trace=...)</code> at INFO level on entry, confirming the function was reached.</li>
+<li><strong>Early-return warnings</strong>: Silent <code>return</code> on short responses or import failures now logs <code>[agent] Skipping eval: ...</code> with reason.</li>
+<li><strong>Fallback logs promoted</strong>: <code>logger.debug("[agent] No RAGAS scores computed")</code> &rarr; <code>logger.info</code> &mdash; visible at default log level.</li>
+</ul>
+
+<h3 class="version">Timeout &amp; Encoding Fixes</h3>
+<ul>
+<li><strong>HTTP timeout 60s &rarr; 180s</strong> (<code>shared/runtime_eval.py</code>): <code>AsyncOpenAI(timeout=180)</code> &mdash; Faithfulness makes multiple sequential LLM calls (decompose claims &rarr; verify each), each taking ~20-30s on the 20B model. The old 60s timeout failed on the second call.</li>
+<li><strong>UTF-8 stdout/stderr</strong> (<code>shared/config.py</code>): <code>sys.stdout.reconfigure(encoding='utf-8')</code> prevents <code>UnicodeEncodeError</code> when RAGAS log messages containing curly quotes or em-dashes hit Windows cp1252 console.</li>
+</ul>
+
+<h3 class="version">Langfuse Push Cleanup</h3>
+<ul>
+<li><strong><code>_push_scores</code> skips when <code>trace_id</code> is None</strong> (<code>shared/runtime_eval.py</code>): With placeholder Langfuse API keys (<code>pk-lf-...</code>), <code>create_score()</code> with no <code>trace_id</code> resulted in &ldquo;Bad request&rdquo; API errors. Now returns early when <code>trace_id is None</code>.</li>
+</ul>
+
+<h3 class="version">Sentiment Narrative Key Fallback</h3>
+<ul>
+<li><strong><code>narrative</code> key fallback</strong> (<code>agent_4_crewai/executor.py</code>): CrewAI LLM may return JSON with <code>investment_narrative</code> or <code>analysis</code> instead of <code>narrative</code>. The eval now tries <code>narrative</code> &rarr; <code>investment_narrative</code> &rarr; <code>analysis</code> &rarr; full JSON dump before giving up.</li>
+</ul>
+
+<h3 class="version">Gitignore</h3>
+<ul>
+<li><strong><code>tests/evaluation/eval_results/</code> added to <code>.gitignore</code></strong>: Runtime-generated trace JSON artifacts excluded from version control.</li>
+</ul>
+
 <h2>v1.19 &mdash; MCP Connection Cleanup &amp; Server Script Fixes</h2>
 
 <h3 class="version">MCP Connection Cleanup</h3>

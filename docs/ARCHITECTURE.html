@@ -298,6 +298,49 @@ Sub-agents (agent_2, agent_3, agent_4)
 )</pre>
 <p>When <code>EVAL_TRACE_ENABLED=true</code>, the same call also writes a JSON file to <code>tests/evaluation/eval_results/orchestrator_traces/</code> for use by the RAGAS orchestrator evaluation runner.</p>
 
+<h2>Runtime RAGAS Evaluation</h2>
+<p>After each agent produces a response, a fire-and-forget background task scores it using RAGAS metrics that require no ground-truth reference. Scores are pushed to Langfuse per-trace (linked by <code>trace_id</code>).</p>
+
+<table>
+<tr><th>Agent</th><th>Background Task</th><th>Metrics</th><th>Data Required</th></tr>
+<tr><td>Orchestrator</td><td><code>score_response()</code></td><td>ResponseRelevancy, citation_quality, risk_disclosure, recommendation_clarity, response_completeness</td><td><code>user_input</code>, <code>response</code></td></tr>
+<tr><td>RAG</td><td><code>score_rag_response()</code></td><td>Faithfulness, ResponseRelevancy, LLMContextPrecisionWithoutReference</td><td><code>user_input</code>, <code>response</code>, <code>context_texts</code> (ChromaDB nodes)</td></tr>
+<tr><td>Quant</td><td><code>score_quant_response()</code></td><td>FactualCorrectness, ResponseRelevancy</td><td><code>user_input</code>, <code>response</code>, <code>quant_result</code> (computed metrics dict)</td></tr>
+<tr><td>Sentiment</td><td><code>score_sentiment_response()</code></td><td>ResponseRelevancy, catalyst_identification, insider_signal_discussion, Faithfulness</td><td><code>user_input</code>, <code>response</code>, <code>_retrieved_contexts</code> (news/filing titles)</td></tr>
+</table>
+
+<h3>Per-Metric Streaming</h3>
+<p>Metrics within an agent are run concurrently via <code>asyncio.wait(FIRST_COMPLETED)</code> instead of <code>asyncio.gather</code>. Each metric score is logged and pushed to Langfuse the moment its <code>ascore()</code> finishes &mdash; fast metrics (AnswerRelevancy, DomainSpecificRubrics ~3-5s) appear immediately without waiting for slow metrics (e.g., Faithfulness which runs multiple sequential LLM calls and can take ~180s).</p>
+
+<h3>Client Caching</h3>
+<p><code>_setup_ragas_clients()</code> caches the <code>(InstructorLLM, _STEmbeddings)</code> tuple at module level after the first call. All four agents reuse the cached <code>SentenceTransformer</code> model &mdash; the previous approach loaded a fresh model (~1-2s, ~80MB) on every agent response, multiplying latency by 4 per query.</p>
+
+<h3>Error Handling</h3>
+<ul>
+<li><strong><code>_score_metric</code></strong>: Wraps <code>metric.ascore()</code> in try/except with <code>exc_info=True</code> logging and re-raises.</li>
+<li><strong><code>_run_metrics</code></strong>: Catches <code>BaseException</code> (including <code>CancelledError</code> which inherits from <code>BaseException</code>, not <code>Exception</code>) per-metric. Float conversion is guarded with try/except.</li>
+<li><strong>Scoring functions</strong>: Each function body is wrapped in try/except that logs any unexpected crash with full traceback.</li>
+</ul>
+
+<h3>Debuggability</h3>
+<p>Each scoring function logs <code>[agent] Eval entered</code> at INFO on entry. Early-return conditions (short response, import failure, no RAGAS clients) log a warning with the reason. The fallback <code>[agent] No RAGAS scores computed</code> is at INFO level.</p>
+
+<h3>Timeout &amp; Encoding</h3>
+<p>The <code>AsyncOpenAI</code> client uses a 180-second timeout (up from 60s) &mdash; Faithfulness makes multiple sequential LLM calls within a single <code>ascore()</code>, and each call can take ~20-30s on a 20B model. <code>sys.stdout.reconfigure(encoding='utf-8')</code> at import time prevents <code>UnicodeEncodeError</code> from RAGAS log messages with Unicode characters on Windows cp1252.</p>
+
+<h3>Langfuse Integration</h3>
+<p><code>_push_scores()</code> pushes each metric to <code>langfuse.create_score()</code> linked by <code>trace_id</code>. When <code>trace_id</code> is None (no active Langfuse trace), the push is skipped entirely to avoid &ldquo;Bad request&rdquo; errors from the cloud API with placeholder keys.</p>
+
+<h3>LM Studio Compatibility</h3>
+<p>RAGAS defaults to <code>instructor.Mode.JSON</code> which sends <code>response_format.type="json_object"</code> &mdash; LM Studio only supports <code>"json_schema"</code> or <code>"text"</code>. <code>_setup_ragas_clients()</code> patches with <code>instructor.Mode.JSON_SCHEMA</code>. HuggingFace embeddings are wrapped via a custom <code>_STEmbeddings</code> class (RAGAS 0.4.x <code>BaseRagasEmbedding</code>) to avoid a broken pydantic integration path.</p>
+
+<h3>Offline-Mode Metrics (Ground-Truth Required)</h3>
+<p>These metrics require a human-curated reference dataset and live in <code>tests/evaluation/</code> as offline scripts:</p>
+<ul>
+<li><code>run_rag_eval.py</code> &mdash; Faithfulness, ResponseRelevancy, ContextPrecision, ContextRecall, NoiseSensitivity</li>
+<li><code>run_orchestrator_eval.py</code> &mdash; ToolCallAccuracy, AgentGoalAccuracy</li>
+</ul>
+
 <h2>Memory Layer Architecture</h2>
 <p>The memory layer provides persistent session storage and cross-session memory retrieval using SQLite. All memory components are in <code>shared/memory/</code>.</p>
 
