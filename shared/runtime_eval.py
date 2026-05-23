@@ -163,73 +163,80 @@ async def score_response(
     Metrics: ResponseRelevancy, citation_quality, risk_disclosure,
              recommendation_clarity, response_completeness.
     """
+    logger.info("[orchestrator] Eval entered (response_len=%d, trace=%s)", len(response) if response else 0, trace_id)
     if not user_input or not response or len(response) < _MIN_RESPONSE_LEN:
+        logger.warning("[orchestrator] Skipping eval: response too short (len=%d, min=%d)", len(response) if response else 0, _MIN_RESPONSE_LEN)
         return
-
-    clients = await _setup_ragas_clients()
-    if clients is None:
-        return
-    ragas_llm, ragas_embedder = clients
 
     try:
-        from ragas.metrics.collections import DomainSpecificRubrics, RubricsScoreWithoutReference, AnswerRelevancy
-    except ImportError:
-        return
+        clients = await _setup_ragas_clients()
+        if clients is None:
+            logger.warning("[orchestrator] Skipping eval: no RAGAS clients")
+            return
+        ragas_llm, ragas_embedder = clients
 
-    _ui_resp = {"user_input": user_input, "response": response}
-    pairs = [
-        (AnswerRelevancy(llm=ragas_llm, embeddings=ragas_embedder), _ui_resp),
-        (DomainSpecificRubrics(
-            name="citation_quality",
-            llm=ragas_llm,
-            rubrics={
-                "score1_description": "Response makes only generic claims with no specific figures, filing references, dates, or dollar amounts.",
-                "score2_description": "Response mentions one vague reference but without specific figures or filing details.",
-                "score3_description": "Response includes one specific figure or filing reference.",
-                "score4_description": "Response cites two or more specific figures, dates, or filing sections.",
-                "score5_description": "Response extensively cites specific filing sections, dates, dollar amounts, and percentages throughout.",
-            },
-        ), _ui_resp),
-        (DomainSpecificRubrics(
-            name="risk_disclosure",
-            llm=ragas_llm,
-            rubrics={
-                "score1_description": "Response presents only upside with no mention of any investment risk.",
-                "score2_description": "Response hints at risk in passing but does not name a specific risk factor.",
-                "score3_description": "Response acknowledges one material risk (regulatory, competitive, market, or operational).",
-                "score4_description": "Response explicitly discusses two or more distinct risk factors.",
-                "score5_description": "Response provides a balanced assessment with detailed discussion of multiple material risks across different categories.",
-            },
-        ), _ui_resp),
-        (RubricsScoreWithoutReference(
-            name="recommendation_clarity",
-            llm=ragas_llm,
-            rubrics={
-                "score1_description": "No clear BUY/HOLD/SELL signal present.",
-                "score2_description": "Signal present but rationale is absent or vague.",
-                "score3_description": "Signal with rationale but supported by only one data point.",
-                "score4_description": "Signal with rationale supported by two or more data points from different sources.",
-                "score5_description": "Clear signal with specific supporting evidence from at least two agent analyses (quant, filing, or sentiment) with cited figures.",
-            },
-        ), _ui_resp),
-        (DomainSpecificRubrics(
-            name="response_completeness",
-            llm=ragas_llm,
-            rubrics={
-                "score1_description": "Response draws from only one analysis type or provides only a generic summary.",
-                "score2_description": "Response references two analysis types but one is superficial.",
-                "score3_description": "Response integrates findings from two of: filing analysis, quantitative metrics, or news sentiment.",
-                "score4_description": "Response integrates all three analysis types with reasonable depth.",
-                "score5_description": "Response thoroughly synthesises filing analysis, quantitative metrics (Sharpe, DCF, VaR), and news/sentiment into a cohesive brief.",
-            },
-        ), _ui_resp),
-    ]
+        try:
+            from ragas.metrics.collections import DomainSpecificRubrics, RubricsScoreWithoutReference, AnswerRelevancy
+        except ImportError:
+            logger.warning("[orchestrator] Skipping eval: ragas import failed (RubricsScoreWithoutReference?)")
+            return
 
-    scores = await _run_metrics(pairs, "orchestrator", trace_id)
-    if scores:
-        logger.info("[orchestrator] RAGAS scores summary (trace=%s): %s", trace_id, scores)
-    else:
-        logger.info("[orchestrator] No RAGAS scores computed")
+        _ui_resp = {"user_input": user_input, "response": response}
+        pairs = [
+            (AnswerRelevancy(llm=ragas_llm, embeddings=ragas_embedder), _ui_resp),
+            (DomainSpecificRubrics(
+                name="citation_quality",
+                llm=ragas_llm,
+                rubrics={
+                    "score1_description": "Response makes only generic claims with no specific figures, filing references, dates, or dollar amounts.",
+                    "score2_description": "Response mentions one vague reference but without specific figures or filing details.",
+                    "score3_description": "Response includes one specific figure or filing reference.",
+                    "score4_description": "Response cites two or more specific figures, dates, or filing sections.",
+                    "score5_description": "Response extensively cites specific filing sections, dates, dollar amounts, and percentages throughout.",
+                },
+            ), _ui_resp),
+            (DomainSpecificRubrics(
+                name="risk_disclosure",
+                llm=ragas_llm,
+                rubrics={
+                    "score1_description": "Response presents only upside with no mention of any investment risk.",
+                    "score2_description": "Response hints at risk in passing but does not name a specific risk factor.",
+                    "score3_description": "Response acknowledges one material risk (regulatory, competitive, market, or operational).",
+                    "score4_description": "Response explicitly discusses two or more distinct risk factors.",
+                    "score5_description": "Response provides a balanced assessment with detailed discussion of multiple material risks across different categories.",
+                },
+            ), _ui_resp),
+            (RubricsScoreWithoutReference(
+                name="recommendation_clarity",
+                llm=ragas_llm,
+                rubrics={
+                    "score1_description": "No clear BUY/HOLD/SELL signal present.",
+                    "score2_description": "Signal present but rationale is absent or vague.",
+                    "score3_description": "Signal with rationale but supported by only one data point.",
+                    "score4_description": "Signal with rationale supported by two or more data points from different sources.",
+                    "score5_description": "Clear signal with specific supporting evidence from at least two agent analyses (quant, filing, or sentiment) with cited figures.",
+                },
+            ), _ui_resp),
+            (DomainSpecificRubrics(
+                name="response_completeness",
+                llm=ragas_llm,
+                rubrics={
+                    "score1_description": "Response draws from only one analysis type or provides only a generic summary.",
+                    "score2_description": "Response references two analysis types but one is superficial.",
+                    "score3_description": "Response integrates findings from two of: filing analysis, quantitative metrics, or news sentiment.",
+                    "score4_description": "Response integrates all three analysis types with reasonable depth.",
+                    "score5_description": "Response thoroughly synthesises filing analysis, quantitative metrics (Sharpe, DCF, VaR), and news/sentiment into a cohesive brief.",
+                },
+            ), _ui_resp),
+        ]
+
+        scores = await _run_metrics(pairs, "orchestrator", trace_id)
+        if scores:
+            logger.info("[orchestrator] RAGAS scores summary (trace=%s): %s", trace_id, scores)
+        else:
+            logger.info("[orchestrator] No RAGAS scores computed")
+    except Exception:
+        logger.exception("[orchestrator] Eval crashed unexpectedly")
 
 
 # ---------------------------------------------------------------------------
