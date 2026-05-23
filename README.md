@@ -10,7 +10,8 @@ An autonomous multi-agent system that answers investment queries like *"Should I
 - **Input/output guardrails**: Off-topic filter, pre-flight ticker validation, empty-response guard, and BUY/HOLD/SELL signal enforcement with auto-retry
 - **Persistent memory layer**: SQLite-backed session storage, cross-session memory search, ticker brief history, portfolio persistence, and recommendation tracking with live price snapshots
 - **Incremental RAG ingestion**: Tracks ingested filing URLs in SQLite — restarts never re-ingest already-indexed documents
-- **RAGAS evaluation pipeline**: Faithfulness, ResponseRelevancy, ContextPrecision, ContextRecall, ToolCallAccuracy, AgentGoalAccuracy, and custom financial rubrics with Langfuse score push
+- **RAGAS evaluation pipeline**: Offline batch evaluation (Faithfulness, ResponseRelevancy, ContextPrecision, ContextRecall, ToolCallAccuracy, AgentGoalAccuracy) with Langfuse score push. Runtime per-query evaluation on live production responses with per-metric streaming, client caching, and 180s LLM timeout
+- **Debuggable runtime eval**: Entry/exit logs on every scoring function, per-metric streaming via `asyncio.wait(FIRST_COMPLETED)`, `sys.stdout.reconfigure(encoding='utf-8')` to prevent UnicodeEncodeError, and early-return fallbacks on missing contexts
 - **Portfolio correlation analysis**: When you explicitly mention portfolio holdings (e.g. "My portfolio holds AAPL, MSFT"), the quant agent computes cross-stock correlation matrices alongside the primary analysis
 - **Distributed tracing**: Langfuse traces span all four agent processes in a single trace tree via text-based context propagation, with automatic filtering of noisy A2A internal spans
 - **Health monitoring**: `/health` endpoints on all five services with docker-compose healthcheck integration
@@ -70,7 +71,7 @@ All A2A communication uses `A2ACardResolver` for standard discovery and `ClientF
 | Quant | LangChain + LangGraph (state machine, MCP data) + LangChain SQLiteCache |
 | Sentiment | CrewAI (parallel data collection + synthesis) |
 | MCP Server | FastMCP (agent registry + data tools + TTL caching) |
-| Evaluation | RAGAS (faithfulness, relevancy, tool accuracy) + custom financial rubrics |
+| Evaluation | RAGAS offline pipeline + runtime per-query eval (per-metric streaming, client caching, 180s timeout) + custom financial rubrics |
 | LLM | LM Studio (local, OpenAI-compatible) |
 | Embeddings | sentence-transformers (all-MiniLM-L6-v2, local) |
 | Reranker | cross-encoder/ms-marco-MiniLM-L-6-v2 |

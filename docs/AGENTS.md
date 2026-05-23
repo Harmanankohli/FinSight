@@ -21,7 +21,7 @@ The orchestrator uses a single `LlmAgent` with one `send_message` tool. The LLM 
 6. **Output guardrails** — Responses shorter than 50 chars trigger `TASK_STATE_FAILED`. Missing BUY/HOLD/SELL signal emits a Langfuse warning with `missing_signal: true`.
 7. **Synthesizes results** — LLM collects all outputs and produces a BUY/HOLD/SELL recommendation
 8. **Auto-save** — After each response, persists ticker brief, portfolio holdings, and performance record (with live price snapshot via yfinance) to SQLite. Fires background task to evaluate past recommendations.
-9. **Runtime RAGAS evaluation** — After response processing, fires `asyncio.create_task(_eval_score_response(...))` scoring ResponseRelevancy, citation_quality, risk_disclosure, recommendation_clarity, and response_completeness. Scores pushed to Langfuse per-trace.
+9. **Runtime RAGAS evaluation** — After response processing, fires `asyncio.create_task(_eval_score_response(...))` with 5 metrics (all reference-free). Scores pushed to Langfuse per-trace. See Runtime Evaluation section below for metric details.
 
 All A2A communication uses `ClientFactory` + `BaseClient` from the official `a2a-sdk`. Streaming events are handled correctly: intermediate SUBMITTED/WORKING events are skipped, only `artifact_update` events (data or text) and terminal `status_update` events are returned to the LLM.
 
@@ -86,6 +86,18 @@ Body:
 }
 ```
 
+### Runtime Evaluation
+
+After response synthesis, fires `asyncio.create_task(score_response(...))` with 5 metrics. All scored from `user_input` + `response` only — no ground-truth reference needed.
+
+| Metric | Why |
+|---|---|
+| `AnswerRelevancy` | Measures whether the final BUY/HOLD/SELL recommendation addresses what the user asked. Generic catch-all. |
+| `citation_quality` (DomainSpecificRubrics) | Custom 5-level rubric: scores whether the response cites specific filing dates, sections, and monetary figures vs making generic claims. A response saying "NVDA's revenue grew" without citing the 10-Q date and amount scores 1. Critical for financial credibility — unsubstantiated claims are worthless. |
+| `risk_disclosure` (DomainSpecificRubrics) | Custom 5-level rubric: evaluates whether risks are acknowledged. An investment thesis without risk discussion is incomplete. Scores from "no risk mentioned" (level 1) to "balanced multi-category risk assessment" (level 5). |
+| `recommendation_clarity` (RubricsScoreWithoutReference) | Custom 5-level rubric: verifies the synthesizer produces an explicit BUY/HOLD/SELL signal with supporting evidence from ≥2 sub-agents. A response that discusses pros/cons without committing to a clear signal scores low. |
+| `response_completeness` (DomainSpecificRubrics) | Custom 5-level rubric: assesses whether all three analysis types (SEC filings, quant metrics, sentiment) are synthesized. A response that only discusses stock price without filing data or narrative scores 1. |
+
 ---
 
 ## Agent 2: RAG (LlamaIndex)
@@ -125,9 +137,17 @@ Request → DefaultRequestHandler → GenericAgentExecutor(RAGAgent)
 
 #### Runtime Evaluation
 
-After each successful query, fires background `score_rag_response()` task with Faithfulness, ResponseRelevancy, and LLMContextPrecisionWithoutReference metrics using the retrieved `context_texts` from ChromaDB source nodes.
+After each response, fires `asyncio.create_task(score_rag_response(...))` with 3 metrics. Scored from `user_input`, `response`, and `context_texts` (ChromaDB source chunks). No ground-truth reference required.
+
+| Metric | Why |
+|---|---|
+| `Faithfulness` | Verifies every claim in the response is directly supported by the retrieved SEC filing text. Prevents hallucinated dates, numbers, or citations. |
+| `AnswerRelevancy` | Measures whether the response answers what the user asked. Generic catch-all for response quality. |
+| `ContextPrecisionWithoutReference` | Evaluates whether the retrieved ChromaDB chunks are relevant to the query. Flags retrieval drift — when RAG returns irrelevant filings, this drops even if Faithfulness passes. |
 
 ---
+
+
 
 ## Agent 3: Quant (LangGraph)
 
@@ -174,9 +194,16 @@ Request → DefaultRequestHandler → GenericAgentExecutor(QuantAgent)
 
 #### Runtime Evaluation
 
-After each analysis, fires background `score_quant_response()` task with FactualCorrectness (uses computed metrics dict as reference — catches hallucinated numbers) and ResponseRelevancy. Builds reference string from `quant_result` metrics (Sharpe, VaR, DCF values) for factual comparison.
+After each analysis, fires `asyncio.create_task(score_quant_response(...))` with 2 metrics. Scored from `user_input`, `response`, and full `quant_result` dict (Sharpe, VaR, DCF, beta, etc.) serialized as a reference string.
+
+| Metric | Why |
+|---|---|
+| `FactualCorrectness` | Compares the LLM summary's numerical claims against the actual computed metrics. The reference is the raw quant result dict — if the LLM says "Sharpe ratio of 1.5" but the computation produced 0.8, this metric catches it. Prevents hallucinated numbers, the primary failure mode for quantitative analysis. |
+| `AnswerRelevancy` | Measures whether the response addresses the user's query. |
 
 ---
+
+
 
 ## Agent 4: Sentiment (CrewAI)
 
@@ -216,4 +243,11 @@ Request → DefaultRequestHandler → GenericAgentExecutor(SentimentAgent)
 
 #### Runtime Evaluation
 
-After each analysis, fires background `score_sentiment_response()` task with ResponseRelevancy, catalyst_identification (AspectCritic), insider_signal_discussion (AspectCritic), and Faithfulness (when news/filing contexts available). Contexts extracted from pre-fetched data via `_extract_sentiment_contexts()`.
+After each analysis, fires `asyncio.create_task(score_sentiment_response(...))` with 4 metrics (3 standard + 1 conditional). Scored from `user_input`, `response`, and `_retrieved_contexts` (news headlines + filing titles from pre-fetched data).
+
+| Metric | Why |
+|---|---|
+| `AnswerRelevancy` | Measures whether the narrative answers the user's query. |
+| `catalyst_identification` (DomainSpecificRubrics) | Custom 5-level rubric: scores whether the agent identifies specific business catalysts (earnings events, product launches, regulatory changes, competitive shifts) rather than producing vague qualitative statements. A sentiment analyst that only says "Sentiment is positive" without naming the catalyst scores 1. |
+| `insider_signal_discussion` (DomainSpecificRubrics) | Custom 5-level rubric: evaluates depth of insider trading pattern analysis and institutional signal discussion. An investment narrative that omits insider activity entirely scores 1. |
+| `Faithfulness` (conditional) | Only scored when `_retrieved_contexts` is non-empty. Verifies the narrative is factually grounded in the collected news/filing data — a narrative that contradicts or fabricates events fails here. |

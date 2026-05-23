@@ -59,7 +59,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <li><strong>Output guardrails</strong> &mdash; Responses shorter than 50 chars trigger <code>TASK_STATE_FAILED</code>. Missing BUY/HOLD/SELL signal emits a Langfuse warning with <code>missing_signal: true</code>.</li>
 <li><strong>Synthesizes results</strong> &mdash; LLM collects all outputs and produces a BUY/HOLD/SELL recommendation</li>
 <li><strong>Auto-save</strong> &mdash; After each response, persists ticker brief, portfolio holdings, and performance record (with live price snapshot via yfinance) to SQLite. Fires background task to evaluate past recommendations.</li>
-<li><strong>Runtime RAGAS evaluation</strong> &mdash; After response processing, fires <code>asyncio.create_task(_eval_score_response(...))</code> scoring ResponseRelevancy, citation_quality, risk_disclosure, recommendation_clarity, and response_completeness. Scores pushed to Langfuse per-trace.</li>
+<li><strong>Runtime RAGAS evaluation</strong> &mdash; After response processing, fires <code>asyncio.create_task(_eval_score_response(...))</code> with 5 reference-free metrics. Scores pushed to Langfuse per-trace. See Runtime Evaluation below for metric details.</li>
 </ol>
 
 <p>All A2A communication uses <code>ClientFactory</code> + <code>BaseClient</code> from the official <code>a2a-sdk</code>. Streaming events are handled correctly: intermediate SUBMITTED/WORKING events are skipped, only <code>artifact_update</code> events (data or text) and terminal <code>status_update</code> events are returned to the LLM.</p>
@@ -114,6 +114,19 @@ Body:
   }
 }</pre>
 
+<h3>Runtime Evaluation</h3>
+
+<p>After response synthesis, fires <code>asyncio.create_task(score_response(...))</code> with 5 metrics. All scored from <code>user_input</code> + <code>response</code> only &mdash; no ground-truth reference needed.</p>
+
+<table>
+<tr><th>Metric</th><th>Why</th></tr>
+<tr><td><code>AnswerRelevancy</code></td><td>Measures whether the final BUY/HOLD/SELL recommendation addresses what the user asked. Generic catch-all.</td></tr>
+<tr><td><code>citation_quality</code> (DomainSpecificRubrics)</td><td>Custom 5-level rubric: scores whether the response cites specific filing dates, sections, and monetary figures vs making generic claims. A response saying &ldquo;NVDA's revenue grew&rdquo; without citing the 10-Q date and amount scores 1. Critical for financial credibility &mdash; unsubstantiated claims are worthless.</td></tr>
+<tr><td><code>risk_disclosure</code> (DomainSpecificRubrics)</td><td>Custom 5-level rubric: evaluates whether risks are acknowledged. An investment thesis without risk discussion is incomplete. Scores from &ldquo;no risk mentioned&rdquo; (level 1) to &ldquo;balanced multi-category risk assessment&rdquo; (level 5).</td></tr>
+<tr><td><code>recommendation_clarity</code> (RubricsScoreWithoutReference)</td><td>Custom 5-level rubric: verifies the synthesizer produces an explicit BUY/HOLD/SELL signal with supporting evidence from &ge;2 sub-agents. A response that discusses pros/cons without committing to a clear signal scores low.</td></tr>
+<tr><td><code>response_completeness</code> (DomainSpecificRubrics)</td><td>Custom 5-level rubric: assesses whether all three analysis types (SEC filings, quant metrics, sentiment) are synthesized. A response that only discusses stock price without filing data or narrative scores 1.</td></tr>
+</table>
+
 <hr>
 
 <h2>Agent 2: RAG (LlamaIndex)</h2>
@@ -150,7 +163,13 @@ Body:
   &rarr; finally: await self._disconnect() &mdash; closes MCP sockets gracefully</pre>
 
 <h4>Runtime Evaluation</h4>
-<p>After each successful query, fires background <code>score_rag_response()</code> task with Faithfulness, ResponseRelevancy, and LLMContextPrecisionWithoutReference metrics using the retrieved <code>context_texts</code> from ChromaDB source nodes.</p>
+<p>After each response, fires <code>asyncio.create_task(score_rag_response(...))</code> with 3 metrics. Scored from <code>user_input</code>, <code>response</code>, and <code>context_texts</code> (ChromaDB source chunks). No ground-truth reference required.</p>
+<table>
+<tr><th>Metric</th><th>Why</th></tr>
+<tr><td><code>Faithfulness</code></td><td>Verifies every claim in the response is directly supported by the retrieved SEC filing text. Prevents hallucinated dates, numbers, or citations.</td></tr>
+<tr><td><code>AnswerRelevancy</code></td><td>Measures whether the response answers what the user asked. Generic catch-all for response quality.</td></tr>
+<tr><td><code>ContextPrecisionWithoutReference</code></td><td>Evaluates whether the retrieved ChromaDB chunks are relevant to the query. Flags retrieval drift &mdash; when RAG returns irrelevant filings, this drops even if Faithfulness passes.</td></tr>
+</table>
 
 <hr>
 
@@ -195,7 +214,12 @@ Body:
 <p><strong>Logging &amp; Error Propagation</strong>: The graph logs routing decisions, metric computation failures, DCF fallbacks, and beta calculation errors. When DCF is skipped due to high volatility, the <code>dcf_error</code> field is set and propagated through formatting and LLM summary, giving users visibility into why DCF was not computed.</p>
 
 <h4>Runtime Evaluation</h4>
-<p>After each analysis, fires background <code>score_quant_response()</code> task with FactualCorrectness (uses computed metrics dict as reference &mdash; catches hallucinated numbers) and ResponseRelevancy. Builds reference string from <code>quant_result</code> metrics (Sharpe, VaR, DCF values) for factual comparison.</p>
+<p>After each analysis, fires <code>asyncio.create_task(score_quant_response(...))</code> with 2 metrics. Scored from <code>user_input</code>, <code>response</code>, and full <code>quant_result</code> dict serialized as a reference string.</p>
+<table>
+<tr><th>Metric</th><th>Why</th></tr>
+<tr><td><code>FactualCorrectness</code></td><td>Compares the LLM summary's numerical claims against the actual computed metrics. The reference is the raw quant result dict &mdash; if the LLM says &ldquo;Sharpe ratio of 1.5&rdquo; but the computation produced 0.8, this catches it. Prevents hallucinated numbers, the primary failure mode for quantitative analysis.</td></tr>
+<tr><td><code>AnswerRelevancy</code></td><td>Measures whether the response addresses the user's query.</td></tr>
+</table>
 
 <hr>
 
@@ -233,7 +257,14 @@ Body:
   &rarr; finally: await self._disconnect() &mdash; closes MCP sockets gracefully</pre>
 
 <h4>Runtime Evaluation</h4>
-<p>After each analysis, fires background <code>score_sentiment_response()</code> task with ResponseRelevancy, catalyst_identification (AspectCritic), insider_signal_discussion (AspectCritic), and Faithfulness (when news/filing contexts available). Contexts extracted from pre-fetched data via <code>_extract_sentiment_contexts()</code>.</p>
+<p>After each analysis, fires <code>asyncio.create_task(score_sentiment_response(...))</code> with 4 metrics (3 standard + 1 conditional). Scored from <code>user_input</code>, <code>response</code>, and <code>_retrieved_contexts</code> (news headlines + filing titles from pre-fetched data).</p>
+<table>
+<tr><th>Metric</th><th>Why</th></tr>
+<tr><td><code>AnswerRelevancy</code></td><td>Measures whether the narrative answers the user's query.</td></tr>
+<tr><td><code>catalyst_identification</code> (DomainSpecificRubrics)</td><td>Custom 5-level rubric: scores whether the agent identifies specific business catalysts (earnings events, product launches, regulatory changes, competitive shifts) rather than producing vague qualitative statements. A sentiment analyst that only says &ldquo;Sentiment is positive&rdquo; without naming the catalyst scores 1.</td></tr>
+<tr><td><code>insider_signal_discussion</code> (DomainSpecificRubrics)</td><td>Custom 5-level rubric: evaluates depth of insider trading pattern analysis and institutional signal discussion. An investment narrative that omits insider activity entirely scores 1.</td></tr>
+<tr><td><code>Faithfulness</code> (conditional)</td><td>Only scored when <code>_retrieved_contexts</code> is non-empty. Verifies the narrative is factually grounded in the collected news/filing data &mdash; a narrative that contradicts or fabricates events fails here.</td></tr>
+</table>
 
 <hr>
 <p style="font-size:.85rem;color:#888"><a href="index.html">Back to docs hub</a></p>

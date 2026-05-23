@@ -48,6 +48,8 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <li><strong>Persistent memory layer</strong>: SQLite-backed session storage, cross-session memory search, ticker brief history, portfolio persistence, and recommendation tracking</li>
 <li><strong>Portfolio correlation analysis</strong>: When you explicitly mention portfolio holdings (e.g. &ldquo;My portfolio holds AAPL, MSFT&rdquo;), the quant agent computes cross-stock correlation matrices alongside the primary analysis</li>
 <li><strong>Distributed tracing</strong>: Langfuse traces span all four agent processes in a single trace tree via text-based context propagation</li>
+<li><strong>RAGAS evaluation pipeline</strong>: Offline batch evaluation (Faithfulness, ResponseRelevancy, ContextPrecision, ContextRecall, ToolCallAccuracy) + runtime per-query eval with per-metric streaming, client caching, and 180s LLM timeout</li>
+<li><strong>Debuggable runtime eval</strong>: Entry/exit logs on every scoring function, per-metric streaming via <code>asyncio.wait(FIRST_COMPLETED)</code>, <code>sys.stdout.reconfigure(encoding='utf-8')</code> Unicode fix, early-return fallbacks</li>
 <li><strong>Local LLM inference</strong>: All agents use LM Studio (OpenAI-compatible API) &mdash; no cloud dependencies</li>
 <li><strong>MCP data tools</strong>: Unified server providing SEC filings, price data, financials, news sentiment, and more</li>
 </ul>
@@ -92,6 +94,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <tr><td>Reranker</td><td>cross-encoder/ms-marco-MiniLM-L-6-v2</td></tr>
 <tr><td>Vector Store</td><td>ChromaDB (local, persisted)</td></tr>
 <tr><td>Agent Discovery</td><td><code>A2ACardResolver</code> via <code>AGENT_SEED_URLS</code></td></tr>
+<tr><td>Evaluation</td><td>RAGAS offline pipeline + runtime per-query eval (per-metric streaming, client caching, 180s timeout) + custom financial rubrics</td></tr>
 </table>
 
 <h2>Quick Start</h2>

@@ -420,12 +420,12 @@ ingested_filings (edgar_url PRIMARY KEY, ticker, ingested_at)  -- v1.18
 
 After each agent produces a response, a fire-and-forget background task scores it using RAGAS metrics that require no ground-truth reference. Scores are pushed to Langfuse per-trace (linked by `trace_id`).
 
-| Agent | Background Task | Metrics | Data Required |
-|---|---|---|---|
-| Orchestrator | `score_response()` | ResponseRelevancy, citation_quality, risk_disclosure, recommendation_clarity, response_completeness | `user_input`, `response` |
-| RAG | `score_rag_response()` | Faithfulness, ResponseRelevancy, LLMContextPrecisionWithoutReference | `user_input`, `response`, `context_texts` (ChromaDB nodes) |
-| Quant | `score_quant_response()` | FactualCorrectness, ResponseRelevancy | `user_input`, `response`, `quant_result` (computed metrics dict) |
-| Sentiment | `score_sentiment_response()` | ResponseRelevancy, catalyst_identification, insider_signal_discussion, Faithfulness | `user_input`, `response`, `_retrieved_contexts` (news/filing titles) |
+| Agent | Background Task | Metrics | Why Each Metric | Data Required |
+|---|---|---|---|---|---|
+| Orchestrator | `score_response()` | AnswerRelevancy, citation_quality, risk_disclosure, recommendation_clarity, response_completeness | AnswerRelevancy: generic catch-all for response quality. citation_quality: unsubstantiated financial claims are worthless — must cite filing dates/amounts. risk_disclosure: an investment thesis without risk discussion is incomplete. recommendation_clarity: the core output is a BUY/HOLD/SELL signal — ambiguous synthesis fails. response_completeness: must synthesize all 3 analysis types, not just one. | `user_input`, `response` |
+| RAG | `score_rag_response()` | Faithfulness, AnswerRelevancy, ContextPrecisionWithoutReference | Faithfulness: prevents hallucinated dates/numbers by verifying claims against retrieved SEC text. ContextPrecisionWithoutReference: flags retrieval drift — when RAG returns irrelevant filings, this drops even if Faithfulness passes. | `user_input`, `response`, `context_texts` (ChromaDB nodes) |
+| Quant | `score_quant_response()` | FactualCorrectness, AnswerRelevancy | FactualCorrectness: compares LLM summary numbers (Sharpe, VaR, DCF) against actual computed values — primary failure mode is hallucinated numbers. AnswerRelevancy: generic catch-all. | `user_input`, `response`, `quant_result` (computed metrics dict) |
+| Sentiment | `score_sentiment_response()` | AnswerRelevancy, catalyst_identification, insider_signal_discussion, Faithfulness | catalyst_identification: vague "sentiment is positive" without naming the catalyst scores low — must identify specific events. insider_signal_discussion: omitting insider trading patterns misses a key sentiment signal. Faithfulness: verifies narrative is grounded in collected news/filing data, not fabricated. | `user_input`, `response`, `_retrieved_contexts` (news/filing titles) |
 
 ### Per-Metric Streaming
 
