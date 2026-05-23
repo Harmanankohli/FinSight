@@ -1,4 +1,5 @@
 import os
+import sys
 from pathlib import Path
 
 _dotenv_path = Path(__file__).resolve().parent.parent / ".env"
@@ -16,6 +17,14 @@ if _dotenv_path.exists():
 # Skip HuggingFace Hub network checks — models are expected to be cached locally.
 # Set HF_HUB_OFFLINE=0 in .env to re-enable update checks (e.g. to pull a new model).
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
+
+# Ensure stdout/stderr use UTF-8 so RAGAS log messages with Unicode characters
+# (curly quotes, em-dashes) don't trigger UnicodeEncodeError on Windows (cp1252).
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
 
 # LLM (LM Studio / OpenAI-compatible local)
 LLM_MODEL = os.environ.get("LLM_MODEL", "gpt-oss-20b")

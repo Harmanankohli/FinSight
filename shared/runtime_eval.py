@@ -40,6 +40,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 _MIN_RESPONSE_LEN = 80
+_ragas_clients: tuple | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -48,6 +49,9 @@ _MIN_RESPONSE_LEN = 80
 
 async def _setup_ragas_clients():
     """Return (ragas_llm, ragas_embedder) or None if dependencies are missing."""
+    global _ragas_clients
+    if _ragas_clients is not None:
+        return _ragas_clients
     try:
         import instructor
         from openai import AsyncOpenAI
@@ -78,7 +82,7 @@ async def _setup_ragas_clients():
             return await loop.run_in_executor(None, self.embed_text, text)
 
     try:
-        client = AsyncOpenAI(base_url=LLM_BASE_URL, api_key="lm-studio", timeout=60)
+        client = AsyncOpenAI(base_url=LLM_BASE_URL, api_key="lm-studio", timeout=180)
         patched = instructor.from_openai(client, mode=instructor.Mode.JSON_SCHEMA)
         ragas_llm = InstructorLLM(
             client=patched,
@@ -87,15 +91,21 @@ async def _setup_ragas_clients():
             model_args=InstructorModelArgs(max_tokens=2048),
         )
         ragas_embedder = _STEmbeddings(model_name=EMBED_MODEL)
+        _ragas_clients = (ragas_llm, ragas_embedder)
         return ragas_llm, ragas_embedder
     except Exception as exc:
         logger.warning("Runtime eval client setup failed: %s", exc)
+        _ragas_clients = None
         return None
 
 
 async def _score_metric(metric, **kwargs) -> float:
-    result = await metric.ascore(**kwargs)
-    return result.value
+    try:
+        result = await metric.ascore(**kwargs)
+        return result.value
+    except Exception:
+        logger.warning("RAGAS metric '%s' ascore failed (kwargs keys: %s)", metric.name, list(kwargs.keys()), exc_info=True)
+        raise
 
 
 async def _run_metrics(pairs: list) -> dict[str, float]:
@@ -114,7 +124,7 @@ async def _run_metrics(pairs: list) -> dict[str, float]:
 
 
 def _push_scores(scores: dict[str, float], trace_id: str | None, agent: str) -> None:
-    if not scores:
+    if not scores or trace_id is None:
         return
     try:
         from langfuse import Langfuse
@@ -210,6 +220,8 @@ async def score_response(
     if scores:
         logger.info("[orchestrator] RAGAS scores (trace=%s): %s", trace_id, scores)
         _push_scores(scores, trace_id, "orchestrator")
+    else:
+        logger.debug("[orchestrator] No RAGAS scores computed")
 
 
 # ---------------------------------------------------------------------------
@@ -255,6 +267,8 @@ async def score_rag_response(
     if scores:
         logger.info("[rag] RAGAS scores (trace=%s): %s", trace_id, scores)
         _push_scores(scores, trace_id, "rag")
+    else:
+        logger.debug("[rag] No RAGAS scores computed")
 
 
 # ---------------------------------------------------------------------------
@@ -301,6 +315,8 @@ async def score_quant_response(
     if scores:
         logger.info("[quant] RAGAS scores (trace=%s): %s", trace_id, scores)
         _push_scores(scores, trace_id, "quant")
+    else:
+        logger.debug("[quant] No RAGAS scores computed")
 
 
 def _build_quant_reference(result: dict) -> str:
@@ -398,3 +414,5 @@ async def score_sentiment_response(
     if scores:
         logger.info("[sentiment] RAGAS scores (trace=%s): %s", trace_id, scores)
         _push_scores(scores, trace_id, "sentiment")
+    else:
+        logger.debug("[sentiment] No RAGAS scores computed")
