@@ -108,21 +108,27 @@ async def _score_metric(metric, **kwargs) -> float:
         raise
 
 
-async def _run_metrics(pairs: list) -> dict[str, float]:
-    """Run (metric, kwargs) pairs concurrently, return name→score dict."""
-    results = await asyncio.gather(
-        *[_score_metric(m, **kw) for m, kw in pairs],
-        return_exceptions=True,
-    )
+async def _run_metrics(pairs: list, agent: str = "", trace_id: str | None = None) -> dict[str, float]:
+    """Run metrics concurrently, log/push each as it completes."""
     scores: dict[str, float] = {}
-    for (metric, _), result in zip(pairs, results):
-        if isinstance(result, BaseException):
-            logger.warning("RAGAS metric '%s' error: %s", metric.name, result)
-        elif result is not None:
+    task_map: dict[asyncio.Task, str] = {}
+
+    for metric, kw in pairs:
+        task = asyncio.create_task(_score_metric(metric, **kw))
+        task_map[task] = metric.name
+
+    pending = set(task_map.keys())
+    while pending:
+        done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+        for task in done:
+            metric_name = task_map[task]
             try:
-                scores[metric.name] = round(float(result), 4)
-            except (TypeError, ValueError) as exc:
-                logger.warning("RAGAS metric '%s' bad result type %s: %s", metric.name, type(result).__name__, exc)
+                result = task.result()
+                scores[metric_name] = round(float(result), 4)
+                logger.info("[%s] RAGAS metric '%s' = %s (trace=%s)", agent, metric_name, scores[metric_name], trace_id)
+                _push_scores({metric_name: scores[metric_name]}, trace_id, agent)
+            except BaseException as exc:
+                logger.warning("[%s] RAGAS metric '%s' error: %s", agent, metric_name, exc)
     return scores
 
 
@@ -219,10 +225,9 @@ async def score_response(
         ), _ui_resp),
     ]
 
-    scores = await _run_metrics(pairs)
+    scores = await _run_metrics(pairs, "orchestrator", trace_id)
     if scores:
-        logger.info("[orchestrator] RAGAS scores (trace=%s): %s", trace_id, scores)
-        _push_scores(scores, trace_id, "orchestrator")
+        logger.info("[orchestrator] RAGAS scores summary (trace=%s): %s", trace_id, scores)
     else:
         logger.info("[orchestrator] No RAGAS scores computed")
 
@@ -266,10 +271,9 @@ async def score_rag_response(
         (ContextPrecisionWithoutReference(llm=ragas_llm), _ctx_kwargs),
     ]
 
-    scores = await _run_metrics(pairs)
+    scores = await _run_metrics(pairs, "rag", trace_id)
     if scores:
-        logger.info("[rag] RAGAS scores (trace=%s): %s", trace_id, scores)
-        _push_scores(scores, trace_id, "rag")
+        logger.info("[rag] RAGAS scores summary (trace=%s): %s", trace_id, scores)
     else:
         logger.info("[rag] No RAGAS scores computed")
 
@@ -314,10 +318,9 @@ async def score_quant_response(
         (AnswerRelevancy(llm=ragas_llm, embeddings=ragas_embedder), {"user_input": user_input, "response": response}),
     ]
 
-    scores = await _run_metrics(pairs)
+    scores = await _run_metrics(pairs, "quant", trace_id)
     if scores:
-        logger.info("[quant] RAGAS scores (trace=%s): %s", trace_id, scores)
-        _push_scores(scores, trace_id, "quant")
+        logger.info("[quant] RAGAS scores summary (trace=%s): %s", trace_id, scores)
     else:
         logger.info("[quant] No RAGAS scores computed")
 
@@ -413,9 +416,8 @@ async def score_sentiment_response(
     if retrieved_contexts:
         pairs.append((Faithfulness(llm=ragas_llm), _ctx_kwargs))
 
-    scores = await _run_metrics(pairs)
+    scores = await _run_metrics(pairs, "sentiment", trace_id)
     if scores:
-        logger.info("[sentiment] RAGAS scores (trace=%s): %s", trace_id, scores)
-        _push_scores(scores, trace_id, "sentiment")
+        logger.info("[sentiment] RAGAS scores summary (trace=%s): %s", trace_id, scores)
     else:
         logger.info("[sentiment] No RAGAS scores computed")
