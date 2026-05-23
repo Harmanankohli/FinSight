@@ -1,5 +1,41 @@
 # Changelog
 
+## v1.20 — Runtime RAGAS Evaluation & Offline HF Model Loading
+
+### Runtime RAGAS Evaluation
+
+- **`shared/runtime_eval.py` (new)**: Fire-and-forget RAGAS scoring for all four agents as background tasks. Uses `ragas` metrics without requiring ground-truth references — scores are computed at runtime using the LLM itself as the judge.
+
+- **Orchestrator scoring** (`agent_1_adk/agent_executor.py`): After response processing, fires `asyncio.create_task(_eval_score_response(...))`. Metrics: `ResponseRelevancy`, `citation_quality` (AspectCritic), `risk_disclosure` (AspectCritic), `recommendation_clarity` (RubricsScoreWithoutReference), `response_completeness` (AspectCritic).
+
+- **RAG agent scoring** (`agent_2_llamaindex/executor.py`): After query response, fires `asyncio.create_task(_eval_rag_response(...))`. Metrics: `Faithfulness`, `ResponseRelevancy`, `LLMContextPrecisionWithoutReference`. Requires `context_texts` from ChromaDB source nodes.
+
+- **Quant agent scoring** (`agent_3_langgraph/executor.py`): After analysis, fires `asyncio.create_task(_eval_quant_response(...))`. Metrics: `FactualCorrectness` (uses computed metrics as reference — catches hallucinated numbers), `ResponseRelevancy`.
+
+- **Sentiment agent scoring** (`agent_4_crewai/executor.py`): After narrative, fires `asyncio.create_task(_eval_sentiment_response(...))`. Metrics: `ResponseRelevancy`, `catalyst_identification` (AspectCritic), `insider_signal_discussion` (AspectCritic), `Faithfulness` (when news/filing contexts available).
+
+- **Score push to Langfuse**: All scores pushed to Langfuse `create_score()` per-trace, linked by `trace_id` when available. Enables regression tracking across model/prompt changes.
+
+- **LM Studio compatibility patched**: RAGAS defaults to `instructor.Mode.JSON` which sends `response_format.type="json_object"` — LM Studio only supports `"json_schema"` or `"text"`. Patched with `instructor.Mode.JSON_SCHEMA` in `_setup_ragas_clients()`. HuggingFace embeddings wrapped via custom `_STEmbeddings` (RAGAS 0.4.x `BaseRagasEmbedding`) to avoid broken pydantic integration.
+
+- **Eval trace directory updated** (`agent_1_adk/sub_agent_client.py`): Changed from `eval_traces/` to `tests/evaluation/eval_results/orchestrator_traces/` to align with test suite layout.
+
+### CrewAI Simplification
+
+- **Sentiment crew reduced from 2 agents to 1** (`agent_4_crewai/crew.py`): Removed separate Synthesis Agent — the Analysis Agent now produces the full narrative directly. `build_crew()` simplified from a 2-agent `Crew` with `sequential` process to a single-agent `Crew`. Reduces LLM calls per sentiment query from 2 to 1.
+
+### Offline HuggingFace Model Loading
+
+- **`HF_HUB_OFFLINE=1` default** (`shared/config.py`): Set at import time before any HuggingFace code runs. Prevents network calls to `huggingface.co` when loading `sentence-transformers` or `all-MiniLM-L6-v2` — models are expected to be cached locally from a prior online run. Set `HF_HUB_OFFLINE=0` in `.env` to re-enable download checks.
+
+### Index Manager Cleanup
+
+- **Duplicated query methods removed** (`agent_2_llamaindex/index_manager.py`): `query_sec_filings()` and `query_earnings()` were dead code — the RAG agent only calls `query()` (which routes via `RouterQueryEngine` with fallback). Removed both methods along with `query_earnings` index collection setup.
+
+### Configuration
+
+- **`A2A_TIMEOUT` default reduced** (`shared/config.py`): Changed from `300.0` to `180.0` — 5 minutes was excessive for local LLM inference; 3 minutes provides sufficient margin while failing faster on genuinely stuck agents.
+
 ## v1.19 — MCP Connection Cleanup & Server Script Fixes
 
 ### MCP Connection Cleanup
@@ -43,7 +79,7 @@
 ### Evaluation
 
 - **RAGAS evaluation pipeline** (`tests/evaluation/`): `run_rag_eval.py` measures Faithfulness, ResponseRelevancy, ContextPrecision, ContextRecall, NoiseSensitivity. `run_orchestrator_eval.py` measures ToolCallAccuracy and AgentGoalAccuracy via eval traces written by sub-agent client. `financial_rubrics.py` provides custom `AspectCritic` metrics: citation quality, risk disclosure, recommendation clarity. `push_scores.py` pushes all scores to Langfuse per-trace.
-- **Eval trace capture** (`agent_1_adk/sub_agent_client.py`): When `EVAL_TRACE_ENABLED=true`, each sub-agent call appends `{agent_name, task_sent, response, latency_ms}` to a JSON file in `eval_traces/`.
+- **Eval trace capture** (`agent_1_adk/sub_agent_client.py`): When `EVAL_TRACE_ENABLED=true`, each sub-agent call appends `{agent_name, task_sent, response, latency_ms}` to a JSON file in `tests/evaluation/eval_results/orchestrator_traces/`.
 - **Curated RAG dataset** (`tests/evaluation/rag_dataset.json`): 10 Q&A pairs for NVDA, AAPL, MSFT, JPM with reference contexts from real SEC filings.
 
 ### Observability

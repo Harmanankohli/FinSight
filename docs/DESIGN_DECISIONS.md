@@ -74,6 +74,16 @@ RAGAS core metrics evaluate retrieval quality and factual consistency — they d
 
 Evaluation results are only useful if they're tracked over time. Pushing scores to Langfuse per-trace links quality metrics to specific queries and model versions, enabling regression detection when the prompt or model changes. The `push_scores.py` script is intentionally decoupled from the evaluation runners so scores can be re-pushed without re-running evaluation.
 
+### Runtime vs Offline Evaluation
+
+**Why score at runtime instead of only in batch tests?** Batch evaluation (RAGAS offline pipeline) runs on a fixed dataset and catches regressions before deployment. Runtime evaluation catches real-world drift — production queries produce different patterns than curated test sets. Together they cover both pre-deployment quality gates and live monitoring.
+
+**Why fire-and-forget (`asyncio.create_task`) instead of synchronous?** RAGAS metric computation calls the LLM 1-5 times per agent response. Waiting synchronously would add 10-30 seconds to response time. Fire-and-forget background tasks complete in parallel with the A2A response being returned to the orchestrator, adding zero latency to the user-facing path.
+
+**Why custom `_STEmbeddings` instead of RAGAS's `HuggingfaceEmbeddings`?** RAGAS 0.4.x's `HuggingfaceEmbeddings` is a Pydantic dataclass that fails to serialize correctly when passed to RAGAS internal `aembed_text` calls. The custom wrapper uses `BaseRagasEmbedding` directly with `SentenceTransformer.encode()`, bypassing the broken Pydantic path entirely.
+
+**Why `JSON_SCHEMA` mode instead of `JSON` mode for instructor?** RAGAS defaults to `instructor.Mode.JSON` which sends `response_format.type="json_object"` in the API request. LM Studio only supports `"json_schema"` and `"text"` response format types. Patching to `JSON_SCHEMA` enables structured output without a custom LM Studio fork.
+
 ## Why Four Different Agent Frameworks?
 
 | Agent | Framework | Why |
@@ -635,6 +645,20 @@ This filters out `a2a-python-sdk`, `opentelemetry.instrumentation.httpx`, and ot
 ### Tradeoff
 
 If you need to **temporarily debug** and see all spans (including A2A internals), switch back to `should_export_span=lambda span: True`. The default filter is the recommended production setting per [Langfuse maintainer guidance](https://github.com/orgs/langfuse/discussions/8366).
+
+## HF_HUB_OFFLINE Default
+
+### Problem
+
+HuggingFace `sentence-transformers` and `transformers` make network calls to `huggingface.co` at import time to check for model updates, download missing files, and verify cached model integrity. In an air-gapped or offline development environment (or during Docker builds without internet), these checks fail with `OSError: Can't load model ...` or hang waiting for a timeout. The `all-MiniLM-L6-v2` model is large enough (~80MB) that re-download on every cold start is both slow and wasteful.
+
+### Solution
+
+`shared/config.py` sets `os.environ["HF_HUB_OFFLINE"] = "1"` at import time, before any HuggingFace code is imported or executed. This tells the `huggingface_hub` library to skip all network calls — it assumes models are already cached locally from a prior online run.
+
+**Why at the top of `config.py` instead of in `.env`?** HuggingFace libraries read `HF_HUB_OFFLINE` at import time via `os.environ.get()`. If `.env` is loaded later (e.g. after the `config` import chain), the embedding model import happens before the env var is set. Setting it via `os.environ.setdefault()` at module level guarantees it's in place before any HuggingFace code runs.
+
+**Tradeoff**: If a model is missing from the local cache, the error is a hard crash (`OSError`) instead of an automatic download. Set `HF_HUB_OFFLINE=0` in `.env` to re-enable downloads.
 
 ## Langfuse Distributed Tracing Across Processes
 

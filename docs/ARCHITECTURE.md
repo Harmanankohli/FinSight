@@ -130,7 +130,7 @@ A2A Request → DefaultRequestHandler → GenericAgentExecutor(SentimentAgent)
     → Parallel MCP data collection (asyncio.gather):
       ├── get_news_sentiment
       └── get_company_filings
-    → 2-agent CrewAI: Analysis → Synthesis
+    → 1-agent CrewAI: Analysis → narrative directly
   → Yields data response
 ```
 
@@ -212,7 +212,7 @@ Agent cards loaded from `agent_cards/*.json`, embedded via `sentence-transformer
 
 ## Timeout Architecture
 
-Timeouts configured via `.env` with `A2A_TIMEOUT=300.0`:
+Timeouts configured via `.env` with `A2A_TIMEOUT=180.0`:
 
 | Layer | Timeout | Mechanism |
 |---|---|---|
@@ -299,7 +299,7 @@ lf.observation(
 )
 ```
 
-When `EVAL_TRACE_ENABLED=true`, the same call also writes a JSON file to `eval_traces/` for use by the RAGAS orchestrator evaluation runner.
+When `EVAL_TRACE_ENABLED=true`, the same call also writes a JSON file to `tests/evaluation/eval_results/orchestrator_traces/` for use by the RAGAS orchestrator evaluation runner.
 
 ## Memory Layer Architecture
 
@@ -411,6 +411,31 @@ ingested_filings (edgar_url PRIMARY KEY, ticker, ingested_at)  -- v1.18
 ```
 
 `ingested_filings` tracks which SEC EDGAR document URLs have been indexed into ChromaDB. The RAG agent checks this table before fetching filing content — already-indexed URLs are skipped, preventing redundant ingest on restart.
+
+### HF_HUB_OFFLINE
+
+`shared/config.py` sets `HF_HUB_OFFLINE=1` at import time before any HuggingFace code runs. This prevents network calls to `huggingface.co` when loading `sentence-transformers` or embedding models — models must be cached locally from a prior online run. Set `HF_HUB_OFFLINE=0` in `.env` to re-enable download checks.
+
+## Runtime RAGAS Evaluation
+
+After each agent produces a response, a fire-and-forget background task scores it using RAGAS metrics that require no ground-truth reference. Scores are pushed to Langfuse per-trace (linked by `trace_id`).
+
+| Agent | Background Task | Metrics | Data Required |
+|---|---|---|---|
+| Orchestrator | `score_response()` | ResponseRelevancy, citation_quality, risk_disclosure, recommendation_clarity, response_completeness | `user_input`, `response` |
+| RAG | `score_rag_response()` | Faithfulness, ResponseRelevancy, LLMContextPrecisionWithoutReference | `user_input`, `response`, `context_texts` (ChromaDB nodes) |
+| Quant | `score_quant_response()` | FactualCorrectness, ResponseRelevancy | `user_input`, `response`, `quant_result` (computed metrics dict) |
+| Sentiment | `score_sentiment_response()` | ResponseRelevancy, catalyst_identification, insider_signal_discussion, Faithfulness | `user_input`, `response`, `_retrieved_contexts` (news/filing titles) |
+
+### LM Studio Compatibility
+
+RAGAS defaults to `instructor.Mode.JSON` which sends `response_format.type="json_object"` — LM Studio only supports `"json_schema"` or `"text"`. `_setup_ragas_clients()` patches with `instructor.Mode.JSON_SCHEMA`. HuggingFace embeddings are wrapped via a custom `_STEmbeddings` class (RAGAS 0.4.x `BaseRagasEmbedding`) to avoid a broken pydantic integration path.
+
+### Offline-Mode Metrics (Ground-Truth Required)
+
+These metrics require a human-curated reference dataset and live in `tests/evaluation/` as offline scripts:
+- `run_rag_eval.py` — Faithfulness, ResponseRelevancy, ContextPrecision, ContextRecall, NoiseSensitivity
+- `run_orchestrator_eval.py` — ToolCallAccuracy, AgentGoalAccuracy
 
 ### Auto-Save Flow
 

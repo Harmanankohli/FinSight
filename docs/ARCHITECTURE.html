@@ -149,7 +149,7 @@ A2A Request &rarr; FinSightAgentExecutor.execute()
     &rarr; Parallel MCP data collection (asyncio.gather):
       &#x251C;&#x2500;&#x2500; get_news_sentiment
       &#x2514;&#x2500;&#x2500; get_company_filings
-    &rarr; 2-agent CrewAI: Analysis &rarr; Synthesis
+    &rarr; 1-agent CrewAI: Analysis &rarr; narrative directly
   &rarr; Yields data response</pre>
 
 <h2>Caching Layer</h2>
@@ -220,7 +220,7 @@ A2A Request &rarr; FinSightAgentExecutor.execute()
 <p>Agent cards loaded from <code>agent_cards/*.json</code>, embedded via <code>sentence-transformers</code>, queried via <code>find_agent</code> tool using dot-product similarity.</p>
 
 <h2>Timeout Architecture</h2>
-<p>Timeouts configured via <code>.env</code> with <code>A2A_TIMEOUT=300.0</code>:</p>
+<p>Timeouts configured via <code>.env</code> with <code>A2A_TIMEOUT=180.0</code>:</p>
 <table>
 <tr><th>Layer</th><th>Timeout</th><th>Mechanism</th></tr>
 <tr><td>A2A discovery</td><td>10s per URL</td><td>httpx.AsyncClient within A2ACardResolver</td></tr>
@@ -296,7 +296,7 @@ Sub-agents (agent_2, agent_3, agent_4)
     output={"response": result_text[:200]},
     metadata={"latency_ms": round((t1 - t0) * 1000), "agent": agent_name},
 )</pre>
-<p>When <code>EVAL_TRACE_ENABLED=true</code>, the same call also writes a JSON file to <code>eval_traces/</code> for use by the RAGAS orchestrator evaluation runner.</p>
+<p>When <code>EVAL_TRACE_ENABLED=true</code>, the same call also writes a JSON file to <code>tests/evaluation/eval_results/orchestrator_traces/</code> for use by the RAGAS orchestrator evaluation runner.</p>
 
 <h2>Memory Layer Architecture</h2>
 <p>The memory layer provides persistent session storage and cross-session memory retrieval using SQLite. All memory components are in <code>shared/memory/</code>.</p>
@@ -384,6 +384,9 @@ recommendation_records (id, ticker, recommendation, confidence, price_at_rec, cr
 memory_entries (id, session_id, content_hash, content, search_text, created_at)
 ingested_filings (edgar_url PRIMARY KEY, ticker, ingested_at)  -- v1.18</pre>
 <p><code>ingested_filings</code> tracks which SEC EDGAR document URLs have been indexed into ChromaDB. The RAG agent checks this table before fetching filing content &mdash; already-indexed URLs are skipped, preventing redundant ingest on restart.</p>
+
+<h3>HF_HUB_OFFLINE</h3>
+<p><code>shared/config.py</code> sets <code>HF_HUB_OFFLINE=1</code> at import time before any HuggingFace code runs. This prevents network calls to <code>huggingface.co</code> when loading <code>sentence-transformers</code> or embedding models &mdash; models must be cached locally from a prior online run. Set <code>HF_HUB_OFFLINE=0</code> in <code>.env</code> to re-enable download checks.</p>
 
 <h3>Auto-Save Flow</h3>
 <p>After each successful response, the executor automatically persists:</p>

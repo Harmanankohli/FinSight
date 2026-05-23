@@ -36,6 +36,40 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 
 <h1>Changelog</h1>
 
+<h2>v1.20 &mdash; Runtime RAGAS Evaluation &amp; Offline HF Model Loading</h2>
+
+<h3 class="version">Runtime RAGAS Evaluation</h3>
+<ul>
+<li><strong><code>shared/runtime_eval.py</code> (new)</strong>: Fire-and-forget RAGAS scoring for all four agents as background tasks. Uses <code>ragas</code> metrics without requiring ground-truth references &mdash; scores are computed at runtime using the LLM itself as the judge.</li>
+<li><strong>Orchestrator scoring</strong> (<code>agent_1_adk/agent_executor.py</code>): After response processing, fires <code>asyncio.create_task(_eval_score_response(...))</code>. Metrics: <code>ResponseRelevancy</code>, <code>citation_quality</code> (AspectCritic), <code>risk_disclosure</code> (AspectCritic), <code>recommendation_clarity</code> (RubricsScoreWithoutReference), <code>response_completeness</code> (AspectCritic).</li>
+<li><strong>RAG agent scoring</strong> (<code>agent_2_llamaindex/executor.py</code>): After query response, fires <code>asyncio.create_task(_eval_rag_response(...))</code>. Metrics: <code>Faithfulness</code>, <code>ResponseRelevancy</code>, <code>LLMContextPrecisionWithoutReference</code>. Requires <code>context_texts</code> from ChromaDB source nodes.</li>
+<li><strong>Quant agent scoring</strong> (<code>agent_3_langgraph/executor.py</code>): After analysis, fires <code>asyncio.create_task(_eval_quant_response(...))</code>. Metrics: <code>FactualCorrectness</code> (uses computed metrics as reference &mdash; catches hallucinated numbers), <code>ResponseRelevancy</code>.</li>
+<li><strong>Sentiment agent scoring</strong> (<code>agent_4_crewai/executor.py</code>): After narrative, fires <code>asyncio.create_task(_eval_sentiment_response(...))</code>. Metrics: <code>ResponseRelevancy</code>, <code>catalyst_identification</code> (AspectCritic), <code>insider_signal_discussion</code> (AspectCritic), <code>Faithfulness</code> (when news/filing contexts available).</li>
+<li><strong>Score push to Langfuse</strong>: All scores pushed to Langfuse <code>create_score()</code> per-trace, linked by <code>trace_id</code> when available. Enables regression tracking across model/prompt changes.</li>
+<li><strong>LM Studio compatibility patched</strong>: RAGAS defaults to <code>instructor.Mode.JSON</code> which sends <code>response_format.type="json_object"</code> &mdash; LM Studio only supports <code>"json_schema"</code> or <code>"text"</code>. Patched with <code>instructor.Mode.JSON_SCHEMA</code> in <code>_setup_ragas_clients()</code>. HuggingFace embeddings wrapped via custom <code>_STEmbeddings</code> (RAGAS 0.4.x <code>BaseRagasEmbedding</code>) to avoid broken pydantic integration.</li>
+<li><strong>Eval trace directory updated</strong> (<code>agent_1_adk/sub_agent_client.py</code>): Changed from <code>eval_traces/</code> to <code>tests/evaluation/eval_results/orchestrator_traces/</code> to align with test suite layout.</li>
+</ul>
+
+<h3 class="version">CrewAI Simplification</h3>
+<ul>
+<li><strong>Sentiment crew reduced from 2 agents to 1</strong> (<code>agent_4_crewai/crew.py</code>): Removed separate Synthesis Agent &mdash; the Analysis Agent now produces the full narrative directly. <code>build_crew()</code> simplified from a 2-agent <code>Crew</code> with <code>sequential</code> process to a single-agent <code>Crew</code>. Reduces LLM calls per sentiment query from 2 to 1.</li>
+</ul>
+
+<h3 class="version">Offline HuggingFace Model Loading</h3>
+<ul>
+<li><strong><code>HF_HUB_OFFLINE=1</code> default</strong> (<code>shared/config.py</code>): Set at import time before any HuggingFace code runs. Prevents network calls to <code>huggingface.co</code> when loading <code>sentence-transformers</code> or <code>all-MiniLM-L6-v2</code> &mdash; models are expected to be cached locally from a prior online run. Set <code>HF_HUB_OFFLINE=0</code> in <code>.env</code> to re-enable download checks.</li>
+</ul>
+
+<h3 class="version">Index Manager Cleanup</h3>
+<ul>
+<li><strong>Duplicated query methods removed</strong> (<code>agent_2_llamaindex/index_manager.py</code>): <code>query_sec_filings()</code> and <code>query_earnings()</code> were dead code &mdash; the RAG agent only calls <code>query()</code> (which routes via <code>RouterQueryEngine</code> with fallback). Removed both methods along with <code>query_earnings</code> index collection setup.</li>
+</ul>
+
+<h3 class="version">Configuration</h3>
+<ul>
+<li><strong><code>A2A_TIMEOUT</code> default reduced</strong> (<code>shared/config.py</code>): Changed from <code>300.0</code> to <code>180.0</code> &mdash; 5 minutes was excessive for local LLM inference; 3 minutes provides sufficient margin while failing faster on genuinely stuck agents.</li>
+</ul>
+
 <h2>v1.19 &mdash; MCP Connection Cleanup &amp; Server Script Fixes</h2>
 
 <h3 class="version">MCP Connection Cleanup</h3>
@@ -85,7 +119,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <h3 class="version">Evaluation</h3>
 <ul>
 <li><strong>RAGAS evaluation pipeline</strong> (<code>tests/evaluation/</code>): <code>run_rag_eval.py</code> measures Faithfulness, ResponseRelevancy, ContextPrecision, ContextRecall, NoiseSensitivity. <code>run_orchestrator_eval.py</code> measures ToolCallAccuracy and AgentGoalAccuracy via eval traces written by sub-agent client. <code>financial_rubrics.py</code> provides custom <code>AspectCritic</code> metrics: citation quality, risk disclosure, recommendation clarity. <code>push_scores.py</code> pushes all scores to Langfuse per-trace.</li>
-<li><strong>Eval trace capture</strong> (<code>agent_1_adk/sub_agent_client.py</code>): When <code>EVAL_TRACE_ENABLED=true</code>, each sub-agent call appends <code>{agent_name, task_sent, response, latency_ms}</code> to a JSON file in <code>eval_traces/</code>.</li>
+<li><strong>Eval trace capture</strong> (<code>agent_1_adk/sub_agent_client.py</code>): When <code>EVAL_TRACE_ENABLED=true</code>, each sub-agent call appends <code>{agent_name, task_sent, response, latency_ms}</code> to a JSON file in <code>tests/evaluation/eval_results/orchestrator_traces/</code>.</li>
 <li><strong>Curated RAG dataset</strong> (<code>tests/evaluation/rag_dataset.json</code>): 10 Q&amp;A pairs for NVDA, AAPL, MSFT, JPM with reference contexts from real SEC filings.</li>
 </ul>
 

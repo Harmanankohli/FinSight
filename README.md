@@ -170,7 +170,7 @@ stop_servers.bat
 ├── agent_4_crewai/           # Sentiment Agent
 │   ├── server.py             # GenericAgentExecutor(SentimentAgent)
 │   ├── executor.py           # SentimentAgent extends BaseAgent with stream()
-│   ├── crew.py               # 2-agent CrewAI (analysis + synthesis)
+│   ├── crew.py               # 1-agent CrewAI (analysis → narrative)
 │   └── mcp_tools.py          # DynamicMCPTool with Pydantic args_schema
 │
 ├── agents/finsight_agent/    # ADK Web-compatible agent entrypoint
@@ -238,7 +238,7 @@ Key environment variables in `.env`:
 |---|---|---|
 | `ADK_MODEL` | `openai/qwen/qwen3-30b-a3b-2507` | LLM model for the orchestrator |
 | `AGENT_SEED_URLS` | `http://localhost:8002,http://localhost:8003,http://localhost:8004` | A2A agent discovery URLs |
-| `A2A_TIMEOUT` | `300.0` | Timeout for A2A communication (seconds) |
+| `A2A_TIMEOUT` | `180.0` | Timeout for A2A communication (seconds) |
 | `LLM_BASE_URL` | `http://localhost:1234/v1` | LM Studio OpenAI-compatible endpoint |
 | `SEMANTIC_CACHE_ENABLED` | `false` | Enable ChromaDB semantic cache for repeated investment queries |
 | `MCP_SERVER_URL` | `http://localhost:8010/sse` | Unified MCP server SSE endpoint |

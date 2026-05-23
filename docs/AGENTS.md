@@ -21,6 +21,7 @@ The orchestrator uses a single `LlmAgent` with one `send_message` tool. The LLM 
 6. **Output guardrails** — Responses shorter than 50 chars trigger `TASK_STATE_FAILED`. Missing BUY/HOLD/SELL signal emits a Langfuse warning with `missing_signal: true`.
 7. **Synthesizes results** — LLM collects all outputs and produces a BUY/HOLD/SELL recommendation
 8. **Auto-save** — After each response, persists ticker brief, portfolio holdings, and performance record (with live price snapshot via yfinance) to SQLite. Fires background task to evaluate past recommendations.
+9. **Runtime RAGAS evaluation** — After response processing, fires `asyncio.create_task(_eval_score_response(...))` scoring ResponseRelevancy, citation_quality, risk_disclosure, recommendation_clarity, and response_completeness. Scores pushed to Langfuse per-trace.
 
 All A2A communication uses `ClientFactory` + `BaseClient` from the official `a2a-sdk`. Streaming events are handled correctly: intermediate SUBMITTED/WORKING events are skipped, only `artifact_update` events (data or text) and terminal `status_update` events are returned to the LLM.
 
@@ -121,7 +122,10 @@ Request → DefaultRequestHandler → GenericAgentExecutor(RAGAgent)
       └── Fallback: SEC filings index directly
   → Yields: {response_type: "data", content: result, is_task_complete: true}
   → finally: await self._disconnect() — closes MCP sockets gracefully
-```
+
+#### Runtime Evaluation
+
+After each successful query, fires background `score_rag_response()` task with Faithfulness, ResponseRelevancy, and LLMContextPrecisionWithoutReference metrics using the retrieved `context_texts` from ChromaDB source nodes.
 
 ---
 
@@ -168,6 +172,10 @@ Request → DefaultRequestHandler → GenericAgentExecutor(QuantAgent)
 
 **Logging & Error Propagation**: The graph logs routing decisions, metric computation failures, DCF fallbacks, and beta calculation errors. When DCF is skipped due to high volatility, the `dcf_error` field is set and propagated through formatting and LLM summary, giving users visibility into why DCF was not computed.
 
+#### Runtime Evaluation
+
+After each analysis, fires background `score_quant_response()` task with FactualCorrectness (uses computed metrics dict as reference — catches hallucinated numbers) and ResponseRelevancy. Builds reference string from `quant_result` metrics (Sharpe, VaR, DCF values) for factual comparison.
+
 ---
 
 ## Agent 4: Sentiment (CrewAI)
@@ -201,8 +209,11 @@ Request → DefaultRequestHandler → GenericAgentExecutor(SentimentAgent)
       │   ├── call("get_company_filings", {ticker})
       │   └── asyncio.gather
       └── SentimentIntelligenceCrew.analyze(ticker, precollected_data)
-          ├── Analysis Agent
-          └── Synthesis Agent
+          └── Single Agent (Analysis → narrative directly)
   → Yields: {response_type: "data", content: result, is_task_complete: true}
   → finally: await self._disconnect() — closes MCP sockets gracefully
 ```
+
+#### Runtime Evaluation
+
+After each analysis, fires background `score_sentiment_response()` task with ResponseRelevancy, catalyst_identification (AspectCritic), insider_signal_discussion (AspectCritic), and Faithfulness (when news/filing contexts available). Contexts extracted from pre-fetched data via `_extract_sentiment_contexts()`.

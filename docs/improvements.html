@@ -162,6 +162,19 @@ Offline evaluation:
 <tr><td>recommendation_clarity</td><td>Full pipeline</td><td>Custom: 1-5 scale for BUY/HOLD/SELL with supporting evidence</td></tr>
 </table>
 
+<h3>Runtime RAGAS Evaluation</h3>
+<p>v1.20 added fire-and-forget RAGAS scoring for all four agents as background tasks (<code>asyncio.create_task</code>). Unlike the offline pipeline (which requires curated datasets with ground-truth references), runtime evaluation scores every production response without a reference — the LLM itself acts as the judge.</p>
+
+<table>
+<tr><th>Agent</th><th>Background Task</th><th>Runtime Metrics</th></tr>
+<tr><td>Orchestrator</td><td><code>score_response()</code></td><td>ResponseRelevancy, citation_quality, risk_disclosure, recommendation_clarity, response_completeness</td></tr>
+<tr><td>RAG</td><td><code>score_rag_response()</code></td><td>Faithfulness, ResponseRelevancy, LLMContextPrecisionWithoutReference</td></tr>
+<tr><td>Quant</td><td><code>score_quant_response()</code></td><td>FactualCorrectness (computed metrics = reference), ResponseRelevancy</td></tr>
+<tr><td>Sentiment</td><td><code>score_sentiment_response()</code></td><td>ResponseRelevancy, catalyst_identification, insider_signal_discussion, Faithfulness</td></tr>
+</table>
+
+<p>Scores are pushed to Langfuse per-trace via <code>create_score()</code>, linked by <code>trace_id</code>. LM Studio compatibility requires patching RAGAS's default <code>instructor.Mode.JSON</code> to <code>JSON_SCHEMA</code> since LM Studio only supports <code>"json_schema"</code> or <code>"text"</code> response formats. HuggingFace embeddings bypass RAGAS's broken Pydantic <code>HuggingfaceEmbeddings</code> with a custom <code>_STEmbeddings</code> using <code>SentenceTransformer</code> directly.</p>
+
 <h3>Files</h3>
 <table>
 <tr><th>File</th><th>Purpose</th></tr>
