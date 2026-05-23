@@ -126,6 +126,27 @@ class SubAgentClient:
             "_http": None,
         }
 
+    def resolve_agent_name(self, name: str) -> str | None:
+        """Return the registered agent name that best matches `name`.
+
+        Checks in order:
+        1. Exact match
+        2. Case-insensitive exact match
+        3. Case-insensitive substring match (name is contained in registered key or vice-versa)
+        Returns None if nothing matches.
+        """
+        if name in self._agents:
+            return name
+        lower = name.lower()
+        for key in self._agents:
+            if key.lower() == lower:
+                return key
+        for key in self._agents:
+            kl = key.lower()
+            if lower in kl or kl in lower:
+                return key
+        return None
+
     def list_agents(self) -> list[dict[str, str]]:
         return [
             {

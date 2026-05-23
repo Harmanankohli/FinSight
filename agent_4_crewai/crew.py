@@ -15,7 +15,6 @@ from shared.config import ADK_MODEL, LLM_BASE_URL
 _LLM = CrewLLM(model=ADK_MODEL, base_url=LLM_BASE_URL, api_key="lmstudio", temperature=0.3)
 
 _SYNTHESIS_BACKSTORY = "Senior portfolio manager with 20 years of experience writing investment theses"
-_ANALYST_BACKSTORY = "Expert financial analyst"
 
 
 class SentimentIntelligenceCrew:
@@ -23,15 +22,6 @@ class SentimentIntelligenceCrew:
         self._mcp = mcp_wrapper
 
     def build_crew(self, ticker: str, data: dict | None = None) -> Crew:
-        _agent_defaults = dict(llm=_LLM, verbose=True, allow_delegation=False, max_retry_limit=1)
-
-        synthesis_agent = Agent(
-            role="Investment Narrative Synthesizer",
-            goal=f"Produce a sentiment narrative for {ticker} based on provided data",
-            backstory=_SYNTHESIS_BACKSTORY,
-            **_agent_defaults,
-        )
-
         news_summary = ""
         filings_summary = ""
         if data:
@@ -54,45 +44,38 @@ class SentimentIntelligenceCrew:
 
         context_data = f"Data for {ticker}:\n\nNews:\n{news_summary}\n\nSEC Filings:\n{filings_summary}"
 
-        analysis_agent = Agent(
-            role="Sentiment Analyst",
-            goal=f"Analyze sentiment for {ticker} and return key insights",
-            backstory=_ANALYST_BACKSTORY,
-            **_agent_defaults,
+        agent = Agent(
+            role="Investment Sentiment Analyst",
+            goal=f"Analyze sentiment for {ticker} and produce an investment narrative",
+            backstory=_SYNTHESIS_BACKSTORY,
+            llm=_LLM,
+            verbose=False,
+            allow_delegation=False,
+            max_retry_limit=1,
         )
 
         today = date.today().isoformat()
-        analysis_task = Task(
+        task = Task(
             description=(
                 f"Today's date: {today}. "
-                f"Analyze the following data for {ticker} and extract:\n"
+                f"Analyze the following data for {ticker} and produce:\n"
                 f"1. Sentiment signal (bullish/bearish/neutral)\n"
                 f"2. Key risks and catalysts\n"
-                f"3. Overall confidence score (0-1)\n\n"
+                f"3. A 2-3 paragraph investment narrative\n"
+                f"4. Overall confidence score (0-1)\n\n"
                 f"{context_data}"
             ),
-            agent=analysis_agent,
-            expected_output="JSON with overall_signal, key_risks, key_catalysts, confidence_score",
-        )
-
-        synthesis_task = Task(
-            description=(
-                f"Today's date: {today}. "
-                f"Synthesize a 2-3 paragraph investment narrative for {ticker} "
-                f"with overall sentiment signal and confidence score."
-            ),
-            agent=synthesis_agent,
-            context=[analysis_task],
+            agent=agent,
             expected_output=(
                 "JSON with narrative, overall_signal, confidence_score (0-1), key_risks, key_catalysts"
             ),
         )
 
         return Crew(
-            agents=[analysis_agent, synthesis_agent],
-            tasks=[analysis_task, synthesis_task],
+            agents=[agent],
+            tasks=[task],
             process=Process.sequential,
-            verbose=True,
+            verbose=False,
         )
 
     async def analyze(self, ticker: str, precollected_data: dict | None = None) -> dict:

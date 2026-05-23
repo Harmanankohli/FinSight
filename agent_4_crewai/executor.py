@@ -7,6 +7,7 @@ from shared.base_agent import BaseAgent
 from shared.mcp_client import MCPClient, MCPServerConfig
 from shared.config import MCP_SERVER_URL, MCP_TIMEOUT
 from shared.observability import get_langfuse_client
+from shared.runtime_eval import score_sentiment_response as _eval_sentiment_response
 from shared.ticker_utils import extract_ticker, validate_ticker_via_mcp, resolve_ticker_via_mcp
 from shared.trace_context import extract_trace_ids
 
@@ -78,7 +79,9 @@ class SentimentAgent(BaseAgent):
         data = await self._collect_data_parallel(ticker)
         logger.info("Collected data for %s: %s", ticker, list(data.keys()))
         crew_builder = SentimentIntelligenceCrew(self._wrapper)
-        return await crew_builder.analyze(ticker, precollected_data=data)
+        result = await crew_builder.analyze(ticker, precollected_data=data)
+        result["_retrieved_contexts"] = _extract_sentiment_contexts(data)
+        return result
 
     async def _validate_ticker(self, ticker: str) -> tuple[bool, str, str]:
         if not ticker:
@@ -155,11 +158,20 @@ class SentimentAgent(BaseAgent):
 
             try:
                 result = await self.analyze(ticker, query)
+                contexts = result.pop("_retrieved_contexts", [])
                 span.update(output={
                     "ticker": ticker,
                     "signal": result.get("overall_signal"),
                     "confidence": result.get("confidence_score"),
                 })
+                asyncio.create_task(
+                    _eval_sentiment_response(
+                        query,
+                        result.get("narrative", ""),
+                        contexts,
+                        trace_id,
+                    )
+                )
                 yield {
                     "response_type": "data",
                     "is_task_complete": True,
@@ -180,3 +192,31 @@ class SentimentAgent(BaseAgent):
             span.end()
             # Gracefully disconnect MCP client after stream completes
             await self._disconnect()
+
+
+def _extract_sentiment_contexts(data: dict) -> list[str]:
+    """Convert pre-fetched news/filing data into text strings for RAGAS Faithfulness."""
+    contexts: list[str] = []
+
+    news = data.get("news", {})
+    articles = news.get("articles", []) if isinstance(news, dict) else []
+    for a in articles[:5]:
+        title = a.get("title", "")
+        summary = a.get("summary", "") or a.get("content", "")
+        sentiment = a.get("compound", a.get("sentiment_score", ""))
+        if title:
+            contexts.append(
+                f"{title}: {summary[:200]} (sentiment score: {sentiment})"
+                if summary else f"{title} (sentiment score: {sentiment})"
+            )
+
+    filings = data.get("filings", {})
+    filing_list = filings.get("filings", []) if isinstance(filings, dict) else []
+    for f in filing_list[:3]:
+        form = f.get("form_type", f.get("form", ""))
+        date_ = f.get("filing_date", f.get("date", ""))
+        desc = f.get("description", "")
+        if form:
+            contexts.append(f"{form} filing ({date_}): {desc}" if desc else f"{form} filing ({date_})")
+
+    return contexts

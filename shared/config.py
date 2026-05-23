@@ -13,6 +13,10 @@ if _dotenv_path.exists():
                 k, v = line.split("=", 1)
                 os.environ.setdefault(k.strip(), v.strip().strip("\"'"))
 
+# Skip HuggingFace Hub network checks — models are expected to be cached locally.
+# Set HF_HUB_OFFLINE=0 in .env to re-enable update checks (e.g. to pull a new model).
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+
 # LLM (LM Studio / OpenAI-compatible local)
 LLM_MODEL = os.environ.get("LLM_MODEL", "gpt-oss-20b")
 LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "http://localhost:1234/v1")

@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from collections.abc import AsyncIterable
@@ -8,6 +9,7 @@ from shared.mcp_client import MCPClient, MCPServerConfig
 from shared.config import MCP_SERVER_URL
 from shared.memory.store import is_filing_ingested, mark_filing_ingested
 from shared.observability import get_langfuse_client
+from shared.runtime_eval import score_rag_response as _eval_rag_response
 from shared.ticker_utils import extract_ticker, validate_ticker_via_mcp, resolve_ticker_via_mcp
 from shared.trace_context import extract_trace_ids
 
@@ -201,6 +203,14 @@ class RAGAgent(BaseAgent):
             try:
                 result = await self.query(ticker, query)
                 span.update(output={"ticker": ticker, "result_keys": list(result.keys()) if isinstance(result, dict) else "unknown"})
+                asyncio.create_task(
+                    _eval_rag_response(
+                        query,
+                        result.get("summary", ""),
+                        result.get("context_texts", []),
+                        trace_id,
+                    )
+                )
                 yield {
                     "response_type": "data",
                     "is_task_complete": True,

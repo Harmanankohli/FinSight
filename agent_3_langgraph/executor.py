@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from collections.abc import AsyncIterable
@@ -8,6 +9,7 @@ from shared.base_agent import BaseAgent
 from shared.mcp_client import MCPClient, MCPServerConfig
 from shared.config import MCP_SERVER_URL, MCP_TIMEOUT
 from shared.observability import get_langfuse_client
+from shared.runtime_eval import score_quant_response as _eval_quant_response
 from shared.ticker_utils import extract_ticker, extract_holdings, validate_ticker_via_mcp, resolve_ticker_via_mcp
 from shared.trace_context import extract_trace_ids
 
@@ -139,6 +141,14 @@ class QuantAgent(BaseAgent):
             try:
                 result = await self.analyze(ticker, portfolio_holdings=holdings, trace_ctx=trace_ctx)
                 span.update(output={"ticker": ticker, "recommendation": result.get("recommendation")})
+                asyncio.create_task(
+                    _eval_quant_response(
+                        query,
+                        result.get("reasoning", ""),
+                        result,
+                        trace_id,
+                    )
+                )
                 yield {
                     "response_type": "data",
                     "is_task_complete": True,
@@ -159,3 +169,5 @@ class QuantAgent(BaseAgent):
             span.end()
             # Gracefully disconnect MCP client after stream completes
             await self._disconnect()
+
+
