@@ -54,3 +54,6 @@ graphify-out
 .mcp.json
 .langchain_cache.db
 .mcp.json
+
+# Evaluation artifacts
+tests/evaluation/eval_results/

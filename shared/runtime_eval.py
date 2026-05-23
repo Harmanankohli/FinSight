@@ -84,7 +84,7 @@ async def _setup_ragas_clients():
             client=patched,
             model=LLM_MODEL,
             provider="openai",
-            model_args=InstructorModelArgs(),
+            model_args=InstructorModelArgs(max_tokens=2048),
         )
         ragas_embedder = _STEmbeddings(model_name=EMBED_MODEL)
         return ragas_llm, ragas_embedder
@@ -366,7 +366,6 @@ async def score_sentiment_response(
 
     _ui_resp = {"user_input": user_input, "response": response}
     _ctx_kwargs = {"user_input": user_input, "response": response, "retrieved_contexts": retrieved_contexts}
-
     pairs: list = [
         (AnswerRelevancy(llm=ragas_llm, embeddings=ragas_embedder), _ui_resp),
         (DomainSpecificRubrics(
