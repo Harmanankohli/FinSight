@@ -60,6 +60,9 @@ LANGFUSE_HOST = os.environ.get("LANGFUSE_BASE_URL") or os.environ.get("LANGFUSE_
 # SEC
 SEC_API_BASE = os.environ.get("SEC_API_BASE", "https://www.sec.gov")
 
+# Feature flags
+EVAL_ENABLED = os.environ.get("EVAL_TRACE_ENABLED", "true").lower() == "true"
+
 
 def validate() -> None:
     """Raise EnvironmentError if required configuration is missing or has placeholder values."""

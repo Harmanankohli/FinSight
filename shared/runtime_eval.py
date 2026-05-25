@@ -1,32 +1,32 @@
 """Runtime RAGAS evaluation — per-agent scoring as background tasks.
 
-Runtime-feasible metrics (no ground-truth reference needed unless noted):
+All functions are called from within the live agent executor after a response
+is produced. No separate runner is created — the response is already in hand.
 
   Orchestrator (score_response):
-    ResponseRelevancy       — synthesis relevant to the investment query?
-    citation_quality        — AspectCritic: cites specific figures/filings?
-    risk_disclosure         — AspectCritic: acknowledges investment risks?
+    AnswerRelevancy        — synthesis relevant to the investment query?
+    citation_quality        — DomainSpecificRubrics: cites specific figures/filings?
+    risk_disclosure         — DomainSpecificRubrics: acknowledges investment risks?
     recommendation_clarity  — RubricsScore 1-5: clear BUY/HOLD/SELL with evidence?
-    response_completeness   — AspectCritic: integrates RAG + quant + sentiment findings?
+    response_completeness   — DomainSpecificRubrics: integrates RAG + quant + sentiment?
 
   RAG Agent (score_rag_response):
-    Faithfulness                         — claims grounded in retrieved SEC chunks?
-    ResponseRelevancy                    — answer addresses the filing/earnings query?
-    LLMContextPrecisionWithoutReference  — retrieved chunks relevant to the query?
+    Faithfulness                        — claims grounded in retrieved SEC chunks?
+    AnswerRelevancy                     — answer addresses the filing/earnings query?
+    ContextPrecisionWithoutReference    — retrieved chunks relevant to the query?
 
   Quant Agent (score_quant_response):
     FactualCorrectness   — LLM summary numbers match computed metrics (computed = reference)
-    ResponseRelevancy    — quant analysis addresses the risk/valuation query?
+    AnswerRelevancy      — quant analysis addresses the risk/valuation query?
 
   Sentiment Agent (score_sentiment_response):
     Faithfulness              — narrative claims grounded in fetched news/filings?
-    ResponseRelevancy         — sentiment analysis matches the ticker/context?
-    catalyst_identification   — AspectCritic: identifies key business catalysts?
-    insider_signal_discussion — AspectCritic: incorporates insider/institutional signals?
+    AnswerRelevancy           — sentiment analysis matches the ticker/context?
+    catalyst_identification   — DomainSpecificRubrics: identifies key business catalysts?
+    insider_signal_discussion — DomainSpecificRubrics: incorporates insider/institutional signals?
 
-Offline-only (require ground-truth reference — live in tests/evaluation/):
-  ContextRecall, ContextEntityRecall, ContextPrecision (standard),
-  ToolCallAccuracy, AgentGoalAccuracy, FactualCorrectness (RAG/Sentiment)
+Offline-only metrics (require ground-truth reference) live in tests/evaluation/:
+  ContextRecall, ContextEntityRecall, ToolCallAccuracy, AgentGoalAccuracy.
 
 All public functions are safe to fire-and-forget via asyncio.create_task().
 LLM calls go to LM Studio at LLM_BASE_URL.
@@ -138,11 +138,16 @@ def _push_scores(scores: dict[str, float], trace_id: str | None, agent: str) -> 
     try:
         from langfuse import Langfuse
         lf = Langfuse()
+        prefix = f"ragas/{agent}" if agent else "ragas"
         for name, value in scores.items():
-            kwargs: dict = {"name": f"ragas/{name}", "value": value}
+            kwargs: dict = {
+                "name": f"{prefix}/{name}",
+                "value": value,
+                "comment": f"agent={agent}" if agent else None,
+            }
             if trace_id:
                 kwargs["trace_id"] = trace_id
-            lf.create_score(**kwargs)
+            lf.create_score(**{k: v for k, v in kwargs.items() if v is not None})
         lf.flush()
         logger.debug("[%s] Pushed %d RAGAS scores to trace %s", agent, len(scores), trace_id)
     except Exception as exc:
@@ -176,9 +181,9 @@ async def score_response(
         ragas_llm, ragas_embedder = clients
 
         try:
-            from ragas.metrics.collections import DomainSpecificRubrics, RubricsScoreWithoutReference, AnswerRelevancy
+            from ragas.metrics.collections import DomainSpecificRubrics, AnswerRelevancy
         except ImportError:
-            logger.warning("[orchestrator] Skipping eval: ragas import failed (RubricsScoreWithoutReference?)")
+            logger.warning("[orchestrator] Skipping eval: ragas import failed")
             return
 
         _ui_resp = {"user_input": user_input, "response": response}
@@ -206,7 +211,7 @@ async def score_response(
                     "score5_description": "Response provides a balanced assessment with detailed discussion of multiple material risks across different categories.",
                 },
             ), _ui_resp),
-            (RubricsScoreWithoutReference(
+            (DomainSpecificRubrics(
                 name="recommendation_clarity",
                 llm=ragas_llm,
                 rubrics={
@@ -435,3 +440,4 @@ async def score_sentiment_response(
             logger.info("[sentiment] No RAGAS scores computed")
     except Exception:
         logger.exception("[sentiment] Eval crashed unexpectedly")
+

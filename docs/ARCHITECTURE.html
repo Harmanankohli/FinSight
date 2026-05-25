@@ -301,6 +301,13 @@ Sub-agents (agent_2, agent_3, agent_4)
 <h2>Runtime RAGAS Evaluation</h2>
 <p>After each agent produces a response, a fire-and-forget background task scores it using RAGAS metrics that require no ground-truth reference. Scores are pushed to Langfuse per-trace (linked by <code>trace_id</code>).</p>
 
+<h3>Feature flag</h3>
+<p>All sidecar evals are gated by <code>EVAL_TRACE_ENABLED</code> in <code>.env</code> (default <code>True</code>). The flag is exposed as <code>EVAL_ENABLED</code> in <code>shared/config.py</code>; every agent's <code>asyncio.create_task(_eval_*)</code> call site checks it. Set <code>EVAL_TRACE_ENABLED=False</code> to disable all per-agent runtime scoring with no code changes &mdash; useful for fast iteration when LM Studio judge calls add 5&ndash;180s of background work per query.</p>
+
+<h3>Orchestrator eval hook lives in <code>after_agent_callback</code></h3>
+<p>When the orchestrator runs through <code>adk web</code> (the path <code>run_adk_web.bat</code> uses), the ADK Web runner is responsible &mdash; <code>FinSightAgentExecutor</code> is never invoked. The orchestrator's eval is therefore scheduled from <code>agents/finsight_agent/agent.py</code>'s <code>_persist_memory_callback</code>, not from <code>agent_executor.py</code>. The callback first runs <code>_is_analysis_turn(session.events)</code>: if <code>save_brief</code> was not called in this turn (e.g. the user only asked "what were my last recommendations?"), both memory persist and eval are skipped to avoid polluting long-term memory with conversational queries.</p>
+<p><code>FinSightAgentExecutor</code> still keeps its eval call for completeness &mdash; it fires when an A2A client hits <code>agent_1_adk/main.py</code> directly. The A2A server is not started by <code>run_adk_web.bat</code> by default; start it manually with <code>uv run python -m agent_1_adk.main</code> if needed.</p>
+
 <table>
 <tr><th>Agent</th><th>Background Task</th><th>Metrics</th><th>Why Each Metric</th><th>Data Required</th></tr>
 <tr><td>Orchestrator</td><td><code>score_response()</code></td><td>AnswerRelevancy, citation_quality, risk_disclosure, recommendation_clarity, response_completeness</td><td>AnswerRelevancy: generic catch-all. citation_quality: unsubstantiated financial claims are worthless &mdash; must cite filing dates/amounts. risk_disclosure: no risk discussion means incomplete thesis. recommendation_clarity: core output is BUY/HOLD/SELL signal &mdash; ambiguous synthesis fails. response_completeness: must synthesize all 3 analysis types.</td><td><code>user_input</code>, <code>response</code></td></tr>
@@ -330,6 +337,7 @@ Sub-agents (agent_2, agent_3, agent_4)
 
 <h3>Langfuse Integration</h3>
 <p><code>_push_scores()</code> pushes each metric to <code>langfuse.create_score()</code> linked by <code>trace_id</code>. When <code>trace_id</code> is None (no active Langfuse trace), the push is skipped entirely to avoid &ldquo;Bad request&rdquo; errors from the cloud API with placeholder keys.</p>
+<p><strong>Score namespacing by agent</strong> &mdash; each score is pushed as <code>ragas/{agent}/{metric}</code> (e.g. <code>ragas/orchestrator/AnswerRelevancy</code>, <code>ragas/rag/Faithfulness</code>, <code>ragas/quant/FactualCorrectness</code>, <code>ragas/sentiment/catalyst_identification</code>). The previous flat <code>ragas/{metric}</code> naming made it impossible to distinguish the same metric across agents in Langfuse. Each <code>lf.create_score()</code> call also carries <code>comment="agent=&lt;name&gt;"</code> for additional structured filtering.</p>
 
 <h3>LM Studio Compatibility</h3>
 <p>RAGAS defaults to <code>instructor.Mode.JSON</code> which sends <code>response_format.type="json_object"</code> &mdash; LM Studio only supports <code>"json_schema"</code> or <code>"text"</code>. <code>_setup_ragas_clients()</code> patches with <code>instructor.Mode.JSON_SCHEMA</code>. HuggingFace embeddings are wrapped via a custom <code>_STEmbeddings</code> class (RAGAS 0.4.x <code>BaseRagasEmbedding</code>) to avoid a broken pydantic integration path.</p>

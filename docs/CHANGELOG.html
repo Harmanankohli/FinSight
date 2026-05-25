@@ -36,6 +36,56 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 
 <h1>Changelog</h1>
 
+<h2>v1.22 &mdash; ADK 2.x, Eval Toggle, Memory Pollution Fix &amp; Score Namespacing</h2>
+
+<h3 class="version">Google ADK 2.x Upgrade</h3>
+<ul>
+<li><strong><code>google-adk</code> bumped to <code>&gt;=2.0,&lt;3.0</code></strong> (<code>pyproject.toml</code>): installed <code>2.1.0</code>. No code changes required &mdash; all public API surfaces (<code>LlmAgent</code>, <code>Runner</code>, <code>DatabaseSessionService</code>, <code>BaseMemoryService</code>, <code>google.adk.tools.{google_search, load_memory}</code>, <code>google.adk.cli.service_registry.get_service_registry</code>) verified stable. Custom <code>SQLiteMemoryService</code> still satisfies the 2.x <code>BaseMemoryService</code> signatures. Project's <code>BaseAgent</code> in <code>shared/base_agent.py</code> is unaffected (Pydantic class, not ADK's <code>BaseAgent</code>).</li>
+</ul>
+
+<h3 class="version"><code>EVAL_TRACE_ENABLED</code> Feature Flag</h3>
+<ul>
+<li><strong><code>EVAL_ENABLED</code> constant added</strong> (<code>shared/config.py</code>): reads <code>EVAL_TRACE_ENABLED</code> from <code>.env</code> (default <code>True</code>). Single source of truth for whether sidecar RAGAS evals fire.</li>
+<li><strong>All <code>asyncio.create_task(_eval_*)</code> calls gated</strong>: every agent now checks <code>if EVAL_ENABLED:</code> before scheduling its eval task. Sites: <code>agent_1_adk/agent_executor.py</code>, <code>agents/finsight_agent/agent.py</code> (orchestrator), <code>agent_2_llamaindex/executor.py</code> (RAG), <code>agent_3_langgraph/executor.py</code> (quant), <code>agent_4_crewai/executor.py</code> (sentiment). Set <code>EVAL_TRACE_ENABLED=False</code> in <code>.env</code> to disable all sidecar evals with no code changes.</li>
+</ul>
+
+<h3 class="version">Orchestrator Eval Moved to <code>after_agent_callback</code></h3>
+<ul>
+<li><strong>Problem</strong>: when running via <code>adk web</code>, the orchestrator goes through ADK's built-in runner &mdash; <code>FinSightAgentExecutor</code> is never invoked. The eval call in <code>agent_executor.py</code> only fired for A2A clients hitting <code>agent_1_adk/main.py</code>. With the orchestrator A2A server removed from the bat file, evals stopped firing entirely.</li>
+<li><strong>Fix</strong> (<code>agents/finsight_agent/agent.py</code>): added orchestrator eval scheduling into the existing <code>_persist_memory_callback</code>. After memory persist, extracts user query + final agent text from <code>session.events</code>, pulls current Langfuse <code>trace_id</code>, and fires <code>asyncio.create_task(_eval_score_response(...))</code>. Works for both <code>adk web</code> and any other ADK runner path.</li>
+</ul>
+
+<h3 class="version">Memory Persist + Eval Gated on <code>save_brief</code></h3>
+<ul>
+<li><strong>Problem</strong>: <code>_persist_memory_callback</code> fired on every agent turn &mdash; including pure recall turns where the user asked "what were my last recommendations?". That conversational exchange was being indexed into long-term memory and evaluated, polluting future memory searches and inflating eval volume.</li>
+<li><strong>Fix</strong> (<code>agents/finsight_agent/agent.py</code>): added <code>_is_analysis_turn()</code> which walks back to the most recent user message and checks whether <code>save_brief</code> was called after it. If not, both memory persist and eval are skipped. Logs <code>"Skipping persist + eval &mdash; turn did not call save_brief"</code> for visibility.</li>
+<li>Behaviour: "Analyze AAPL" &rarr; <code>save_brief</code> called &rarr; persists + evals. "What were my last recommendations?" &rarr; only <code>load_memory</code> &rarr; skipped. "Show me last NVDA brief, then analyze TSLA" &rarr; <code>save_brief</code> called for TSLA &rarr; persists.</li>
+</ul>
+
+<h3 class="version">Langfuse Score Namespacing by Agent</h3>
+<ul>
+<li><strong><code>_push_scores</code> now prefixes scores by agent</strong> (<code>shared/runtime_eval.py</code>): <code>ragas/{name}</code> &rarr; <code>ragas/{agent}/{name}</code> (e.g. <code>ragas/orchestrator/AnswerRelevancy</code>, <code>ragas/rag/Faithfulness</code>). The previous flat namespace made it impossible to distinguish "the orchestrator's AnswerRelevancy" from "RAG's AnswerRelevancy" in Langfuse.</li>
+<li><strong><code>comment="agent=&lt;name&gt;"</code> added</strong> to each <code>lf.create_score()</code> call for an additional structured tag.</li>
+</ul>
+
+<h3 class="version"><code>RubricsScoreWithoutReference</code> Import Fix</h3>
+<ul>
+<li><strong>Problem</strong>: <code>score_response()</code> orchestrator eval imported <code>RubricsScoreWithoutReference</code> from <code>ragas.metrics.collections</code> &mdash; that class does not exist in ragas 0.4.x. The import failed and the entire orchestrator eval bailed out with <code>[orchestrator] Skipping eval: ragas import failed</code>.</li>
+<li><strong>Fix</strong> (<code>shared/runtime_eval.py</code>): <code>recommendation_clarity</code> metric now uses <code>DomainSpecificRubrics</code> (the actual reference-free rubric class in 0.4.x). Same scoring rubric, working import.</li>
+</ul>
+
+<h3 class="version">Removed Duplicate Batch-Eval Runner</h3>
+<ul>
+<li><strong>Deleted from <code>shared/runtime_eval.py</code></strong>: <code>_invoke_agent()</code>, <code>_run_batch_eval()</code>, <code>_BATCH_EVAL_CASES</code>, and the <code>if __name__ == "__main__":</code> block. <code>_invoke_agent</code> spun up its own <code>Runner</code> + <code>InMemorySessionService</code> to invoke the orchestrator &mdash; duplicating exactly what <code>FinSightAgentExecutor</code> and <code>after_agent_callback</code> already do for live traffic. The live executor has the response in hand; no second runner needed.</li>
+<li>Batch evaluation with ground-truth references still lives in <code>tests/evaluation/run_orchestrator_eval.py</code>.</li>
+</ul>
+
+<h3 class="version">Bat-File Cleanup</h3>
+<ul>
+<li><strong>Orchestrator A2A server removed from <code>run_adk_web.bat</code></strong>: <code>agent_1_adk/main.py</code> is no longer started. The orchestrator runs through <code>adk web</code> on port <code>8080</code>. The A2A endpoint at <code>:8001</code> is no longer exposed by default; bring it back manually with <code>uv run python -m agent_1_adk.main</code> if needed for A2A clients.</li>
+<li><code>stop_servers.bat</code> already kills the port; PowerShell terminal-close command targets all <code>uv run</code> and <code>lms server</code> windows reliably.</li>
+</ul>
+
 <h2>v1.20 &mdash; Runtime RAGAS Evaluation &amp; Offline HF Model Loading</h2>
 
 <h3 class="version">Runtime RAGAS Evaluation</h3>

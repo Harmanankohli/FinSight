@@ -8,7 +8,7 @@ dependencies = [
     # A2A Protocol
     "a2a-sdk[http-server]>=1.0.0",
     # Agent Frameworks
-    "google-adk>=0.1.0",
+    "google-adk>=2.0,<3.0",
     "llama-index>=0.10.0",
     "llama-index-vector-stores-pinecone>=0.1.0",
     "llama-index-vector-stores-chroma>=0.5.0",
@@ -64,6 +64,8 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "pyyaml>=6.0.0",
     "pygments>=2.18.0",
+    "ag-ui-protocol>=0.1.18",
+    "ragas[ag-ui]>=0.4.3",
 ]
 
 [project.optional-dependencies]

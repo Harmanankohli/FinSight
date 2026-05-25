@@ -32,6 +32,7 @@ from shared.config import ADK_MODEL
 
 from .agent import root_agent
 from .agent_executor import FinSightAgentExecutor
+from .agui_endpoint import make_agui_endpoint
 
 from shared.logging_config import setup_file_logging
 setup_file_logging("orchestrator")
@@ -96,6 +97,7 @@ async def health(request):
 
 
 routes = [Route("/health", health)]
+routes.append(Route("/agentic_chat", make_agui_endpoint(runner), methods=["POST"]))
 routes.extend(create_agent_card_routes(agent_card))
 routes.extend(create_jsonrpc_routes(request_handler, "/a2a"))
 

@@ -7,7 +7,7 @@ from langfuse.langchain import CallbackHandler
 
 from shared.base_agent import BaseAgent
 from shared.mcp_client import MCPClient, MCPServerConfig
-from shared.config import MCP_SERVER_URL, MCP_TIMEOUT
+from shared.config import MCP_SERVER_URL, MCP_TIMEOUT, EVAL_ENABLED
 from shared.observability import get_langfuse_client
 from shared.runtime_eval import score_quant_response as _eval_quant_response
 from shared.ticker_utils import extract_ticker, extract_holdings, validate_ticker_via_mcp, resolve_ticker_via_mcp
@@ -141,14 +141,15 @@ class QuantAgent(BaseAgent):
             try:
                 result = await self.analyze(ticker, portfolio_holdings=holdings, trace_ctx=trace_ctx)
                 span.update(output={"ticker": ticker, "recommendation": result.get("recommendation")})
-                asyncio.create_task(
-                    _eval_quant_response(
-                        query,
-                        result.get("reasoning", ""),
-                        result,
-                        trace_id,
+                if EVAL_ENABLED:
+                    asyncio.create_task(
+                        _eval_quant_response(
+                            query,
+                            result.get("reasoning", ""),
+                            result,
+                            trace_id,
+                        )
                     )
-                )
                 yield {
                     "response_type": "data",
                     "is_task_complete": True,

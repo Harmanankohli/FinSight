@@ -59,7 +59,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <li><strong>Output guardrails</strong> &mdash; Responses shorter than 50 chars trigger <code>TASK_STATE_FAILED</code>. Missing BUY/HOLD/SELL signal emits a Langfuse warning with <code>missing_signal: true</code>.</li>
 <li><strong>Synthesizes results</strong> &mdash; LLM collects all outputs and produces a BUY/HOLD/SELL recommendation</li>
 <li><strong>Auto-save</strong> &mdash; After each response, persists ticker brief, portfolio holdings, and performance record (with live price snapshot via yfinance) to SQLite. Fires background task to evaluate past recommendations.</li>
-<li><strong>Runtime RAGAS evaluation</strong> &mdash; After response processing, fires <code>asyncio.create_task(_eval_score_response(...))</code> with 5 reference-free metrics. Scores pushed to Langfuse per-trace. See Runtime Evaluation below for metric details.</li>
+<li><strong>Memory persist + Runtime RAGAS evaluation</strong> &mdash; Both run from <code>after_agent_callback</code> in <code>agents/finsight_agent/agent.py</code>. The callback first checks <code>_is_analysis_turn()</code> (was <code>save_brief</code> called in this turn?) &mdash; non-analysis turns like "what were my last recommendations?" skip persist + eval to avoid memory pollution. Analysis turns then call <code>add_events_to_memory()</code> and fire <code>asyncio.create_task(_eval_score_response(...))</code> with 5 metrics (all reference-free). Both gated globally by <code>EVAL_TRACE_ENABLED</code>. Scores pushed to Langfuse under <code>ragas/orchestrator/&lt;metric&gt;</code>.</li>
 </ol>
 
 <p>All A2A communication uses <code>ClientFactory</code> + <code>BaseClient</code> from the official <code>a2a-sdk</code>. Streaming events are handled correctly: intermediate SUBMITTED/WORKING events are skipped, only <code>artifact_update</code> events (data or text) and terminal <code>status_update</code> events are returned to the LLM.</p>
@@ -86,9 +86,15 @@ FinSightAgentExecutor:
   &rarr; _persist_to_memory() &rarr; direct events &rarr; SQLiteMemoryService (for load_memory)
   &rarr; _store_memory() &rarr; TickerMemory + PortfolioStore + PerformanceTracker
 
-after_agent_callback (ADK web UI path):
-  &rarr; callback_context.add_events_to_memory(events=session.events, custom_metadata={...})
-  &rarr; SQLiteMemoryService.add_events_to_memory() &rarr; memory_entries table</pre>
+after_agent_callback (ADK web UI path &mdash; primary path; run_adk_web.bat no longer starts agent_1_adk/main.py):
+  &rarr; _is_analysis_turn(session.events) &mdash; was save_brief called?
+       &#9500; No  &rarr; skip persist + eval (memory recall turn, e.g. load_memory only)
+       &#9492; Yes &rarr;
+            &rarr; callback_context.add_events_to_memory(events=session.events, custom_metadata={...})
+            &rarr; SQLiteMemoryService.add_events_to_memory() &rarr; memory_entries table
+            &rarr; if EVAL_ENABLED: asyncio.create_task(score_response(query, response, trace_id))
+                 &rarr; ragas/orchestrator/{AnswerRelevancy, citation_quality, risk_disclosure,
+                                          recommendation_clarity, response_completeness}</pre>
 
 <h3>Streaming Event Flow</h3>
 <pre>event 1: task { state: SUBMITTED }          &larr; skipped (non-terminal)
@@ -116,14 +122,14 @@ Body:
 
 <h3>Runtime Evaluation</h3>
 
-<p>After response synthesis, fires <code>asyncio.create_task(score_response(...))</code> with 5 metrics. All scored from <code>user_input</code> + <code>response</code> only &mdash; no ground-truth reference needed.</p>
+<p>Triggered from <code>after_agent_callback</code> (ADK Web path) &mdash; see step 9 above. Fires <code>asyncio.create_task(score_response(...))</code> with 5 metrics. All scored from <code>user_input</code> + <code>response</code> only &mdash; no ground-truth reference needed. Globally toggled by <code>EVAL_TRACE_ENABLED</code> in <code>.env</code>. Scores pushed to Langfuse under <code>ragas/orchestrator/&lt;metric&gt;</code>.</p>
 
 <table>
 <tr><th>Metric</th><th>Why</th></tr>
 <tr><td><code>AnswerRelevancy</code></td><td>Measures whether the final BUY/HOLD/SELL recommendation addresses what the user asked. Generic catch-all.</td></tr>
 <tr><td><code>citation_quality</code> (DomainSpecificRubrics)</td><td>Custom 5-level rubric: scores whether the response cites specific filing dates, sections, and monetary figures vs making generic claims. A response saying &ldquo;NVDA's revenue grew&rdquo; without citing the 10-Q date and amount scores 1. Critical for financial credibility &mdash; unsubstantiated claims are worthless.</td></tr>
 <tr><td><code>risk_disclosure</code> (DomainSpecificRubrics)</td><td>Custom 5-level rubric: evaluates whether risks are acknowledged. An investment thesis without risk discussion is incomplete. Scores from &ldquo;no risk mentioned&rdquo; (level 1) to &ldquo;balanced multi-category risk assessment&rdquo; (level 5).</td></tr>
-<tr><td><code>recommendation_clarity</code> (RubricsScoreWithoutReference)</td><td>Custom 5-level rubric: verifies the synthesizer produces an explicit BUY/HOLD/SELL signal with supporting evidence from &ge;2 sub-agents. A response that discusses pros/cons without committing to a clear signal scores low.</td></tr>
+<tr><td><code>recommendation_clarity</code> (DomainSpecificRubrics)</td><td>Custom 5-level rubric: verifies the synthesizer produces an explicit BUY/HOLD/SELL signal with supporting evidence from &ge;2 sub-agents. A response that discusses pros/cons without committing to a clear signal scores low.</td></tr>
 <tr><td><code>response_completeness</code> (DomainSpecificRubrics)</td><td>Custom 5-level rubric: assesses whether all three analysis types (SEC filings, quant metrics, sentiment) are synthesized. A response that only discusses stock price without filing data or narrative scores 1.</td></tr>
 </table>
 

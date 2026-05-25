@@ -22,7 +22,7 @@ An autonomous multi-agent system that answers investment queries like *"Should I
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│              ADK Web UI (port 8001)                           │
+│              ADK Web UI (port 8080)                           │
 │           Orchestrator (ADK LlmAgent)                        │
 │         Discovers agents → LLM routes via send_message       │
 │         Single tool: send_message(name, task)                │
@@ -131,12 +131,14 @@ uv run python -m uvicorn agent_3_langgraph.server:app --host 0.0.0.0 --port 8003
 uv run python -m uvicorn agent_4_crewai.server:app --host 0.0.0.0 --port 8004
 
 # Terminal 5: ADK Web UI
-.venv\Scripts\activate && adk web --port 8001 agents
+uv run adk web --port 8080 --session_service_uri sqlite://./finsight_memory.db --memory_service_uri finsight:// agents
 ```
 
 **Startup order:** LM Studio → MCP Server → RAG → Quant → Sentiment → ADK Web UI
 
-Open http://127.0.0.1:8001 in your browser.
+Open http://127.0.0.1:8080 in your browser.
+
+> The orchestrator's standalone A2A server (`agent_1_adk/main.py` on `:8001`) is no longer started by `run_adk_web.bat`. The orchestrator runs inside `adk web`. Start it manually with `uv run python -m agent_1_adk.main` if you need to expose the A2A JSON-RPC endpoint to external A2A clients.
 
 ### Stop All Services
 
@@ -242,6 +244,7 @@ Key environment variables in `.env`:
 | `A2A_TIMEOUT` | `180.0` | Timeout for A2A communication (seconds) |
 | `LLM_BASE_URL` | `http://localhost:1234/v1` | LM Studio OpenAI-compatible endpoint |
 | `SEMANTIC_CACHE_ENABLED` | `false` | Enable ChromaDB semantic cache for repeated investment queries |
+| `EVAL_TRACE_ENABLED` | `True` | Master switch for sidecar RAGAS evals. Set to `False` to disable all per-agent runtime scoring with no code changes |
 | `MCP_SERVER_URL` | `http://localhost:8010/sse` | Unified MCP server SSE endpoint |
 
 ## Documentation

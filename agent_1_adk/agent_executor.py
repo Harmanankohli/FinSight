@@ -16,6 +16,7 @@ from langfuse import propagate_attributes
 
 import os
 
+from shared.config import EVAL_ENABLED
 from shared.observability import get_langfuse_client
 from shared.runtime_eval import score_response as _eval_score_response
 from shared.ticker_utils import extract_ticker
@@ -273,13 +274,14 @@ class FinSightAgentExecutor(AgentExecutor):
         asyncio.create_task(
             self._store_memory(user_input, text, task.context_id, user_id)
         )
-        asyncio.create_task(
-            _eval_score_response(
-                original_input or user_input,
-                text,
-                root_trace.id if root_trace else None,
+        if EVAL_ENABLED:
+            asyncio.create_task(
+                _eval_score_response(
+                    original_input or user_input,
+                    text,
+                    root_trace.id if root_trace else None,
+                )
             )
-        )
 
         # Store in semantic cache for future identical/similar queries
         if original_input:

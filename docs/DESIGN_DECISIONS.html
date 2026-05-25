@@ -121,6 +121,43 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 
 <p><strong>Why <code>JSON_SCHEMA</code> mode instead of <code>JSON</code> mode for instructor?</strong> RAGAS defaults to <code>instructor.Mode.JSON</code> which sends <code>response_format.type="json_object"</code> in the API request. LM Studio only supports <code>"json_schema"</code> and <code>"text"</code> response format types. Patching to <code>JSON_SCHEMA</code> enables structured output without a custom LM Studio fork.</p>
 
+<h3>Why gate every eval call behind a single <code>EVAL_TRACE_ENABLED</code> flag?</h3>
+<p>Sidecar RAGAS evaluation adds 5&ndash;180 seconds of background LLM work per query (per agent) on the local LM Studio judge. During fast iteration on prompts or sub-agent behaviour, this background load slows the judge model down for the next user query, and burns context on metrics that aren't being inspected. Wrapping each <code>asyncio.create_task(_eval_*)</code> site in <code>if EVAL_ENABLED:</code> lets the user kill all sidecar scoring from <code>.env</code> without removing code. <code>EVAL_ENABLED</code> reads the same <code>EVAL_TRACE_ENABLED</code> env var that already controls orchestrator trace JSON dumps &mdash; one switch, two effects, both about "extra eval load". Default stays <code>True</code> so production observability is on by default.</p>
+
+<h3>Why move the orchestrator eval into <code>after_agent_callback</code>?</h3>
+<p>When <code>adk web</code> is the entry point, the orchestrator goes through ADK's built-in runner &mdash; <code>FinSightAgentExecutor.execute()</code> is never called. The eval call originally placed in <code>agent_executor.py</code> only fired when an A2A client hit <code>agent_1_adk/main.py</code> directly. Once <code>run_adk_web.bat</code> stopped starting the standalone orchestrator A2A server (redundant with <code>adk web</code>), evals stopped firing entirely.</p>
+<p><code>after_agent_callback</code> is the only ADK extension point guaranteed to fire on every agent turn regardless of runner. Wiring eval scheduling into the existing <code>_persist_memory_callback</code> keeps both side-effects in one place: callback &rarr; check turn type &rarr; persist memory &rarr; fire eval. The trace_id is read from the active Langfuse span at callback time, so traces from <code>adk web</code> are still linked.</p>
+
+<h3>Why gate memory persist + eval on whether <code>save_brief</code> was called this turn?</h3>
+<p><code>_persist_memory_callback</code> fires on every ADK turn, including pure recall turns where the user asks "what were my last recommendations?" and the agent only invokes <code>load_memory</code>. The old behaviour persisted the entire session &mdash; including the conversational recall query and the agent's response &mdash; into long-term memory. Subsequent <code>load_memory</code> calls would then surface those recall exchanges alongside actual analyses, polluting search results and drifting the agent toward conversational rather than analytical responses.</p>
+<p><code>_is_analysis_turn(events)</code> walks back to the most recent user message and checks for a <code>save_brief</code> tool call in the agent's response &mdash; <code>save_brief</code> is the explicit signal that a fresh recommendation was produced. If absent, persist + eval both skip. This is preferable to time-based heuristics (last N turns) or content-based heuristics (response length, keyword matching) because it relies on a deterministic signal that the orchestrator emits as a real act, not on inference about what the turn <em>meant</em>.</p>
+
+<h3>Why namespace Langfuse scores by agent (<code>ragas/{agent}/{metric}</code>)?</h3>
+<p>The previous <code>ragas/{metric}</code> naming flattened all four agents into one dimension. <code>ragas/AnswerRelevancy</code> could be the orchestrator's synthesis score, the RAG agent's filing-answer score, the quant agent's metric-summary score, or the sentiment agent's narrative score &mdash; Langfuse had no way to tell them apart in dashboards or aggregations. Adding the agent prefix surfaces the source in every existing Langfuse view (score breakdowns, trends, filters) without requiring custom metadata processing. The redundant <code>comment="agent=&lt;name&gt;"</code> tag gives a second filter dimension if anyone wants to query by comment instead of name prefix.</p>
+
+<h3>Why not introduce a separate batch-eval runner (<code>_invoke_agent</code>)?</h3>
+<p>The earlier shape of <code>runtime_eval.py</code> included an <code>if __name__ == "__main__":</code> block with <code>_invoke_agent()</code> that spun up its own <code>Runner</code> + <code>InMemorySessionService</code> to invoke the orchestrator for a fixed set of test cases. This duplicated exactly what <code>FinSightAgentExecutor</code> and <code>after_agent_callback</code> already do for live traffic &mdash; running the agent, collecting events, extracting the response. The live executor <em>already has the response in hand</em> when it fires the sidecar eval; a second runner adds nothing except a second source of truth that can drift from the first.</p>
+<p>Removed: <code>_invoke_agent()</code>, <code>_run_batch_eval()</code>, <code>_BATCH_EVAL_CASES</code>, and the <code>__main__</code> block. Batch evaluation with ground-truth references (a genuinely different concern &mdash; it needs reference tool calls and reference answers) still lives in <code>tests/evaluation/run_orchestrator_eval.py</code>.</p>
+
+<h2>Google ADK 2.x Upgrade</h2>
+
+<h3>Why upgrade now?</h3>
+<p>ADK 1.x is in maintenance mode. 2.x is the active development line. The 2.0 breaking-change inventory (event schema additions, <code>BaseAgent</code> extending <code>BaseNode</code>, automatic exception catching for retries) is small and easy to audit against the current codebase. Putting off the upgrade only widens the diff that needs to be reviewed later.</p>
+
+<h3>Code changes required: zero</h3>
+<p>All 2.0 breaking changes were checked against the codebase before upgrading:</p>
+<table>
+<tr><th>2.0 breaking change</th><th>Affects FinSight?</th></tr>
+<tr><td>Event schema adds <code>node_info</code> + <code>output</code> fields</td><td>No &mdash; <code>SQLiteMemoryService._event_to_dict</code> only reads <code>author</code> and <code>content.parts</code>, doesn't validate full schema</td></tr>
+<tr><td><code>BaseAgent</code> extends <code>BaseNode</code>; no more <code>_run_async_impl</code> overrides</td><td>No &mdash; we use <code>LlmAgent</code> directly; <code>shared/base_agent.py</code> is a separate Pydantic class, not ADK's <code>BaseAgent</code></td></tr>
+<tr><td>No manual <code>enqueue_event()</code> on ADK events</td><td>No &mdash; <code>enqueue_event()</code> calls in <code>shared/generic_executor.py</code> are on A2A's <code>EventQueue</code>, not ADK</td></tr>
+<tr><td>No broad <code>try/except BaseException</code></td><td>No &mdash; the three matches are in <code>shared/mcp_client.py</code> and <code>shared/runtime_eval.py</code>, both outside the ADK execution path</td></tr>
+</table>
+<p>Smoke-tested at upgrade time: all imports from <code>google.adk.agents</code>, <code>google.adk.tools</code>, <code>google.adk.runners</code>, <code>google.adk.sessions</code>, <code>google.adk.events</code>, <code>google.adk.memory</code>, <code>google.adk.cli.service_registry</code> resolve. <code>SQLiteMemoryService</code> still satisfies the 2.x <code>BaseMemoryService</code> interface (signatures match). <code>agent_1_adk.agent.root_agent</code> loads and registers all four tools. <code>after_agent_callback</code> still fires.</p>
+
+<h3>Why pin <code>&gt;=2.0,&lt;3.0</code> instead of an exact version?</h3>
+<p>We track 2.x patches and minor updates automatically (bug fixes, new features) while excluding the next major bump (which will have its own breaking-change audit). Same pattern as other major-version-pinned deps in this project.</p>
+
 <h2>Why Four Different Agent Frameworks?</h2>
 <table>
 <tr><th>Agent</th><th>Framework</th><th>Why</th></tr>

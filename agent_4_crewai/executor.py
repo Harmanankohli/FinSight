@@ -5,7 +5,7 @@ from collections.abc import AsyncIterable
 
 from shared.base_agent import BaseAgent
 from shared.mcp_client import MCPClient, MCPServerConfig
-from shared.config import MCP_SERVER_URL, MCP_TIMEOUT
+from shared.config import MCP_SERVER_URL, MCP_TIMEOUT, EVAL_ENABLED
 from shared.observability import get_langfuse_client
 from shared.runtime_eval import score_sentiment_response as _eval_sentiment_response
 from shared.ticker_utils import extract_ticker, validate_ticker_via_mcp, resolve_ticker_via_mcp
@@ -170,14 +170,15 @@ class SentimentAgent(BaseAgent):
                     or result.get("analysis")
                     or json.dumps(result, indent=2)
                 )
-                asyncio.create_task(
-                    _eval_sentiment_response(
-                        query,
-                        narrative,
-                        contexts,
-                        trace_id,
+                if EVAL_ENABLED:
+                    asyncio.create_task(
+                        _eval_sentiment_response(
+                            query,
+                            narrative,
+                            contexts,
+                            trace_id,
+                        )
                     )
-                )
                 yield {
                     "response_type": "data",
                     "is_task_complete": True,

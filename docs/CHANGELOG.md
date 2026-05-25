@@ -1,5 +1,47 @@
 # Changelog
 
+## v1.22 — ADK 2.x, Eval Toggle, Memory Pollution Fix & Score Namespacing
+
+### Google ADK 2.x Upgrade
+
+- **`google-adk` bumped to `>=2.0,<3.0`** (`pyproject.toml`): installed `2.1.0`. No code changes required — all public API surfaces (`LlmAgent`, `Runner`, `DatabaseSessionService`, `BaseMemoryService`, `google.adk.tools.{google_search, load_memory}`, `google.adk.cli.service_registry.get_service_registry`) verified stable. Custom `SQLiteMemoryService` still satisfies the 2.x `BaseMemoryService` signatures. Project's `BaseAgent` in `shared/base_agent.py` is unaffected (it is a Pydantic class, not ADK's `BaseAgent`).
+
+### `EVAL_TRACE_ENABLED` Feature Flag
+
+- **`EVAL_ENABLED` constant added** (`shared/config.py`): reads `EVAL_TRACE_ENABLED` from `.env` (default `True`). Single source of truth for whether sidecar RAGAS evals fire.
+- **All `asyncio.create_task(_eval_*)` calls gated**: every agent now checks `if EVAL_ENABLED:` before scheduling its eval task. Sites: `agent_1_adk/agent_executor.py`, `agents/finsight_agent/agent.py` (orchestrator), `agent_2_llamaindex/executor.py` (RAG), `agent_3_langgraph/executor.py` (quant), `agent_4_crewai/executor.py` (sentiment). Set `EVAL_TRACE_ENABLED=False` in `.env` to disable all sidecar evals with no code changes.
+
+### Orchestrator Eval Moved to `after_agent_callback`
+
+- **Problem**: when running via `adk web`, the orchestrator goes through ADK's built-in runner — `FinSightAgentExecutor` is never invoked. The eval call in `agent_executor.py` only fired for A2A clients hitting `agent_1_adk/main.py`. With the orchestrator A2A server removed from the bat file, evals stopped firing entirely.
+- **Fix** (`agents/finsight_agent/agent.py`): added orchestrator eval scheduling into the existing `_persist_memory_callback`. After memory persist, extracts user query + final agent text from `session.events`, pulls current Langfuse `trace_id`, and fires `asyncio.create_task(_eval_score_response(...))`. Works for both `adk web` and any other ADK runner path.
+
+### Memory Persist + Eval Gated on `save_brief`
+
+- **Problem**: `_persist_memory_callback` fired on every agent turn — including pure recall turns where the user asked "what were my last recommendations?". That conversational exchange was being indexed into long-term memory and evaluated, polluting future memory searches and inflating eval volume.
+- **Fix** (`agents/finsight_agent/agent.py`): added `_is_analysis_turn()` which walks back to the most recent user message and checks whether `save_brief` was called after it. If not, both memory persist and eval are skipped. Logs `"Skipping persist + eval — turn did not call save_brief"` for visibility.
+- Behaviour: "Analyze AAPL" → `save_brief` called → persists + evals. "What were my last recommendations?" → only `load_memory` → skipped. "Show me last NVDA brief, then analyze TSLA" → `save_brief` called for TSLA → persists.
+
+### Langfuse Score Namespacing by Agent
+
+- **`_push_scores` now prefixes scores by agent** (`shared/runtime_eval.py`): `ragas/{name}` → `ragas/{agent}/{name}` (e.g. `ragas/orchestrator/AnswerRelevancy`, `ragas/rag/Faithfulness`). The previous flat namespace made it impossible to distinguish "the orchestrator's AnswerRelevancy" from "RAG's AnswerRelevancy" in Langfuse.
+- **`comment="agent=<name>"` added** to each `lf.create_score()` call for an additional structured tag.
+
+### `RubricsScoreWithoutReference` Import Fix
+
+- **Problem**: `score_response()` orchestrator eval imported `RubricsScoreWithoutReference` from `ragas.metrics.collections` — that class does not exist in ragas 0.4.x. The import failed and the entire orchestrator eval bailed out with `[orchestrator] Skipping eval: ragas import failed`.
+- **Fix** (`shared/runtime_eval.py`): `recommendation_clarity` metric now uses `DomainSpecificRubrics` (the actual reference-free rubric class in 0.4.x). Same scoring rubric, working import.
+
+### Removed Duplicate Batch-Eval Runner
+
+- **Deleted from `shared/runtime_eval.py`**: `_invoke_agent()`, `_run_batch_eval()`, `_BATCH_EVAL_CASES`, and the `if __name__ == "__main__":` block. `_invoke_agent` spun up its own `Runner` + `InMemorySessionService` to invoke the orchestrator — duplicating exactly what `FinSightAgentExecutor` and `after_agent_callback` already do for live traffic. The live executor has the response in hand; no second runner needed.
+- Batch evaluation with ground-truth references still lives in `tests/evaluation/run_orchestrator_eval.py`.
+
+### Bat-File Cleanup
+
+- **Orchestrator A2A server removed from `run_adk_web.bat`**: `agent_1_adk/main.py` is no longer started. The orchestrator runs through `adk web` on port `8080`. The A2A endpoint at `:8001` is no longer exposed by default; bring it back manually with `uv run python -m agent_1_adk.main` if needed for A2A clients.
+- `stop_servers.bat` already kills the port; PowerShell terminal-close command targets all `uv run` and `lms server` windows reliably.
+
 ## v1.21 — Runtime RAGAS Robustness & Debuggability
 
 ### RAGAS Client Caching
