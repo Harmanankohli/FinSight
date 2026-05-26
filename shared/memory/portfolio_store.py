@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from shared.config import IST
 from shared.memory.store import DB_PATH, get_db
 from shared.models import QueryContext
 
@@ -54,7 +55,7 @@ class PortfolioStore:
             )
             row = await existing.fetchone()
 
-            now = datetime.utcnow().isoformat()
+            now = datetime.now(IST).isoformat()
             new_holdings = list(set(ctx.portfolio_holdings))
 
             if row:
@@ -92,7 +93,7 @@ class PortfolioStore:
         """Explicitly set a user's portfolio holdings."""
         conn = await get_db(self._db_path)
         try:
-            now = datetime.utcnow().isoformat()
+            now = datetime.now(IST).isoformat()
             await conn.execute(
                 """INSERT INTO user_profiles (user_id, holdings, updated_at)
                    VALUES (?, ?, ?)

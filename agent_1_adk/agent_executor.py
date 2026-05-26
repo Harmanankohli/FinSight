@@ -353,7 +353,8 @@ class FinSightAgentExecutor(AgentExecutor):
 
     async def _build_memory_context(self, user_input: str, user_id: str) -> str:
         """Build compact memory context for prompt injection."""
-        from datetime import date as _date
+        from datetime import datetime
+        from shared.config import IST
         from shared.memory import PortfolioStore, TickerMemory
         from shared.ticker_utils import extract_ticker
 
@@ -371,7 +372,7 @@ class FinSightAgentExecutor(AgentExecutor):
                     if not analysis_date:
                         raw = latest["created_at"]
                         analysis_date = raw.split("T")[0] if "T" in raw else raw[:10]
-                    today = _date.today().isoformat()
+                    today = datetime.now(IST).date().isoformat()
                     if analysis_date == today:
                         parts.append(f"[TODAY — analysis is current, you may return it directly without calling agents again] {context}")
                     else:
@@ -392,7 +393,8 @@ class FinSightAgentExecutor(AgentExecutor):
         self, query: str, response_text: str, session_id: str, user_id: str
     ) -> None:
         """Parse response and store brief + portfolio + performance record."""
-        from datetime import date as _date
+        from datetime import datetime
+        from shared.config import IST
         from shared.memory import PerformanceTracker, PortfolioStore, TickerMemory
         from shared.models import QueryContext
         from shared.ticker_utils import extract_ticker
@@ -406,7 +408,7 @@ class FinSightAgentExecutor(AgentExecutor):
         existing = await tm.get_latest(ticker, user_id=user_id)
         if existing:
             ad = existing.get("analysis_date") or existing["created_at"][:10]
-            if ad == _date.today().isoformat():
+            if ad == datetime.now(IST).date().isoformat():
                 logger.debug("Skip _store_memory — save_brief already stored today for %s", ticker)
                 return
 
@@ -438,7 +440,7 @@ class FinSightAgentExecutor(AgentExecutor):
                 portfolio_holdings=[],
                 investment_horizon="",
                 session_id=session_id,
-                timestamp=__import__("datetime").datetime.utcnow(),
+                timestamp=datetime.now(IST),
             )
             ps = PortfolioStore()
             await ps.upsert_from_context(ctx)

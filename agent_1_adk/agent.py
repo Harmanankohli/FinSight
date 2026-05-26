@@ -3,7 +3,7 @@ import json
 import logging
 import os
 import sys
-from datetime import date
+from datetime import date, datetime
 
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
@@ -12,7 +12,7 @@ from google.adk.agents import LlmAgent
 from google.adk.tools import load_memory
 from google.adk.tools.tool_context import ToolContext
 from google.genai import types as genai_types
-from shared.config import ADK_MODEL, LLM_BASE_URL
+from shared.config import ADK_MODEL, IST, LLM_BASE_URL
 from shared.observability import init_langfuse
 
 init_langfuse(service_name="orchestrator")
@@ -88,7 +88,6 @@ async def save_brief(
     Returns:
         Confirmation message.
     """
-    from datetime import date
     from shared.memory import PerformanceTracker, TickerMemory
 
     session_id = tool_context.session.id if tool_context and tool_context.session else "unknown"
@@ -100,7 +99,7 @@ async def save_brief(
     existing = await tm.get_latest(ticker, user_id=user_id)
     if existing:
         ad = existing.get("analysis_date") or existing["created_at"][:10]
-        if ad == date.today().isoformat():
+        if ad == datetime.now(IST).date().isoformat():
             return (
                 f"Brief already saved today for {ticker}: "
                 f"{existing['recommendation']} (confidence: {existing['confidence']:.2f})"
@@ -204,7 +203,7 @@ For general chat or non-stock queries, respond conversationally.\
 
 
 def _build_instruction() -> str:
-    today = date.today().isoformat()
+    today = datetime.now(IST).date().isoformat()
     agent_list = _client.list_agents()
     if agent_list:
         preamble = _STATIC_PREAMBLE

@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
+from shared.config import IST
 from shared.memory.store import DB_PATH, get_db
 
 
@@ -49,7 +50,7 @@ class PerformanceTracker:
                     recommendation.upper(),
                     confidence,
                     price,
-                    datetime.utcnow().isoformat(),
+                    datetime.now(IST).isoformat(),
                 ),
             )
             await conn.commit()
@@ -81,7 +82,7 @@ class PerformanceTracker:
                 continue
 
             realized_return = (current_price - price_at_rec) / price_at_rec
-            now = datetime.utcnow().isoformat()
+            now = datetime.now(IST).isoformat()
 
             conn = await get_db(self._db_path)
             try:
@@ -167,7 +168,7 @@ class PerformanceTracker:
         """Get recommendations for a ticker in the last N days."""
         conn = await get_db(self._db_path)
         try:
-            cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+            cutoff = (datetime.now(IST) - timedelta(days=days)).isoformat()
             if user_id:
                 cursor = await conn.execute(
                     """SELECT id, ticker, user_id, recommendation, confidence,

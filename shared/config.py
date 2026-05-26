@@ -1,6 +1,9 @@
 import os
 import sys
+from datetime import timezone, timedelta
 from pathlib import Path
+
+IST = timezone(timedelta(hours=5, minutes=30), name="IST")
 
 _dotenv_path = Path(__file__).resolve().parent.parent / ".env"
 if _dotenv_path.exists():

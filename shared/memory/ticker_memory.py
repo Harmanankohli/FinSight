@@ -6,10 +6,11 @@ summaries for prompt injection (~100-300 tokens max).
 
 import json
 import uuid
-from datetime import date, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from shared.config import IST
 from shared.memory.store import DB_PATH, get_db
 from shared.models import InvestmentBrief
 
@@ -40,7 +41,7 @@ class TickerMemory:
                     brief.confidence_score,
                     json.dumps(brief.model_dump(mode="json")),
                     brief.generated_at.isoformat(),
-                    date.today().isoformat(),
+                    datetime.now(IST).date().isoformat(),
                 ),
             )
             await conn.commit()
@@ -76,8 +77,8 @@ class TickerMemory:
                     recommendation,
                     confidence,
                     json.dumps({"response_text": response_text[:5000]}),
-                    datetime.utcnow().isoformat(),
-                    date.today().isoformat(),
+                    datetime.now(IST).isoformat(),
+                    datetime.now(IST).date().isoformat(),
                 ),
             )
             await conn.commit()

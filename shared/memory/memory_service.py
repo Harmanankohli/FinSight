@@ -26,6 +26,7 @@ from google.genai import types
 from rank_bm25 import BM25Okapi
 from sentence_transformers import SentenceTransformer, util
 
+from shared.config import IST
 from shared.memory.store import DB_PATH, get_db
 
 logger = logging.getLogger(__name__)
@@ -73,7 +74,7 @@ class SQLiteMemoryService(BaseMemoryService):
                         content_json,
                         metadata_json,
                         content_text,
-                        datetime.utcnow().isoformat(),
+                        datetime.now(IST).isoformat(),
                     ),
                 )
             await conn.commit()
@@ -129,7 +130,7 @@ class SQLiteMemoryService(BaseMemoryService):
                         content_json,
                         metadata_json,
                         content_text,
-                        datetime.utcnow().isoformat(),
+                        datetime.now(IST).isoformat(),
                     ),
                 )
             await conn.commit()

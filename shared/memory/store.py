@@ -147,11 +147,12 @@ async def is_filing_ingested(edgar_url: str, db_path: Path = DB_PATH) -> bool:
 async def mark_filing_ingested(edgar_url: str, ticker: str, db_path: Path = DB_PATH) -> None:
     """Record that a filing has been ingested."""
     from datetime import datetime
+    from shared.config import IST
     conn = await get_db(db_path)
     try:
         await conn.execute(
             "INSERT OR IGNORE INTO ingested_filings (edgar_url, ticker, ingested_at) VALUES (?, ?, ?)",
-            (edgar_url, ticker.upper(), datetime.utcnow().isoformat()),
+            (edgar_url, ticker.upper(), datetime.now(IST).isoformat()),
         )
         await conn.commit()
     finally:
