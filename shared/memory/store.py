@@ -5,6 +5,7 @@ All custom memory tables live alongside ADK's DatabaseSessionService tables
 in the same SQLite database file.
 """
 
+import asyncio
 from pathlib import Path
 
 import aiosqlite
@@ -81,19 +82,40 @@ CREATE INDEX IF NOT EXISTS idx_ingested_ticker ON ingested_filings(ticker);
 """
 
 
-async def get_db(path: Path = DB_PATH) -> aiosqlite.Connection:
-    # WAL for concurrent reads, foreign_keys for referential integrity, busy_timeout to avoid SQLITE_BUSY under load.
-    """Open an async SQLite connection with WAL mode and foreign keys.
+_db_conn: aiosqlite.Connection | None = None
+_db_lock = asyncio.Lock()   # serialises writes
+_init_lock = asyncio.Lock() # guards singleton creation
 
-    Automatically runs schema migration on first use.
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    conn = await aiosqlite.connect(str(path))
-    await conn.execute("PRAGMA journal_mode=WAL")
-    await conn.execute("PRAGMA foreign_keys=ON")
-    await conn.execute("PRAGMA busy_timeout=5000")
-    await init_db(conn)
-    return conn
+
+async def get_db(path: Path = DB_PATH) -> aiosqlite.Connection:
+    """Return the long-lived singleton SQLite connection, creating it on first call."""
+    global _db_conn
+    if _db_conn is not None:
+        return _db_conn
+    async with _init_lock:
+        if _db_conn is not None:
+            return _db_conn
+        path.parent.mkdir(parents=True, exist_ok=True)
+        conn = await aiosqlite.connect(str(path))
+        await conn.execute("PRAGMA journal_mode=WAL")
+        await conn.execute("PRAGMA foreign_keys=ON")
+        await conn.execute("PRAGMA busy_timeout=5000")
+        await init_db(conn)
+        _db_conn = conn
+    return _db_conn
+
+
+def write_lock() -> asyncio.Lock:
+    """Return the module-level write lock. Wrap all INSERT/UPDATE/DELETE calls with this."""
+    return _db_lock
+
+
+async def close_db() -> None:
+    """Close the singleton connection. Call at process shutdown."""
+    global _db_conn
+    if _db_conn is not None:
+        await _db_conn.close()
+        _db_conn = None
 
 
 # Version-based migration — schema_version tracks current version, CREATE TABLEs are idempotent, ALTER TABLEs use try/except for additive changes.
@@ -142,25 +164,20 @@ async def init_db(conn: aiosqlite.Connection) -> None:
 async def is_filing_ingested(edgar_url: str, db_path: Path = DB_PATH) -> bool:
     """Return True if this filing URL has already been ingested."""
     conn = await get_db(db_path)
-    try:
-        cursor = await conn.execute(
-            "SELECT 1 FROM ingested_filings WHERE edgar_url = ? LIMIT 1", (edgar_url,)
-        )
-        return await cursor.fetchone() is not None
-    finally:
-        await conn.close()
+    cursor = await conn.execute(
+        "SELECT 1 FROM ingested_filings WHERE edgar_url = ? LIMIT 1", (edgar_url,)
+    )
+    return await cursor.fetchone() is not None
 
 
 async def mark_filing_ingested(edgar_url: str, ticker: str, db_path: Path = DB_PATH) -> None:
     """Record that a filing has been ingested."""
     from datetime import datetime
     from shared.config import IST
-    conn = await get_db(db_path)
-    try:
+    async with write_lock():
+        conn = await get_db(db_path)
         await conn.execute(
             "INSERT OR IGNORE INTO ingested_filings (edgar_url, ticker, ingested_at) VALUES (?, ?, ?)",
             (edgar_url, ticker.upper(), datetime.now(IST).isoformat()),
         )
         await conn.commit()
-    finally:
-        await conn.close()
