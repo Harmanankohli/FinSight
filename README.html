@@ -168,8 +168,7 @@ uv run python -m uvicorn agent_4_crewai.server:app --host 0.0.0.0 --port 8004
 </table>
 
 <h2>Testing</h2>
-<pre>uv run pytest -v</pre>
-<p>64 tests covering: A2A discovery, agent card validation, orchestrator tools, sub-agent executors, LangGraph state graphs, RAG pipelines, CrewAI integration, distributed trace propagation, portfolio holdings extraction, and persistent memory layer.</p>
+<p>No automated test suite. All test files removed in v1.24 &mdash; they were unmaintained fixtures from earlier architecture iterations that no longer matched the current codebase. Testing is performed manually via the ADK Web UI.</p>
 
 <hr>
 <p style="font-size:.85rem;color:#888">Apache 2.0 License</p>

@@ -16,12 +16,13 @@ The orchestrator uses a single `LlmAgent` with one `send_message` tool. The LLM 
 1. **Discovers agents in background** via `SubAgentClient.discover()` — async `A2ACardResolver` with retries
 2. **Input guardrails** — Off-topic queries rejected in < 100 ms via `_NON_INVESTMENT_RE`. Invalid tickers rejected in < 2 s via pre-flight MCP `validate_ticker` call before any sub-agent is invoked. Temporary MCP connection for validation is cleaned up in a `finally` block via `await _mcp.disconnect_all()`.
 3. **Semantic cache** — When `SEMANTIC_CACHE_ENABLED=true`, similar queries (cosine ≥ 0.95) return cached responses without running the orchestrator.
-4. **Memory context injection** — Before each query, extracts ticker from user input, retrieves latest recommendation from `TickerMemory`, and prepends it to the user message (~300 token budget)
-5. **LLM routes to agents** — LLM calls `send_message(agent_name, task)` for each sub-agent. Parallel with qwen; sequential with other models. Each call measured with `time.monotonic()` and emitted as a Langfuse latency span.
-6. **Output guardrails** — Responses shorter than 50 chars trigger `TASK_STATE_FAILED`. Missing BUY/HOLD/SELL signal emits a Langfuse warning with `missing_signal: true`.
-7. **Synthesizes results** — LLM collects all outputs and produces a BUY/HOLD/SELL recommendation
-8. **Auto-save** — After each response, persists ticker brief, portfolio holdings, and performance record (with live price snapshot via yfinance) to SQLite. Fires background task to evaluate past recommendations.
-9. **Memory persist + Runtime RAGAS evaluation** — Both run from `after_agent_callback` in `agents/finsight_agent/agent.py`. The callback first checks `_is_analysis_turn()` (was `save_brief` called in this turn?) — non-analysis turns like "what were my last recommendations?" skip persist + eval to avoid memory pollution. Analysis turns then call `add_events_to_memory()` and fire `asyncio.create_task(_eval_score_response(...))` with 5 metrics (all reference-free). Both gated globally by `EVAL_TRACE_ENABLED` (see below). Scores pushed to Langfuse under `ragas/orchestrator/<metric>` namespace per-trace.
+4. **Memory cache callback (before agent)** — `root_agent.before_agent_callback = _memory_cache_callback` fires before the LLM runs. Extracts the user's ticker, queries `TickerMemory.get_latest()`, and if today's brief exists with a valid `response_text`, returns it as `types.Content` — short-circuiting the LLM entirely. This is the fastest path for same-day repeat queries (~200ms vs 30-60s).
+5. **Memory context injection** — If the cache callback misses (no today brief), extracts ticker from user input, retrieves latest recommendation from `TickerMemory`, and prepends it to the user message (~300 token budget). Tags as `[TODAY]` (fresh) or `[STALE]` (prior day) — LLM is instructed **"MUST return directly"** on `[TODAY]` rather than the previous "MAY return".
+6. **LLM routes to agents** — LLM calls `send_message(agent_name, task)` for each sub-agent. Parallel with qwen; sequential with other models. Each call measured with `time.monotonic()` and emitted as a Langfuse latency span.
+7. **Output guardrails** — Responses shorter than 50 chars trigger `TASK_STATE_FAILED`. Missing BUY/HOLD/SELL signal emits a Langfuse warning with `missing_signal: true`.
+8. **Synthesizes results** — LLM collects all outputs and produces a BUY/HOLD/SELL recommendation
+9. **Auto-save** — After each response, persists ticker brief, portfolio holdings, and performance record (with live price snapshot via yfinance) to SQLite. Fires background task to evaluate past recommendations.
+10. **Memory persist + Runtime RAGAS evaluation + response_text overwrite** — All run from `after_agent_callback` in `agents/finsight_agent/agent.py`. The callback first checks `_is_analysis_turn()` (was `save_brief` called in this turn?) — non-analysis turns like "what were my last recommendations?" skip persist + eval to avoid memory pollution. Analysis turns then call `add_events_to_memory()`, overwrite the brief's `response_text` with the full synthesized analysis via `tm.update_response_text()`, and fire `asyncio.create_task(_eval_score_response(...))` with 5 metrics. All gated globally by `EVAL_TRACE_ENABLED`. Scores pushed to Langfuse under `ragas/orchestrator/<metric>`.
 
 All A2A communication uses `ClientFactory` + `BaseClient` from the official `a2a-sdk`. Streaming events are handled correctly: intermediate SUBMITTED/WORKING events are skipped, only `artifact_update` events (data or text) and terminal `status_update` events are returned to the LLM.
 
@@ -49,12 +50,25 @@ FinSightAgentExecutor:
   → _persist_to_memory() → direct events → SQLiteMemoryService (for load_memory)
   → _store_memory() → TickerMemory + PortfolioStore + PerformanceTracker
 
-after_agent_callback (ADK web UI path — primary path since run_adk_web.bat no longer starts agent_1_adk/main.py):
+before_agent_callback (ADK Web UI path — fires before LLM every turn):
+  → _memory_cache_callback(callback_context)
+       → Extract user ticker from session.events
+       → TickerMemory.get_latest(ticker, user_id=None)
+         ├── today's cache exists with response_text → return types.Content directly (short-circuit)
+         └── no cache → return None (let LLM run)
+
+Executor-level cache (A2A path — agent_1_adk/agent_executor.py):
+  A2A Request → execute()
+  → _get_today_cached_text(ticker) — same check, returns cached text directly
+  → [miss] → _build_memory_context() → RUNNER.run_async()
+
+after_agent_callback (ADK web UI path — primary path; run_adk_web.bat no longer starts agent_1_adk/main.py):
   → _is_analysis_turn(session.events) — was save_brief called?
        ├── No  → skip persist + eval (memory recall turn, e.g. load_memory only)
        └── Yes →
             → callback_context.add_events_to_memory(events=session.events, custom_metadata={...})
             → SQLiteMemoryService.add_events_to_memory() → memory_entries table
+            → TickerMemory.update_response_text(record_id, full_response) — overwrite brief with full analysis
             → if EVAL_ENABLED: asyncio.create_task(score_response(query, response, trace_id))
                  → ragas/orchestrator/{AnswerRelevancy, citation_quality, risk_disclosure,
                                        recommendation_clarity, response_completeness}
@@ -132,14 +146,24 @@ Triggered from `after_agent_callback` (ADK Web path) — see step 9 above. Fires
 ```
 Request → DefaultRequestHandler → GenericAgentExecutor(RAGAgent)
   → RAGAgent.stream(query, context_id, task_id)
-    → RAGAgent._ensure_ingested(ticker)
-      ├── MCPClient.connect_all()
-      └── MCPClient.call_tool_by_name("get_company_filings", {...})
-    → FinancialIndexManager.query(ticker, query)
-      ├── Try: RouterQueryEngine → LM Studio LLM → response
-      └── Fallback: SEC filings index directly
-  → Yields: {response_type: "data", content: result, is_task_complete: true}
-  → finally: await self._disconnect() — closes MCP sockets gracefully
+    → try: yield await self._build_response(query)
+    → finally: await self._disconnect()
+
+The core response logic lives in _build_response(query) → dict, extracted from stream() in v1.24:
+
+RAGAgent._build_response(query):
+    → extract_trace_ids(query)
+    → with langfuse.start_as_current_observation(name="rag-agent-stream")
+      → ticker = extract_ticker(query)  — supports dotted (BRK.A), single-char (V), $prefix
+      → Fallback chain: regex → MCP resolve → MCP validate
+      → RAGAgent._ensure_ingested(ticker)
+        ├── MCPClient.connect_all()
+        └── MCPClient.call_tool_by_name("get_company_filings", {...})
+      → FinancialIndexManager.query(ticker, query)
+        ├── Try: RouterQueryEngine → LM Studio LLM → response
+        └── Fallback: SEC filings index directly
+      → if EVAL_ENABLED: asyncio.create_task(score_rag_response(...))
+      → return {response_type: "data", content: result, ...}
 
 #### Runtime Evaluation
 
@@ -180,16 +204,21 @@ After each response, fires `asyncio.create_task(score_rag_response(...))` with 3
 ```
 Request → DefaultRequestHandler → GenericAgentExecutor(QuantAgent)
   → QuantAgent.stream(query, context_id, task_id)
-    → extract_holdings(query, exclude_ticker=ticker) → ["AAPL", "MSFT", "GOOGL"]
-    → QuantAgent.analyze(ticker, portfolio_holdings=holdings)
-      [MCP: get_prices → parse Close data] → compute_metrics → conditional branch (logged)
-        ├── high_volatility (annual_vol > 35%) → stress_test, sets dcf_error
-        └── low_volatility (annual_vol ≤ 35%) → dcf_valuation
-      → portfolio_correlation (fetches prices for target + each holding)
-        → format_output (dcf_error in reasoning) → llm_summary
-  → Yields: {response_type: "data", content: result, is_task_complete: true}
-      Result includes dcf_error field when DCF is skipped
-  → finally: await self._disconnect() — closes MCP sockets gracefully
+    → try: yield await self._build_response(query)
+    → finally: await self._disconnect()
+
+QuantAgent._build_response(query):
+    → extract_trace_ids(query)
+    → with langfuse.start_as_current_observation(name="quant-agent-stream")
+      → extract_holdings(query, exclude_ticker=ticker) → ["AAPL", "MSFT", "GOOGL"]
+      → QuantAgent.analyze(ticker, portfolio_holdings=holdings)
+        [MCP: get_prices → parse Close data] → compute_metrics → conditional branch (logged)
+          ├── high_volatility (annual_vol > 35%) → stress_test, sets dcf_error
+          └── low_volatility (annual_vol ≤ 35%) → dcf_valuation
+        → portfolio_correlation (fetches prices for target + each holding)
+          → format_output (dcf_error in reasoning) → llm_summary
+      → if EVAL_ENABLED: asyncio.create_task(score_quant_response(...))
+      → return {response_type: "data", content: result, ...}
 ```
 
 **Portfolio Holdings Extraction**: `extract_holdings()` in `shared/ticker_utils.py` uses regex patterns to extract holdings from natural language (e.g. "My portfolio holds AAPL, MSFT, GOOGL"). The orchestrator LLM is instructed to include holdings in the task text for the Quant agent. Holdings are passed through the full chain and used by `correlation_node` to compute a correlation matrix.
@@ -235,16 +264,22 @@ After each analysis, fires `asyncio.create_task(score_quant_response(...))` with
 ```
 Request → DefaultRequestHandler → GenericAgentExecutor(SentimentAgent)
   → SentimentAgent.stream(query, context_id, task_id)
-    → SentimentAgent.analyze(ticker)
-      ├── _connect() → MCPClient.connect_all()
-      ├── _collect_data_parallel(ticker)
-      │   ├── call("get_news_sentiment", {ticker})
-      │   ├── call("get_company_filings", {ticker})
-      │   └── asyncio.gather
-      └── SentimentIntelligenceCrew.analyze(ticker, precollected_data)
-          └── Single Agent (Analysis → narrative directly)
-  → Yields: {response_type: "data", content: result, is_task_complete: true}
-  → finally: await self._disconnect() — closes MCP sockets gracefully
+    → try: yield await self._build_response(query)
+    → finally: await self._disconnect()
+
+SentimentAgent._build_response(query):
+    → extract_trace_ids(query)
+    → with langfuse.start_as_current_observation(name="sentiment-agent-stream")
+      → SentimentAgent.analyze(ticker)
+        ├── _connect() → MCPClient.connect_all()
+        ├── _collect_data_parallel(ticker)
+        │   ├── call("get_news_sentiment", {ticker})
+        │   ├── call("get_company_filings", {ticker})
+        │   └── asyncio.gather
+        └── SentimentIntelligenceCrew.analyze(ticker, precollected_data)
+            └── Single Agent (Analysis → narrative directly)
+      → if EVAL_ENABLED: asyncio.create_task(score_sentiment_response(...))
+      → return {response_type: "data", content: result, ...}
 ```
 
 #### Runtime Evaluation

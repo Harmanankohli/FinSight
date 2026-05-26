@@ -59,6 +59,66 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 
 <p><strong>Why opt-in (<code>SEMANTIC_CACHE_ENABLED=false</code>)?</strong> The semantic cache is stateful &mdash; a cached stale recommendation from yesterday might mislead a user. Off by default so developers consciously enable it in environments where TTL staleness is acceptable.</p>
 
+<h2>Before-Agent Callback for Same-Day Memory Cache</h2>
+
+<h3>Why a <code>before_agent_callback</code> instead of extending the code-level gate?</h3>
+<p>The v1.23 same-day cache relied on the LLM honoring <code>[TODAY]</code> tags in the injected memory context &mdash; but the LLM was inconsistent. Sometimes it re-ran agents anyway (wasting 30&ndash;60s). Making <code>[TODAY]</code> a hard <strong>&ldquo;MUST return directly&rdquo;</strong> helped but did not eliminate the variance.</p>
+<p><code>before_agent_callback</code> is an ADK extension point that fires <em>before</em> the LLM is invoked. Returning a <code>types.Content</code> response from this callback tells the ADK runner to use that as the agent response and skip the LLM entirely. This gives a deterministic same-day cache with zero LLM variance &mdash; the LLM is never asked to make a decision about whether to re-run.</p>
+<p>The callback checks for a valid <code>response_text</code> in the cached brief (populated by the <code>update_response_text</code> overwrite, see below). If only a recommendation exists without analysis text, it falls through to let the LLM run.</p>
+<p><strong>Why two cache paths (callback + executor-level)?</strong> The <code>before_agent_callback</code> only fires when the orchestrator runs through ADK&rsquo;s built-in runner (<code>adk web</code> path). A2A requests hitting <code>agent_1_adk/main.py</code> directly bypass ADK callbacks, so the executor-level <code>_get_today_cached_text()</code> provides the same short-circuit for that path.</p>
+
+<h3>Why <code>update_response_text</code> overwrite the brief after the turn?</h3>
+<p>The <code>save_brief</code> tool is called <em>during</em> the LLM turn, before synthesis completes. At that point the LLM has only produced a brief rationale for the recommendation. The full synthesis (combining RAG, Quant, and Sentiment results) happens after <code>save_brief</code> returns. Without the overwrite, the same-day cache would return only the abbreviated rationale &mdash; a few sentences of justification &mdash; instead of the complete multi-paragraph analysis that the user originally saw.</p>
+<p>The overwrite happens in <code>_persist_memory_callback</code> (after the turn), extracting the response text from session events and storing it into the existing brief via <code>tm.update_response_text()</code>. Subsequent same-day queries via <code>_memory_cache_callback</code> then return the full analysis.</p>
+
+<h3>Why programmatic dedup at <code>save_brief</code> and <code>_store_memory</code>?</h3>
+<p>Two duplicate-prevention layers:</p>
+<ul>
+<li><strong><code>save_brief</code> (agent.py)</strong>: Checks if today&rsquo;s brief already exists for the ticker before inserting. The <code>analysis_date</code> column makes this a single SQL lookup &mdash; no equality comparison on timestamps needed.</li>
+<li><strong><code>_store_memory</code> (agent_executor.py)</strong>: Same check at the executor level, guarding against the case where <code>save_brief</code> was called but the brief was stored under a different <code>user_id</code> (the A2A executor and ADK callback use different user_id values).</li>
+</ul>
+<p>Together they prevent identical rows accumulating on repeated same-day queries, which was the root cause of the original duplicate record bug.</p>
+
+<h2>Ticker Extraction: Dotted &amp; Single-Char Tickers</h2>
+
+<h3>Why support dotted tickers?</h3>
+<p>Berkshire Hathaway (<code>BRK.A</code>, <code>BRK.B</code>) has a dot in its ticker symbol. The previous regex limited matches to <code>[A-Z]{1,5}</code> which excluded the dot entirely. When a user typed <code>BRK.A</code>, the pattern matched <code>BRK</code> (which is not a valid standalone ticker) and validation failed. The fix was to extend the regex to <code>[A-Z]{1,5}(?:\.[A-Z]{1,2})?</code> in all patterns, matching the optional dot suffix.</p>
+
+<h3>Why support single-char tickers?</h3>
+<p>Visa (<code>V</code>) and Alleghany (<code>Y</code>) are single-character NYSE tickers. Pattern 5 (<code>\b([A-Z]{2})\b</code>) excluded them. Changed to <code>\b([A-Z]{1,2})\b</code>. The new mixed-case parens pattern (<code>\b([A-Z]{1,5})\s+\([A-Za-z][a-z]</code>) specifically handles &ldquo;V (Visa)&rdquo; format, which was the only way these single-char tickers appeared in user input.</p>
+
+<h3>Why extract <code>_build_response</code> from <code>stream()</code>?</h3>
+<p>All three sub-agent executors had the same pattern: a try/finally block wrapping Langfuse observability inside <code>stream()</code>. Extracting <code>_build_response(query) &rarr; dict</code> isolates the response-building logic from the async generator boilerplate. Benefits:</p>
+<ul>
+<li><strong>Testability</strong>: <code>_build_response()</code> is a plain async function returning a dict &mdash; no generator machinery, no yield semantics. Unit tests can call it directly.</li>
+<li><strong>Clarity</strong>: <code>stream()</code> is now two lines: <code>yield await self._build_response(query)</code> in try, <code>_disconnect()</code> in finally. The actual logic is in one place instead of mixed with yield statements.</li>
+<li><strong>Consistency</strong>: All three agents use the same pattern, making cross-agent debugging easier.</li>
+</ul>
+
+<h2>IST Timezone Standardization</h2>
+
+<h3>Why IST instead of UTC?</h3>
+<p>The system is operated from India (IST, UTC+5:30). Before the fix, timestamps were a mix of:</p>
+<ul>
+<li><code>datetime.now()</code> &mdash; used the server&rsquo;s local time (IST on the development machine, UTC in Docker)</li>
+<li><code>datetime.utcnow()</code> &mdash; explicit UTC in some memory modules</li>
+<li><code>datetime.now(IST)</code> &mdash; explicitly IST in the agent executor</li>
+</ul>
+<p>The mix caused the same-day cache to fail on non-IST machines: a brief created at <code>2026-05-26T06:30:00Z</code> (UTC) was analyzed as <code>analysis_date=2026-05-26</code> (correct), but <code>datetime.now()</code> on an IST machine returned <code>2026-05-26 12:00:00</code> (noon IST, still same day) &mdash; same day, fine. But on a UTC machine, <code>datetime.now()</code> returns <code>2026-05-26T12:00:00Z</code> &mdash; also fine during the day. The bug manifested at the day boundary: a brief created at <code>2026-05-26T23:30:00Z</code> (next day IST: 05:00 AM) would have <code>analysis_date=2026-05-26</code>, but <code>datetime.now()</code> in UTC would return <code>2026-05-26T23:30:00Z</code> still, appearing to be same day. The boundary was inconsistent.</p>
+<p>Centralizing on <code>IST = timezone(timedelta(hours=5, minutes=30))</code> and using <code>datetime.now(IST)</code> everywhere makes the day boundary unambiguous: the analysis date and &ldquo;today&rdquo; comparison always use the same timezone.</p>
+
+<h2>Stale Test Removal</h2>
+
+<h3>Why delete all tests instead of fixing them?</h3>
+<p>The 17 test files were written during the initial architecture iterations (v1.0&ndash;v1.15) when the codebase was rapidly evolving. By v1.24, most tests referenced:</p>
+<ul>
+<li>Classes and functions that were renamed or removed</li>
+<li>Mock patterns that no longer matched current dependency injection</li>
+<li>Offline evaluation fixtures that diverged from the live runtime behavior</li>
+<li>A2A communication patterns from the v1&ndash;v4 orchestrator architecture that were completely replaced</li>
+</ul>
+<p>Fixing them would require a full rewrite against the current codebase &mdash; essentially writing new tests from scratch while also removing all the old ones. Deleting the stale fixtures was the honest option rather than maintaining dead test code that would confuse future readers. A new test suite should be built from scratch against the current stable architecture.</p>
+
 <h2>Same-Day Memory Cache &amp; analysis_date Column</h2>
 
 <h3>Why check the date before re-running agents?</h3>

@@ -1,5 +1,48 @@
 # Changelog
 
+## v1.24 — Before-Agent Cache Callback, IST Timezone & Stale Test Cleanup
+
+### Before-Agent Cache Callback (`_memory_cache_callback`)
+
+- **Two-tier same-day cache** (`agents/finsight_agent/agent.py`): New `_memory_cache_callback` registered as `root_agent.before_agent_callback` — fires before the LLM runs, extracts the user's ticker, queries `TickerMemory.get_latest()`, and returns today's cached brief (`types.Content`) directly if available. Short-circuits the LLM entirely, saving 30-60s per repeat same-day query.
+- **Strict prompt directive** (`agent_1_adk/agent.py`): `[TODAY]` tag changed from "you MAY return it directly" to **"you MUST return it directly"** — reduces LLM variance on same-day cache hits.
+- **Executor-level cache** (`agent_1_adk/agent_executor.py`): `_get_today_cached_text()` provides a parallel short-circuit for the A2A executor path, checking before `RUNNER.run_async()` is called.
+
+### Response Text Overwrite for Cache Quality
+
+- **`update_response_text()` added** (`shared/memory/ticker_memory.py`): Overwrites `brief_json.response_text` on an existing record after the agent turn completes. The `save_brief` tool's rationale is a short LLM-written summary; after the full synthesis finishes, the real analysis text replaces it — so the same-day cache returns the rich analysis, not the abbreviated rationale.
+- **Integration in `_persist_memory_callback`** (`agents/finsight_agent/agent.py`): After memory persist, extracts the response text and calls `tm.update_response_text()`.
+
+### IST Timezone Standardization
+
+- **`IST` constant added** (`shared/config.py`): `IST = timezone(timedelta(hours=5, minutes=30))`. All `datetime.now()` calls across the system converted to use `IST` explicitly — agent timestamps, memory timestamps, analysis_date comparisons. Previously mixed between UTC and local machine time, causing same-day cache mismatches on non-IST systems.
+- **Files changed**: `shared/config.py`, `shared/memory/memory_service.py`, `shared/memory/performance_tracker.py`, `shared/memory/portfolio_store.py`, `shared/memory/store.py`, `shared/memory/ticker_memory.py`, `agent_1_adk/agent.py`, `agent_1_adk/agent_executor.py`.
+
+### Programmatic Dedup in save_brief & _store_memory
+
+- **`save_brief` dedup** (`agent_1_adk/agent.py`): Checks if today's brief already exists for the ticker before inserting. Returns early with a confirmation message instead of creating a duplicate row.
+- **`_store_memory` dedup** (`agent_1_adk/agent_executor.py`): Same check at the executor level — if `save_brief` already stored today's brief, `_store_memory` skips its own insert. Creates two-layer defense against duplicate records.
+
+### Ticker Extraction: Dotted & Single-Char Tickers
+
+- **Dotted tickers supported** (`shared/ticker_utils.py`): Patterns now match `[A-Z]{1,5}(?:\.[A-Z]{1,2})?` — handles Berkshire Hathaway (`BRK.A`, `BRK.B`) and other class-share tickers.
+- **Single-char tickers**: Pattern 5 changed from `[A-Z]{2}` to `[A-Z]{1,2}`, enabling detection of tickers like `V` (Visa) and `Y` (Alleghany). New mixed-case parens pattern detects `V (Visa)` → `V`.
+- **`$` prefix widened**: Pattern 3 (dollar prefix) now matches `[A-Z]{1,5}` instead of just `[A-Z]{1,2}`.
+
+### _build_response Extracted from stream()
+
+- **All three sub-agents refactored** (`agent_2_llamaindex/executor.py`, `agent_3_langgraph/executor.py`, `agent_4_crewai/executor.py`): The core response logic moved from inside `stream()` to a new `_build_response(query) → dict` method. `stream()` is now a thin wrapper: `yield await self._build_response(query)` in a `try/finally` block (ensuring `_disconnect()` runs). This makes the response-building logic independently testable and callable.
+
+### DB Path Consolidation
+
+- **Session DB separated** (`agent_1_adk/main.py`): ADK session store moved from `db/finsight_memory.db` to `db/adk_sessions.db` — separates conversational session data from ticker briefs and memory, preventing one schema migration from affecting the other.
+- **User-id-agnostic cache queries**: `_get_today_cached_text()` and `_build_memory_context()` now query `TickerMemory.get_latest(ticker, user_id=None)` to avoid cache misses across different user_id values (a2a_user, user, eval_user).
+
+### Stale Test Removal
+
+- **17 test files removed**: All `tests/*.py` files and `tests/evaluation/` suite deleted — these were unmaintained fixtures from earlier architecture iterations that no longer matched the current codebase. Offline RAGAS evaluation pipeline, stale rubric tests, and outdated memory/integration tests all removed.
+- **Test count: 0** — no automated test suite remains. Testing is performed manually via the ADK Web UI.
+
 ## v1.23 — Same-Day Memory Cache, analysis_date Column & Unified db/ Folder
 
 ### Same-Day Recommendation Cache

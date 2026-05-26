@@ -28,7 +28,7 @@ FinSight is a multi-agent investment research system where four specialized agen
 
 ## Orchestrator Architecture
 
-The orchestrator (`agent_1_adk/`) uses a single `LlmAgent` with one `send_message` tool that delegates to sub-agents via A2A:
+The orchestrator (`agent_1_adk/`) uses a single `LlmAgent` with one `send_message` tool that delegates to sub-agents via A2A. Two parallel cache paths can short-circuit the LLM entirely on same-day repeat queries:
 
 ```
 Module load → SubAgentClient.discover()
@@ -37,13 +37,20 @@ Module load → SubAgentClient.discover()
   └── self.agents populated → instruction updated
 
 A2A Request → FinSightAgentExecutor.execute()
+  → _get_today_cached_text(ticker)  — [CACHE: return today brief if exists]
+  → _build_memory_context(query)    — inject [MEMORY CONTEXT] with [TODAY]/[STALE] tag
   → RUNNER.run_async(user_query)
   → LlmAgent (no pre-fetch)
+    → before_agent_callback: _memory_cache_callback  — [CACHE: return types.Content if today brief exists]
     → LLM calls send_message(agent_name, task) for each agent
     → SubAgentClient → A2A task to sub-agent
     → SubAgentClient → A2A response (text or data parts)
     → LLM calls next agent
     → LLM synthesizes BUY/HOLD/SELL
+  → after_agent_callback: _persist_memory_callback
+    → add_events_to_memory()
+    → update_response_text() — overwrite brief rationale with full analysis
+    → if EVAL_ENABLED: score_response()
   → COMPLETED with synthesis
 ```
 
@@ -335,16 +342,30 @@ DatabaseSessionService(db_url="sqlite+aiosqlite:///./db/finsight_memory.db")
 
 All conversation events (user messages, agent responses, tool calls) are persisted to SQLite tables (`sessions`, `events`). Conversations survive server restarts.
 
+### Timezone
+
+All datetime operations use **IST (UTC+5:30)**, defined as `IST = timezone(timedelta(hours=5, minutes=30), name="IST")` in `shared/config.py`. This applies to agent timestamps, memory created_at fields, analysis_date comparisons, and performance evaluation timestamps. Previously mixed UTC/local timestamps caused same-day cache mismatches on non-IST machines.
+
+### Memory Cache Callback (before_agent_callback)
+
+The fastest same-day cache path is the `before_agent_callback` registered as `root_agent.before_agent_callback = _memory_cache_callback`. It fires before the LLM runs, extracts the user's ticker from session events, and if today's brief has a valid `response_text`, returns `types.Content(role="model", parts=[...])` — the ADK runner accepts this as the agent response and skips the LLM entirely. This completes in ~200ms vs 30-60s for a full agent run.
+
+The executor-level path (`agent_1_adk/agent_executor.py`) has a parallel check via `_get_today_cached_text()` for A2A requests.
+
+### Response Text Overwrite
+
+After the agent turn completes, `_persist_memory_callback` calls `TickerMemory.update_response_text(record_id, full_response)`. This overwrites the short `save_brief` rationale (an LLM-written summary) with the full synthesized analysis text. The same-day cache callback reads this `response_text`, so subsequent same-day queries return the rich analysis rather than an abbreviated rationale.
+
 ### Memory Context Injection
 
-Before each query, the executor injects memory context into the user message:
+When the cache callback misses (no today brief), the executor injects memory context into the user message:
 
 ```
 User Query → Executor._build_memory_context(query)
   ├── extract_ticker(query) → "NVDA"
   ├── TickerMemory.get_latest("NVDA") → last brief (with analysis_date)
   ├── Compare analysis_date with today
-  │     [TODAY]  → tag as current; LLM may return directly
+  │     [TODAY]  → tag as current; LLM MUST return directly (strict directive)
   │     [STALE]  → tag as outdated; LLM MUST call all agents fresh
   ├── PortfolioStore.get() → current holdings
   └── Prepend: [MEMORY CONTEXT] ... [/MEMORY CONTEXT]
@@ -352,9 +373,9 @@ User Query → Executor._build_memory_context(query)
 ```
 
 The memory context is compact (~300 tokens) and includes:
-- Latest recommendation tagged `[TODAY]` or `[STALE]` based on `analysis_date`
+- Latest recommendation for the queried ticker tagged `[TODAY]` or `[STALE]` based on `analysis_date`
 - Current portfolio holdings (labelled as background reference — not forwarded to sub-agents unless user explicitly requests portfolio analysis)
-- When serving a `[TODAY]` response, `_store_memory()` is skipped to prevent duplicate records
+- When serving from today's cache (`[TODAY]`), the response is **not** re-saved to memory to prevent duplicate records
 
 ### Component Architecture
 
@@ -520,7 +541,8 @@ The LLM can call `load_memory(query="What did I ask about NVDA last week?")` to 
 
 All databases are stored under the `db/` folder at the project root — the entire folder is excluded from git via `.gitignore`.
 
-- `db/finsight_memory.db` — session, memory, ticker briefs, portfolios, performance records
+- `db/finsight_memory.db` — ticker briefs, portfolios, performance records, ingested filings
+- `db/adk_sessions.db` — ADK conversation sessions and events (separated from memory data in v1.24 to prevent schema conflicts)
 - `db/chroma_db/` — ChromaDB vector store for SEC filing RAG and semantic cache
 - `db/.langchain_cache.db` — LangChain SQLiteCache for quant agent LLM responses
-- Auto-created on first run; `db/` directory created by `get_db()` via `path.parent.mkdir(parents=True, exist_ok=True)`
+- All files auto-created on first run; `db/` directory created by `get_db()` via `path.parent.mkdir(parents=True, exist_ok=True)`

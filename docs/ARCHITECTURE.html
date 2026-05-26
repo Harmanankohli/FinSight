@@ -61,20 +61,27 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 &#x2514;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2518;</pre>
 
 <h2>Orchestrator Architecture</h2>
-<p>The orchestrator (<code>agent_1_adk/</code>) uses a single <code>LlmAgent</code> with one <code>send_message</code> tool that delegates to sub-agents via A2A:</p>
+<p>The orchestrator (<code>agent_1_adk/</code>) uses a single <code>LlmAgent</code> with one <code>send_message</code> tool that delegates to sub-agents via A2A. Two parallel cache paths can short-circuit the LLM entirely on same-day repeat queries:</p>
 <pre>Module load &rarr; SubAgentClient.discover()
   &#x251C;&#x2500;&#x2500; A2ACardResolver(httpx.AsyncClient, url) per seed URL
   &#x251C;&#x2500;&#x2500; Returns typed AgentCard (protobuf)
   &#x2514;&#x2500;&#x2500; self.agents populated &rarr; instruction updated
 
 A2A Request &rarr; FinSightAgentExecutor.execute()
+  &rarr; _get_today_cached_text(ticker)  &mdash; [CACHE: return today brief if exists]
+  &rarr; _build_memory_context(query)    &mdash; inject [MEMORY CONTEXT] with [TODAY]/[STALE] tag
   &rarr; RUNNER.run_async(user_query)
   &rarr; LlmAgent (no pre-fetch)
+    &rarr; before_agent_callback: _memory_cache_callback  &mdash; [CACHE: return types.Content if today brief exists]
     &rarr; LLM calls send_message(agent_name, task) for each agent
     &rarr; SubAgentClient &rarr; A2A task to sub-agent
     &rarr; SubAgentClient &rarr; A2A response (text or data parts)
     &rarr; LLM calls next agent
     &rarr; LLM synthesizes BUY/HOLD/SELL
+  &rarr; after_agent_callback: _persist_memory_callback
+    &rarr; add_events_to_memory()
+    &rarr; update_response_text() &mdash; overwrite brief rationale with full analysis
+    &rarr; if EVAL_ENABLED: score_response()
   &rarr; COMPLETED with synthesis</pre>
 
 <h3>Key Design Choices</h3>
@@ -374,13 +381,21 @@ Sub-agents (agent_2, agent_3, agent_4)
 <pre>DatabaseSessionService(db_url="sqlite+aiosqlite:///./db/finsight_memory.db")</pre>
 <p>All conversation events (user messages, agent responses, tool calls) are persisted to SQLite tables (<code>sessions</code>, <code>events</code>). Conversations survive server restarts.</p>
 
+<h3>Memory Cache Callback (before_agent_callback)</h3>
+<p>The fastest same-day cache path is the <code>before_agent_callback</code> registered as <code>root_agent.before_agent_callback = _memory_cache_callback</code>. It fires before the LLM runs, extracts the user&rsquo;s ticker from session events, and if today&rsquo;s brief has a valid <code>response_text</code>, returns <code>types.Content(role="model", parts=[...])</code> &mdash; the ADK runner accepts this as the agent response and skips the LLM entirely. This completes in ~200ms vs 30&ndash;60s for a full agent run.</p>
+
+<p>The executor-level path (<code>agent_1_adk/agent_executor.py</code>) has a parallel check via <code>_get_today_cached_text()</code> for A2A requests.</p>
+
+<h3>Response Text Overwrite</h3>
+<p>After the agent turn completes, <code>_persist_memory_callback</code> calls <code>TickerMemory.update_response_text(record_id, full_response)</code>. This overwrites the short <code>save_brief</code> rationale (an LLM-written summary) with the full synthesized analysis text. The same-day cache callback reads this <code>response_text</code>, so subsequent same-day queries return the rich analysis rather than an abbreviated rationale.</p>
+
 <h3>Memory Context Injection</h3>
-<p>Before each query, the executor injects memory context into the user message:</p>
+<p>When the cache callback misses (no today brief), the executor injects memory context into the user message:</p>
 <pre>User Query &rarr; Executor._build_memory_context(query)
   &#x251C;&#x2500;&#x2500; extract_ticker(query) &rarr; "NVDA"
   &#x251C;&#x2500;&#x2500; TickerMemory.get_latest("NVDA") &rarr; last brief (with analysis_date)
   &#x251C;&#x2500;&#x2500; Compare analysis_date with today
-  &#x2502;     [TODAY]  &rarr; tag as current; LLM may return directly
+  &#x2502;     [TODAY]  &rarr; tag as current; LLM MUST return directly (strict directive)
   &#x2502;     [STALE]  &rarr; tag as outdated; LLM MUST call all agents fresh
   &#x251C;&#x2500;&#x2500; PortfolioStore.get() &rarr; current holdings
   &#x2514;&#x2500;&#x2500; Prepend: [MEMORY CONTEXT] ... [/MEMORY CONTEXT]
@@ -424,11 +439,15 @@ runner = Runner(
 <h3>Database Files</h3>
 <ul>
 <li>All databases stored under the <code>db/</code> folder at the project root &mdash; the entire folder is excluded from git via <code>.gitignore</code></li>
-<li><code>db/finsight_memory.db</code> &mdash; session, memory, ticker briefs, portfolios, performance records</li>
+<li><code>db/finsight_memory.db</code> &mdash; ticker briefs, portfolios, performance records, ingested filings</li>
+<li><code>db/adk_sessions.db</code> &mdash; ADK conversation sessions and events (separated from memory data in v1.24 to prevent schema conflicts)</li>
 <li><code>db/chroma_db/</code> &mdash; ChromaDB vector store for SEC filing RAG and semantic cache</li>
 <li><code>db/.langchain_cache.db</code> &mdash; LangChain SQLiteCache for quant agent LLM responses</li>
 <li>All files auto-created on first run; <code>db/</code> directory created by <code>get_db()</code> via <code>path.parent.mkdir(parents=True, exist_ok=True)</code></li>
 </ul>
+
+<h3>Timezone</h3>
+<p>All datetime operations use <strong>IST (UTC+5:30)</strong>, defined as <code>IST = timezone(timedelta(hours=5, minutes=30), name="IST")</code> in <code>shared/config.py</code>. This applies to agent timestamps, memory created_at fields, analysis_date comparisons, and performance evaluation timestamps. Previously mixed UTC/local timestamps caused same-day cache mismatches on non-IST machines.</p>
 
 <h3>SQLite Schema</h3>
 <pre>sessions (id, user_id, created_at, updated_at)
