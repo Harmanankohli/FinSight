@@ -106,6 +106,12 @@ class SentimentAgent(BaseAgent):
     async def stream(
         self, query: str, context_id: str, task_id: str
     ) -> AsyncIterable[dict]:
+        try:
+            yield await self._build_response(query)
+        finally:
+            await self._disconnect()
+
+    async def _build_response(self, query: str) -> dict:
         trace_id, parent_span_id, query = extract_trace_ids(query)
 
         langfuse = get_langfuse_client()
@@ -114,87 +120,82 @@ class SentimentAgent(BaseAgent):
             if trace_id and parent_span_id
             else None
         )
-        try:
-            with langfuse.start_as_current_observation(
-                as_type="span",
-                name="sentiment-agent-stream",
-                input=query,
-                trace_context=trace_ctx,
-            ) as span:
-                ticker = extract_ticker(query)
-                resolved = False
+        with langfuse.start_as_current_observation(
+            as_type="span",
+            name="sentiment-agent-stream",
+            input=query,
+            trace_context=trace_ctx,
+        ) as span:
+            ticker = extract_ticker(query)
+            resolved = False
 
-                if not ticker:
-                    span.update(output={"error": "No ticker found"})
-                    yield {
-                        "response_type": "text",
-                        "is_task_complete": True,
-                        "is_error": True,
-                        "require_user_input": False,
-                        "content": "Could not identify a stock ticker from the query. Try using parentheses (AAPL) or $ prefix ($V).",
-                    }
-                    return
+            if not ticker:
+                span.update(output={"error": "No ticker found"})
+                return {
+                    "response_type": "text",
+                    "is_task_complete": True,
+                    "is_error": True,
+                    "require_user_input": False,
+                    "content": "Could not identify a stock ticker from the query. Try using parentheses (AAPL) or $ prefix ($V).",
+                }
 
-                valid, validated_ticker, company = await self._validate_ticker(ticker)
-                if not valid and not resolved:
-                    ticker, _ = await self._resolve_ticker(query, exclude_ticker=ticker)
-                    if ticker:
-                        valid, validated_ticker, company = await self._validate_ticker(ticker)
+            valid, validated_ticker, company = await self._validate_ticker(ticker)
+            if not valid and not resolved:
+                ticker, _ = await self._resolve_ticker(query, exclude_ticker=ticker)
+                if ticker:
+                    valid, validated_ticker, company = await self._validate_ticker(ticker)
 
-                if not valid:
-                    span.update(output={"error": f"Invalid ticker: {ticker}"})
-                    yield {
-                        "response_type": "text",
-                        "is_task_complete": True,
-                        "is_error": True,
-                        "require_user_input": False,
-                        "content": f"Ticker '{ticker}' is not valid. Error: {company}",
-                    }
-                    return
+            if not valid:
+                span.update(output={"error": f"Invalid ticker: {ticker}"})
+                return {
+                    "response_type": "text",
+                    "is_task_complete": True,
+                    "is_error": True,
+                    "require_user_input": False,
+                    "content": f"Ticker '{ticker}' is not valid. Error: {company}",
+                }
 
-                ticker = validated_ticker
+            ticker = validated_ticker
 
-                try:
-                    result = await self.analyze(ticker, query)
-                    contexts = result.pop("_retrieved_contexts", [])
-                    span.update(output={
-                        "ticker": ticker,
-                        "signal": result.get("overall_signal"),
-                        "confidence": result.get("confidence_score"),
-                    })
-                    narrative = (
-                        result.get("narrative")
-                        or result.get("investment_narrative")
-                        or result.get("analysis")
-                        or json.dumps(result, indent=2)
-                    )
-                    if EVAL_ENABLED:
-                        asyncio.create_task(
-                            _eval_sentiment_response(
-                                query,
-                                narrative,
-                                contexts,
-                                trace_id,
-                            )
+            try:
+                result = await self.analyze(ticker, query)
+                contexts = result.pop("_retrieved_contexts", [])
+                span.update(output={
+                    "ticker": ticker,
+                    "signal": result.get("overall_signal"),
+                    "confidence": result.get("confidence_score"),
+                })
+                narrative = (
+                    result.get("narrative")
+                    or result.get("investment_narrative")
+                    or result.get("analysis")
+                    or json.dumps(result, indent=2)
+                )
+                if EVAL_ENABLED:
+                    asyncio.create_task(
+                        _eval_sentiment_response(
+                            query,
+                            narrative,
+                            contexts,
+                            trace_id,
                         )
-                    yield {
-                        "response_type": "data",
-                        "is_task_complete": True,
-                        "require_user_input": False,
-                        "content": result,
-                    }
-                except Exception as e:
-                    logger.exception("Sentiment analysis failed")
-                    span.update(output={"error": str(e)})
-                    yield {
-                        "response_type": "text",
-                        "is_task_complete": True,
-                        "is_error": True,
-                        "require_user_input": False,
-                        "content": f"Sentiment analysis failed: {e}",
-                    }
-        finally:
-            await self._disconnect()
+                    )
+                return {
+                    "response_type": "data",
+                    "is_task_complete": True,
+                    "require_user_input": False,
+                    "content": result,
+                }
+            except Exception as e:
+                logger.exception("Sentiment analysis failed")
+                span.update(output={"error": str(e)})
+                return {
+                    "response_type": "text",
+                    "is_task_complete": True,
+                    "is_error": True,
+                    "require_user_input": False,
+                    "content": f"Sentiment analysis failed: {e}",
+                }
 
 
 def _extract_sentiment_contexts(data: dict) -> list[str]:

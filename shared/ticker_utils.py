@@ -51,15 +51,22 @@ def clean_query_for_resolution(text: str) -> str:
 # (2) preposition-adjacent "buy NVDA" or "invest in NVDA",
 # (3) $ prefix as explicit signal, (4) isolated uppercase words.
 def extract_ticker(query: str) -> str:
-    m = re.search(r"\(([A-Z]{1,5})\)", query)
-    if m:
+    # All-uppercase parens = ticker symbol e.g. "Visa (V)" or "buy (NVDA)".
+    m = re.search(r"\(([A-Z]{1,5}(?:\.[A-Z]{1,2})?)\)", query)
+    if m and not _is_financial_stop_word(m.group(1)):
         return m.group(1)
 
-    m = re.search(r"(?:for|of|about|buy|sell|invest|in)\s+\$?([A-Z]{1,5})\b", query, re.IGNORECASE)
-    if m and m.group(1).isupper():
+    # Mixed-case parens = company name e.g. "V (Visa)" — the pre-paren word is
+    # the ticker. Handles single-char tickers (V, Y) that no other pattern catches.
+    m = re.search(r"\b([A-Z]{1,5})\s+\([A-Za-z][a-z]", query)
+    if m and not _is_financial_stop_word(m.group(1)):
         return m.group(1)
 
-    m = re.search(r"\$([A-Z]{1,2})\b", query)
+    m = re.search(r"(?:for|of|about|buy|sell|invest|in)\s+\$?([A-Z]{1,5}(?:\.[A-Z]{1,2})?)\b", query, re.IGNORECASE)
+    if m and re.fullmatch(r"[A-Z]{1,5}(?:\.[A-Z]{1,2})?", m.group(1)):
+        return m.group(1)
+
+    m = re.search(r"\$([A-Z]{1,5}(?:\.[A-Z]{1,2})?)\b", query)
     if m:
         return m.group(1)
 
@@ -67,7 +74,7 @@ def extract_ticker(query: str) -> str:
     if matches:
         return matches[0]
 
-    matches = [w for w in re.findall(r"\b([A-Z]{2})\b", query) if not _is_financial_stop_word(w)]
+    matches = [w for w in re.findall(r"\b([A-Z]{1,2})\b", query) if not _is_financial_stop_word(w)]
     if matches:
         return matches[-1]
 
