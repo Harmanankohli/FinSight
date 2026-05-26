@@ -38,6 +38,7 @@ for _stream in (sys.stdout, sys.stderr):
 # ── LLM (LM Studio / OpenAI-compatible local) ─────────────────────────────
 LLM_MODEL = os.environ.get("LLM_MODEL", "gpt-oss-20b")
 LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "http://localhost:1234/v1")
+LLM_API_KEY = os.environ.get("LLM_API_KEY", "lmstudio")
 ADK_MODEL = os.environ.get("ADK_MODEL", "openai/gpt-oss-20b")
 
 # ── Embedding ─────────────────────────────────────────────────────────────
@@ -66,6 +67,10 @@ LANGFUSE_HOST = os.environ.get("LANGFUSE_BASE_URL") or os.environ.get("LANGFUSE_
 
 # ── SEC EDGAR ─────────────────────────────────────────────────────────────
 SEC_API_BASE = os.environ.get("SEC_API_BASE", "https://www.sec.gov")
+SEC_USER_AGENT = os.environ.get(
+    "SEC_USER_AGENT",
+    "FinSight Research (dev-mode-set-SEC_USER_AGENT)",
+)
 
 # ── Feature flags ─────────────────────────────────────────────────────────
 EVAL_ENABLED = os.environ.get("EVAL_TRACE_ENABLED", "true").lower() == "true"
@@ -85,6 +90,13 @@ def validate() -> None:
         import logging
         logging.getLogger(__name__).warning(
             "LANGFUSE_PUBLIC_KEY is a placeholder — Langfuse traces will not be recorded"
+        )
+
+    if "dev-mode" in SEC_USER_AGENT:
+        import logging
+        logging.getLogger(__name__).warning(
+            "SEC_USER_AGENT is placeholder — SEC may rate-limit or block. "
+            "Set SEC_USER_AGENT='Your Name (your-email@example.com)' in .env"
         )
 
     if issues:

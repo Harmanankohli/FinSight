@@ -15,7 +15,7 @@ from llama_index.vector_stores.chroma import ChromaVectorStore
 import chromadb
 
 
-from shared.config import LLM_MODEL, EMBED_MODEL, CHROMA_DIR, LLM_BASE_URL
+from shared.config import LLM_MODEL, EMBED_MODEL, CHROMA_DIR, LLM_BASE_URL, LLM_API_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,7 @@ class FinancialIndexManager:
         self.llm = OpenAILike(
             model=LLM_MODEL,
             api_base=LLM_BASE_URL,
-            api_key="lmstudio",
+            api_key=LLM_API_KEY,
             request_timeout=600.0,
             is_chat_model=True,
         )

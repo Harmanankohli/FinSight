@@ -39,6 +39,7 @@ from mcp.server.fastmcp import FastMCP
 from sentence_transformers import SentenceTransformer
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
+from shared.config import SEC_USER_AGENT
 from shared.observability import init_langfuse, shutdown_langfuse
 init_langfuse(service_name="mcp_server")
 atexit.register(shutdown_langfuse)
@@ -355,7 +356,7 @@ async def get_options_chain(ticker: str, expiration: str | None = None) -> dict:
 # requester — their robots.txt enforcement actively rate-limits non-compliant
 # clients. The contact email lets SEC reach us if we accidentally hammer them.
 _SEC_HEADERS = {
-    "User-Agent": "FinSight Research (contact@finsight.com)",
+    "User-Agent": SEC_USER_AGENT,
     "Accept-Encoding": "gzip, deflate",
 }
 
