@@ -84,6 +84,7 @@ class FinSightAgentExecutor(AgentExecutor):
 
         ticker_hint = extract_ticker(user_input) or "unknown"
 
+        # Skip LLM inference for non-investment queries — saves cost and latency
         # ── Input Guardrail: off-topic filter ────────────────────────────────
         if _NON_INVESTMENT_RE.search(original_input):
             task = context.current_task
@@ -101,6 +102,7 @@ class FinSightAgentExecutor(AgentExecutor):
             )
             return
 
+        # Fail fast on invalid tickers to avoid wasted agent calls downstream
         # ── Input Guardrail: invalid ticker pre-check ────────────────────────
         if ticker_hint != "unknown":
             _mcp = None
@@ -140,6 +142,7 @@ class FinSightAgentExecutor(AgentExecutor):
                     except Exception as cleanup_err:
                         logger.debug("MCP cleanup error (non-critical): %s", cleanup_err)
 
+        # Short-circuit identical queries via semantic similarity cache
         # ── Semantic cache check ─────────────────────────────────────────────
         sc = _get_semantic_cache()
         if sc is not None:
@@ -182,6 +185,7 @@ class FinSightAgentExecutor(AgentExecutor):
             with propagate_attributes(session_id=context_id, user_id=user_id):
                 collected_events: list = []
                 final_event = None
+                # Main execute loop: run the ADK agent and collect all streaming events
                 try:
                     async for event in self._runner.run_async(
                         user_id=user_id,
@@ -219,6 +223,7 @@ class FinSightAgentExecutor(AgentExecutor):
                         ),
                     )
 
+    # Output guardrails: reject too-short responses, warn when BUY/HOLD/SELL signal is missing
     async def _process_response(
         self, event, updater: TaskUpdater, task, span=None, trace_id=None,
         user_input: str = "", user_id: str = "", original_input: str = "",
@@ -238,6 +243,7 @@ class FinSightAgentExecutor(AgentExecutor):
 
         text = event.content.parts[0].text.strip()
 
+        # Reject responses shorter than 50 chars — likely a hallucination or refusal
         # ── Output Guardrail: empty / too-short response ─────────────────────
         if len(text) < 50:
             logger.warning("Orchestrator response too short (%d chars) — failing", len(text))
@@ -249,6 +255,7 @@ class FinSightAgentExecutor(AgentExecutor):
             )
             return
 
+        # Warn when a stock query response is missing a BUY/HOLD/SELL verdict
         # ── Output Guardrail: BUY/HOLD/SELL signal check ─────────────────────
         if not _SIGNAL_RE.search(text) and user_input and extract_ticker(user_input):
             logger.warning("Orchestrator response missing BUY/HOLD/SELL signal")
@@ -351,6 +358,7 @@ class FinSightAgentExecutor(AgentExecutor):
         except Exception:
             logger.error("Failed to add session to memory", exc_info=True)
 
+    # Label past analysis TODAY (return directly) vs STALE (must re-run agents)
     async def _build_memory_context(self, user_input: str, user_id: str) -> str:
         """Build compact memory context for prompt injection."""
         from datetime import datetime
@@ -389,6 +397,7 @@ class FinSightAgentExecutor(AgentExecutor):
 
         return "\n".join(parts)
 
+    # Dedup-aware store: skips if save_brief already persisted this ticker today
     async def _store_memory(
         self, query: str, response_text: str, session_id: str, user_id: str
     ) -> None:
@@ -447,6 +456,7 @@ class FinSightAgentExecutor(AgentExecutor):
         except Exception:
             logger.debug("Failed to update portfolio from query context", exc_info=True)
 
+    # Fallback: persist directly to SQLiteMemoryService for load_memory tool support
     async def _persist_to_memory(
         self, user_id: str, context_id: str, events: list
     ) -> None:

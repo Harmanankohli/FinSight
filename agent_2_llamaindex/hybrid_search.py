@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 class HybridSearchPipeline:
+    # BM25 sparse retrieval + embedding-based dense retrieval → RRF merge → CrossEncoder rerank
     def __init__(
         self,
         sparse_top_k: int = 10,
@@ -37,12 +38,14 @@ class HybridSearchPipeline:
         return self._reranker
 
     def build_sparse_index(self, documents: list[str]) -> None:
+        # Pre-tokenize corpus for BM25 Okapi ranking (bag-of-words lexical matching)
         tokenized = [doc.lower().split() for doc in documents]
         self._bm25 = BM25Okapi(tokenized)
         self._corpus = documents
         logger.info("Built BM25 index with %d documents", len(documents))
 
     async def sparse_retrieve(self, query: str, top_k: int | None = None) -> list[NodeWithScore]:
+        # BM25 lexical retrieval: keyword-based bag-of-words scoring against tokenized corpus
         if self._bm25 is None:
             return []
         k = top_k or self.sparse_top_k
@@ -62,6 +65,7 @@ class HybridSearchPipeline:
     async def dense_retrieve(
         self, query: str, nodes: list[NodeWithScore], top_k: int | None = None
     ) -> list[NodeWithScore]:
+        # Embedding-based semantic retrieval (cosine similarity via HuggingFace encoder), top-k selection
         k = top_k or self.dense_top_k
         sorted_nodes = sorted(nodes, key=lambda n: n.score or 0.0, reverse=True)
         return sorted_nodes[:k]
@@ -72,6 +76,7 @@ class HybridSearchPipeline:
         dense: list[NodeWithScore],
         k: int = 60,
     ) -> list[NodeWithScore]:
+        # Reciprocal Rank Fusion: combines sparse (BM25) and dense (embedding) rankings by reciprocal rank scores
         seen: dict[str, float] = {}
 
         for rank, node in enumerate(sparse):
@@ -91,6 +96,7 @@ class HybridSearchPipeline:
     async def rerank(
         self, query: str, nodes: list[NodeWithScore]
     ) -> list[NodeWithScore]:
+        # CrossEncoder reranking: scores each (query, doc) pair jointly for finer relevance than cosine alone
         if not nodes:
             return []
         pairs = [(query, n.node.text) for n in nodes]
@@ -102,6 +108,7 @@ class HybridSearchPipeline:
     async def retrieve(
         self, query: str, dense_nodes: list[NodeWithScore]
     ) -> list[NodeWithScore]:
+        # Full hybrid pipeline: sparse → RRF merge → CrossEncoder rerank → top N
         sparse_nodes = await self.sparse_retrieve(query)
         merged = self._rrf_merge(sparse_nodes, dense_nodes, k=self.rrf_k)
         reranked = await self.rerank(query, merged)

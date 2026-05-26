@@ -38,10 +38,12 @@ logger = logging.getLogger(__name__)
 _EVAL_USER_ID = "eval_user"
 
 
+# Format an AG-UI event as a Server-Sent Events data frame
 def _sse(event_obj) -> str:
     return f"data: {event_obj.model_dump_json()}\n\n"
 
 
+# Stream AG-UI protocol: RunStarted → tool calls / text chunks → RunFinished
 async def _stream(
     runner: Runner,
     user_text: str,
@@ -72,7 +74,7 @@ async def _stream(
     msg_id = str(uuid.uuid4())
     text_started = False
 
-    # track tool call ids so responses can reference them
+    # Track active tool call IDs so function responses can reference their parent calls
     pending_calls: dict[str, str] = {}  # fn_name → call_id
 
     try:

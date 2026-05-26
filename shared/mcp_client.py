@@ -11,6 +11,9 @@ from mcp.client.sse import sse_client
 logger = logging.getLogger(__name__)
 
 
+# Normalises MCP tool responses—which arrive as complex objects with
+# content.text, raw data structs, or JSON strings—into a uniform dict/list/str.
+# Without this, every call site would need its own format sniffing.
 def parse_mcp_result(result: Any) -> dict | list | str:
     """Parse MCP tool call result into a consistent Python object.
 
@@ -91,6 +94,9 @@ class MCPServerConfig:
     tools: list[str] | None = None
 
 
+# Multi-server MCP bridge: maintains a session pool keyed by server name and a
+# global tool→server registry so callers can route by tool name without caring
+# which server hosts it. Servers are loaded from YAML or passed programmatically.
 class MCPClient:
     def __init__(
         self,
@@ -120,6 +126,9 @@ class MCPClient:
         for server in self.servers:
             await self._connect_server(server)
 
+    # Retries SSE connection with exponential backoff (2^attempt sec). Each
+    # attempt creates a fresh transport session from scratch—stale state from
+    # the prior failure is discarded.
     async def _connect_server(self, server: MCPServerConfig) -> None:
         for attempt in range(self.max_retries):
             try:
@@ -145,6 +154,8 @@ class MCPClient:
             f"Failed to connect to MCP server '{server.name}' after {self.max_retries} attempts"
         )
 
+    # Queries the server for its available tools and populates the lookup
+    # registry so call_tool_by_name can route a tool name to its host server.
     async def _discover_tools(self, server_name: str, session: ClientSession) -> None:
         try:
             result = await session.list_tools()
@@ -157,6 +168,8 @@ class MCPClient:
         except Exception as e:
             logger.warning("Failed to discover tools on '%s': %s", server_name, e)
 
+    # Routes to a specific named server. Used when the caller knows which
+    # server hosts the tool (e.g. multi-server orchestration layers).
     async def call_tool(
         self,
         server_name: str,
@@ -185,6 +198,9 @@ class MCPClient:
             f"Tool call '{server_name}/{tool_name}' failed after {self.max_retries} attempts"
         )
 
+    # Looks up the host server in the tool registry, then delegates to
+    # call_tool. This is the primary entry point for agents that only know
+    # what they need, not where it lives.
     async def call_tool_by_name(
         self,
         tool_name: str,
@@ -264,6 +280,9 @@ class MCPClient:
             self.servers.append(MCPServerConfig(name=name, url=url))
         await self.connect_all()
 
+    # Cleans up sessions first, then transports, then in-memory state.
+    # Order matters: closing the session while its transport is still live
+    # causes protocol errors, so transport is torn down last.
     async def disconnect_all(self) -> None:
         for name in list(self._sessions):
             try:

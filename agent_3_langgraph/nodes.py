@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 def _parse_price_data(mcp_result, ticker: str) -> dict:
+    # Extract {date: close_price} dict from MCP tool response content (handles TextContent wrapping)
     if not hasattr(mcp_result, "content"):
         return {}
     for item in mcp_result.content:
@@ -34,6 +35,7 @@ def _parse_price_data(mcp_result, ticker: str) -> dict:
 
 
 async def fetch_price_data_node(state: QuantAnalysisState) -> dict:
+    # First graph node: fetches historical daily closes via MCP get_prices tool into state["price_data"]
     ticker = state["ticker"]
     period = state.get("period", "5y")
     mcp = state.get("mcp_client")
@@ -52,6 +54,7 @@ async def fetch_price_data_node(state: QuantAnalysisState) -> dict:
 
 
 async def compute_metrics_node(state: QuantAnalysisState) -> dict:
+    # Computes Sharpe ratio, annualized volatility, VaR (95%), max drawdown, and beta vs S&P 500
     prices_dict = state.get("price_data", {})
     ticker = state.get("ticker", "?")
     if not prices_dict:
@@ -138,6 +141,7 @@ async def compute_metrics_node(state: QuantAnalysisState) -> dict:
 
 
 async def stress_test_node(state: QuantAnalysisState) -> dict:
+    # Projects price under 4 historical crash scenarios (2008/2020/dot-com/recession) + CVaR of tail losses
     prices_dict = state.get("price_data", {})
     ticker = state.get("ticker", "?")
     if not prices_dict:
@@ -199,6 +203,7 @@ def _get_fcf_from_financials(financials_dict: dict) -> float | None:
 
 
 async def dcf_valuation_node(state: QuantAnalysisState) -> dict:
+    # 5-year discounted cash flow valuation with terminal value; fetches FCF from MCP financials
     ticker = state["ticker"]
     mcp = state.get("mcp_client")
     if not mcp:
@@ -282,6 +287,7 @@ async def dcf_valuation_node(state: QuantAnalysisState) -> dict:
 
 
 async def correlation_node(state: QuantAnalysisState) -> dict:
+    # Pairwise Pearson correlation matrix between primary ticker and portfolio holdings
     prices_dict = state.get("price_data", {})
     holdings = state.get("portfolio_holdings", [])
     mcp = state.get("mcp_client")
@@ -324,6 +330,7 @@ async def correlation_node(state: QuantAnalysisState) -> dict:
 
 
 async def format_output_node(state: QuantAnalysisState) -> dict:
+    # Signal voting: tallies positive vs negative signals (Sharpe, vol, DCF, CVaR) → BUY/HOLD/SELL
     metrics = state.get("metrics", {})
     stress = state.get("stress_test_result")
     dcf = state.get("dcf_valuation")
@@ -408,6 +415,7 @@ async def format_output_node(state: QuantAnalysisState) -> dict:
 
 
 async def llm_summary_node(state: QuantAnalysisState) -> dict:
+    # Calls local LLM to produce a 2-3 sentence natural language summary of the full quant analysis
     from langchain_openai import ChatOpenAI
     from shared.config import LLM_MODEL, LLM_BASE_URL
 

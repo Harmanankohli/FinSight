@@ -32,6 +32,7 @@ class RAGAgent(BaseAgent):
         self._last_ingestion: dict[str, date] = {}
 
     async def _ensure_ingested(self, ticker: str) -> None:
+        # Daily dedup: skip if already ingested today (avoids re-fetching filings every call)
         today = datetime.now(timezone.utc).date()
         if self._last_ingestion.get(ticker) == today:
             return
@@ -59,6 +60,7 @@ class RAGAgent(BaseAgent):
                         for filing in filings:
                             edgar_url = filing.get("edgar_url")
                             ix_url = filing.get("ix_url")
+                            # Skip filings already ingested (persistent dedup across restarts)
                             if edgar_url and await is_filing_ingested(edgar_url):
                                 logger.debug("Skipping already-ingested filing: %s", edgar_url[:80])
                                 continue
@@ -100,6 +102,7 @@ class RAGAgent(BaseAgent):
             logger.warning("Auto-ingest failed for %s: %s", ticker, e)
 
     async def query(self, ticker: str, query_text: str) -> dict:
+        # Main entry point: auto-ingest today's filings then query ChromaDB via LlamaIndex
         await self._ensure_ingested(ticker)
         return await self.index.query(ticker, query_text)
 
@@ -163,6 +166,7 @@ class RAGAgent(BaseAgent):
                 input=query,
                 trace_context=trace_ctx,
             ) as span:
+                # Fallback chain: regex extract → MCP resolve → MCP validate
                 ticker = extract_ticker(query)
                 resolved = False
 

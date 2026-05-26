@@ -29,6 +29,7 @@ from .sub_agent_client import SubAgentClient
 _client = SubAgentClient()
 
 
+# ADK tool function: delegates tasks to sub-agents via A2A
 async def send_message(
     agent_name: str, task: str, tool_context: ToolContext
 ) -> str:
@@ -67,6 +68,7 @@ async def send_message(
     return result
 
 
+# Dedup: skip if brief for this ticker was already saved today
 async def save_brief(
     ticker: str,
     recommendation: str,
@@ -128,6 +130,7 @@ async def save_brief(
     return f"Brief saved for {ticker}: {recommendation.upper()} (confidence: {confidence:.2f})"
 
 
+# Fire-and-forget: evaluate past recommendations vs current prices without blocking the response
 async def _evaluate_past_recommendations(ticker: str) -> None:
     """Background task: evaluate past recommendations against current prices."""
     try:
@@ -202,6 +205,7 @@ For general chat or non-stock queries, respond conversationally.\
 """
 
 
+# Dynamically inject available sub-agents into the LLM system prompt
 def _build_instruction() -> str:
     today = datetime.now(IST).date().isoformat()
     agent_list = _client.list_agents()
@@ -221,6 +225,7 @@ def _build_instruction() -> str:
     )
 
 
+# Async startup: discover sub-agents on boot, rebuild instruction once agents are known
 async def discover_background() -> None:
     await _client.discover()
     agent_list = _client.list_agents()

@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 
 
 async def health(request):
+    # Health check for orchestrator-level monitoring and container orchestration probes
     return JSONResponse({"status": "ok", "agent": "sentiment"})
 
 host = os.environ.get("HOST", "localhost")
@@ -74,9 +75,9 @@ request_handler = DefaultRequestHandler(
     agent_card=agent_card,
 )
 
-routes = [Route("/health", health)]
-routes.extend(create_agent_card_routes(agent_card))
-routes.extend(create_jsonrpc_routes(request_handler, "/a2a"))
+routes = [Route("/health", health)]  # Liveness check
+routes.extend(create_agent_card_routes(agent_card))  # A2A agent card discovery
+routes.extend(create_jsonrpc_routes(request_handler, "/a2a"))  # JSON-RPC task endpoints
 
 app = Starlette(routes=routes, debug=True)
 

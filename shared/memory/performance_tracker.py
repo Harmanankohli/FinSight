@@ -17,6 +17,7 @@ class PerformanceTracker:
     def __init__(self, db_path: Path = DB_PATH):
         self._db_path = db_path
 
+    # Persists recommendation with async price snapshot. Falls back to yfinance fetch via executor if no price supplied.
     async def record_recommendation(
         self,
         ticker: str,
@@ -58,6 +59,7 @@ class PerformanceTracker:
             await conn.close()
         return record_id
 
+    # Batch-evaluates all unevaluated recommendations by fetching current prices and computing realized_return for each.
     async def evaluate_all(self) -> list[dict]:
         """Compare all unevaluated recommendations to current prices.
 
@@ -107,6 +109,7 @@ class PerformanceTracker:
 
         return results
 
+    # Computes win rate per recommendation type. BUY correct if price rose (ret > 0), SELL correct if price fell (ret < 0). HOLD always counted as correct.
     async def get_accuracy_stats(
         self, user_id: Optional[str] = None
     ) -> dict:

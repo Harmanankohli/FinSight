@@ -21,6 +21,7 @@ from shared.memory import SQLiteMemoryService
 registry = get_service_registry()
 
 
+# Factory for the URI-based memory service registration pattern (maps `finsight://` URIs to SQLiteMemoryService)
 def finsight_memory_factory(uri: str, **kwargs) -> SQLiteMemoryService:
     """Create a SQLiteMemoryService instance."""
     return SQLiteMemoryService()

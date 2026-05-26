@@ -30,6 +30,7 @@ class QuantAgent(BaseAgent):
         self._connected = False
 
     async def _ensure_connected(self):
+        # Connection lifecycle: single MCPClient reused across graph runs, disconnected on stream exit
         if not self._connected:
             self._mcp = MCPClient(configs=[MCPServerConfig(name="finsight-mcp", url=MCP_SERVER_URL)], timeout=MCP_TIMEOUT)
             await self._mcp.connect_all()
@@ -49,8 +50,10 @@ class QuantAgent(BaseAgent):
 
     async def analyze(self, ticker: str, period: str = "5y", portfolio_holdings: list[str] | None = None, trace_ctx: dict | None = None) -> dict:
         logger.info("Quant analysis starting for %s (period=%s, holdings=%s, mcp_connected=%s)", ticker, period, portfolio_holdings, self._connected)
+        # Lazy MCP connection: connected on first analyze call, reused across calls
         await self._ensure_connected()
 
+        # Langfuse CallbackHandler is nested under the parent agent span via trace_ctx
         langfuse_handler = CallbackHandler(trace_context=trace_ctx)
         result = await self.graph.run(
             ticker, period=period, portfolio_holdings=portfolio_holdings,
@@ -97,7 +100,7 @@ class QuantAgent(BaseAgent):
                 input=query,
                 trace_context=trace_ctx,
             ) as span:
-                # Nest LangGraph CallbackHandler spans under this agent span
+                # Nest LangGraph CallbackHandler under this agent span so graph steps appear as children
                 if trace_id:
                     trace_ctx = {"trace_id": trace_id, "parent_span_id": span.id}
 

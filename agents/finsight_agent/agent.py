@@ -1,3 +1,7 @@
+"""ADK callback layer for `adk web` mode.
+
+Handles post-turn memory persistence and orchestrator-level RAGAS eval.
+Bypassed entirely when running through FinSightAgentExecutor."""
 import asyncio
 import logging
 import sys
@@ -19,6 +23,7 @@ _LOGS_DIR.mkdir(exist_ok=True)
 _LOG_FILE = _LOGS_DIR / "memory_callback.log"
 
 
+# Pulls the user query + final agent response from session events for RAGAS eval scoring
 def _extract_query_and_response(events) -> tuple[str, str]:
     """Pull first user message and final agent text from session events."""
     user_query = ""
@@ -38,6 +43,7 @@ def _extract_query_and_response(events) -> tuple[str, str]:
     return user_query, response_text
 
 
+# Checks whether the turn called save_brief (vs a load_memory-only query that should not be persisted)
 def _is_analysis_turn(events) -> bool:
     """True if the current turn produced a fresh analysis (called save_brief).
 
@@ -62,6 +68,7 @@ def _is_analysis_turn(events) -> bool:
     return False
 
 
+# ADK invokes this after every agent turn. Non-analysis turns are skipped to avoid polluting long-term memory with casual chitchat queries.
 async def _persist_memory_callback(callback_context) -> None:
     """Persist session to memory after each agent turn.
 
@@ -110,7 +117,7 @@ async def _persist_memory_callback(callback_context) -> None:
         with open(_LOG_FILE, "a") as f:
             f.write(f"  add_events_to_memory failed: {e}\n")
 
-    # ── Orchestrator RAGAS eval ─────────────────────────────────────────
+    # ── Orchestrator RAGAS eval (ADK Web path) ──────────────────────────
     # ADK Web bypasses FinSightAgentExecutor, so the eval hook lives here.
     if EVAL_ENABLED:
         user_query, response_text = _extract_query_and_response(session.events)

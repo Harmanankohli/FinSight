@@ -40,6 +40,7 @@ class FinancialIndexManager:
         self._indexes: dict[str, VectorStoreIndex] = {}
 
     def _get_or_create_index(self, collection_name: str) -> VectorStoreIndex:
+        # Lazy index creation: one ChromaDB collection per document type (sec_filings, earnings, etc.)
         if collection_name in self._indexes:
             return self._indexes[collection_name]
 
@@ -55,6 +56,7 @@ class FinancialIndexManager:
         return index
 
     async def query(self, ticker: str, query_text: str) -> dict:
+        # Metadata filter restricts retrieval to docs matching the ticker (multi-tenant by ticker)
         filters = MetadataFilters(
             filters=[ExactMatchFilter(key="ticker", value=ticker)]
         )
@@ -101,6 +103,7 @@ class FinancialIndexManager:
         }
 
     async def query_sec_filings(self, ticker: str, query_text: str) -> dict:
+        # Same ticker filter but scoped to sec_filings collection; validates first result matches
         filters = MetadataFilters(
             filters=[ExactMatchFilter(key="ticker", value=ticker)]
         )
@@ -130,6 +133,7 @@ class FinancialIndexManager:
         }
 
     async def query_earnings(self, ticker: str, query_text: str) -> dict:
+        # Earnings collection uses same metadata filter pattern but no cross-ticker validation
         index = self._get_or_create_index("earnings")
         engine = index.as_query_engine(similarity_top_k=5)
         response = await engine.aquery(
@@ -148,6 +152,7 @@ class FinancialIndexManager:
     def ingest_documents(
         self, collection_name: str, documents: list[dict]
     ) -> int:
+        # Batch insert: wraps each dict as a LlamaIndex Document with ticker/source/file_name metadata
         index = self._get_or_create_index(collection_name)
         docs = [
             Document(

@@ -45,6 +45,7 @@ class SentimentAgent(BaseAgent):
                 self._connected = False
 
     async def _collect_data_parallel(self, ticker: str) -> dict:
+        # Concurrent fetch: fires news sentiment and SEC filings requests in parallel via asyncio.gather
         results = {}
 
         async def call(tool, args):
@@ -76,6 +77,7 @@ class SentimentAgent(BaseAgent):
         return results
 
     async def analyze(self, ticker: str, query_text: str) -> dict:
+        # Orchestration: parallel data collection → CrewAI analysis → extract contexts for RAGAS eval
         data = await self._collect_data_parallel(ticker)
         logger.info("Collected data for %s: %s", ticker, list(data.keys()))
         crew_builder = SentimentIntelligenceCrew(self._wrapper)
@@ -196,7 +198,7 @@ class SentimentAgent(BaseAgent):
 
 
 def _extract_sentiment_contexts(data: dict) -> list[str]:
-    """Convert pre-fetched news/filing data into text strings for RAGAS Faithfulness."""
+    # Builds RAGAS faithfulness inputs: flat text strings from news articles and filing descriptions
     contexts: list[str] = []
 
     news = data.get("news", {})

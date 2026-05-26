@@ -22,6 +22,7 @@ class SentimentIntelligenceCrew:
         self._mcp = mcp_wrapper
 
     def build_crew(self, ticker: str, data: dict | None = None) -> Crew:
+        # Assembles a single-agent CrewAI Crew with pre-fetched data injected as task context
         news_summary = ""
         filings_summary = ""
         if data:
@@ -79,6 +80,7 @@ class SentimentIntelligenceCrew:
         )
 
     async def analyze(self, ticker: str, precollected_data: dict | None = None) -> dict:
+        # Runs the Crew sequentially and parses the LLM JSON output; falls back to raw text on parse failure
         crew = self.build_crew(ticker, data=precollected_data)
         try:
             result = crew.kickoff()

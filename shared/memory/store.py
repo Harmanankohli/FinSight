@@ -14,6 +14,7 @@ DB_PATH = Path(__file__).resolve().parent.parent.parent / "db" / "finsight_memor
 SCHEMA_VERSION = 2
 
 CREATE_TABLES_SQL = """
+-- Stores structured InvestmentBrief objects. Written by TickerMemory, read by agent prompt builders.
 CREATE TABLE IF NOT EXISTS ticker_briefs (
     id TEXT PRIMARY KEY,
     ticker TEXT NOT NULL,
@@ -26,6 +27,7 @@ CREATE TABLE IF NOT EXISTS ticker_briefs (
     created_at TIMESTAMP NOT NULL
 );
 
+-- Stores user risk profile and portfolio holdings. Written by PortfolioStore, read by analysis agents.
 CREATE TABLE IF NOT EXISTS user_profiles (
     user_id TEXT PRIMARY KEY,
     risk_profile TEXT NOT NULL DEFAULT 'medium',
@@ -34,6 +36,7 @@ CREATE TABLE IF NOT EXISTS user_profiles (
     updated_at TIMESTAMP NOT NULL
 );
 
+-- Tracks each BUY/HOLD/SELL recommendation with price snapshot. Written by PerformanceTracker, read by evaluate/get_accuracy_stats.
 CREATE TABLE IF NOT EXISTS recommendation_records (
     id TEXT PRIMARY KEY,
     ticker TEXT NOT NULL,
@@ -46,6 +49,7 @@ CREATE TABLE IF NOT EXISTS recommendation_records (
     realized_return REAL
 );
 
+-- Stores conversation events as searchable entries. Written by SQLiteMemoryService, read by search_memory.
 CREATE TABLE IF NOT EXISTS memory_entries (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
@@ -66,6 +70,7 @@ CREATE INDEX IF NOT EXISTS idx_memory_user ON memory_entries(user_id);
 CREATE INDEX IF NOT EXISTS idx_memory_session ON memory_entries(session_id);
 CREATE INDEX IF NOT EXISTS idx_memory_created ON memory_entries(created_at);
 
+-- Deduplicates SEC filing ingestion. Written by filing pipeline, read by is_filing_ingested.
 CREATE TABLE IF NOT EXISTS ingested_filings (
     edgar_url TEXT PRIMARY KEY,
     ticker TEXT NOT NULL,
@@ -77,6 +82,7 @@ CREATE INDEX IF NOT EXISTS idx_ingested_ticker ON ingested_filings(ticker);
 
 
 async def get_db(path: Path = DB_PATH) -> aiosqlite.Connection:
+    # WAL for concurrent reads, foreign_keys for referential integrity, busy_timeout to avoid SQLITE_BUSY under load.
     """Open an async SQLite connection with WAL mode and foreign keys.
 
     Automatically runs schema migration on first use.
@@ -90,6 +96,7 @@ async def get_db(path: Path = DB_PATH) -> aiosqlite.Connection:
     return conn
 
 
+# Version-based migration — schema_version tracks current version, CREATE TABLEs are idempotent, ALTER TABLEs use try/except for additive changes.
 async def init_db(conn: aiosqlite.Connection) -> None:
     """Create all memory tables if they don't exist. Idempotent."""
     await conn.execute("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY)")
@@ -105,21 +112,21 @@ async def init_db(conn: aiosqlite.Connection) -> None:
         )
         await conn.commit()
 
-    # Migration: add search_text column if missing
+    # Migration v1→v2: adds search_text column for BM25 full-text search. Safe to re-run — noop if column exists.
     try:
         await conn.execute("ALTER TABLE memory_entries ADD COLUMN search_text TEXT NOT NULL DEFAULT ''")
         await conn.commit()
     except Exception:
         pass  # Column already exists
 
-    # Migration: add analysis_date column to ticker_briefs if missing
+    # Migration v2→v3: adds analysis_date column to support date-ordered lookups independent of created_at.
     try:
         await conn.execute("ALTER TABLE ticker_briefs ADD COLUMN analysis_date TEXT")
         await conn.commit()
     except Exception:
         pass  # Column already exists
 
-    # Migration: add ingested_filings table if missing
+    # Migration v3→v4: creates ingested_filings table for SEC filing dedup. Added after initial schema release.
     try:
         await conn.execute("""CREATE TABLE IF NOT EXISTS ingested_filings (
             edgar_url TEXT PRIMARY KEY,

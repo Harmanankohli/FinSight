@@ -65,6 +65,7 @@ async def _setup_ragas_clients():
 
     # ragas default uses instructor.Mode.JSON → response_format.type="json_object"
     # LM Studio only accepts "json_schema" or "text", so patch with JSON_SCHEMA mode.
+    # Without this patch the ragas LLM call hard-fails on LM Studio.
     # ragas 0.4.x uses BaseRagasEmbedding (embed_text + aembed_text).
     # HuggingfaceEmbeddings is a broken pydantic dataclass; implement directly.
     class _STEmbeddings(BaseRagasEmbedding):
@@ -100,6 +101,10 @@ async def _setup_ragas_clients():
 
 
 async def _score_metric(metric, **kwargs) -> float:
+    """Thin wrapper around ragas.ascore that extracts the raw float from the result.
+
+    Raises on failure so _run_metrics can collect the error per-task.
+    """
     try:
         result = await metric.ascore(**kwargs)
         return result.value
@@ -109,7 +114,12 @@ async def _score_metric(metric, **kwargs) -> float:
 
 
 async def _run_metrics(pairs: list, agent: str = "", trace_id: str | None = None) -> dict[str, float]:
-    """Run metrics concurrently, log/push each as it completes."""
+    """Run metrics concurrently, log/push each as it completes.
+
+    Fire-and-forget pattern: each metric is an asyncio.Task so all metrics
+    run in parallel.  asyncio.wait(FIRST_COMPLETED) lets us push scores to
+    Langfuse as each one finishes rather than waiting for all.
+    """
     scores: dict[str, float] = {}
     task_map: dict[asyncio.Task, str] = {}
 
@@ -133,6 +143,11 @@ async def _run_metrics(pairs: list, agent: str = "", trace_id: str | None = None
 
 
 def _push_scores(scores: dict[str, float], trace_id: str | None, agent: str) -> None:
+    """Push one or more RAGAS scores to an existing Langfuse trace.
+
+    Called after each individual metric completes so the trace is updated
+    incrementally rather than in one batch at the end.
+    """
     if not scores or trace_id is None:
         return
     try:
@@ -165,7 +180,11 @@ async def score_response(
 ) -> None:
     """Score orchestrator final synthesis.
 
-    Metrics: ResponseRelevancy, citation_quality, risk_disclosure,
+    Fires after the orchestrator produces its aggregated InvestmentBrief.
+    Evaluates how well the final output integrates all sub-agent signals,
+    cites evidence, discloses risks, and states a clear recommendation.
+
+    Metrics: AnswerRelevancy, citation_quality, risk_disclosure,
              recommendation_clarity, response_completeness.
     """
     logger.info("[orchestrator] Eval entered (response_len=%d, trace=%s)", len(response) if response else 0, trace_id)
@@ -256,7 +275,12 @@ async def score_rag_response(
 ) -> None:
     """Score RAG agent response.
 
-    Metrics: Faithfulness, ResponseRelevancy, LLMContextPrecisionWithoutReference.
+    Fires after the RAG agent generates a filing/earnings summary.
+    Checks whether claims are grounded in the retrieved SEC chunks
+    (Faithfulness) and whether the retrieved chunks were actually
+    relevant (ContextPrecisionWithoutReference).
+
+    Metrics: Faithfulness, AnswerRelevancy, ContextPrecisionWithoutReference.
     Requires retrieved_contexts (text of ChromaDB source nodes).
     """
     if not user_input or not response or not retrieved_contexts:
@@ -302,11 +326,12 @@ async def score_quant_response(
 ) -> None:
     """Score quant agent LLM summary.
 
-    Metrics: FactualCorrectness (computed metrics = reference), ResponseRelevancy.
+    Fires after the quant agent produces a narrative around computed
+    risk/valuation metrics.  FactualCorrectness compares numerical claims
+    in the LLM output (Sharpe, VaR, DCF values) against the deterministically
+    computed values — catching hallucinated numbers without external ground truth.
 
-    FactualCorrectness checks whether the LLM summary's numerical claims (Sharpe,
-    VaR, DCF values) match the deterministically computed values — catching
-    hallucinated numbers without needing external ground truth.
+    Metrics: FactualCorrectness (computed metrics = reference), AnswerRelevancy.
     """
     if not user_input or not response or len(response) < _MIN_RESPONSE_LEN:
         return
@@ -381,8 +406,13 @@ async def score_sentiment_response(
 ) -> None:
     """Score sentiment agent narrative.
 
-    Metrics: Faithfulness, ResponseRelevancy,
-             catalyst_identification, insider_signal_discussion (AspectCritic).
+    Fires after the sentiment agent synthesises news/social/insider data.
+    Faithfulness checks grounding in the fetched articles; the two
+    DomainSpecificRubrics measure whether the agent identified concrete
+    business catalysts and discussed insider/institutional signals.
+
+    Metrics: Faithfulness, AnswerRelevancy,
+             catalyst_identification, insider_signal_discussion.
     Requires retrieved_contexts (news article titles/summaries from MCP).
     """
     logger.info("[sentiment] Eval entered (response_len=%d, contexts=%d, trace=%s)", len(response) if response else 0, len(retrieved_contexts) if retrieved_contexts else 0, trace_id)

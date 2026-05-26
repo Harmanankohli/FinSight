@@ -19,6 +19,7 @@ class TickerMemory:
     def __init__(self, db_path: Path = DB_PATH):
         self._db_path = db_path
 
+    # Stores full structured InvestmentBrief (ticker, rec, confidence, rationale). Called after agent completes analysis.
     async def store_brief(
         self, brief: InvestmentBrief, user_id: str, session_id: str
     ) -> str:
@@ -49,6 +50,7 @@ class TickerMemory:
             await conn.close()
         return record_id
 
+    # Stores a lightweight text-only brief when no structured InvestmentBrief is available (e.g. fallback or non-agent responses).
     async def store_minimal(
         self,
         ticker: str,
@@ -86,6 +88,7 @@ class TickerMemory:
             await conn.close()
         return record_id
 
+    # Fetches most recent brief for a ticker, ordered by analysis_date then created_at descending.
     async def get_latest(
         self, ticker: str, user_id: Optional[str] = None
     ) -> Optional[dict]:
@@ -128,6 +131,7 @@ class TickerMemory:
         finally:
             await conn.close()
 
+    # Returns last N briefs for a ticker, newest first. Used for trend detection and context building.
     async def get_history(
         self, ticker: str, limit: int = 10, user_id: Optional[str] = None
     ) -> list[dict]:
@@ -171,6 +175,7 @@ class TickerMemory:
         finally:
             await conn.close()
 
+    # Compares latest two briefs on a given field (default: recommendation). Detects upgrades/downgrades across analyses.
     async def has_changed(
         self, ticker: str, field: str = "recommendation"
     ) -> Optional[dict]:
@@ -188,6 +193,7 @@ class TickerMemory:
             "changed": old_val != new_val,
         }
 
+    # Builds a compact ~300-token summary for prompt injection. Keeps rec, confidence, date, change delta, and truncated rationale.
     async def format_context(self, ticker: str, max_tokens: int = 300) -> str:
         """Generate a compact memory summary for prompt injection.
 
