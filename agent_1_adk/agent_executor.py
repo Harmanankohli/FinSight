@@ -392,16 +392,27 @@ class FinSightAgentExecutor(AgentExecutor):
         self, query: str, response_text: str, session_id: str, user_id: str
     ) -> None:
         """Parse response and store brief + portfolio + performance record."""
+        from datetime import date as _date
         from shared.memory import PerformanceTracker, PortfolioStore, TickerMemory
         from shared.models import QueryContext
         from shared.ticker_utils import extract_ticker
 
         ticker = extract_ticker(query) or "unknown"
 
+        # Skip if save_brief already stored a brief for this ticker today.
+        # This avoids duplicates when the LLM calls save_brief during execution
+        # and _store_memory also runs as a fallback.
+        tm = TickerMemory()
+        existing = await tm.get_latest(ticker, user_id=user_id)
+        if existing:
+            ad = existing.get("analysis_date") or existing["created_at"][:10]
+            if ad == _date.today().isoformat():
+                logger.debug("Skip _store_memory — save_brief already stored today for %s", ticker)
+                return
+
         rec_match = re.search(r'\b(BUY|HOLD|SELL)\b', response_text, re.IGNORECASE)
         recommendation = rec_match.group(1).upper() if rec_match else "UNKNOWN"
 
-        tm = TickerMemory()
         await tm.store_minimal(
             ticker=ticker,
             user_id=user_id,

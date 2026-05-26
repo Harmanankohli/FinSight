@@ -88,12 +88,24 @@ async def save_brief(
     Returns:
         Confirmation message.
     """
+    from datetime import date
     from shared.memory import PerformanceTracker, TickerMemory
 
     session_id = tool_context.session.id if tool_context and tool_context.session else "unknown"
     user_id = tool_context.user_id if tool_context else "default_user"
 
     tm = TickerMemory()
+
+    # Skip if a brief for this ticker was already saved today (dedup)
+    existing = await tm.get_latest(ticker, user_id=user_id)
+    if existing:
+        ad = existing.get("analysis_date") or existing["created_at"][:10]
+        if ad == date.today().isoformat():
+            return (
+                f"Brief already saved today for {ticker}: "
+                f"{existing['recommendation']} (confidence: {existing['confidence']:.2f})"
+            )
+
     await tm.store_minimal(
         ticker=ticker,
         user_id=user_id,
