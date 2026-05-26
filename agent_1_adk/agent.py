@@ -169,7 +169,7 @@ PROCEDURE:
     use the `load_memory` tool to search past conversations.
 
 MEMORY CONTEXT RULES (applies when [MEMORY CONTEXT] block is present):
-- [TODAY]: analysis was done today — you MAY return it directly without calling agents again.
+- [TODAY]: analysis was done today — you MUST return it directly without calling agents again.
 - [STALE]: analysis is from a prior day — you MUST call ALL agents for a fresh analysis.
   Treat stale data as background reference only. Do NOT return it as the current recommendation.
 
@@ -198,7 +198,7 @@ PROCEDURE:
     use the `load_memory` tool to search past conversations.
 
 MEMORY CONTEXT RULES (applies when [MEMORY CONTEXT] block is present):
-- [TODAY]: analysis was done today — you MAY return it directly.
+- [TODAY]: analysis was done today — you MUST return it directly.
 - [STALE]: analysis is from a prior day — treat as background reference only, not as the current recommendation.
 
 For general chat or non-stock queries, respond conversationally.\

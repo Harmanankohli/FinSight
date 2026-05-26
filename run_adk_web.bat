@@ -24,7 +24,7 @@ start "FinSight Sentiment" cmd /k "uv run python -m uvicorn agent_4_crewai.serve
 timeout /t 3 /nobreak >nul
 
 :: Terminal 5 - ADK Web UI (:8080)
-start "FinSight ADK Web" cmd /k "uv run adk web --port 8080 --session_service_uri sqlite://./finsight_memory.db --memory_service_uri finsight:// agents"
+start "FinSight ADK Web" cmd /k "uv run adk web --port 8080 --session_service_uri sqlite://./db/adk_sessions.db --memory_service_uri finsight:// agents"
 
 echo.
 echo All services starting. Allow 30-40s for boot.

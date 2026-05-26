@@ -59,6 +59,43 @@ class FinSightAgentExecutor(AgentExecutor):
     def __init__(self, runner: Runner) -> None:
         self._runner = runner
 
+    async def _get_today_cached_text(self, ticker: str, user_id: str) -> str | None:
+        """Return today's cached analysis text, or None if not available."""
+        import json
+        from datetime import datetime
+        from shared.config import IST
+        from shared.memory import TickerMemory
+
+        tm = TickerMemory()
+        # Query without user_id filter — user_id varies across endpoints (a2a_user / user / eval_user)
+        latest = await tm.get_latest(ticker, user_id=None)
+        if not latest:
+            logger.debug("Memory cache miss for %s (no record)", ticker)
+            return None
+
+        analysis_date = latest.get("analysis_date") or latest["created_at"][:10]
+        today = datetime.now(IST).date().isoformat()
+        if analysis_date != today:
+            logger.debug("Memory cache miss for %s (stale: %s vs today %s)", ticker, analysis_date, today)
+            return None
+
+        rec = latest.get("recommendation", "UNKNOWN")
+        conf = latest.get("confidence", 0.5)
+
+        try:
+            data = json.loads(latest.get("brief_json", "{}"))
+            response_text = data.get("response_text", "")
+        except Exception:
+            response_text = ""
+
+        logger.info("Memory cache HIT for %s (rec=%s, conf=%.2f, text_len=%d)", ticker, rec, conf, len(response_text))
+
+        if response_text:
+            return f"**{ticker} — {rec}** (confidence: {conf:.0%})\n\n{response_text}"
+        if rec != "UNKNOWN":
+            return f"**{ticker} — {rec}** (confidence: {conf:.0%})"
+        return None
+
     async def execute(
         self, context: RequestContext, event_queue: EventQueue
     ) -> None:
@@ -160,6 +197,17 @@ class FinSightAgentExecutor(AgentExecutor):
                 await updater.update_status(
                     TaskState.TASK_STATE_COMPLETED,
                     new_text_message(cached_response, task.context_id, task.id),
+                    final=True,
+                )
+                return
+
+        # Hard short-circuit: today's brief exists — return it directly, skip LLM + sub-agents
+        if ticker_hint != "unknown":
+            cached = await self._get_today_cached_text(ticker_hint, user_id)
+            if cached:
+                await updater.update_status(
+                    TaskState.TASK_STATE_COMPLETED,
+                    new_text_message(cached, task.context_id, task.id),
                     final=True,
                 )
                 return
@@ -371,7 +419,7 @@ class FinSightAgentExecutor(AgentExecutor):
 
         if ticker:
             tm = TickerMemory()
-            latest = await tm.get_latest(ticker, user_id=user_id)
+            latest = await tm.get_latest(ticker, user_id=None)
             if latest:
                 context = await tm.format_context(ticker, max_tokens=300)
                 if context:

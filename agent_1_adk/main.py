@@ -76,7 +76,7 @@ task_store = InMemoryTaskStore()
 
 # session_service: persists conversation turns; memory_service: enables semantic recall (load_memory tool)
 session_service = DatabaseSessionService(
-    db_url="sqlite+aiosqlite:///./db/finsight_memory.db"
+    db_url="sqlite+aiosqlite:///./db/adk_sessions.db"
 )
 memory_service = SQLiteMemoryService()
 
