@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FinSight — Test Plan</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:1.7;color:#2c2c2c;background:#faf8f5;padding:2rem 1rem}
+.container{max-width:740px;margin:0 auto}
+h1,h2,h3,h4{font-family:Georgia,"Times New Roman",serif;color:#1a1a1a;line-height:1.3}
+h1{font-size:2.2rem;margin-bottom:.25rem;border-bottom:2px solid #e8dcc8;padding-bottom:.5rem}
+h2{font-size:1.5rem;margin-top:2.5rem;margin-bottom:.75rem}
+h3{font-size:1.2rem;margin-top:1.5rem;margin-bottom:.5rem}
+h4{font-size:1.05rem;margin-top:1.2rem;margin-bottom:.4rem}
+p{margin-bottom:1rem;color:#444}
+a{color:#8b6f4e;text-decoration:none;font-weight:500}
+a:hover{text-decoration:underline}
+code{background:#f0ebe3;padding:.15em .4em;border-radius:3px;font-size:.875em;font-family:"SF Mono","Fira Code","Fira Mono",monospace}
+pre{background:#f0ebe3;padding:1rem;border-radius:6px;overflow-x:auto;margin-bottom:1rem;font-size:.875em;line-height:1.5}
+pre code{background:0 0;padding:0}
+table{width:100%;border-collapse:collapse;margin-bottom:1rem;font-size:.925rem}
+th,td{padding:.5rem .75rem;text-align:left;border-bottom:1px solid #e0d8cc}
+th{background:#f0ebe3;font-weight:600}
+ul,ol{margin-bottom:1rem;padding-left:1.5rem}
+li{margin-bottom:.25rem}
+hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
+.header-nav{margin-bottom:2rem;padding-bottom:1rem;border-bottom:1px solid #e0d8cc}
+.header-nav a{margin-right:1.2rem;font-size:.9rem}
+@media(max-width:600px){body{padding:1rem}h1{font-size:1.8rem}table{font-size:.85rem}}
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>Test Plan</h1>
+<p>Comprehensive testing strategy for the multi-agent investment system. Covers unit, integration, end-to-end, evaluation, and regression tests.</p>
+
+<table>
+<tr><th>Metric</th><th>Value</th></tr>
+<tr><td>Test files</td><td>30</td></tr>
+<tr><td>Estimated tests</td><td>211-280</td></tr>
+<tr><td>Estimated lines</td><td>3,850-5,300</td></tr>
+<tr><td>Current state</td><td>0 test files</td></tr>
+<tr><td>Framework</td><td>pytest + pytest-asyncio + pytest-cov</td></tr>
+</table>
+
+<h2>Current State</h2>
+<p>Zero test files exist. <code>pyproject.toml</code> has pytest configured with <code>pytest-asyncio</code> and <code>pytest-cov</code> in dev dependencies. Only <code>tests/evaluation/</code> exists with 3 JSON trace artifacts.</p>
+
+<p><strong>Critical blocker</strong>: Import-time side effects must be isolated before any test can run:</p>
+<ul>
+<li>OpenTelemetry instrumentors fire at module level in 4 server files (e.g. <code>sub_agent_client.py:12</code>)</li>
+<li><code>os.environ.setdefault("HF_HUB_OFFLINE", "1")</code> at <code>shared/config.py:28</code> breaks embedding model imports</li>
+<li>Langfuse placeholder keys trigger warnings on import</li>
+</ul>
+
+<hr>
+
+<h2>0. Foundation: Conftest &amp; Fixtures</h2>
+
+<p>A <code>tests/conftest.py</code> with shared fixtures eliminates duplication across all test files.</p>
+
+<pre># tests/conftest.py — proposed structure
+
+@pytest.fixture(autouse=True)
+def _clean_env(monkeypatch):
+    """Prevent HF_HUB_OFFLINE, OTel instrumentors, etc. from firing."""
+    monkeypatch.setenv("HF_HUB_OFFLINE", "0")
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_HEADERS", raising=False)
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-lf-test")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-lf-test")
+    monkeypatch.setenv("EVAL_TRACE_ENABLED", "false")
+
+@pytest.fixture
+async def memory_db(tmp_path):
+    """In-memory SQLite with schema applied."""
+    conn = await aiosqlite.connect(":memory:")
+    await init_db(conn)
+    yield conn
+    await conn.close()
+
+@pytest.fixture
+def mock_mcp(mocker):
+    """Mock MCPClient with canned responses."""
+    mcp = mocker.AsyncMock(spec=MCPClient)
+    mcp.call_tool_by_name = mocker.AsyncMock()
+    mcp.connect_all = mocker.AsyncMock()
+    mcp.disconnect_all = mocker.AsyncMock()
+    return mcp</pre>
+
+<hr>
+
+<h2>1. Unit Tests — Pure Functions (No Mocking)</h2>
+
+<h3>1.1 <code>test_ticker_utils.py</code> — 10-15 tests</h3>
+
+<table>
+<tr><th>Test</th><th>Input</th><th>Expected</th></tr>
+<tr><td>Valid ticker formats</td><td><code>"AAPL"</code>, <code>"BRK.B"</code>, <code>"V"</code></td><td><code>True</code></td></tr>
+<tr><td>Invalid ticker formats</td><td><code>"ABCDEF"</code>, <code>"12345"</code>, <code>""</code></td><td><code>False</code></td></tr>
+<tr><td>Stop word check</td><td><code>"SEC"</code>, <code>"EPS"</code>, <code>"AI"</code></td><td><code>_is_financial_stop_word</code> returns True</td></tr>
+<tr><td>Parenthesis extraction</td><td><code>"buy Visa (V)"</code></td><td><code>"V"</code></td></tr>
+<tr><td>Mixed-case parens extraction</td><td><code>"V (Visa)"</code></td><td><code>"V"</code></td></tr>
+<tr><td>Preposition extraction</td><td><code>"invest in NVDA"</code></td><td><code>"NVDA"</code></td></tr>
+<tr><td>$ prefix extraction</td><td><code>"what about $TSLA"</code></td><td><code>"TSLA"</code></td></tr>
+<tr><td>Stop word extraction</td><td><code>"what is EPS"</code></td><td><code>""</code></td></tr>
+<tr><td>Holdings extraction</td><td><code>"portfolio: AAPL, MSFT, GOOGL"</code></td><td><code>["AAPL", "MSFT", "GOOGL"]</code></td></tr>
+<tr><td>Holdings extraction (empty)</td><td><code>"no tickers here"</code></td><td><code>[]</code></td></tr>
+</table>
+
+<h3>1.2 <code>test_trace_context.py</code> — 8-10 tests</h3>
+
+<table>
+<tr><th>Test</th><th>Expected</th></tr>
+<tr><td>Inject with valid IDs</td><td>JSON envelope prepended with <code>&lt;&lt;&lt;TASK&gt;&gt;&gt;</code> separator</td></tr>
+<tr><td>Skip inject on empty IDs</td><td>Original text returned</td></tr>
+<tr><td>Extract valid context</td><td>Parsed dict + clean text</td></tr>
+<tr><td>Extract no context</td><td><code>(None, original_text)</code></td></tr>
+<tr><td>Extract malformed JSON</td><td><code>(None, full_string)</code></td></tr>
+<tr><td>Extract missing fields</td><td><code>(None, clean_text)</code></td></tr>
+<tr><td>Round-trip</td><td>inject → extract returns original IDs</td></tr>
+</table>
+
+<h3>1.3 <code>test_models.py</code> — 8-12 tests</h3>
+<p>Pydantic model validation, serialization round-trips, optional field handling (<code>QuantMetrics.dcf_intrinsic_value</code>), nested <code>InvestmentBrief</code> serialization, ISO datetime format, JSON schema generation.</p>
+
+<h3>1.4 <code>test_config.py</code> — 5-6 tests</h3>
+<p>Default values, env var overrides, <code>validate()</code> pass/warn/fail scenarios, missing <code>.env</code> handling.</p>
+
+<h3>1.5 <code>test_runtime_eval.py</code> — 5 tests (pure parts)</h3>
+<p><code>_build_quant_reference</code> serialization: with metrics, with DCF, with stress test, empty dict, partial data.</p>
+
+<h3>1.6 <code>test_logging_config.py</code> — 4-5 tests</h3>
+<p>File handler creation, stream handler added, idempotent second calls, custom log levels.</p>
+
+<hr>
+
+<h2>2. Unit Tests — With Mocking</h2>
+
+<h3>2.1 <code>test_mcp_client.py</code> — 10-15 tests</h3>
+<p><code>parse_mcp_result</code> with 7 format variants (None, dict, list, TextContent, DataContent, JSONResult, empty list). Connection retry with exponential backoff. Tool routing by name. Session/transport cleanup in <code>disconnect_all</code>.</p>
+
+<h3>2.2 <code>test_generic_executor.py</code> — 8-10 tests</h3>
+<p>State machine: WORKING → COMPLETED/FAILED/input-required. Streaming progress emits WORKING events. Structured data → protobuf Struct. Cancel raises. Exception handling.</p>
+
+<h3>2.3 <code>test_semantic_cache.py</code> — 5-6 tests</h3>
+<p>Cache hit (high sim + fresh TTL), miss (low sim), miss (expired TTL), backend unavailable graceful degradation.</p>
+
+<h3>2.4 <code>test_memory_store.py</code> — 8-10 tests</h3>
+<p>Schema creation, idempotent init, migration on version bump, filing dedup, WAL/foreign key pragmas.</p>
+
+<h3>2.5 <code>test_ticker_memory.py</code> — 8-10 tests</h3>
+<p>CRUD operations, <code>has_changed</code> delta detection, <code>format_context</code> token budget (300 tokens ~ 1200 chars).</p>
+
+<h3>2.6 <code>test_portfolio_store.py</code> — 5-6 tests</h3>
+<p>Profile upsert with holdings merge, get/update holdings, user-not-found returns None.</p>
+
+<h3>2.7 <code>test_performance_tracker.py</code> — 6-7 tests</h3>
+<p>Win-rate computation: BUY (ret &gt; 0 correct), SELL (ret &lt; 0 correct), HOLD (always correct). yfinance fallback. Evaluation logic.</p>
+
+<h3>2.8 <code>test_sub_agent_client.py</code> — 8-10 tests</h3>
+<p>Discovery retry logic, agent name resolution (exact → case-insensitive → fuzzy), send_message event parsing (message, artifact, status, task), timeout handling.</p>
+
+<h3>2.9 <code>test_observability.py</code> — 4-5 tests</h3>
+<p>Singleton behavior, lazy init, OTLP env var setup, flush/shutdown without crash.</p>
+
+<hr>
+
+<h2>3. Integration Tests</h2>
+
+<h3>3.1 <code>test_mcp_server_integration.py</code> — 5-6 tests</h3>
+<p>FastMCP TestClient: health endpoint, agent card resources, tool calls (<code>validate_ticker</code>, <code>execute_python</code>). Marked <code>@pytest.mark.external</code> (requires SEC network).</p>
+
+<h3>3.2 <code>test_a2a_protocol_integration.py</code> — 4-5 tests</h3>
+<p>Agent card endpoints, health endpoints, SendMessage round-trip, sub-agent discovery, trace context propagation across A2A boundary. Marked <code>@pytest.mark.integration</code> (requires docker-compose).</p>
+
+<h3>3.3 <code>test_memory_integration.py</code> — 4-5 tests</h3>
+<p>Full ticker_memory workflow (<code>store_brief</code> → <code>get_latest</code> → <code>has_changed</code>), portfolio merge logic, filing dedup, concurrent reads/writes.</p>
+
+<h3>3.4 <code>test_ticker_flow_integration.py</code> — 3-4 tests</h3>
+<p>Ticker extraction → MCP validation → resolution pipeline end-to-end with mocked MCP.</p>
+
+<hr>
+
+<h2>4. End-to-End Tests</h2>
+
+<h3>4.1 <code>test_full_pipeline_e2e.py</code> — 2-3 tests</h3>
+<p>Happy path ("Analyze Apple (AAPL)"), portfolio-inclusive query, off-topic guardrail rejection. Requires all 5 servers + LM Studio. Marked <code>@pytest.mark.e2e</code>.</p>
+
+<hr>
+
+<h2>5. Evaluation Tests</h2>
+
+<h3>5.1 <code>test_evaluation_traces.py</code> — 3-4 tests</h3>
+<p>Validates existing JSON trace artifacts: valid JSON, correct structure (<code>agent_name</code>, <code>task_sent</code>, <code>response</code>, <code>latency_ms</code>), plausible latency values.</p>
+
+<h3>5.2 <code>test_ragas_scoring.py</code> — 5-6 tests</h3>
+<p><code>_setup_ragas_clients</code> with/without deps, <code>_score_metric</code> success/failure, <code>_push_scores</code> with/without trace_id. Mocked ragas + Langfuse.</p>
+
+<hr>
+
+<h2>6. Agent-Level Tests</h2>
+
+<h3>6.1 <code>test_rag_agent.py</code> — 8-10 tests</h3>
+<p>Response shape, daily dedup, filing dedup, no-ticker error, invalid-ticker error, MCP fallback, disconnect cleanup, trace context propagation.</p>
+
+<h3>6.2 <code>test_quant_agent.py</code> — 8-10 tests</h3>
+<p>Response shape, no-ticker error, MCP connection failure, Langfuse CallbackHandler creation, holdings extraction.</p>
+
+<h3>6.3 <code>test_quant_graph_nodes.py</code> — 10-15 tests</h3>
+<p>Pure numerical functions — strongest unit test targets: <code>compute_metrics_node</code>, <code>stress_test_node</code>, <code>dcf_valuation_node</code>, <code>correlation_node</code>, <code>_parse_price_data</code>, <code>_get_fcf_from_financials</code>. Edge cases: empty price data, single stock (no correlation).</p>
+
+<h3>6.4 <code>test_hybrid_search.py</code> — 6-8 tests</h3>
+<p><code>_rrf_merge</code> with equal/empty/partial rank lists, <code>sparse_retrieve</code> BM25 ranking, <code>rerank</code> CrossEncoder ordering, full pipeline.</p>
+
+<h3>6.5 <code>test_sentiment_agent.py</code> — 6-8 tests</h3>
+<p>Response shape, no-ticker error, parallel data collection (both succeed, partial failure), <code>_extract_sentiment_contexts</code> formatting.</p>
+
+<hr>
+
+<h2>7. Security Tests</h2>
+
+<h3>7.1 <code>test_sandbox_security.py</code> — 8-10 tests (critical)</h3>
+<table>
+<tr><th>Test</th><th>Input</th><th>Expected</th></tr>
+<tr><td>Import restriction</td><td><code>import os; os.system("dir")</code></td><td>Blocked</td></tr>
+<tr><td>File I/O blocked</td><td><code>open("test.txt")</code></td><td>Blocked</td></tr>
+<tr><td>Subprocess blocked</td><td><code>import subprocess</code></td><td>Blocked</td></tr>
+<tr><td>Network blocked</td><td><code>import requests</code></td><td>Blocked</td></tr>
+<tr><td>Simple arithmetic</td><td><code>2 + 2</code></td><td><code>4</code></td></tr>
+<tr><td>Timeout</td><td>Infinite loop</td><td>Times out</td></tr>
+<tr><td>Output size limit</td><td>Huge output</td><td>Truncated</td></tr>
+<tr><td>Memory bomb</td><td>Large list allocation</td><td>OOM handled</td></tr>
+</table>
+
+<hr>
+
+<h2>8. File Organization</h2>
+
+<pre>tests/
+├── conftest.py
+├── __init__.py
+├── unit/
+│   ├── test_ticker_utils.py
+│   ├── test_trace_context.py
+│   ├── test_models.py
+│   ├── test_config.py
+│   ├── test_logging_config.py
+│   ├── test_runtime_eval.py
+│   ├── test_mcp_client.py
+│   ├── test_generic_executor.py
+│   ├── test_semantic_cache.py
+│   ├── test_observability.py
+│   ├── test_sub_agent_client.py
+│   └── memory/
+│       ├── test_memory_store.py
+│       ├── test_ticker_memory.py
+│       ├── test_portfolio_store.py
+│       └── test_performance_tracker.py
+├── integration/
+│   ├── test_mcp_server_integration.py    [@pytest.mark.external]
+│   ├── test_a2a_protocol_integration.py  [@pytest.mark.integration]
+│   ├── test_memory_integration.py
+│   └── test_ticker_flow_integration.py
+├── agents/
+│   ├── test_rag_agent.py
+│   ├── test_quant_agent.py
+│   ├── test_quant_graph_nodes.py
+│   ├── test_sentiment_agent.py
+│   ├── test_orchestrator_executor.py
+│   └── test_hybrid_search.py
+├── e2e/
+│   └── test_full_pipeline_e2e.py         [@pytest.mark.e2e]
+├── evaluation/
+│   ├── eval_results/
+│   │   └── orchestrator_traces/
+│   └── test_ragas_scoring.py
+└── security/
+    └── test_sandbox_security.py
+</pre>
+
+<hr>
+
+<h2>9. Test Markers &amp; Configuration</h2>
+
+<p>Add to <code>pyproject.toml</code>:</p>
+
+<pre>[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+    "external: requires network access (SEC EDGAR, Yahoo, etc.)",
+    "integration: requires multiple services running",
+    "e2e: requires full pipeline (all services + LM Studio)",
+    "slow: takes &gt;10 seconds to run",
+    "security: security-critical tests (sandbox escaping, etc.)",
+]</pre>
+
+<p>Run targets:</p>
+
+<pre># Fast unit tests only
+pytest tests/unit -v --no-header -q
+
+# All except slow/external
+pytest tests/ -v -m "not external and not integration and not e2e"
+
+# With coverage
+pytest tests/ -v --cov=shared --cov=agent_1_adk --cov=mcp_servers</pre>
+
+<hr>
+
+<h2>10. Effort Summary</h2>
+
+<table>
+<tr><th>Category</th><th>Files</th><th>Tests</th><th>Effort</th><th>Lines</th></tr>
+<tr><td>Unit (pure)</td><td>5</td><td>45-60</td><td>Small</td><td>600-800</td></tr>
+<tr><td>Unit (mocked)</td><td>11</td><td>85-110</td><td>Medium</td><td>1500-2000</td></tr>
+<tr><td>Integration</td><td>4</td><td>16-20</td><td>Medium</td><td>400-500</td></tr>
+<tr><td>Agent tests</td><td>6</td><td>50-70</td><td>Large</td><td>1000-1500</td></tr>
+<tr><td>End-to-end</td><td>1</td><td>2-3</td><td>Small</td><td>100-150</td></tr>
+<tr><td>Security</td><td>1</td><td>8-10</td><td>Small</td><td>150-200</td></tr>
+<tr><td>Evaluation</td><td>2</td><td>5-7</td><td>Small</td><td>100-150</td></tr>
+<tr><td><strong>Total</strong></td><td><strong>30</strong></td><td><strong>211-280</strong></td><td>—</td><td><strong>3850-5300</strong></td></tr>
+</table>
+
+<p>Estimated total effort: 2-3 days for first pass covering critical paths.</p>
+
+<hr>
+
+<h2>11. Implementation Order</h2>
+
+<ol>
+<li><strong>Phase 0</strong> — Conftest + env isolation (blocks everything)</li>
+<li><strong>Phase 1</strong> — Pure-function unit tests (ticker_utils, trace_context, models, config, logging) — fastest ROI</li>
+<li><strong>Phase 2</strong> — Memory layer tests (in-memory SQLite, no external deps)</li>
+<li><strong>Phase 3</strong> — MCP client + generic executor + semantic cache (mocked)</li>
+<li><strong>Phase 4</strong> — Quant graph node pure-function tests (numerical correctness)</li>
+<li><strong>Phase 5</strong> — Agent-level tests (mocked MCP)</li>
+<li><strong>Phase 6</strong> — Security sandbox tests (critical, low effort)</li>
+<li><strong>Phase 7</strong> — Integration tests (MCP server, ticker flow, memory)</li>
+<li><strong>Phase 8</strong> — E2E + evaluation tests</li>
+</ol>
+
+<hr>
+
+<p>Next step: start implementing Phase 0 (conftest) and Phase 1 (pure-function unit tests).</p>
+
+</div>
+</body>
+</html>
