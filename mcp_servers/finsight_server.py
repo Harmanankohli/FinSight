@@ -40,6 +40,7 @@ from sentence_transformers import SentenceTransformer
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
 from shared.config import SEC_USER_AGENT
+from shared.rate_limiter import TokenBucket
 from shared.observability import init_langfuse, shutdown_langfuse
 init_langfuse(service_name="mcp_server")
 atexit.register(shutdown_langfuse)
@@ -59,6 +60,13 @@ AGENT_CARDS_DIR = Path(__file__).resolve().parent.parent / "agent_cards"
 # all-MiniLM-L6-v2: 23 MB (vs 80+ MB for larger models), 384-dim, fast CPU
 # inference — good enough for agent card semantic search without GPU cost.
 EMBED_MODEL_NAME = os.environ.get("EMBED_MODEL", "all-MiniLM-L6-v2")
+
+# ──────────────────────────────────────────────
+# Rate limiters
+# ──────────────────────────────────────────────
+_sec_limiter = TokenBucket(rate=8, burst=10)      # SEC: 10 req/s hard cap; stay below
+_yfinance_limiter = TokenBucket(rate=4, burst=8)  # Yahoo Finance: no published cap, conservative
+_rss_limiter = TokenBucket(rate=2, burst=4)       # RSS + Yahoo news fallback
 
 
 # ──────────────────────────────────────────────
@@ -270,6 +278,7 @@ async def get_prices(ticker: str, period: str = "1y", interval: str = "1d") -> d
         logger.debug("Cache hit: get_prices(%s, %s, %s)", ticker, period, interval)
         return cached
     try:
+        await _yfinance_limiter.acquire()
         stock = yf.Ticker(ticker)
         hist = stock.history(period=period, interval=interval)
         records = _serialise_value(hist.reset_index().to_dict(orient="records"))
@@ -299,6 +308,7 @@ async def get_financials(ticker: str) -> dict:
         logger.debug("Cache hit: get_financials(%s)", ticker)
         return cached
     try:
+        await _yfinance_limiter.acquire()
         stock = yf.Ticker(ticker)
         result = _serialise_value({
             "income_statement": stock.financials.to_dict()
@@ -335,6 +345,7 @@ async def get_options_chain(ticker: str, expiration: str | None = None) -> dict:
         dict: calls + puts if expiration given, else expirations list.
     """
     try:
+        await _yfinance_limiter.acquire()
         stock = yf.Ticker(ticker)
         if expiration:
             chain = stock.option_chain(expiration)
@@ -405,6 +416,7 @@ class _EdgarClient:
             if self._ticker_map is not None:
                 return self._ticker_map
             c = await self._get_client()
+            await _sec_limiter.acquire()
             resp = await c.get("https://www.sec.gov/files/company_tickers.json")
             resp.raise_for_status()
             raw = resp.json()
@@ -475,6 +487,7 @@ class _EdgarClient:
         url = f"https://data.sec.gov/submissions/CIK{cik}.json"
         for attempt in range(3):
             try:
+                await _sec_limiter.acquire()
                 resp = await c.get(url)
                 resp.raise_for_status()
                 result = resp.json()
@@ -612,6 +625,7 @@ class _EdgarClient:
                 continue
             try:
                 c = await self._get_client()
+                await _sec_limiter.acquire()
                 resp = await c.get(
                     f"https://data.sec.gov/submissions/{fname}"
                 )
@@ -651,6 +665,7 @@ class _EdgarClient:
             if ticker:
                 params["cik"] = await self._lookup_cik(ticker)
             c = await self._get_client()
+            await _sec_limiter.acquire()
             resp = await c.get(
                 "https://efts.sec.gov/LATEST/search-index?dateRange=all",
                 params=params,
@@ -686,6 +701,7 @@ class _EdgarClient:
         for url in tried_urls:
             try:
                 c = await self._get_client()
+                await _sec_limiter.acquire()
                 resp = await c.get(url)
                 resp.raise_for_status()
                 content_type = resp.headers.get("Content-Type", "")
@@ -1159,6 +1175,7 @@ async def _fetch_rss(url: str, client: httpx.AsyncClient) -> dict:
       error   (str):  error message if status != "ok", else ""
     """
     try:
+        await _rss_limiter.acquire()
         resp = await client.get(url, timeout=10.0)
         if resp.status_code != 200:
             logger.warning("RSS %s returned HTTP %s", url, resp.status_code)
@@ -1196,6 +1213,7 @@ async def _fetch_yf_news(ticker: str, client: httpx.AsyncClient, limit: int = 15
             f"https://query1.finance.yahoo.com/v1/finance/search"
             f"?q={urlquote(ticker)}&lang=en-US&region=US&newsCount={limit}&quotesCount=0"
         )
+        await _rss_limiter.acquire()
         resp = await client.get(
             url,
             headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
@@ -1438,6 +1456,7 @@ async def get_earnings_calendar(ticker: str) -> dict:
         dict with keys: ticker, next_earnings_date, source, or error
     """
     try:
+        await _yfinance_limiter.acquire()
         stock = yf.Ticker(ticker)
         cal = stock.calendar
         if cal and "Earnings Date" in cal:
