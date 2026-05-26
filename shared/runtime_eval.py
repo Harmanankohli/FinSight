@@ -89,7 +89,7 @@ async def _setup_ragas_clients():
             client=patched,
             model=LLM_MODEL,
             provider="openai",
-            model_args=InstructorModelArgs(max_tokens=2048),
+            model_args=InstructorModelArgs(max_tokens=4096),
         )
         ragas_embedder = _STEmbeddings(model_name=EMBED_MODEL)
         _ragas_clients = (ragas_llm, ragas_embedder)
