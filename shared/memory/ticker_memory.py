@@ -88,6 +88,31 @@ class TickerMemory:
             await conn.close()
         return record_id
 
+    # Replaces brief_json.response_text on an existing record. Used to overwrite the LLM's short
+    # save_brief rationale with the full synthesized analysis after the agent turn completes.
+    async def update_response_text(self, record_id: str, response_text: str) -> bool:
+        conn = await get_db(self._db_path)
+        try:
+            cursor = await conn.execute(
+                "SELECT brief_json FROM ticker_briefs WHERE id = ?", (record_id,)
+            )
+            row = await cursor.fetchone()
+            if not row:
+                return False
+            try:
+                data = json.loads(row[0]) if row[0] else {}
+            except (json.JSONDecodeError, TypeError):
+                data = {}
+            data["response_text"] = response_text[:10000]
+            await conn.execute(
+                "UPDATE ticker_briefs SET brief_json = ? WHERE id = ?",
+                (json.dumps(data), record_id),
+            )
+            await conn.commit()
+            return True
+        finally:
+            await conn.close()
+
     # Fetches most recent brief for a ticker, ordered by analysis_date then created_at descending.
     async def get_latest(
         self, ticker: str, user_id: Optional[str] = None
