@@ -6,7 +6,7 @@ summaries for prompt injection (~100-300 tokens max).
 
 import json
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
 
@@ -28,8 +28,8 @@ class TickerMemory:
             await conn.execute(
                 """INSERT INTO ticker_briefs
                    (id, ticker, session_id, user_id, query, recommendation,
-                    confidence, brief_json, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    confidence, brief_json, created_at, analysis_date)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     record_id,
                     brief.ticker,
@@ -40,6 +40,7 @@ class TickerMemory:
                     brief.confidence_score,
                     json.dumps(brief.model_dump(mode="json")),
                     brief.generated_at.isoformat(),
+                    date.today().isoformat(),
                 ),
             )
             await conn.commit()
@@ -64,8 +65,8 @@ class TickerMemory:
             await conn.execute(
                 """INSERT INTO ticker_briefs
                    (id, ticker, session_id, user_id, query, recommendation,
-                    confidence, brief_json, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    confidence, brief_json, created_at, analysis_date)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     record_id,
                     ticker,
@@ -76,6 +77,7 @@ class TickerMemory:
                     confidence,
                     json.dumps({"response_text": response_text[:5000]}),
                     datetime.utcnow().isoformat(),
+                    date.today().isoformat(),
                 ),
             )
             await conn.commit()
@@ -92,19 +94,19 @@ class TickerMemory:
             if user_id:
                 cursor = await conn.execute(
                     """SELECT id, ticker, session_id, user_id, query, recommendation,
-                              confidence, brief_json, created_at
+                              confidence, brief_json, created_at, analysis_date
                        FROM ticker_briefs
                        WHERE ticker = ? AND user_id = ?
-                       ORDER BY created_at DESC LIMIT 1""",
+                       ORDER BY COALESCE(analysis_date, created_at) DESC LIMIT 1""",
                     (ticker.upper(), user_id),
                 )
             else:
                 cursor = await conn.execute(
                     """SELECT id, ticker, session_id, user_id, query, recommendation,
-                              confidence, brief_json, created_at
+                              confidence, brief_json, created_at, analysis_date
                        FROM ticker_briefs
                        WHERE ticker = ?
-                       ORDER BY created_at DESC LIMIT 1""",
+                       ORDER BY COALESCE(analysis_date, created_at) DESC LIMIT 1""",
                     (ticker.upper(),),
                 )
             row = await cursor.fetchone()
@@ -120,6 +122,7 @@ class TickerMemory:
                 "confidence": row[6],
                 "brief_json": row[7],
                 "created_at": row[8],
+                "analysis_date": row[9],
             }
         finally:
             await conn.close()
@@ -133,19 +136,19 @@ class TickerMemory:
             if user_id:
                 cursor = await conn.execute(
                     """SELECT id, ticker, session_id, user_id, query, recommendation,
-                              confidence, brief_json, created_at
+                              confidence, brief_json, created_at, analysis_date
                        FROM ticker_briefs
                        WHERE ticker = ? AND user_id = ?
-                       ORDER BY created_at DESC LIMIT ?""",
+                       ORDER BY COALESCE(analysis_date, created_at) DESC LIMIT ?""",
                     (ticker.upper(), user_id, limit),
                 )
             else:
                 cursor = await conn.execute(
                     """SELECT id, ticker, session_id, user_id, query, recommendation,
-                              confidence, brief_json, created_at
+                              confidence, brief_json, created_at, analysis_date
                        FROM ticker_briefs
                        WHERE ticker = ?
-                       ORDER BY created_at DESC LIMIT ?""",
+                       ORDER BY COALESCE(analysis_date, created_at) DESC LIMIT ?""",
                     (ticker.upper(), limit),
                 )
             rows = await cursor.fetchall()
@@ -160,6 +163,7 @@ class TickerMemory:
                     "confidence": r[6],
                     "brief_json": r[7],
                     "created_at": r[8],
+                    "analysis_date": r[9],
                 }
                 for r in rows
             ]

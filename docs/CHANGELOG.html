@@ -36,6 +36,28 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 
 <h1>Changelog</h1>
 
+<h2>v1.23 &mdash; Same-Day Memory Cache, analysis_date Column &amp; Unified db/ Folder</h2>
+
+<h3 class="version">Same-Day Recommendation Cache</h3>
+<ul>
+<li><strong>Date-aware memory injection</strong> (<code>agent_1_adk/agent_executor.py</code>): <code>_build_memory_context()</code> now compares the stored brief&rsquo;s <code>analysis_date</code> against today&rsquo;s date. Context is tagged <code>[TODAY]</code> when the brief is from today (LLM may return it directly without calling agents) or <code>[STALE]</code> when from a prior day (LLM must call all agents for fresh analysis).</li>
+<li><strong>Duplicate write prevention</strong>: <code>_process_response()</code> skips the <code>_store_memory()</code> background task when <code>[TODAY]</code> is present in the injected user message, preventing identical records accumulating on repeated same-day queries.</li>
+<li><strong>Agent instruction updated</strong> (<code>agent_1_adk/agent.py</code>): Both <code>_STATIC_PREAMBLE</code> and <code>_STATIC_PREAMBLE_FALLBACK</code> include a <em>MEMORY CONTEXT RULES</em> block instructing the LLM on how to handle each tag.</li>
+</ul>
+
+<h3 class="version">analysis_date Column</h3>
+<ul>
+<li><strong>New <code>analysis_date TEXT</code> column</strong> (<code>shared/memory/ticker_memory.py</code>, <code>shared/memory/store.py</code>): Added to <code>ticker_briefs</code> via an idempotent <code>ALTER TABLE</code> migration in <code>init_db()</code>. Both <code>store_brief()</code> and <code>store_minimal()</code> now write <code>date.today().isoformat()</code> into this column on every insert.</li>
+<li><strong>Read path updated</strong>: <code>get_latest()</code> and <code>get_history()</code> select and return <code>analysis_date</code> as <code>row[9]</code>. Sort order changed to <code>ORDER BY COALESCE(analysis_date, created_at) DESC</code> &mdash; uses the explicit date where available, falls back to <code>created_at</code> for legacy rows.</li>
+</ul>
+
+<h3 class="version">Unified db/ Folder</h3>
+<ul>
+<li><strong>All databases consolidated under <code>db/</code></strong>: <code>shared/memory/store.py</code> <code>DB_PATH</code> changed from project root to <code>db/finsight_memory.db</code>. Session DB URL in <code>agent_1_adk/main.py</code> updated to <code>sqlite+aiosqlite:///./db/finsight_memory.db</code>. LangChain cache in <code>agent_3_langgraph/nodes.py</code> moved to <code>db/.langchain_cache.db</code>. ChromaDB default in <code>shared/config.py</code> (<code>CHROMA_DIR</code>) moved to <code>./db/chroma_db</code>.</li>
+<li><strong><code>.gitignore</code> simplified</strong>: All scattered per-file DB ignore entries replaced with a single <code>db/</code> rule. Removed duplicate <code>chroma_db/</code> entry and stale repeated lines.</li>
+<li>The <code>db/</code> directory is auto-created on first run via <code>path.parent.mkdir(parents=True, exist_ok=True)</code> in <code>get_db()</code>.</li>
+</ul>
+
 <h2>v1.22 &mdash; ADK 2.x, Eval Toggle, Memory Pollution Fix &amp; Score Namespacing</h2>
 
 <h3 class="version">Google ADK 2.x Upgrade</h3>

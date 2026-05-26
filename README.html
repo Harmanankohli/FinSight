@@ -45,7 +45,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <ul>
 <li><strong>Multi-framework orchestration</strong>: Google ADK orchestrator delegates to LlamaIndex (RAG), LangGraph (Quant), and CrewAI (Sentiment) agents</li>
 <li><strong>A2A protocol</strong>: Standard-compliant agent discovery and streaming communication via JSON-RPC over HTTP</li>
-<li><strong>Persistent memory layer</strong>: SQLite-backed session storage, cross-session memory search, ticker brief history, portfolio persistence, and recommendation tracking</li>
+<li><strong>Persistent memory layer</strong>: SQLite-backed session storage, cross-session memory search, ticker brief history, portfolio persistence, and recommendation tracking. Same-day analysis is served from memory; stale briefs (prior day) trigger a full fresh agent run. All databases stored under <code>db/</code></li>
 <li><strong>Portfolio correlation analysis</strong>: When you explicitly mention portfolio holdings (e.g. &ldquo;My portfolio holds AAPL, MSFT&rdquo;), the quant agent computes cross-stock correlation matrices alongside the primary analysis</li>
 <li><strong>Distributed tracing</strong>: Langfuse traces span all four agent processes in a single trace tree via text-based context propagation</li>
 <li><strong>RAGAS evaluation pipeline</strong>: Offline batch evaluation (Faithfulness, ResponseRelevancy, ContextPrecision, ContextRecall, ToolCallAccuracy) + runtime per-query eval with per-metric streaming, client caching, and 180s LLM timeout</li>
@@ -92,7 +92,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <tr><td>LLM</td><td>LM Studio (local, OpenAI-compatible)</td></tr>
 <tr><td>Embeddings</td><td>sentence-transformers (all-MiniLM-L6-v2, local)</td></tr>
 <tr><td>Reranker</td><td>cross-encoder/ms-marco-MiniLM-L-6-v2</td></tr>
-<tr><td>Vector Store</td><td>ChromaDB (local, persisted)</td></tr>
+<tr><td>Vector Store</td><td>ChromaDB (local, persisted to <code>db/chroma_db/</code>)</td></tr>
 <tr><td>Agent Discovery</td><td><code>A2ACardResolver</code> via <code>AGENT_SEED_URLS</code></td></tr>
 <tr><td>Evaluation</td><td>RAGAS offline pipeline + runtime per-query eval (per-metric streaming, client caching, 180s timeout) + custom financial rubrics</td></tr>
 </table>

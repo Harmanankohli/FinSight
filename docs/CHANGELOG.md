@@ -1,5 +1,24 @@
 # Changelog
 
+## v1.23 — Same-Day Memory Cache, analysis_date Column & Unified db/ Folder
+
+### Same-Day Recommendation Cache
+
+- **Date-aware memory injection** (`agent_1_adk/agent_executor.py`): `_build_memory_context()` now compares the stored brief's `analysis_date` against today's date. Context tagged `[TODAY]` when brief is from today (LLM may return directly without calling agents); tagged `[STALE]` when from a prior day (LLM must call all agents for fresh analysis).
+- **Duplicate write prevention**: `_process_response()` skips the `_store_memory()` background task when `[TODAY]` is present in the injected user message, preventing identical records accumulating on same-day repeated queries.
+- **Agent instruction updated** (`agent_1_adk/agent.py`): Both `_STATIC_PREAMBLE` and `_STATIC_PREAMBLE_FALLBACK` include a *MEMORY CONTEXT RULES* block instructing the LLM how to handle each tag.
+
+### analysis_date Column
+
+- **New `analysis_date TEXT` column** (`shared/memory/ticker_memory.py`, `shared/memory/store.py`): Added to `ticker_briefs` via idempotent `ALTER TABLE` migration in `init_db()`. Both `store_brief()` and `store_minimal()` write `date.today().isoformat()` into this column on every insert.
+- **Read path updated**: `get_latest()` and `get_history()` select and return `analysis_date` as `row[9]`. Sort order changed to `ORDER BY COALESCE(analysis_date, created_at) DESC` — uses explicit date where available, falls back to `created_at` for legacy rows.
+
+### Unified db/ Folder
+
+- **All databases consolidated under `db/`**: `shared/memory/store.py` `DB_PATH` → `db/finsight_memory.db`. Session DB URL in `agent_1_adk/main.py` → `sqlite+aiosqlite:///./db/finsight_memory.db`. LangChain cache in `agent_3_langgraph/nodes.py` → `db/.langchain_cache.db`. ChromaDB default in `shared/config.py` (`CHROMA_DIR`) → `./db/chroma_db`.
+- **`.gitignore` simplified**: All scattered per-file DB ignore entries replaced with a single `db/` rule. Removed duplicate entries and stale repeated lines.
+- `db/` directory auto-created on first run via `path.parent.mkdir(parents=True, exist_ok=True)` in `get_db()`.
+
 ## v1.22 — ADK 2.x, Eval Toggle, Memory Pollution Fix & Score Namespacing
 
 ### Google ADK 2.x Upgrade
@@ -140,7 +159,7 @@
 ### Caching
 
 - **TTL tool-result cache in MCP server** (`mcp_servers/finsight_server.py`): `_TTLCache` class using `OrderedDict` + `time.monotonic()`. Cache instances per tool: `get_prices` (5 min), `get_financials` (24 h), `get_news_sentiment` (15 min), `get_filing_content` (permanent LRU-200), `_fetch_submissions` (6 h). No new dependencies.
-- **LangChain SQLiteCache** (`agent_3_langgraph/nodes.py`): `SQLiteCache(database_path=".langchain_cache.db")` wraps the quant agent's LLM summary call — identical ticker+metrics inputs reuse the cached LLM response. Requires `langchain-community>=0.3.0`.
+- **LangChain SQLiteCache** (`agent_3_langgraph/nodes.py`): `SQLiteCache(database_path="db/.langchain_cache.db")` wraps the quant agent's LLM summary call — identical ticker+metrics inputs reuse the cached LLM response. Requires `langchain-community>=0.3.0`.
 - **KV cache prefix optimization** (`agent_1_adk/agent.py`, `agent_4_crewai/crew.py`): Static PROCEDURE block extracted to module-level `_STATIC_PREAMBLE` constant. `_build_instruction()` now only appends today's date and the dynamic agent list, keeping the large static prefix stable across requests for LM Studio KV-cache reuse. Backstory strings for CrewAI agents moved to module-level constants.
 - **Semantic cache** (`shared/semantic_cache.py`): ChromaDB + `all-MiniLM-L6-v2` cosine similarity cache (threshold 0.95, TTL 1 h). Wired into `agent_1_adk/agent_executor.py`: cache checked before `runner.run_async`, hit returns immediately; successful responses stored. Controlled by `SEMANTIC_CACHE_ENABLED=true` env var (off by default).
 
@@ -209,7 +228,7 @@
 - **`_persist_to_memory` added to `agent_executor.py`**: After each successful response, events are directly persisted to the runner's memory service. This bypasses the unreliable callback chain for A2A requests.
 - **RAG retrieval deduplication**: Reduced `similarity_top_k` from 5 → 3 across all index query engines in `index_manager.py` to cut context size and LLM inference time by ~40%.
 
-- **`DatabaseSessionService` replaces `InMemorySessionService`**: ADK's built-in `DatabaseSessionService` with `sqlite+aiosqlite:///./finsight_memory.db` provides persistent session/event storage across restarts. Full conversation history (user messages, agent responses, tool calls) is saved to SQLite.
+- **`DatabaseSessionService` replaces `InMemorySessionService`**: ADK's built-in `DatabaseSessionService` with `sqlite+aiosqlite:///./db/finsight_memory.db` provides persistent session/event storage across restarts. Full conversation history (user messages, agent responses, tool calls) is saved to SQLite.
 - **`SQLiteMemoryService` for cross-session memory search**: Custom implementation of ADK's `BaseMemoryService` that persists conversation events to SQLite. The `load_memory` tool can search past conversations across sessions and restarts. Sessions are auto-ingested after each successful response.
 - **`TickerMemory` for structured brief history**: Stores per-ticker investment recommendations with ticker, recommendation (BUY/HOLD/SELL), confidence, full response text, and timestamp. Provides `format_context()` that generates a compact (~300 token) memory summary injected into the orchestrator's system prompt before each query.
 - **`PortfolioStore` for user profile persistence**: Auto-captures portfolio holdings from each query's context. Merges holdings over time — users never need to explicitly set their portfolio. Stores risk profile and investment horizon.
@@ -218,7 +237,7 @@
 - **Auto-save on every response**: `agent_executor.py` automatically stores briefs, recommendations, and portfolio updates after every successful response — no LLM action required.
 - **`save_brief` tool removed**: Simplified to auto-save only. The LLM no longer needs to explicitly call a tool to persist its analysis.
 - **`load_memory` tool added to orchestrator**: The ADK `load_memory` tool is now available to the orchestrator LLM for searching past conversations.
-- **`finsight_memory.db` added to `.gitignore`**: SQLite database file excluded from version control.
+- **`db/` folder added to `.gitignore`**: All database files (`finsight_memory.db`, `chroma_db/`, `.langchain_cache.db`) consolidated under `db/` and excluded via a single rule.
 - **16 tests passing** in `tests/test_memory.py`: covers all four memory stores (TickerMemory, PortfolioStore, PerformanceTracker, SQLiteMemoryService) plus the SQLite foundation.
 
 ## v1.12 — A2A Span Noise Filtering

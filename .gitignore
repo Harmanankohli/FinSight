@@ -21,15 +21,14 @@ venv/
 logs/
 *.log
 
-# Vector store data
-chroma_db/
+# ADK session state
 .adk/
 
-# Memory database
-finsight_memory.db
-finsight_memory.db-wal
-finsight_memory.db-shm
+# Memory / cache databases
+db/
 .langchain_cache.db
+chroma_db/
+finsight_memory.db
 
 # OS
 .DS_Store
@@ -48,11 +47,6 @@ CLAUDE.md
 graphify-out
 .opencode
 .claude/
-.mcp.json
-.langchain_cache.db
-.claude/
-.mcp.json
-.langchain_cache.db
 .mcp.json
 
 # Evaluation artifacts

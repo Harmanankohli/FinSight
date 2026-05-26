@@ -90,85 +90,83 @@ class QuantAgent(BaseAgent):
             if trace_id and parent_span_id
             else None
         )
-        span = langfuse.start_observation(
-            as_type="span",
-            name="quant-agent-stream",
-            input=query,
-            trace_context=trace_ctx,
-        )
         try:
-            ticker = extract_ticker(query)
-            resolved = False
+            with langfuse.start_as_current_observation(
+                as_type="span",
+                name="quant-agent-stream",
+                input=query,
+                trace_context=trace_ctx,
+            ) as span:
+                # Nest LangGraph CallbackHandler spans under this agent span
+                if trace_id:
+                    trace_ctx = {"trace_id": trace_id, "parent_span_id": span.id}
 
-            if not ticker:
-                ticker, _ = await self._resolve_ticker(query)
-                resolved = True
+                ticker = extract_ticker(query)
+                resolved = False
 
-            if not ticker:
-                span.update(output={"error": "No ticker found"})
-                yield {
-                    "response_type": "text",
-                    "is_task_complete": True,
-                    "is_error": True,
-                    "require_user_input": False,
-                    "content": "Could not identify a stock ticker from the query. Try using parentheses (AAPL) or $ prefix ($V).",
-                }
-                return
+                if not ticker:
+                    span.update(output={"error": "No ticker found"})
+                    yield {
+                        "response_type": "text",
+                        "is_task_complete": True,
+                        "is_error": True,
+                        "require_user_input": False,
+                        "content": "Could not identify a stock ticker from the query. Try using parentheses (AAPL) or $ prefix ($V).",
+                    }
+                    return
 
-            valid, validated_ticker, company = await self._validate_ticker(ticker)
-            if not valid and not resolved:
-                ticker, _ = await self._resolve_ticker(query, exclude_ticker=ticker)
-                if ticker:
-                    valid, validated_ticker, company = await self._validate_ticker(ticker)
+                valid, validated_ticker, company = await self._validate_ticker(ticker)
+                if not valid and not resolved:
+                    ticker, _ = await self._resolve_ticker(query, exclude_ticker=ticker)
+                    if ticker:
+                        valid, validated_ticker, company = await self._validate_ticker(ticker)
 
-            if not valid:
-                span.update(output={"error": f"Invalid ticker: {ticker}"})
-                yield {
-                    "response_type": "text",
-                    "is_task_complete": True,
-                    "is_error": True,
-                    "require_user_input": False,
-                    "content": f"Ticker '{ticker}' is not valid. Error: {company}",
-                }
-                return
+                if not valid:
+                    span.update(output={"error": f"Invalid ticker: {ticker}"})
+                    yield {
+                        "response_type": "text",
+                        "is_task_complete": True,
+                        "is_error": True,
+                        "require_user_input": False,
+                        "content": f"Ticker '{ticker}' is not valid. Error: {company}",
+                    }
+                    return
 
-            ticker = validated_ticker
+                ticker = validated_ticker
 
-            holdings = extract_holdings(query, exclude_ticker=ticker)
-            if holdings:
-                logger.info("Extracted portfolio holdings for %s: %s", ticker, holdings)
+                holdings = extract_holdings(query, exclude_ticker=ticker)
+                if holdings:
+                    logger.info("Extracted portfolio holdings for %s: %s", ticker, holdings)
 
-            try:
-                result = await self.analyze(ticker, portfolio_holdings=holdings, trace_ctx=trace_ctx)
-                span.update(output={"ticker": ticker, "recommendation": result.get("recommendation")})
-                if EVAL_ENABLED:
-                    asyncio.create_task(
-                        _eval_quant_response(
-                            query,
-                            result.get("reasoning", ""),
-                            result,
-                            trace_id,
+                try:
+                    result = await self.analyze(ticker, portfolio_holdings=holdings, trace_ctx=trace_ctx)
+                    span.update(output={"ticker": ticker, "recommendation": result.get("recommendation")})
+                    if EVAL_ENABLED:
+                        asyncio.create_task(
+                            _eval_quant_response(
+                                query,
+                                result.get("reasoning", ""),
+                                result,
+                                trace_id,
+                            )
                         )
-                    )
-                yield {
-                    "response_type": "data",
-                    "is_task_complete": True,
-                    "require_user_input": False,
-                    "content": result,
-                }
-            except Exception as e:
-                logger.exception("Quant analysis failed")
-                span.update(output={"error": str(e)})
-                yield {
-                    "response_type": "text",
-                    "is_task_complete": True,
-                    "is_error": True,
-                    "require_user_input": False,
-                    "content": f"Quant analysis failed: {e}",
-                }
+                    yield {
+                        "response_type": "data",
+                        "is_task_complete": True,
+                        "require_user_input": False,
+                        "content": result,
+                    }
+                except Exception as e:
+                    logger.exception("Quant analysis failed")
+                    span.update(output={"error": str(e)})
+                    yield {
+                        "response_type": "text",
+                        "is_task_complete": True,
+                        "is_error": True,
+                        "require_user_input": False,
+                        "content": f"Quant analysis failed: {e}",
+                    }
         finally:
-            span.end()
-            # Gracefully disconnect MCP client after stream completes
             await self._disconnect()
 
 

@@ -9,7 +9,7 @@ from scipy import stats
 try:
     from langchain_community.cache import SQLiteCache
     from langchain_core.globals import set_llm_cache
-    set_llm_cache(SQLiteCache(database_path=".langchain_cache.db"))
+    set_llm_cache(SQLiteCache(database_path="db/.langchain_cache.db"))
 except Exception:
     logging.getLogger(__name__).warning("LangChain SQLiteCache unavailable; LLM caching disabled")
 

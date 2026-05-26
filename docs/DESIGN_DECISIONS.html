@@ -59,6 +59,25 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 
 <p><strong>Why opt-in (<code>SEMANTIC_CACHE_ENABLED=false</code>)?</strong> The semantic cache is stateful &mdash; a cached stale recommendation from yesterday might mislead a user. Off by default so developers consciously enable it in environments where TTL staleness is acceptable.</p>
 
+<h2>Same-Day Memory Cache &amp; analysis_date Column</h2>
+
+<h3>Why check the date before re-running agents?</h3>
+<p>Market data (prices, news sentiment) changes daily. A recommendation from yesterday may be wrong today. However, re-running all three sub-agents for every query on the same stock within the same day wastes 30&ndash;60 seconds of LLM inference and MCP calls when the underlying data has not changed since the last run. The same-day cache gives users instant responses for repeat queries while guaranteeing a fresh agent run the next day.</p>
+
+<h3>Why a separate <code>analysis_date</code> column instead of parsing <code>created_at</code>?</h3>
+<p><code>created_at</code> stores a full UTC ISO-8601 timestamp (<code>2024-01-15T14:32:00</code>). Comparing it to today requires string slicing and timezone handling that is fragile across platforms and SQLite versions. <code>analysis_date</code> is a plain <code>TEXT</code> column storing <code>YYYY-MM-DD</code> &mdash; an equality check against <code>date.today().isoformat()</code> is unambiguous and requires no parsing. Added as a nullable column via <code>ALTER TABLE</code> migration so old rows fall back to <code>created_at</code> via <code>COALESCE(analysis_date, created_at)</code>.</p>
+
+<h3>Why tag with [TODAY] / [STALE] in the injected context instead of a code-level gate?</h3>
+<p>A code-level gate (returning early before calling the LLM) would be faster, but it removes the LLM&rsquo;s ability to reason about context &mdash; a user asking a follow-up question about the same ticker on the same day may warrant a different answer even with the same recommendation. Tagging lets the LLM decide: <code>[TODAY]</code> says &ldquo;you may use this directly&rdquo;; <code>[STALE]</code> says &ldquo;call agents, treat this as background only.&rdquo; The instruction is reinforced in both the injected user message and the system preamble (<code>_STATIC_PREAMBLE</code>) for reliability.</p>
+
+<h3>Why skip <code>_store_memory()</code> on [TODAY] responses?</h3>
+<p>Every call to <code>_store_memory()</code> inserts a new row into <code>ticker_briefs</code>. Without the guard, a stock queried ten times in a day produces ten identical rows, inflating the DB and returning redundant context on the next query. Since same-day responses are served from an already-stored brief, re-storing is pure duplication. The guard checks for <code>"[TODAY"</code> in the augmented <code>user_input</code> string &mdash; one string check, no extra DB query.</p>
+
+<h2>Unified db/ Folder</h2>
+
+<h3>Why consolidate all databases under db/ instead of keeping them at the project root?</h3>
+<p>Three separate DB files (<code>finsight_memory.db</code>, <code>.langchain_cache.db</code>, <code>chroma_db/</code>) were scattered at the project root, requiring three separate <code>.gitignore</code> entries and making it easy to miss one. A single <code>db/</code> folder with one ignore rule (<code>db/</code>) is easier to reason about, simpler to back up or wipe, and keeps the project root clean. The folder is created automatically on first run &mdash; no setup step required.</p>
+
 <h2>Guardrails</h2>
 
 <h3>Why a regex off-topic filter instead of an LLM classifier?</h3>

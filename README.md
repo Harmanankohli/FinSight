@@ -131,7 +131,7 @@ uv run python -m uvicorn agent_3_langgraph.server:app --host 0.0.0.0 --port 8003
 uv run python -m uvicorn agent_4_crewai.server:app --host 0.0.0.0 --port 8004
 
 # Terminal 5: ADK Web UI
-uv run adk web --port 8080 --session_service_uri sqlite://./finsight_memory.db --memory_service_uri finsight:// agents
+uv run adk web --port 8080 --session_service_uri sqlite://./db/finsight_memory.db --memory_service_uri finsight:// agents
 ```
 
 **Startup order:** LM Studio → MCP Server → RAG → Quant → Sentiment → ADK Web UI

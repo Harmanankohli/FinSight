@@ -113,7 +113,7 @@ Triggered from `after_agent_callback` (ADK Web path) — see step 9 above. Fires
 | Framework | LlamaIndex |
 | Executor | `GenericAgentExecutor(RAGAgent)` |
 | LLM | LM Studio via `llama-index-llms-openai-like` |
-| Vector Store | ChromaDB (local, persisted to `./chroma_db`) |
+| Vector Store | ChromaDB (local, persisted to `./db/chroma_db`) |
 | Embeddings | HuggingFace `all-MiniLM-L6-v2` (local) |
 | Port | 8002 |
 | Agent Card | Built programmatically in `agent_2_llamaindex/server.py` |

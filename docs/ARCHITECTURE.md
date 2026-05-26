@@ -152,7 +152,7 @@ Three independent caching tiers reduce latency and external API load:
 
 ### LangChain SQLiteCache (Tier 1B)
 
-`agent_3_langgraph/nodes.py` sets `SQLiteCache(database_path=".langchain_cache.db")` before the `ChatOpenAI` instance is used in `llm_summary_node`. Identical ticker+metrics inputs reuse cached LLM output without an LM Studio round-trip.
+`agent_3_langgraph/nodes.py` sets `SQLiteCache(database_path="db/.langchain_cache.db")` before the `ChatOpenAI` instance is used in `llm_summary_node`. Identical ticker+metrics inputs reuse cached LLM output without an LM Studio round-trip.
 
 ### Semantic Cache (Tier 1D)
 
@@ -330,7 +330,7 @@ The memory layer provides persistent session storage and cross-session memory re
 `DatabaseSessionService` (ADK native) replaces `InMemorySessionService`:
 
 ```python
-DatabaseSessionService(db_url="sqlite+aiosqlite:///./finsight_memory.db")
+DatabaseSessionService(db_url="sqlite+aiosqlite:///./db/finsight_memory.db")
 ```
 
 All conversation events (user messages, agent responses, tool calls) are persisted to SQLite tables (`sessions`, `events`). Conversations survive server restarts.
@@ -340,18 +340,21 @@ All conversation events (user messages, agent responses, tool calls) are persist
 Before each query, the executor injects memory context into the user message:
 
 ```
-User Query → Executor._inject_memory_context(query)
+User Query → Executor._build_memory_context(query)
   ├── extract_ticker(query) → "NVDA"
-  ├── TickerMemory.get_latest("NVDA") → last recommendation
+  ├── TickerMemory.get_latest("NVDA") → last brief (with analysis_date)
+  ├── Compare analysis_date with today
+  │     [TODAY]  → tag as current; LLM may return directly
+  │     [STALE]  → tag as outdated; LLM MUST call all agents fresh
   ├── PortfolioStore.get() → current holdings
   └── Prepend: [MEMORY CONTEXT] ... [/MEMORY CONTEXT]
        → Runner receives augmented query
 ```
 
 The memory context is compact (~300 tokens) and includes:
-- Latest recommendation for the queried ticker (if exists)
+- Latest recommendation tagged `[TODAY]` or `[STALE]` based on `analysis_date`
 - Current portfolio holdings (labelled as background reference — not forwarded to sub-agents unless user explicitly requests portfolio analysis)
-- Timestamp of last interaction
+- When serving a `[TODAY]` response, `_store_memory()` is skipped to prevent duplicate records
 
 ### Component Architecture
 
@@ -402,7 +405,7 @@ setup_file_logging("orchestrator")  # → logs/orchestrator.log
 ```sql
 sessions (id, user_id, created_at, updated_at)
 events (id, session_id, event_type, data, created_at)
-ticker_briefs (id, ticker, recommendation, confidence, response_text, created_at)
+ticker_briefs (id, ticker, recommendation, confidence, response_text, created_at, analysis_date)
 user_profiles (id, user_id, holdings_json, risk_profile, investment_horizon, updated_at)
 recommendation_records (id, ticker, recommendation, confidence, price_at_rec, created_at,
                         evaluated_at, realized_return)
@@ -513,8 +516,11 @@ The LLM can call `load_memory(query="What did I ask about NVDA last week?")` to 
 | `agent_1_adk/agent_executor.py` | Memory context injection, auto-save, `_add_to_memory` |
 | `agent_1_adk/agent.py` | System prompt includes memory usage instructions |
 
-### Database File
+### Database Files
 
-- Location: `finsight_memory.db` at project root
-- Excluded from git via `.gitignore`
-- Auto-created on first use with schema migration
+All databases are stored under the `db/` folder at the project root — the entire folder is excluded from git via `.gitignore`.
+
+- `db/finsight_memory.db` — session, memory, ticker briefs, portfolios, performance records
+- `db/chroma_db/` — ChromaDB vector store for SEC filing RAG and semantic cache
+- `db/.langchain_cache.db` — LangChain SQLiteCache for quant agent LLM responses
+- Auto-created on first run; `db/` directory created by `get_db()` via `path.parent.mkdir(parents=True, exist_ok=True)`

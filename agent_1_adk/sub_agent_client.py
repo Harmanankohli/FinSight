@@ -268,19 +268,6 @@ class SubAgentClient:
 
         latency_ms = round((time.monotonic() - t0) * 1000)
 
-        # Emit per-agent latency as a Langfuse span
-        try:
-            lf = get_langfuse_client()
-            lf.observation(
-                as_type="span",
-                name=f"sub-agent-{agent_name}",
-                input={"task": task_str[:200]},
-                output={"response": result_text[:200]},
-                metadata={"latency_ms": latency_ms, "agent": agent_name},
-            )
-        except Exception:
-            pass
-
         # Record trace for RAGAS evaluation when enabled
         if _EVAL_TRACE_ENABLED:
             try:

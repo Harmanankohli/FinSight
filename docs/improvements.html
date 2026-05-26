@@ -110,7 +110,7 @@ Offline evaluation:
 <p><span class="badge green">Expected speedup</span> Second identical query: ~8s → &lt;200ms for cached tools.</p>
 
 <h3>1B. LangChain SQLiteCache</h3>
-<p>Activated <code>SQLiteCache</code> in <code>agent_3_langgraph/nodes.py</code> at module load time. The <code>llm_summary_node</code> is the only LangChain LLM call in the quant graph; identical ticker+metrics inputs now reuse the cached response from <code>.langchain_cache.db</code>.</p>
+<p>Activated <code>SQLiteCache</code> in <code>agent_3_langgraph/nodes.py</code> at module load time. The <code>llm_summary_node</code> is the only LangChain LLM call in the quant graph; identical ticker+metrics inputs now reuse the cached response from <code>db/.langchain_cache.db</code>.</p>
 
 <h3>1C. KV Cache Prompt Prefix Optimization</h3>
 <p>Extracted the static PROCEDURE block from <code>_build_instruction()</code> in <code>agent_1_adk/agent.py</code> into a module-level constant <code>_STATIC_PREAMBLE</code>. The dynamic tail (today's date + agent list) is now the only part that changes between calls. LM Studio's KV cache keyed on the token prefix can now reuse ~85% of the prompt tokens on repeated queries.</p>

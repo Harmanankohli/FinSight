@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import re
+import uuid
 
 from a2a.helpers import (
     new_task_from_user_message,
@@ -169,23 +170,14 @@ class FinSightAgentExecutor(AgentExecutor):
             parts=[types.Part.from_text(text=user_input)],
         )
 
-        root_trace = langfuse.trace(
-            name="finsight-query",
-            session_id=context_id,
-            user_id=user_id,
-            input={"query": user_input},
-            metadata={
-                "ticker": ticker_hint,
-                "context_id": context_id,
-            },
-            tags=["finsight", "investment-query"],
-        )
+        trace_id = str(uuid.uuid4())
 
         with langfuse.start_as_current_observation(
             as_type="span",
-            name="orchestrator-execute",
-            trace_id=root_trace.id,
-            input=user_input,
+            name="finsight-query",
+            trace_context={"trace_id": trace_id},
+            input={"query": user_input},
+            metadata={"ticker": ticker_hint, "context_id": context_id},
         ) as span:
             with propagate_attributes(session_id=context_id, user_id=user_id):
                 collected_events: list = []
@@ -202,7 +194,7 @@ class FinSightAgentExecutor(AgentExecutor):
 
                     if final_event:
                         await self._process_response(
-                            final_event, updater, task, span, root_trace,
+                            final_event, updater, task, span, trace_id,
                             user_input, user_id, original_input,
                         )
                         logger.info("Collected %d events, calling _add_events_to_memory", len(collected_events))
@@ -228,7 +220,7 @@ class FinSightAgentExecutor(AgentExecutor):
                     )
 
     async def _process_response(
-        self, event, updater: TaskUpdater, task, span=None, root_trace=None,
+        self, event, updater: TaskUpdater, task, span=None, trace_id=None,
         user_input: str = "", user_id: str = "", original_input: str = "",
     ) -> None:
         if not (
@@ -265,21 +257,18 @@ class FinSightAgentExecutor(AgentExecutor):
 
         if span:
             span.update(output={"response": text[:2000]})
-        if root_trace:
-            root_trace.update(
-                output={"synthesis": text[:2000]},
-                metadata={"completed": True},
-            )
+            span.update(output={"synthesis": text[:2000]}, metadata={"completed": True})
 
-        asyncio.create_task(
-            self._store_memory(user_input, text, task.context_id, user_id)
-        )
+        if "[TODAY" not in user_input:
+            asyncio.create_task(
+                self._store_memory(user_input, text, task.context_id, user_id)
+            )
         if EVAL_ENABLED:
             asyncio.create_task(
                 _eval_score_response(
                     original_input or user_input,
                     text,
-                    root_trace.id if root_trace else None,
+                    trace_id,
                 )
             )
 
@@ -364,6 +353,7 @@ class FinSightAgentExecutor(AgentExecutor):
 
     async def _build_memory_context(self, user_input: str, user_id: str) -> str:
         """Build compact memory context for prompt injection."""
+        from datetime import date as _date
         from shared.memory import PortfolioStore, TickerMemory
         from shared.ticker_utils import extract_ticker
 
@@ -372,9 +362,24 @@ class FinSightAgentExecutor(AgentExecutor):
 
         if ticker:
             tm = TickerMemory()
-            context = await tm.format_context(ticker, max_tokens=300)
-            if context:
-                parts.append(context)
+            latest = await tm.get_latest(ticker, user_id=user_id)
+            if latest:
+                context = await tm.format_context(ticker, max_tokens=300)
+                if context:
+                    # Prefer explicit analysis_date; fall back to created_at for old rows
+                    analysis_date = latest.get("analysis_date")
+                    if not analysis_date:
+                        raw = latest["created_at"]
+                        analysis_date = raw.split("T")[0] if "T" in raw else raw[:10]
+                    today = _date.today().isoformat()
+                    if analysis_date == today:
+                        parts.append(f"[TODAY — analysis is current, you may return it directly without calling agents again] {context}")
+                    else:
+                        parts.append(
+                            f"[STALE — analyzed on {analysis_date}, today is {today}. "
+                            f"You MUST call ALL agents for a fresh analysis before responding. "
+                            f"Do NOT return this as the current recommendation.] {context}"
+                        )
 
         ps = PortfolioStore()
         holdings = await ps.get_holdings(user_id)

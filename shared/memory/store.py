@@ -9,7 +9,7 @@ from pathlib import Path
 
 import aiosqlite
 
-DB_PATH = Path(__file__).resolve().parent.parent.parent / "finsight_memory.db"
+DB_PATH = Path(__file__).resolve().parent.parent.parent / "db" / "finsight_memory.db"
 
 SCHEMA_VERSION = 2
 
@@ -108,6 +108,13 @@ async def init_db(conn: aiosqlite.Connection) -> None:
     # Migration: add search_text column if missing
     try:
         await conn.execute("ALTER TABLE memory_entries ADD COLUMN search_text TEXT NOT NULL DEFAULT ''")
+        await conn.commit()
+    except Exception:
+        pass  # Column already exists
+
+    # Migration: add analysis_date column to ticker_briefs if missing
+    try:
+        await conn.execute("ALTER TABLE ticker_briefs ADD COLUMN analysis_date TEXT")
         await conn.commit()
     except Exception:
         pass  # Column already exists

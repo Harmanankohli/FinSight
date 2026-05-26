@@ -75,7 +75,7 @@ agent_card = AgentCard(
 task_store = InMemoryTaskStore()
 
 session_service = DatabaseSessionService(
-    db_url="sqlite+aiosqlite:///./finsight_memory.db"
+    db_url="sqlite+aiosqlite:///./db/finsight_memory.db"
 )
 memory_service = SQLiteMemoryService()
 

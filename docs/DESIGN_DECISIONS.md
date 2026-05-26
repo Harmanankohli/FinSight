@@ -24,6 +24,30 @@ ChromaDB is already running in the same process for RAG. `all-MiniLM-L6-v2` is a
 
 **Why opt-in (`SEMANTIC_CACHE_ENABLED=false`)?** The semantic cache is stateful — a cached stale recommendation from yesterday might mislead a user. Off by default so developers consciously enable it in environments where TTL staleness is acceptable.
 
+## Same-Day Memory Cache & analysis_date Column
+
+### Why check the date before re-running agents?
+
+Market data (prices, news sentiment) changes daily. A recommendation from yesterday may be wrong today. However, re-running all three sub-agents for every query on the same stock within the same day wastes 30–60 seconds of LLM inference and MCP calls when the underlying data has not changed since the last run. The same-day cache gives users instant responses for repeat queries while guaranteeing a fresh agent run the next day.
+
+### Why a separate `analysis_date` column instead of parsing `created_at`?
+
+`created_at` stores a full UTC ISO-8601 timestamp (`2024-01-15T14:32:00`). Comparing it to today requires string slicing and timezone handling that is fragile across platforms and SQLite versions. `analysis_date` is a plain `TEXT` column storing `YYYY-MM-DD` — an equality check against `date.today().isoformat()` is unambiguous and requires no parsing. Added as a nullable column via `ALTER TABLE` migration so old rows fall back to `created_at` via `COALESCE(analysis_date, created_at)`.
+
+### Why tag with [TODAY] / [STALE] in the injected context instead of a hard code gate?
+
+A hard code gate (returning early before calling the LLM) would be faster, but it removes the LLM's ability to reason about context — a user asking a follow-up question about the same ticker on the same day may warrant a different answer even with the same recommendation. Tagging lets the LLM decide: `[TODAY]` says "you may use this directly"; `[STALE]` says "call agents, treat this as background only." The instruction is reinforced in both the injected user message and the system preamble (`_STATIC_PREAMBLE`) for reliability.
+
+### Why skip `_store_memory()` on [TODAY] responses?
+
+Every call to `_store_memory()` inserts a new row into `ticker_briefs`. Without the guard, a stock queried ten times in a day produces ten identical rows, inflating the DB and returning redundant context on the next query. Since same-day responses are served from an already-stored brief, re-storing is pure duplication. The guard checks for `"[TODAY"` in the augmented `user_input` string — one string check, no extra DB query.
+
+## Unified db/ Folder
+
+### Why consolidate all databases under db/ instead of keeping them at the project root?
+
+Three separate DB files (`finsight_memory.db`, `.langchain_cache.db`, `chroma_db/`) were scattered at the project root, requiring three separate `.gitignore` entries and making it easy to miss one. A single `db/` folder with one ignore rule (`db/`) is easier to reason about, simpler to back up or wipe, and keeps the project root clean. The folder is created automatically on first run — no setup step required.
+
 ## Guardrails
 
 ### Why a regex off-topic filter instead of an LLM classifier?
