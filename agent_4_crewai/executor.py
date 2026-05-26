@@ -5,7 +5,7 @@ from collections.abc import AsyncIterable
 
 from shared.base_agent import BaseAgent
 from shared.mcp_client import MCPClient, MCPServerConfig
-from shared.config import MCP_SERVER_URL, MCP_TIMEOUT
+from shared.config import MCP_SERVER_URL, MCP_TIMEOUT, EVAL_ENABLED
 from shared.observability import get_langfuse_client
 from shared.runtime_eval import score_sentiment_response as _eval_sentiment_response
 from shared.ticker_utils import extract_ticker, validate_ticker_via_mcp, resolve_ticker_via_mcp
@@ -45,6 +45,7 @@ class SentimentAgent(BaseAgent):
                 self._connected = False
 
     async def _collect_data_parallel(self, ticker: str) -> dict:
+        # Concurrent fetch: fires news sentiment and SEC filings requests in parallel via asyncio.gather
         results = {}
 
         async def call(tool, args):
@@ -76,6 +77,7 @@ class SentimentAgent(BaseAgent):
         return results
 
     async def analyze(self, ticker: str, query_text: str) -> dict:
+        # Orchestration: parallel data collection → CrewAI analysis → extract contexts for RAGAS eval
         data = await self._collect_data_parallel(ticker)
         logger.info("Collected data for %s: %s", ticker, list(data.keys()))
         crew_builder = SentimentIntelligenceCrew(self._wrapper)
@@ -104,6 +106,12 @@ class SentimentAgent(BaseAgent):
     async def stream(
         self, query: str, context_id: str, task_id: str
     ) -> AsyncIterable[dict]:
+        try:
+            yield await self._build_response(query)
+        finally:
+            await self._disconnect()
+
+    async def _build_response(self, query: str) -> dict:
         trace_id, parent_span_id, query = extract_trace_ids(query)
 
         langfuse = get_langfuse_client()
@@ -112,30 +120,24 @@ class SentimentAgent(BaseAgent):
             if trace_id and parent_span_id
             else None
         )
-        span = langfuse.start_observation(
+        with langfuse.start_as_current_observation(
             as_type="span",
             name="sentiment-agent-stream",
             input=query,
             trace_context=trace_ctx,
-        )
-        try:
+        ) as span:
             ticker = extract_ticker(query)
             resolved = False
 
             if not ticker:
-                ticker, _ = await self._resolve_ticker(query)
-                resolved = True
-
-            if not ticker:
                 span.update(output={"error": "No ticker found"})
-                yield {
+                return {
                     "response_type": "text",
                     "is_task_complete": True,
                     "is_error": True,
                     "require_user_input": False,
                     "content": "Could not identify a stock ticker from the query. Try using parentheses (AAPL) or $ prefix ($V).",
                 }
-                return
 
             valid, validated_ticker, company = await self._validate_ticker(ticker)
             if not valid and not resolved:
@@ -145,14 +147,13 @@ class SentimentAgent(BaseAgent):
 
             if not valid:
                 span.update(output={"error": f"Invalid ticker: {ticker}"})
-                yield {
+                return {
                     "response_type": "text",
                     "is_task_complete": True,
                     "is_error": True,
                     "require_user_input": False,
                     "content": f"Ticker '{ticker}' is not valid. Error: {company}",
                 }
-                return
 
             ticker = validated_ticker
 
@@ -170,15 +171,16 @@ class SentimentAgent(BaseAgent):
                     or result.get("analysis")
                     or json.dumps(result, indent=2)
                 )
-                asyncio.create_task(
-                    _eval_sentiment_response(
-                        query,
-                        narrative,
-                        contexts,
-                        trace_id,
+                if EVAL_ENABLED:
+                    asyncio.create_task(
+                        _eval_sentiment_response(
+                            query,
+                            narrative,
+                            contexts,
+                            trace_id,
+                        )
                     )
-                )
-                yield {
+                return {
                     "response_type": "data",
                     "is_task_complete": True,
                     "require_user_input": False,
@@ -187,21 +189,17 @@ class SentimentAgent(BaseAgent):
             except Exception as e:
                 logger.exception("Sentiment analysis failed")
                 span.update(output={"error": str(e)})
-                yield {
+                return {
                     "response_type": "text",
                     "is_task_complete": True,
                     "is_error": True,
                     "require_user_input": False,
                     "content": f"Sentiment analysis failed: {e}",
                 }
-        finally:
-            span.end()
-            # Gracefully disconnect MCP client after stream completes
-            await self._disconnect()
 
 
 def _extract_sentiment_contexts(data: dict) -> list[str]:
-    """Convert pre-fetched news/filing data into text strings for RAGAS Faithfulness."""
+    # Builds RAGAS faithfulness inputs: flat text strings from news articles and filing descriptions
     contexts: list[str] = []
 
     news = data.get("news", {})

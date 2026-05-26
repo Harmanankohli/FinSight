@@ -1,7 +1,16 @@
+"""Central configuration — all env vars read at import time.
+
+Defaults target local development with LM Studio (port 1234).
+"""
 import os
 import sys
+from datetime import timezone, timedelta
 from pathlib import Path
 
+# Indian Standard Time (UTC+5:30) — used throughout for timestamps
+IST = timezone(timedelta(hours=5, minutes=30), name="IST")
+
+# Load .env from project root before any config reads
 _dotenv_path = Path(__file__).resolve().parent.parent / ".env"
 if _dotenv_path.exists():
     try:
@@ -26,39 +35,40 @@ for _stream in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-# LLM (LM Studio / OpenAI-compatible local)
+# ── LLM (LM Studio / OpenAI-compatible local) ─────────────────────────────
 LLM_MODEL = os.environ.get("LLM_MODEL", "gpt-oss-20b")
 LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "http://localhost:1234/v1")
 ADK_MODEL = os.environ.get("ADK_MODEL", "openai/gpt-oss-20b")
 
-# Embedding
+# ── Embedding ─────────────────────────────────────────────────────────────
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "all-MiniLM-L6-v2")
 RERANKER_MODEL = os.environ.get("RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2")
 
-# Host
+# ── Host ──────────────────────────────────────────────────────────────────
 HOST = os.environ.get("HOST", "localhost")
 
-# Agent discovery
+# ── Agent discovery (A2A sub-agent URLs, comma-separated) ────────────────
 AGENT_SEED_URLS = os.environ.get("AGENT_SEED_URLS", "http://localhost:8002,http://localhost:8003,http://localhost:8004")
 
-# MCP
+# ── MCP (Model Context Protocol) ─────────────────────────────────────────
 MCP_TIMEOUT = float(os.environ.get("MCP_TIMEOUT", "30.0"))
 MCP_MAX_RETRIES = int(os.environ.get("MCP_MAX_RETRIES", "3"))
 A2A_TIMEOUT = float(os.environ.get("A2A_TIMEOUT", "180.0"))
-CHROMA_DIR = os.environ.get("CHROMA_DIR", "./chroma_db")
+CHROMA_DIR = os.environ.get("CHROMA_DIR", "./db/chroma_db")
 MCP_SERVER_URL = os.environ.get("MCP_SERVER_URL", "http://localhost:8010/sse")
 MCP_SERVER_PORT = int(os.environ.get("MCP_SERVER_PORT", "8010"))
-
-# Agent Registry (MCP-based discovery, hosted on the unified finsight MCP server)
 AGENT_REGISTRY_URL = os.environ.get("AGENT_REGISTRY_URL", "http://localhost:8010")
 
-# Langfuse
+# ── Langfuse (observability / tracing) ───────────────────────────────────
 LANGFUSE_PUBLIC_KEY = os.environ.get("LANGFUSE_PUBLIC_KEY", "pk-lf-...")
 LANGFUSE_SECRET_KEY = os.environ.get("LANGFUSE_SECRET_KEY", "sk-lf-...")
 LANGFUSE_HOST = os.environ.get("LANGFUSE_BASE_URL") or os.environ.get("LANGFUSE_HOST", "https://cloud.langfuse.com")
 
-# SEC
+# ── SEC EDGAR ─────────────────────────────────────────────────────────────
 SEC_API_BASE = os.environ.get("SEC_API_BASE", "https://www.sec.gov")
+
+# ── Feature flags ─────────────────────────────────────────────────────────
+EVAL_ENABLED = os.environ.get("EVAL_TRACE_ENABLED", "true").lower() == "true"
 
 
 def validate() -> None:

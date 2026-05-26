@@ -28,7 +28,7 @@ FinSight is a multi-agent investment research system where four specialized agen
 
 ## Orchestrator Architecture
 
-The orchestrator (`agent_1_adk/`) uses a single `LlmAgent` with one `send_message` tool that delegates to sub-agents via A2A:
+The orchestrator (`agent_1_adk/`) uses a single `LlmAgent` with one `send_message` tool that delegates to sub-agents via A2A. Two parallel cache paths can short-circuit the LLM entirely on same-day repeat queries:
 
 ```
 Module load → SubAgentClient.discover()
@@ -37,13 +37,20 @@ Module load → SubAgentClient.discover()
   └── self.agents populated → instruction updated
 
 A2A Request → FinSightAgentExecutor.execute()
+  → _get_today_cached_text(ticker)  — [CACHE: return today brief if exists]
+  → _build_memory_context(query)    — inject [MEMORY CONTEXT] with [TODAY]/[STALE] tag
   → RUNNER.run_async(user_query)
   → LlmAgent (no pre-fetch)
+    → before_agent_callback: _memory_cache_callback  — [CACHE: return types.Content if today brief exists]
     → LLM calls send_message(agent_name, task) for each agent
     → SubAgentClient → A2A task to sub-agent
     → SubAgentClient → A2A response (text or data parts)
     → LLM calls next agent
     → LLM synthesizes BUY/HOLD/SELL
+  → after_agent_callback: _persist_memory_callback
+    → add_events_to_memory()
+    → update_response_text() — overwrite brief rationale with full analysis
+    → if EVAL_ENABLED: score_response()
   → COMPLETED with synthesis
 ```
 
@@ -152,7 +159,7 @@ Three independent caching tiers reduce latency and external API load:
 
 ### LangChain SQLiteCache (Tier 1B)
 
-`agent_3_langgraph/nodes.py` sets `SQLiteCache(database_path=".langchain_cache.db")` before the `ChatOpenAI` instance is used in `llm_summary_node`. Identical ticker+metrics inputs reuse cached LLM output without an LM Studio round-trip.
+`agent_3_langgraph/nodes.py` sets `SQLiteCache(database_path="db/.langchain_cache.db")` before the `ChatOpenAI` instance is used in `llm_summary_node`. Identical ticker+metrics inputs reuse cached LLM output without an LM Studio round-trip.
 
 ### Semantic Cache (Tier 1D)
 
@@ -330,28 +337,45 @@ The memory layer provides persistent session storage and cross-session memory re
 `DatabaseSessionService` (ADK native) replaces `InMemorySessionService`:
 
 ```python
-DatabaseSessionService(db_url="sqlite+aiosqlite:///./finsight_memory.db")
+DatabaseSessionService(db_url="sqlite+aiosqlite:///./db/finsight_memory.db")
 ```
 
 All conversation events (user messages, agent responses, tool calls) are persisted to SQLite tables (`sessions`, `events`). Conversations survive server restarts.
 
+### Timezone
+
+All datetime operations use **IST (UTC+5:30)**, defined as `IST = timezone(timedelta(hours=5, minutes=30), name="IST")` in `shared/config.py`. This applies to agent timestamps, memory created_at fields, analysis_date comparisons, and performance evaluation timestamps. Previously mixed UTC/local timestamps caused same-day cache mismatches on non-IST machines.
+
+### Memory Cache Callback (before_agent_callback)
+
+The fastest same-day cache path is the `before_agent_callback` registered as `root_agent.before_agent_callback = _memory_cache_callback`. It fires before the LLM runs, extracts the user's ticker from session events, and if today's brief has a valid `response_text`, returns `types.Content(role="model", parts=[...])` — the ADK runner accepts this as the agent response and skips the LLM entirely. This completes in ~200ms vs 30-60s for a full agent run.
+
+The executor-level path (`agent_1_adk/agent_executor.py`) has a parallel check via `_get_today_cached_text()` for A2A requests.
+
+### Response Text Overwrite
+
+After the agent turn completes, `_persist_memory_callback` calls `TickerMemory.update_response_text(record_id, full_response)`. This overwrites the short `save_brief` rationale (an LLM-written summary) with the full synthesized analysis text. The same-day cache callback reads this `response_text`, so subsequent same-day queries return the rich analysis rather than an abbreviated rationale.
+
 ### Memory Context Injection
 
-Before each query, the executor injects memory context into the user message:
+When the cache callback misses (no today brief), the executor injects memory context into the user message:
 
 ```
-User Query → Executor._inject_memory_context(query)
+User Query → Executor._build_memory_context(query)
   ├── extract_ticker(query) → "NVDA"
-  ├── TickerMemory.get_latest("NVDA") → last recommendation
+  ├── TickerMemory.get_latest("NVDA") → last brief (with analysis_date)
+  ├── Compare analysis_date with today
+  │     [TODAY]  → tag as current; LLM MUST return directly (strict directive)
+  │     [STALE]  → tag as outdated; LLM MUST call all agents fresh
   ├── PortfolioStore.get() → current holdings
   └── Prepend: [MEMORY CONTEXT] ... [/MEMORY CONTEXT]
        → Runner receives augmented query
 ```
 
 The memory context is compact (~300 tokens) and includes:
-- Latest recommendation for the queried ticker (if exists)
+- Latest recommendation for the queried ticker tagged `[TODAY]` or `[STALE]` based on `analysis_date`
 - Current portfolio holdings (labelled as background reference — not forwarded to sub-agents unless user explicitly requests portfolio analysis)
-- Timestamp of last interaction
+- When serving from today's cache (`[TODAY]`), the response is **not** re-saved to memory to prevent duplicate records
 
 ### Component Architecture
 
@@ -402,7 +426,7 @@ setup_file_logging("orchestrator")  # → logs/orchestrator.log
 ```sql
 sessions (id, user_id, created_at, updated_at)
 events (id, session_id, event_type, data, created_at)
-ticker_briefs (id, ticker, recommendation, confidence, response_text, created_at)
+ticker_briefs (id, ticker, recommendation, confidence, response_text, created_at, analysis_date)
 user_profiles (id, user_id, holdings_json, risk_profile, investment_horizon, updated_at)
 recommendation_records (id, ticker, recommendation, confidence, price_at_rec, created_at,
                         evaluated_at, realized_return)
@@ -419,6 +443,16 @@ ingested_filings (edgar_url PRIMARY KEY, ticker, ingested_at)  -- v1.18
 ## Runtime RAGAS Evaluation
 
 After each agent produces a response, a fire-and-forget background task scores it using RAGAS metrics that require no ground-truth reference. Scores are pushed to Langfuse per-trace (linked by `trace_id`).
+
+### Feature flag
+
+All sidecar evals are gated by `EVAL_TRACE_ENABLED` in `.env` (default `True`). The flag is exposed as `EVAL_ENABLED` in `shared/config.py`; every agent's `asyncio.create_task(_eval_*)` call site checks it. Set `EVAL_TRACE_ENABLED=False` to disable all per-agent runtime scoring with no code changes — useful for fast iteration when LM Studio judge calls add 5–180s of background work per query.
+
+### Orchestrator eval hook lives in `after_agent_callback`
+
+When the orchestrator runs through `adk web` (the path `run_adk_web.bat` uses), the ADK Web runner is responsible — `FinSightAgentExecutor` is never invoked. The orchestrator's eval is therefore scheduled from `agents/finsight_agent/agent.py`'s `_persist_memory_callback`, not from `agent_executor.py`. The callback first runs `_is_analysis_turn(session.events)`: if `save_brief` was not called in this turn (e.g. the user only asked "what were my last recommendations?"), both memory persist and eval are skipped to avoid polluting long-term memory with conversational queries.
+
+`FinSightAgentExecutor` still keeps its eval call for completeness — it fires when an A2A client hits `agent_1_adk/main.py` directly. The A2A server is not started by `run_adk_web.bat` by default; start it manually with `uv run python -m agent_1_adk.main` if needed.
 
 | Agent | Background Task | Metrics | Why Each Metric | Data Required |
 |---|---|---|---|---|---|
@@ -452,6 +486,8 @@ The `AsyncOpenAI` client uses a 180-second timeout (up from 60s) — Faithfulnes
 ### Langfuse Integration
 
 `_push_scores()` pushes each metric to `langfuse.create_score()` linked by `trace_id`. When `trace_id` is None (no active Langfuse trace), the push is skipped entirely to avoid "Bad request" errors from the cloud API with placeholder keys.
+
+**Score namespacing by agent** — each score is pushed as `ragas/{agent}/{metric}` (e.g. `ragas/orchestrator/AnswerRelevancy`, `ragas/rag/Faithfulness`, `ragas/quant/FactualCorrectness`, `ragas/sentiment/catalyst_identification`). The previous flat `ragas/{metric}` naming made it impossible to distinguish the same metric across agents in Langfuse. Each `lf.create_score()` call also carries `comment="agent=<name>"` for additional structured filtering.
 
 ### LM Studio Compatibility
 
@@ -501,8 +537,12 @@ The LLM can call `load_memory(query="What did I ask about NVDA last week?")` to 
 | `agent_1_adk/agent_executor.py` | Memory context injection, auto-save, `_add_to_memory` |
 | `agent_1_adk/agent.py` | System prompt includes memory usage instructions |
 
-### Database File
+### Database Files
 
-- Location: `finsight_memory.db` at project root
-- Excluded from git via `.gitignore`
-- Auto-created on first use with schema migration
+All databases are stored under the `db/` folder at the project root — the entire folder is excluded from git via `.gitignore`.
+
+- `db/finsight_memory.db` — ticker briefs, portfolios, performance records, ingested filings
+- `db/adk_sessions.db` — ADK conversation sessions and events (separated from memory data in v1.24 to prevent schema conflicts)
+- `db/chroma_db/` — ChromaDB vector store for SEC filing RAG and semantic cache
+- `db/.langchain_cache.db` — LangChain SQLiteCache for quant agent LLM responses
+- All files auto-created on first run; `db/` directory created by `get_db()` via `path.parent.mkdir(parents=True, exist_ok=True)`

@@ -6,7 +6,7 @@ from datetime import date, datetime, timezone
 
 from shared.base_agent import BaseAgent
 from shared.mcp_client import MCPClient, MCPServerConfig
-from shared.config import MCP_SERVER_URL
+from shared.config import MCP_SERVER_URL, EVAL_ENABLED
 from shared.memory.store import is_filing_ingested, mark_filing_ingested
 from shared.observability import get_langfuse_client
 from shared.runtime_eval import score_rag_response as _eval_rag_response
@@ -32,6 +32,7 @@ class RAGAgent(BaseAgent):
         self._last_ingestion: dict[str, date] = {}
 
     async def _ensure_ingested(self, ticker: str) -> None:
+        # Daily dedup: skip if already ingested today (avoids re-fetching filings every call)
         today = datetime.now(timezone.utc).date()
         if self._last_ingestion.get(ticker) == today:
             return
@@ -59,6 +60,7 @@ class RAGAgent(BaseAgent):
                         for filing in filings:
                             edgar_url = filing.get("edgar_url")
                             ix_url = filing.get("ix_url")
+                            # Skip filings already ingested (persistent dedup across restarts)
                             if edgar_url and await is_filing_ingested(edgar_url):
                                 logger.debug("Skipping already-ingested filing: %s", edgar_url[:80])
                                 continue
@@ -100,6 +102,7 @@ class RAGAgent(BaseAgent):
             logger.warning("Auto-ingest failed for %s: %s", ticker, e)
 
     async def query(self, ticker: str, query_text: str) -> dict:
+        # Main entry point: auto-ingest today's filings then query ChromaDB via LlamaIndex
         await self._ensure_ingested(ticker)
         return await self.index.query(ticker, query_text)
 
@@ -148,6 +151,12 @@ class RAGAgent(BaseAgent):
     async def stream(
         self, query: str, context_id: str, task_id: str
     ) -> AsyncIterable[dict]:
+        try:
+            yield await self._build_response(query)
+        finally:
+            await self._disconnect()
+
+    async def _build_response(self, query: str) -> dict:
         trace_id, parent_span_id, query = extract_trace_ids(query)
 
         langfuse = get_langfuse_client()
@@ -156,13 +165,13 @@ class RAGAgent(BaseAgent):
             if trace_id and parent_span_id
             else None
         )
-        span = langfuse.start_observation(
+        with langfuse.start_as_current_observation(
             as_type="span",
             name="rag-agent-stream",
             input=query,
             trace_context=trace_ctx,
-        )
-        try:
+        ) as span:
+            # Fallback chain: regex extract → MCP resolve → MCP validate
             ticker = extract_ticker(query)
             resolved = False
 
@@ -172,14 +181,13 @@ class RAGAgent(BaseAgent):
 
             if not ticker:
                 span.update(output={"error": "No ticker found"})
-                yield {
+                return {
                     "response_type": "text",
                     "is_task_complete": True,
                     "is_error": True,
                     "require_user_input": False,
                     "content": "Could not identify a stock ticker from the query. Try using parentheses (AAPL) or $ prefix ($V).",
                 }
-                return
 
             valid, validated_ticker, company = await self._validate_ticker(ticker)
             if not valid and not resolved:
@@ -189,29 +197,29 @@ class RAGAgent(BaseAgent):
 
             if not valid:
                 span.update(output={"error": f"Invalid ticker: {ticker}"})
-                yield {
+                return {
                     "response_type": "text",
                     "is_task_complete": True,
                     "is_error": True,
                     "require_user_input": False,
                     "content": f"Ticker '{ticker}' is not valid. Error: {company}",
                 }
-                return
 
             ticker = validated_ticker
 
             try:
                 result = await self.query(ticker, query)
                 span.update(output={"ticker": ticker, "result_keys": list(result.keys()) if isinstance(result, dict) else "unknown"})
-                asyncio.create_task(
-                    _eval_rag_response(
-                        query,
-                        result.get("summary", ""),
-                        result.get("context_texts", []),
-                        trace_id,
+                if EVAL_ENABLED:
+                    asyncio.create_task(
+                        _eval_rag_response(
+                            query,
+                            result.get("summary", ""),
+                            result.get("context_texts", []),
+                            trace_id,
+                        )
                     )
-                )
-                yield {
+                return {
                     "response_type": "data",
                     "is_task_complete": True,
                     "require_user_input": False,
@@ -220,14 +228,10 @@ class RAGAgent(BaseAgent):
             except Exception as e:
                 logger.exception("RAG query failed")
                 span.update(output={"error": str(e)})
-                yield {
+                return {
                     "response_type": "text",
                     "is_task_complete": True,
                     "is_error": True,
                     "require_user_input": False,
                     "content": f"RAG analysis failed: {e}",
                 }
-        finally:
-            span.end()
-            # Gracefully disconnect MCP client after stream completes
-            await self._disconnect()

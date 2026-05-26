@@ -3,7 +3,7 @@ import json
 import logging
 import os
 import sys
-from datetime import date
+from datetime import date, datetime
 
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
@@ -12,9 +12,7 @@ from google.adk.agents import LlmAgent
 from google.adk.tools import load_memory
 from google.adk.tools.tool_context import ToolContext
 from google.genai import types as genai_types
-from langfuse import observe
-
-from shared.config import ADK_MODEL, LLM_BASE_URL
+from shared.config import ADK_MODEL, IST, LLM_BASE_URL
 from shared.observability import init_langfuse
 
 init_langfuse(service_name="orchestrator")
@@ -31,19 +29,21 @@ from .sub_agent_client import SubAgentClient
 _client = SubAgentClient()
 
 
-@observe(as_type="generation")
+# ADK tool function: delegates tasks to sub-agents via A2A
 async def send_message(
     agent_name: str, task: str, tool_context: ToolContext
 ) -> str:
     """Delegate a task to a specialized remote investment agent.
 
-    Call this for EACH agent listed under "Available agents" in your
-    instructions. Use the EXACT agent name from that list — do not
-    invent or guess names.
+    ONLY call this tool when agents are listed under "Available agents"
+    in your instructions. Call it for EACH listed agent. Use the EXACT
+    agent name from that list — never invent or guess names.
+
+    If no agents are listed, DO NOT call this tool — there are no agents.
 
     Args:
         agent_name: The exact name of the agent as listed under
-            "Available agents" in your instructions.
+            "Available agents" in your instructions. Never invent names.
         task: Full description of the analysis. MUST include the company's
             ticker symbol (e.g. "MA", "AAPL", "NVDA") in ALL CAPS somewhere
             in the task text. Use the SAME ticker for every agent.
@@ -51,6 +51,12 @@ async def send_message(
     Returns:
         The agent's analysis as text.
     """
+    if not _client.list_agents():
+        return json.dumps({
+            "error": "No agents are currently available. They may still be "
+                     "starting up. Do not call this tool — answer based on "
+                     "your own knowledge instead."
+        })
     resolved = _client.resolve_agent_name(agent_name)
     if resolved is None:
         valid = [a["name"] for a in _client.list_agents()]
@@ -62,7 +68,7 @@ async def send_message(
     return result
 
 
-@observe(as_type="generation")
+# Dedup: skip if brief for this ticker was already saved today
 async def save_brief(
     ticker: str,
     recommendation: str,
@@ -90,6 +96,17 @@ async def save_brief(
     user_id = tool_context.user_id if tool_context else "default_user"
 
     tm = TickerMemory()
+
+    # Skip if a brief for this ticker was already saved today (dedup)
+    existing = await tm.get_latest(ticker, user_id=user_id)
+    if existing:
+        ad = existing.get("analysis_date") or existing["created_at"][:10]
+        if ad == datetime.now(IST).date().isoformat():
+            return (
+                f"Brief already saved today for {ticker}: "
+                f"{existing['recommendation']} (confidence: {existing['confidence']:.2f})"
+            )
+
     await tm.store_minimal(
         ticker=ticker,
         user_id=user_id,
@@ -113,6 +130,7 @@ async def save_brief(
     return f"Brief saved for {ticker}: {recommendation.upper()} (confidence: {confidence:.2f})"
 
 
+# Fire-and-forget: evaluate past recommendations vs current prices without blocking the response
 async def _evaluate_past_recommendations(ticker: str) -> None:
     """Background task: evaluate past recommendations against current prices."""
     try:
@@ -150,31 +168,64 @@ PROCEDURE:
 7.  If the user asks about past analysis or "what did you recommend before",
     use the `load_memory` tool to search past conversations.
 
+MEMORY CONTEXT RULES (applies when [MEMORY CONTEXT] block is present):
+- [TODAY]: analysis was done today — you MUST return it directly without calling agents again.
+- [STALE]: analysis is from a prior day — you MUST call ALL agents for a fresh analysis.
+  Treat stale data as background reference only. Do NOT return it as the current recommendation.
+
 TASK FORMAT — always include the ticker and current date in the task text:
   "Analyze MA (Mastercard) SEC filings for recent financial performance."
 
 For general chat or non-stock queries, respond conversationally.\
 """
 
+_STATIC_PREAMBLE_FALLBACK = """\
+You are an investment research orchestrator. Your job is to gather analysis
+from specialized agents and produce a BUY/HOLD/SELL recommendation.
 
+NOTE: No specialized agents are currently available — they may still be
+starting up. Do NOT call `send_message` because there are no agents to
+contact. Never invent agent names or make up agents.
+
+PROCEDURE:
+1.  Identify the stock ticker from the user's question. If the user mentions
+    a company name (e.g. "Mastercard", "Apple", "Microsoft"), determine its
+    ticker symbol (MA, AAPL, MSFT).
+2.  Provide your best analysis based on your own general knowledge.
+3.  After your analysis, call `save_brief` with your recommendation to persist
+    it for future reference.
+4.  If the user asks about past analysis or "what did you recommend before",
+    use the `load_memory` tool to search past conversations.
+
+MEMORY CONTEXT RULES (applies when [MEMORY CONTEXT] block is present):
+- [TODAY]: analysis was done today — you MUST return it directly.
+- [STALE]: analysis is from a prior day — treat as background reference only, not as the current recommendation.
+
+For general chat or non-stock queries, respond conversationally.\
+"""
+
+
+# Dynamically inject available sub-agents into the LLM system prompt
 def _build_instruction() -> str:
-    today = date.today().isoformat()
+    today = datetime.now(IST).date().isoformat()
     agent_list = _client.list_agents()
-    skill_lines = (
-        "\n".join(
+    if agent_list:
+        preamble = _STATIC_PREAMBLE
+        skill_lines = "\n".join(
             f"  - {a['name']}: {a['description']}"
             for a in agent_list
         )
-        if agent_list
-        else "  (none discovered yet)"
-    )
+    else:
+        preamble = _STATIC_PREAMBLE_FALLBACK
+        skill_lines = "  (none discovered yet — agents may still be starting up)"
     return (
         f"Today's date is {today}. Use this as the reference date for all analysis.\n\n"
-        f"{_STATIC_PREAMBLE}\n\n"
+        f"{preamble}\n\n"
         f"Available agents:\n{skill_lines}\n"
     )
 
 
+# Async startup: discover sub-agents on boot, rebuild instruction once agents are known
 async def discover_background() -> None:
     await _client.discover()
     agent_list = _client.list_agents()

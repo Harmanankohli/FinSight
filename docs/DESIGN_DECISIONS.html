@@ -59,6 +59,85 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 
 <p><strong>Why opt-in (<code>SEMANTIC_CACHE_ENABLED=false</code>)?</strong> The semantic cache is stateful &mdash; a cached stale recommendation from yesterday might mislead a user. Off by default so developers consciously enable it in environments where TTL staleness is acceptable.</p>
 
+<h2>Before-Agent Callback for Same-Day Memory Cache</h2>
+
+<h3>Why a <code>before_agent_callback</code> instead of extending the code-level gate?</h3>
+<p>The v1.23 same-day cache relied on the LLM honoring <code>[TODAY]</code> tags in the injected memory context &mdash; but the LLM was inconsistent. Sometimes it re-ran agents anyway (wasting 30&ndash;60s). Making <code>[TODAY]</code> a hard <strong>&ldquo;MUST return directly&rdquo;</strong> helped but did not eliminate the variance.</p>
+<p><code>before_agent_callback</code> is an ADK extension point that fires <em>before</em> the LLM is invoked. Returning a <code>types.Content</code> response from this callback tells the ADK runner to use that as the agent response and skip the LLM entirely. This gives a deterministic same-day cache with zero LLM variance &mdash; the LLM is never asked to make a decision about whether to re-run.</p>
+<p>The callback checks for a valid <code>response_text</code> in the cached brief (populated by the <code>update_response_text</code> overwrite, see below). If only a recommendation exists without analysis text, it falls through to let the LLM run.</p>
+<p><strong>Why two cache paths (callback + executor-level)?</strong> The <code>before_agent_callback</code> only fires when the orchestrator runs through ADK&rsquo;s built-in runner (<code>adk web</code> path). A2A requests hitting <code>agent_1_adk/main.py</code> directly bypass ADK callbacks, so the executor-level <code>_get_today_cached_text()</code> provides the same short-circuit for that path.</p>
+
+<h3>Why <code>update_response_text</code> overwrite the brief after the turn?</h3>
+<p>The <code>save_brief</code> tool is called <em>during</em> the LLM turn, before synthesis completes. At that point the LLM has only produced a brief rationale for the recommendation. The full synthesis (combining RAG, Quant, and Sentiment results) happens after <code>save_brief</code> returns. Without the overwrite, the same-day cache would return only the abbreviated rationale &mdash; a few sentences of justification &mdash; instead of the complete multi-paragraph analysis that the user originally saw.</p>
+<p>The overwrite happens in <code>_persist_memory_callback</code> (after the turn), extracting the response text from session events and storing it into the existing brief via <code>tm.update_response_text()</code>. Subsequent same-day queries via <code>_memory_cache_callback</code> then return the full analysis.</p>
+
+<h3>Why programmatic dedup at <code>save_brief</code> and <code>_store_memory</code>?</h3>
+<p>Two duplicate-prevention layers:</p>
+<ul>
+<li><strong><code>save_brief</code> (agent.py)</strong>: Checks if today&rsquo;s brief already exists for the ticker before inserting. The <code>analysis_date</code> column makes this a single SQL lookup &mdash; no equality comparison on timestamps needed.</li>
+<li><strong><code>_store_memory</code> (agent_executor.py)</strong>: Same check at the executor level, guarding against the case where <code>save_brief</code> was called but the brief was stored under a different <code>user_id</code> (the A2A executor and ADK callback use different user_id values).</li>
+</ul>
+<p>Together they prevent identical rows accumulating on repeated same-day queries, which was the root cause of the original duplicate record bug.</p>
+
+<h2>Ticker Extraction: Dotted &amp; Single-Char Tickers</h2>
+
+<h3>Why support dotted tickers?</h3>
+<p>Berkshire Hathaway (<code>BRK.A</code>, <code>BRK.B</code>) has a dot in its ticker symbol. The previous regex limited matches to <code>[A-Z]{1,5}</code> which excluded the dot entirely. When a user typed <code>BRK.A</code>, the pattern matched <code>BRK</code> (which is not a valid standalone ticker) and validation failed. The fix was to extend the regex to <code>[A-Z]{1,5}(?:\.[A-Z]{1,2})?</code> in all patterns, matching the optional dot suffix.</p>
+
+<h3>Why support single-char tickers?</h3>
+<p>Visa (<code>V</code>) and Alleghany (<code>Y</code>) are single-character NYSE tickers. Pattern 5 (<code>\b([A-Z]{2})\b</code>) excluded them. Changed to <code>\b([A-Z]{1,2})\b</code>. The new mixed-case parens pattern (<code>\b([A-Z]{1,5})\s+\([A-Za-z][a-z]</code>) specifically handles &ldquo;V (Visa)&rdquo; format, which was the only way these single-char tickers appeared in user input.</p>
+
+<h3>Why extract <code>_build_response</code> from <code>stream()</code>?</h3>
+<p>All three sub-agent executors had the same pattern: a try/finally block wrapping Langfuse observability inside <code>stream()</code>. Extracting <code>_build_response(query) &rarr; dict</code> isolates the response-building logic from the async generator boilerplate. Benefits:</p>
+<ul>
+<li><strong>Testability</strong>: <code>_build_response()</code> is a plain async function returning a dict &mdash; no generator machinery, no yield semantics. Unit tests can call it directly.</li>
+<li><strong>Clarity</strong>: <code>stream()</code> is now two lines: <code>yield await self._build_response(query)</code> in try, <code>_disconnect()</code> in finally. The actual logic is in one place instead of mixed with yield statements.</li>
+<li><strong>Consistency</strong>: All three agents use the same pattern, making cross-agent debugging easier.</li>
+</ul>
+
+<h2>IST Timezone Standardization</h2>
+
+<h3>Why IST instead of UTC?</h3>
+<p>The system is operated from India (IST, UTC+5:30). Before the fix, timestamps were a mix of:</p>
+<ul>
+<li><code>datetime.now()</code> &mdash; used the server&rsquo;s local time (IST on the development machine, UTC in Docker)</li>
+<li><code>datetime.utcnow()</code> &mdash; explicit UTC in some memory modules</li>
+<li><code>datetime.now(IST)</code> &mdash; explicitly IST in the agent executor</li>
+</ul>
+<p>The mix caused the same-day cache to fail on non-IST machines: a brief created at <code>2026-05-26T06:30:00Z</code> (UTC) was analyzed as <code>analysis_date=2026-05-26</code> (correct), but <code>datetime.now()</code> on an IST machine returned <code>2026-05-26 12:00:00</code> (noon IST, still same day) &mdash; same day, fine. But on a UTC machine, <code>datetime.now()</code> returns <code>2026-05-26T12:00:00Z</code> &mdash; also fine during the day. The bug manifested at the day boundary: a brief created at <code>2026-05-26T23:30:00Z</code> (next day IST: 05:00 AM) would have <code>analysis_date=2026-05-26</code>, but <code>datetime.now()</code> in UTC would return <code>2026-05-26T23:30:00Z</code> still, appearing to be same day. The boundary was inconsistent.</p>
+<p>Centralizing on <code>IST = timezone(timedelta(hours=5, minutes=30))</code> and using <code>datetime.now(IST)</code> everywhere makes the day boundary unambiguous: the analysis date and &ldquo;today&rdquo; comparison always use the same timezone.</p>
+
+<h2>Stale Test Removal</h2>
+
+<h3>Why delete all tests instead of fixing them?</h3>
+<p>The 17 test files were written during the initial architecture iterations (v1.0&ndash;v1.15) when the codebase was rapidly evolving. By v1.24, most tests referenced:</p>
+<ul>
+<li>Classes and functions that were renamed or removed</li>
+<li>Mock patterns that no longer matched current dependency injection</li>
+<li>Offline evaluation fixtures that diverged from the live runtime behavior</li>
+<li>A2A communication patterns from the v1&ndash;v4 orchestrator architecture that were completely replaced</li>
+</ul>
+<p>Fixing them would require a full rewrite against the current codebase &mdash; essentially writing new tests from scratch while also removing all the old ones. Deleting the stale fixtures was the honest option rather than maintaining dead test code that would confuse future readers. A new test suite should be built from scratch against the current stable architecture.</p>
+
+<h2>Same-Day Memory Cache &amp; analysis_date Column</h2>
+
+<h3>Why check the date before re-running agents?</h3>
+<p>Market data (prices, news sentiment) changes daily. A recommendation from yesterday may be wrong today. However, re-running all three sub-agents for every query on the same stock within the same day wastes 30&ndash;60 seconds of LLM inference and MCP calls when the underlying data has not changed since the last run. The same-day cache gives users instant responses for repeat queries while guaranteeing a fresh agent run the next day.</p>
+
+<h3>Why a separate <code>analysis_date</code> column instead of parsing <code>created_at</code>?</h3>
+<p><code>created_at</code> stores a full UTC ISO-8601 timestamp (<code>2024-01-15T14:32:00</code>). Comparing it to today requires string slicing and timezone handling that is fragile across platforms and SQLite versions. <code>analysis_date</code> is a plain <code>TEXT</code> column storing <code>YYYY-MM-DD</code> &mdash; an equality check against <code>date.today().isoformat()</code> is unambiguous and requires no parsing. Added as a nullable column via <code>ALTER TABLE</code> migration so old rows fall back to <code>created_at</code> via <code>COALESCE(analysis_date, created_at)</code>.</p>
+
+<h3>Why tag with [TODAY] / [STALE] in the injected context instead of a code-level gate?</h3>
+<p>A code-level gate (returning early before calling the LLM) would be faster, but it removes the LLM&rsquo;s ability to reason about context &mdash; a user asking a follow-up question about the same ticker on the same day may warrant a different answer even with the same recommendation. Tagging lets the LLM decide: <code>[TODAY]</code> says &ldquo;you may use this directly&rdquo;; <code>[STALE]</code> says &ldquo;call agents, treat this as background only.&rdquo; The instruction is reinforced in both the injected user message and the system preamble (<code>_STATIC_PREAMBLE</code>) for reliability.</p>
+
+<h3>Why skip <code>_store_memory()</code> on [TODAY] responses?</h3>
+<p>Every call to <code>_store_memory()</code> inserts a new row into <code>ticker_briefs</code>. Without the guard, a stock queried ten times in a day produces ten identical rows, inflating the DB and returning redundant context on the next query. Since same-day responses are served from an already-stored brief, re-storing is pure duplication. The guard checks for <code>"[TODAY"</code> in the augmented <code>user_input</code> string &mdash; one string check, no extra DB query.</p>
+
+<h2>Unified db/ Folder</h2>
+
+<h3>Why consolidate all databases under db/ instead of keeping them at the project root?</h3>
+<p>Three separate DB files (<code>finsight_memory.db</code>, <code>.langchain_cache.db</code>, <code>chroma_db/</code>) were scattered at the project root, requiring three separate <code>.gitignore</code> entries and making it easy to miss one. A single <code>db/</code> folder with one ignore rule (<code>db/</code>) is easier to reason about, simpler to back up or wipe, and keeps the project root clean. The folder is created automatically on first run &mdash; no setup step required.</p>
+
 <h2>Guardrails</h2>
 
 <h3>Why a regex off-topic filter instead of an LLM classifier?</h3>
@@ -120,6 +199,43 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <p><strong>Why custom <code>_STEmbeddings</code> instead of RAGAS's <code>HuggingfaceEmbeddings</code>?</strong> RAGAS 0.4.x's <code>HuggingfaceEmbeddings</code> is a Pydantic dataclass that fails to serialize correctly when passed to RAGAS internal <code>aembed_text</code> calls. The custom wrapper uses <code>BaseRagasEmbedding</code> directly with <code>SentenceTransformer.encode()</code>, bypassing the broken Pydantic path entirely.</p>
 
 <p><strong>Why <code>JSON_SCHEMA</code> mode instead of <code>JSON</code> mode for instructor?</strong> RAGAS defaults to <code>instructor.Mode.JSON</code> which sends <code>response_format.type="json_object"</code> in the API request. LM Studio only supports <code>"json_schema"</code> and <code>"text"</code> response format types. Patching to <code>JSON_SCHEMA</code> enables structured output without a custom LM Studio fork.</p>
+
+<h3>Why gate every eval call behind a single <code>EVAL_TRACE_ENABLED</code> flag?</h3>
+<p>Sidecar RAGAS evaluation adds 5&ndash;180 seconds of background LLM work per query (per agent) on the local LM Studio judge. During fast iteration on prompts or sub-agent behaviour, this background load slows the judge model down for the next user query, and burns context on metrics that aren't being inspected. Wrapping each <code>asyncio.create_task(_eval_*)</code> site in <code>if EVAL_ENABLED:</code> lets the user kill all sidecar scoring from <code>.env</code> without removing code. <code>EVAL_ENABLED</code> reads the same <code>EVAL_TRACE_ENABLED</code> env var that already controls orchestrator trace JSON dumps &mdash; one switch, two effects, both about "extra eval load". Default stays <code>True</code> so production observability is on by default.</p>
+
+<h3>Why move the orchestrator eval into <code>after_agent_callback</code>?</h3>
+<p>When <code>adk web</code> is the entry point, the orchestrator goes through ADK's built-in runner &mdash; <code>FinSightAgentExecutor.execute()</code> is never called. The eval call originally placed in <code>agent_executor.py</code> only fired when an A2A client hit <code>agent_1_adk/main.py</code> directly. Once <code>run_adk_web.bat</code> stopped starting the standalone orchestrator A2A server (redundant with <code>adk web</code>), evals stopped firing entirely.</p>
+<p><code>after_agent_callback</code> is the only ADK extension point guaranteed to fire on every agent turn regardless of runner. Wiring eval scheduling into the existing <code>_persist_memory_callback</code> keeps both side-effects in one place: callback &rarr; check turn type &rarr; persist memory &rarr; fire eval. The trace_id is read from the active Langfuse span at callback time, so traces from <code>adk web</code> are still linked.</p>
+
+<h3>Why gate memory persist + eval on whether <code>save_brief</code> was called this turn?</h3>
+<p><code>_persist_memory_callback</code> fires on every ADK turn, including pure recall turns where the user asks "what were my last recommendations?" and the agent only invokes <code>load_memory</code>. The old behaviour persisted the entire session &mdash; including the conversational recall query and the agent's response &mdash; into long-term memory. Subsequent <code>load_memory</code> calls would then surface those recall exchanges alongside actual analyses, polluting search results and drifting the agent toward conversational rather than analytical responses.</p>
+<p><code>_is_analysis_turn(events)</code> walks back to the most recent user message and checks for a <code>save_brief</code> tool call in the agent's response &mdash; <code>save_brief</code> is the explicit signal that a fresh recommendation was produced. If absent, persist + eval both skip. This is preferable to time-based heuristics (last N turns) or content-based heuristics (response length, keyword matching) because it relies on a deterministic signal that the orchestrator emits as a real act, not on inference about what the turn <em>meant</em>.</p>
+
+<h3>Why namespace Langfuse scores by agent (<code>ragas/{agent}/{metric}</code>)?</h3>
+<p>The previous <code>ragas/{metric}</code> naming flattened all four agents into one dimension. <code>ragas/AnswerRelevancy</code> could be the orchestrator's synthesis score, the RAG agent's filing-answer score, the quant agent's metric-summary score, or the sentiment agent's narrative score &mdash; Langfuse had no way to tell them apart in dashboards or aggregations. Adding the agent prefix surfaces the source in every existing Langfuse view (score breakdowns, trends, filters) without requiring custom metadata processing. The redundant <code>comment="agent=&lt;name&gt;"</code> tag gives a second filter dimension if anyone wants to query by comment instead of name prefix.</p>
+
+<h3>Why not introduce a separate batch-eval runner (<code>_invoke_agent</code>)?</h3>
+<p>The earlier shape of <code>runtime_eval.py</code> included an <code>if __name__ == "__main__":</code> block with <code>_invoke_agent()</code> that spun up its own <code>Runner</code> + <code>InMemorySessionService</code> to invoke the orchestrator for a fixed set of test cases. This duplicated exactly what <code>FinSightAgentExecutor</code> and <code>after_agent_callback</code> already do for live traffic &mdash; running the agent, collecting events, extracting the response. The live executor <em>already has the response in hand</em> when it fires the sidecar eval; a second runner adds nothing except a second source of truth that can drift from the first.</p>
+<p>Removed: <code>_invoke_agent()</code>, <code>_run_batch_eval()</code>, <code>_BATCH_EVAL_CASES</code>, and the <code>__main__</code> block. Batch evaluation with ground-truth references (a genuinely different concern &mdash; it needs reference tool calls and reference answers) still lives in <code>tests/evaluation/run_orchestrator_eval.py</code>.</p>
+
+<h2>Google ADK 2.x Upgrade</h2>
+
+<h3>Why upgrade now?</h3>
+<p>ADK 1.x is in maintenance mode. 2.x is the active development line. The 2.0 breaking-change inventory (event schema additions, <code>BaseAgent</code> extending <code>BaseNode</code>, automatic exception catching for retries) is small and easy to audit against the current codebase. Putting off the upgrade only widens the diff that needs to be reviewed later.</p>
+
+<h3>Code changes required: zero</h3>
+<p>All 2.0 breaking changes were checked against the codebase before upgrading:</p>
+<table>
+<tr><th>2.0 breaking change</th><th>Affects FinSight?</th></tr>
+<tr><td>Event schema adds <code>node_info</code> + <code>output</code> fields</td><td>No &mdash; <code>SQLiteMemoryService._event_to_dict</code> only reads <code>author</code> and <code>content.parts</code>, doesn't validate full schema</td></tr>
+<tr><td><code>BaseAgent</code> extends <code>BaseNode</code>; no more <code>_run_async_impl</code> overrides</td><td>No &mdash; we use <code>LlmAgent</code> directly; <code>shared/base_agent.py</code> is a separate Pydantic class, not ADK's <code>BaseAgent</code></td></tr>
+<tr><td>No manual <code>enqueue_event()</code> on ADK events</td><td>No &mdash; <code>enqueue_event()</code> calls in <code>shared/generic_executor.py</code> are on A2A's <code>EventQueue</code>, not ADK</td></tr>
+<tr><td>No broad <code>try/except BaseException</code></td><td>No &mdash; the three matches are in <code>shared/mcp_client.py</code> and <code>shared/runtime_eval.py</code>, both outside the ADK execution path</td></tr>
+</table>
+<p>Smoke-tested at upgrade time: all imports from <code>google.adk.agents</code>, <code>google.adk.tools</code>, <code>google.adk.runners</code>, <code>google.adk.sessions</code>, <code>google.adk.events</code>, <code>google.adk.memory</code>, <code>google.adk.cli.service_registry</code> resolve. <code>SQLiteMemoryService</code> still satisfies the 2.x <code>BaseMemoryService</code> interface (signatures match). <code>agent_1_adk.agent.root_agent</code> loads and registers all four tools. <code>after_agent_callback</code> still fires.</p>
+
+<h3>Why pin <code>&gt;=2.0,&lt;3.0</code> instead of an exact version?</h3>
+<p>We track 2.x patches and minor updates automatically (bug fixes, new features) while excluding the next major bump (which will have its own breaking-change audit). Same pattern as other major-version-pinned deps in this project.</p>
 
 <h2>Why Four Different Agent Frameworks?</h2>
 <table>

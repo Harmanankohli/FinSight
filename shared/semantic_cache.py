@@ -38,6 +38,9 @@ class SemanticCache:
         self._col = None
         self._embedder = None
 
+    # Lazy initialisation: Chroma client + embedding model are created on first
+    # use, not at construction. This avoids import-time failures when deps are
+    # unavailable and keeps cache instantiation cheap for non-cached queries.
     def _ensure_ready(self) -> None:
         if self._col is not None:
             return
@@ -55,6 +58,8 @@ class SemanticCache:
         except Exception as exc:
             logger.warning("SemanticCache unavailable: %s", exc)
 
+    # Cosine-similarity check against all cached queries; returns only if the
+    # nearest neighbour exceeds the threshold AND its timestamp is within TTL.
     def get(self, query: str) -> str | None:
         self._ensure_ready()
         if self._col is None or self._embedder is None:
@@ -81,6 +86,8 @@ class SemanticCache:
             logger.warning("SemanticCache.get failed: %s", exc)
         return None
 
+    # Stores query + response embedding with a timestamp for TTL-based expiry.
+    # Response is truncated to 4000 chars to keep Chroma metadata size bounded.
     def set(self, query: str, response: str) -> None:
         self._ensure_ready()
         if self._col is None or self._embedder is None:

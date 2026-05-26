@@ -23,10 +23,12 @@ def _build_args_schema(name: str, input_schema: dict) -> type[BaseModel]:
 
 
 class DynamicMCPTool(BaseTool):
+    # Wraps an MCP server tool as a CrewAI BaseTool so the Agent can call it directly via tool name
     name: str = ""
     description: str = ""
 
     def __init__(self, tool_name: str, tool_description: str, input_schema: dict, mcp_wrapper: "MCPClientWrapper"):
+        # Dynamically builds a Pydantic args_schema from the MCP tool's JSON input_schema
         args_schema = _build_args_schema(tool_name, input_schema)
         super().__init__(name=tool_name, description=tool_description, args_schema=args_schema)
         self._tool_name = tool_name
@@ -41,11 +43,13 @@ class DynamicMCPTool(BaseTool):
 
 
 class MCPClientWrapper:
+    # Discovers and caches MCP tools lazily; provides a synchronous call interface for CrewAI tools
     def __init__(self, mcp_client: Any):
         self._client = mcp_client
         self._tool_cache: dict[str, Any] = {}
 
     async def discover_tools(self) -> list[DynamicMCPTool]:
+        # Fetches tool list from MCP server and wraps each as a DynamicMCPTool, caching descriptions
         tools = await self._client.list_tools()
         discovered = []
         for t in tools:

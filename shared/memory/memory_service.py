@@ -26,6 +26,7 @@ from google.genai import types
 from rank_bm25 import BM25Okapi
 from sentence_transformers import SentenceTransformer, util
 
+from shared.config import IST
 from shared.memory.store import DB_PATH, get_db
 
 logger = logging.getLogger(__name__)
@@ -40,12 +41,14 @@ class SQLiteMemoryService(BaseMemoryService):
         self._db_path = db_path
         self._model: Optional[SentenceTransformer] = None
 
+    # Lazy-loads SentenceTransformer on first search to avoid heavy import cost at service initialization.
     def _get_model(self) -> SentenceTransformer:
         """Lazy-load the embedding model."""
         if self._model is None:
             self._model = SentenceTransformer(EMBEDDING_MODEL)
         return self._model
 
+    # Called after a session completes. Extracts all events and persists as searchable memory entries.
     async def add_session_to_memory(self, session: Session) -> None:
         """Store all events from a session as memory entries."""
         conn = await get_db(self._db_path)
@@ -73,7 +76,7 @@ class SQLiteMemoryService(BaseMemoryService):
                         content_json,
                         metadata_json,
                         content_text,
-                        datetime.utcnow().isoformat(),
+                        datetime.now(IST).isoformat(),
                     ),
                 )
             await conn.commit()
@@ -129,13 +132,14 @@ class SQLiteMemoryService(BaseMemoryService):
                         content_json,
                         metadata_json,
                         content_text,
-                        datetime.utcnow().isoformat(),
+                        datetime.now(IST).isoformat(),
                     ),
                 )
             await conn.commit()
         finally:
             await conn.close()
 
+    # Hybrid retrieval pipeline: BM25 keyword matching + embedding similarity fused via RRF (Reciprocal Rank Fusion). Returns top-10 ranked memories.
     async def search_memory(
         self,
         *,
@@ -223,6 +227,7 @@ class SQLiteMemoryService(BaseMemoryService):
         finally:
             await conn.close()
 
+    # Tokenizes query and corpus, scores entries with BM25Okapi (term-frequency × inverse document frequency).
     @staticmethod
     def _bm25_score(query: str, parsed: list[dict]) -> dict[str, float]:
         """Compute BM25 scores for all entries against the query."""
@@ -236,6 +241,7 @@ class SQLiteMemoryService(BaseMemoryService):
 
         return {p["entry"].id: float(s) for p, s in zip(parsed, scores)}
 
+    # Encodes query and all entry texts with sentence-transformers, computes pairwise cosine similarity.
     def _embedding_score(self, query: str, parsed: list[dict]) -> dict[str, float]:
         """Compute cosine similarity between query embedding and entry embeddings."""
         try:
@@ -249,6 +255,7 @@ class SQLiteMemoryService(BaseMemoryService):
             logger.debug("Embedding search failed, using BM25 only", exc_info=True)
             return {}
 
+    # Reciprocal Rank Fusion: combined_score = 1/(k+rank_bm25) + 1/(k+rank_emb). Default k=60 dampens high-rank dominance.
     @staticmethod
     def _rrf_fuse(
         bm25: dict[str, float],

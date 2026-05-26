@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 def _route_on_volatility(state: QuantAnalysisState) -> str:
+    # Conditional edge: high volatility (>35%) → stress test (tail-risk focused), low → DCF (fundamental value)
     if state.get("is_high_volatility", False):
         logger.info("Routing %s to stress_test (volatility=%.4f high)", state.get("ticker"), state.get("volatility", 0))
         return "stress_test"
@@ -30,6 +31,7 @@ class QuantAnalysisGraph:
         self._graph = self._build_graph()
 
     def _build_graph(self) -> StateGraph:
+        # Node topology: fetch → compute → [stress_test | dcf] → correlation → format → llm_summary → END
         builder = StateGraph(QuantAnalysisState)
 
         builder.add_node("fetch_prices", fetch_price_data_node)
@@ -42,11 +44,13 @@ class QuantAnalysisGraph:
 
         builder.set_entry_point("fetch_prices")
         builder.add_edge("fetch_prices", "compute_base_metrics")
+        # Branch: high-volatility stocks skip DCF and go to stress test (CVaR/scenarios)
         builder.add_conditional_edges(
             "compute_base_metrics",
             _route_on_volatility,
             {"stress_test": "run_stress_test", "dcf": "run_dcf"},
         )
+        # Both branches converge at portfolio correlation
         builder.add_edge("run_stress_test", "portfolio_correlation")
         builder.add_edge("run_dcf", "portfolio_correlation")
         builder.add_edge("portfolio_correlation", "format_output")

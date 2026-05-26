@@ -39,6 +39,7 @@ logger = logging.getLogger(__name__)
 
 
 async def health(request):
+    # Health check for orchestrator-level monitoring and container orchestration probes
     return JSONResponse({"status": "ok", "agent": "rag"})
 
 host = os.environ.get("HOST", "localhost")
@@ -86,14 +87,15 @@ request_handler = DefaultRequestHandler(
 )
 
 async def _prewarm():
+    # Pre-load the embedding model at startup so the first query doesn't pay cold-start penalty
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, FinancialIndexManager)
     logger.info("Embedding model pre-warmed")
 
 
-routes = [Route("/health", health)]
-routes.extend(create_agent_card_routes(agent_card))
-routes.extend(create_jsonrpc_routes(request_handler, "/a2a"))
+routes = [Route("/health", health)]  # Liveness check
+routes.extend(create_agent_card_routes(agent_card))  # A2A agent card discovery
+routes.extend(create_jsonrpc_routes(request_handler, "/a2a"))  # JSON-RPC task endpoints
 
 app = Starlette(routes=routes, on_startup=[_prewarm], debug=True)
 

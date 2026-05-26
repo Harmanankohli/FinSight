@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from shared.config import IST
 from shared.memory.store import DB_PATH, get_db
 from shared.models import QueryContext
 
@@ -39,6 +40,7 @@ class PortfolioStore:
         finally:
             await conn.close()
 
+    # Called on each query. Merges new holdings with existing ones (union), updates risk/horizon only when non-empty.
     async def upsert_from_context(self, ctx: QueryContext) -> None:
         """Auto-capture portfolio from QueryContext on each query.
 
@@ -54,7 +56,7 @@ class PortfolioStore:
             )
             row = await existing.fetchone()
 
-            now = datetime.utcnow().isoformat()
+            now = datetime.now(IST).isoformat()
             new_holdings = list(set(ctx.portfolio_holdings))
 
             if row:
@@ -81,6 +83,7 @@ class PortfolioStore:
         finally:
             await conn.close()
 
+    # Simple read — returns the user's current holdings list from their profile.
     async def get_holdings(self, user_id: str) -> list[str]:
         """Get a user's current portfolio holdings."""
         profile = await self.get_profile(user_id)
@@ -88,11 +91,12 @@ class PortfolioStore:
             return profile["holdings"]
         return []
 
+    # Simple write — replaces holdings outright via upsert (INSERT ... ON CONFLICT DO UPDATE).
     async def update_holdings(self, user_id: str, holdings: list[str]) -> None:
         """Explicitly set a user's portfolio holdings."""
         conn = await get_db(self._db_path)
         try:
-            now = datetime.utcnow().isoformat()
+            now = datetime.now(IST).isoformat()
             await conn.execute(
                 """INSERT INTO user_profiles (user_id, holdings, updated_at)
                    VALUES (?, ?, ?)

@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
+from shared.config import IST
 from shared.memory.store import DB_PATH, get_db
 
 
@@ -16,6 +17,7 @@ class PerformanceTracker:
     def __init__(self, db_path: Path = DB_PATH):
         self._db_path = db_path
 
+    # Persists recommendation with async price snapshot. Falls back to yfinance fetch via executor if no price supplied.
     async def record_recommendation(
         self,
         ticker: str,
@@ -49,7 +51,7 @@ class PerformanceTracker:
                     recommendation.upper(),
                     confidence,
                     price,
-                    datetime.utcnow().isoformat(),
+                    datetime.now(IST).isoformat(),
                 ),
             )
             await conn.commit()
@@ -57,6 +59,7 @@ class PerformanceTracker:
             await conn.close()
         return record_id
 
+    # Batch-evaluates all unevaluated recommendations by fetching current prices and computing realized_return for each.
     async def evaluate_all(self) -> list[dict]:
         """Compare all unevaluated recommendations to current prices.
 
@@ -81,7 +84,7 @@ class PerformanceTracker:
                 continue
 
             realized_return = (current_price - price_at_rec) / price_at_rec
-            now = datetime.utcnow().isoformat()
+            now = datetime.now(IST).isoformat()
 
             conn = await get_db(self._db_path)
             try:
@@ -106,6 +109,7 @@ class PerformanceTracker:
 
         return results
 
+    # Computes win rate per recommendation type. BUY correct if price rose (ret > 0), SELL correct if price fell (ret < 0). HOLD always counted as correct.
     async def get_accuracy_stats(
         self, user_id: Optional[str] = None
     ) -> dict:
@@ -167,7 +171,7 @@ class PerformanceTracker:
         """Get recommendations for a ticker in the last N days."""
         conn = await get_db(self._db_path)
         try:
-            cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+            cutoff = (datetime.now(IST) - timedelta(days=days)).isoformat()
             if user_id:
                 cursor = await conn.execute(
                     """SELECT id, ticker, user_id, recommendation, confidence,

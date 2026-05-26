@@ -36,6 +36,129 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 
 <h1>Changelog</h1>
 
+<h2>v1.24 &mdash; Before-Agent Cache Callback, IST Timezone &amp; Stale Test Cleanup</h2>
+
+<h3 class="version">Before-Agent Cache Callback (<code>_memory_cache_callback</code>)</h3>
+<ul>
+<li><strong>Two-tier same-day cache</strong> (<code>agents/finsight_agent/agent.py</code>): New <code>_memory_cache_callback</code> registered as <code>root_agent.before_agent_callback</code> &mdash; fires before the LLM runs, extracts the user&rsquo;s ticker, queries <code>TickerMemory.get_latest()</code>, and returns today&rsquo;s cached brief (<code>types.Content</code>) directly if available. Short-circuits the LLM entirely, saving 30&ndash;60s per repeat same-day query.</li>
+<li><strong>Strict prompt directive</strong> (<code>agent_1_adk/agent.py</code>): <code>[TODAY]</code> tag changed from <em>&ldquo;you MAY return it directly&rdquo;</em> to <strong>&ldquo;you MUST return it directly&rdquo;</strong> &mdash; reduces LLM variance on same-day cache hits.</li>
+<li><strong>Executor-level cache</strong> (<code>agent_1_adk/agent_executor.py</code>): <code>_get_today_cached_text()</code> provides a parallel short-circuit for the A2A executor path, checking before <code>RUNNER.run_async()</code> is called.</li>
+</ul>
+
+<h3 class="version">Response Text Overwrite for Cache Quality</h3>
+<ul>
+<li><strong><code>update_response_text()</code> added</strong> (<code>shared/memory/ticker_memory.py</code>): Overwrites <code>brief_json.response_text</code> on an existing record after the agent turn completes. The <code>save_brief</code> tool&rsquo;s rationale is a short LLM-written summary; after the full synthesis finishes, the real analysis text replaces it &mdash; so the same-day cache returns the rich analysis, not the abbreviated rationale.</li>
+<li><strong>Integration in <code>_persist_memory_callback</code></strong> (<code>agents/finsight_agent/agent.py</code>): After memory persist, extracts the response text and calls <code>tm.update_response_text()</code>.</li>
+</ul>
+
+<h3 class="version">IST Timezone Standardization</h3>
+<ul>
+<li><strong><code>IST</code> constant added</strong> (<code>shared/config.py</code>): <code>IST = timezone(timedelta(hours=5, minutes=30))</code>. All <code>datetime.now()</code> calls across the system converted to use <code>IST</code> explicitly &mdash; agent timestamps, memory timestamps, analysis_date comparisons. Previously mixed between UTC and local machine time, causing same-day cache mismatches on non-IST systems.</li>
+<li><strong>Files changed</strong>: <code>shared/config.py</code>, <code>shared/memory/memory_service.py</code>, <code>shared/memory/performance_tracker.py</code>, <code>shared/memory/portfolio_store.py</code>, <code>shared/memory/store.py</code>, <code>shared/memory/ticker_memory.py</code>, <code>agent_1_adk/agent.py</code>, <code>agent_1_adk/agent_executor.py</code>.</li>
+</ul>
+
+<h3 class="version">Programmatic Dedup in save_brief &amp; _store_memory</h3>
+<ul>
+<li><strong><code>save_brief</code> dedup</strong> (<code>agent_1_adk/agent.py</code>): Checks if today&rsquo;s brief already exists for the ticker before inserting. Returns early with a confirmation message instead of creating a duplicate row.</li>
+<li><strong><code>_store_memory</code> dedup</strong> (<code>agent_1_adk/agent_executor.py</code>): Same check at the executor level &mdash; if <code>save_brief</code> already stored today&rsquo;s brief, <code>_store_memory</code> skips its own insert. Creates two-layer defense against duplicate records.</li>
+</ul>
+
+<h3 class="version">Ticker Extraction: Dotted &amp; Single-Char Tickers</h3>
+<ul>
+<li><strong>Dotted tickers supported</strong> (<code>shared/ticker_utils.py</code>): Patterns now match <code>[A-Z]{1,5}(?:\.[A-Z]{1,2})?</code> &mdash; handles Berkshire Hathaway (<code>BRK.A</code>, <code>BRK.B</code>) and other class-share tickers.</li>
+<li><strong>Single-char tickers</strong>: Pattern 5 changed from <code>[A-Z]{2}</code> to <code>[A-Z]{1,2}</code>, enabling detection of tickers like <code>V</code> (Visa) and <code>Y</code> (Alleghany). New mixed-case parens pattern detects <code>V (Visa)</code> &rarr; <code>V</code>.</li>
+<li><strong><code>$</code> prefix widened</strong>: Pattern 3 (dollar prefix) now matches <code>[A-Z]{1,5}</code> instead of just <code>[A-Z]{1,2}</code>.</li>
+</ul>
+
+<h3 class="version">_build_response Extracted from stream()</h3>
+<ul>
+<li><strong>All three sub-agents refactored</strong> (<code>agent_2_llamaindex/executor.py</code>, <code>agent_3_langgraph/executor.py</code>, <code>agent_4_crewai/executor.py</code>): The core response logic moved from inside <code>stream()</code> to a new <code>_build_response(query) &rarr; dict</code> method. <code>stream()</code> is now a thin wrapper: <code>yield await self._build_response(query)</code> in a <code>try/finally</code> block (ensuring <code>_disconnect()</code> runs). This makes the response-building logic independently testable and callable.</li>
+</ul>
+
+<h3 class="version">DB Path Consolidation</h3>
+<ul>
+<li><strong>Session DB separated</strong> (<code>agent_1_adk/main.py</code>): ADK session store moved from <code>db/finsight_memory.db</code> to <code>db/adk_sessions.db</code> &mdash; separates conversational session data from ticker briefs and memory, preventing one schema migration from affecting the other.</li>
+<li><strong>User-id-agnostic cache queries</strong>: <code>_get_today_cached_text()</code> and <code>_build_memory_context()</code> now query <code>TickerMemory.get_latest(ticker, user_id=None)</code> to avoid cache misses across different user_id values (a2a_user, user, eval_user).</li>
+</ul>
+
+<h3 class="version">Stale Test Removal</h3>
+<ul>
+<li><strong>17 test files removed</strong>: All <code>tests/*.py</code> files and <code>tests/evaluation/</code> suite deleted &mdash; these were unmaintained fixtures from earlier architecture iterations that no longer matched the current codebase. Offline RAGAS evaluation pipeline, stale rubric tests, and outdated memory/integration tests all removed.</li>
+<li><strong>Test count: 0</strong> &mdash; no automated test suite remains. Testing is performed manually via the ADK Web UI.</li>
+</ul>
+
+<h2>v1.23 &mdash; Same-Day Memory Cache, analysis_date Column &amp; Unified db/ Folder</h2>
+
+<h3 class="version">Same-Day Recommendation Cache</h3>
+<ul>
+<li><strong>Date-aware memory injection</strong> (<code>agent_1_adk/agent_executor.py</code>): <code>_build_memory_context()</code> now compares the stored brief&rsquo;s <code>analysis_date</code> against today&rsquo;s date. Context is tagged <code>[TODAY]</code> when the brief is from today (LLM may return it directly without calling agents) or <code>[STALE]</code> when from a prior day (LLM must call all agents for fresh analysis).</li>
+<li><strong>Duplicate write prevention</strong>: <code>_process_response()</code> skips the <code>_store_memory()</code> background task when <code>[TODAY]</code> is present in the injected user message, preventing identical records accumulating on repeated same-day queries.</li>
+<li><strong>Agent instruction updated</strong> (<code>agent_1_adk/agent.py</code>): Both <code>_STATIC_PREAMBLE</code> and <code>_STATIC_PREAMBLE_FALLBACK</code> include a <em>MEMORY CONTEXT RULES</em> block instructing the LLM on how to handle each tag.</li>
+</ul>
+
+<h3 class="version">analysis_date Column</h3>
+<ul>
+<li><strong>New <code>analysis_date TEXT</code> column</strong> (<code>shared/memory/ticker_memory.py</code>, <code>shared/memory/store.py</code>): Added to <code>ticker_briefs</code> via an idempotent <code>ALTER TABLE</code> migration in <code>init_db()</code>. Both <code>store_brief()</code> and <code>store_minimal()</code> now write <code>date.today().isoformat()</code> into this column on every insert.</li>
+<li><strong>Read path updated</strong>: <code>get_latest()</code> and <code>get_history()</code> select and return <code>analysis_date</code> as <code>row[9]</code>. Sort order changed to <code>ORDER BY COALESCE(analysis_date, created_at) DESC</code> &mdash; uses the explicit date where available, falls back to <code>created_at</code> for legacy rows.</li>
+</ul>
+
+<h3 class="version">Unified db/ Folder</h3>
+<ul>
+<li><strong>All databases consolidated under <code>db/</code></strong>: <code>shared/memory/store.py</code> <code>DB_PATH</code> changed from project root to <code>db/finsight_memory.db</code>. Session DB URL in <code>agent_1_adk/main.py</code> updated to <code>sqlite+aiosqlite:///./db/finsight_memory.db</code>. LangChain cache in <code>agent_3_langgraph/nodes.py</code> moved to <code>db/.langchain_cache.db</code>. ChromaDB default in <code>shared/config.py</code> (<code>CHROMA_DIR</code>) moved to <code>./db/chroma_db</code>.</li>
+<li><strong><code>.gitignore</code> simplified</strong>: All scattered per-file DB ignore entries replaced with a single <code>db/</code> rule. Removed duplicate <code>chroma_db/</code> entry and stale repeated lines.</li>
+<li>The <code>db/</code> directory is auto-created on first run via <code>path.parent.mkdir(parents=True, exist_ok=True)</code> in <code>get_db()</code>.</li>
+</ul>
+
+<h2>v1.22 &mdash; ADK 2.x, Eval Toggle, Memory Pollution Fix &amp; Score Namespacing</h2>
+
+<h3 class="version">Google ADK 2.x Upgrade</h3>
+<ul>
+<li><strong><code>google-adk</code> bumped to <code>&gt;=2.0,&lt;3.0</code></strong> (<code>pyproject.toml</code>): installed <code>2.1.0</code>. No code changes required &mdash; all public API surfaces (<code>LlmAgent</code>, <code>Runner</code>, <code>DatabaseSessionService</code>, <code>BaseMemoryService</code>, <code>google.adk.tools.{google_search, load_memory}</code>, <code>google.adk.cli.service_registry.get_service_registry</code>) verified stable. Custom <code>SQLiteMemoryService</code> still satisfies the 2.x <code>BaseMemoryService</code> signatures. Project's <code>BaseAgent</code> in <code>shared/base_agent.py</code> is unaffected (Pydantic class, not ADK's <code>BaseAgent</code>).</li>
+</ul>
+
+<h3 class="version"><code>EVAL_TRACE_ENABLED</code> Feature Flag</h3>
+<ul>
+<li><strong><code>EVAL_ENABLED</code> constant added</strong> (<code>shared/config.py</code>): reads <code>EVAL_TRACE_ENABLED</code> from <code>.env</code> (default <code>True</code>). Single source of truth for whether sidecar RAGAS evals fire.</li>
+<li><strong>All <code>asyncio.create_task(_eval_*)</code> calls gated</strong>: every agent now checks <code>if EVAL_ENABLED:</code> before scheduling its eval task. Sites: <code>agent_1_adk/agent_executor.py</code>, <code>agents/finsight_agent/agent.py</code> (orchestrator), <code>agent_2_llamaindex/executor.py</code> (RAG), <code>agent_3_langgraph/executor.py</code> (quant), <code>agent_4_crewai/executor.py</code> (sentiment). Set <code>EVAL_TRACE_ENABLED=False</code> in <code>.env</code> to disable all sidecar evals with no code changes.</li>
+</ul>
+
+<h3 class="version">Orchestrator Eval Moved to <code>after_agent_callback</code></h3>
+<ul>
+<li><strong>Problem</strong>: when running via <code>adk web</code>, the orchestrator goes through ADK's built-in runner &mdash; <code>FinSightAgentExecutor</code> is never invoked. The eval call in <code>agent_executor.py</code> only fired for A2A clients hitting <code>agent_1_adk/main.py</code>. With the orchestrator A2A server removed from the bat file, evals stopped firing entirely.</li>
+<li><strong>Fix</strong> (<code>agents/finsight_agent/agent.py</code>): added orchestrator eval scheduling into the existing <code>_persist_memory_callback</code>. After memory persist, extracts user query + final agent text from <code>session.events</code>, pulls current Langfuse <code>trace_id</code>, and fires <code>asyncio.create_task(_eval_score_response(...))</code>. Works for both <code>adk web</code> and any other ADK runner path.</li>
+</ul>
+
+<h3 class="version">Memory Persist + Eval Gated on <code>save_brief</code></h3>
+<ul>
+<li><strong>Problem</strong>: <code>_persist_memory_callback</code> fired on every agent turn &mdash; including pure recall turns where the user asked "what were my last recommendations?". That conversational exchange was being indexed into long-term memory and evaluated, polluting future memory searches and inflating eval volume.</li>
+<li><strong>Fix</strong> (<code>agents/finsight_agent/agent.py</code>): added <code>_is_analysis_turn()</code> which walks back to the most recent user message and checks whether <code>save_brief</code> was called after it. If not, both memory persist and eval are skipped. Logs <code>"Skipping persist + eval &mdash; turn did not call save_brief"</code> for visibility.</li>
+<li>Behaviour: "Analyze AAPL" &rarr; <code>save_brief</code> called &rarr; persists + evals. "What were my last recommendations?" &rarr; only <code>load_memory</code> &rarr; skipped. "Show me last NVDA brief, then analyze TSLA" &rarr; <code>save_brief</code> called for TSLA &rarr; persists.</li>
+</ul>
+
+<h3 class="version">Langfuse Score Namespacing by Agent</h3>
+<ul>
+<li><strong><code>_push_scores</code> now prefixes scores by agent</strong> (<code>shared/runtime_eval.py</code>): <code>ragas/{name}</code> &rarr; <code>ragas/{agent}/{name}</code> (e.g. <code>ragas/orchestrator/AnswerRelevancy</code>, <code>ragas/rag/Faithfulness</code>). The previous flat namespace made it impossible to distinguish "the orchestrator's AnswerRelevancy" from "RAG's AnswerRelevancy" in Langfuse.</li>
+<li><strong><code>comment="agent=&lt;name&gt;"</code> added</strong> to each <code>lf.create_score()</code> call for an additional structured tag.</li>
+</ul>
+
+<h3 class="version"><code>RubricsScoreWithoutReference</code> Import Fix</h3>
+<ul>
+<li><strong>Problem</strong>: <code>score_response()</code> orchestrator eval imported <code>RubricsScoreWithoutReference</code> from <code>ragas.metrics.collections</code> &mdash; that class does not exist in ragas 0.4.x. The import failed and the entire orchestrator eval bailed out with <code>[orchestrator] Skipping eval: ragas import failed</code>.</li>
+<li><strong>Fix</strong> (<code>shared/runtime_eval.py</code>): <code>recommendation_clarity</code> metric now uses <code>DomainSpecificRubrics</code> (the actual reference-free rubric class in 0.4.x). Same scoring rubric, working import.</li>
+</ul>
+
+<h3 class="version">Removed Duplicate Batch-Eval Runner</h3>
+<ul>
+<li><strong>Deleted from <code>shared/runtime_eval.py</code></strong>: <code>_invoke_agent()</code>, <code>_run_batch_eval()</code>, <code>_BATCH_EVAL_CASES</code>, and the <code>if __name__ == "__main__":</code> block. <code>_invoke_agent</code> spun up its own <code>Runner</code> + <code>InMemorySessionService</code> to invoke the orchestrator &mdash; duplicating exactly what <code>FinSightAgentExecutor</code> and <code>after_agent_callback</code> already do for live traffic. The live executor has the response in hand; no second runner needed.</li>
+<li>Batch evaluation with ground-truth references still lives in <code>tests/evaluation/run_orchestrator_eval.py</code>.</li>
+</ul>
+
+<h3 class="version">Bat-File Cleanup</h3>
+<ul>
+<li><strong>Orchestrator A2A server removed from <code>run_adk_web.bat</code></strong>: <code>agent_1_adk/main.py</code> is no longer started. The orchestrator runs through <code>adk web</code> on port <code>8080</code>. The A2A endpoint at <code>:8001</code> is no longer exposed by default; bring it back manually with <code>uv run python -m agent_1_adk.main</code> if needed for A2A clients.</li>
+<li><code>stop_servers.bat</code> already kills the port; PowerShell terminal-close command targets all <code>uv run</code> and <code>lms server</code> windows reliably.</li>
+</ul>
+
 <h2>v1.20 &mdash; Runtime RAGAS Evaluation &amp; Offline HF Model Loading</h2>
 
 <h3 class="version">Runtime RAGAS Evaluation</h3>

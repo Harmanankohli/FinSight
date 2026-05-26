@@ -22,7 +22,7 @@ An autonomous multi-agent system that answers investment queries like *"Should I
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│              ADK Web UI (port 8001)                           │
+│              ADK Web UI (port 8080)                           │
 │           Orchestrator (ADK LlmAgent)                        │
 │         Discovers agents → LLM routes via send_message       │
 │         Single tool: send_message(name, task)                │
@@ -131,12 +131,14 @@ uv run python -m uvicorn agent_3_langgraph.server:app --host 0.0.0.0 --port 8003
 uv run python -m uvicorn agent_4_crewai.server:app --host 0.0.0.0 --port 8004
 
 # Terminal 5: ADK Web UI
-.venv\Scripts\activate && adk web --port 8001 agents
+uv run adk web --port 8080 --session_service_uri sqlite://./db/finsight_memory.db --memory_service_uri finsight:// agents
 ```
 
 **Startup order:** LM Studio → MCP Server → RAG → Quant → Sentiment → ADK Web UI
 
-Open http://127.0.0.1:8001 in your browser.
+Open http://127.0.0.1:8080 in your browser.
+
+> The orchestrator's standalone A2A server (`agent_1_adk/main.py` on `:8001`) is no longer started by `run_adk_web.bat`. The orchestrator runs inside `adk web`. Start it manually with `uv run python -m agent_1_adk.main` if you need to expose the A2A JSON-RPC endpoint to external A2A clients.
 
 ### Stop All Services
 
@@ -207,23 +209,7 @@ stop_servers.bat
 │       ├── memory_service.py # ADK BaseMemoryService (load_memory tool)
 │       └── __init__.py       # Exports
 │
-├── tests/                    # Test suite
-│   ├── test_a2a_communication.py
-│   ├── test_agent_cards.py
-│   ├── test_base_agent.py
-│   ├── test_orchestrator_tools.py
-│   ├── test_planner.py
-│   ├── test_quant_graph.py
-│   ├── test_rag_pipeline.py
-│   ├── test_sentiment_crew.py
-│   ├── test_trace_propagation.py  # Trace context + holdings extraction
-│   ├── test_memory.py             # Memory layer (SQLite, ticker, portfolio, performance)
-│   └── evaluation/                # RAGAS evaluation pipeline
-│       ├── run_rag_eval.py        # RAG faithfulness + relevancy evaluation
-│       ├── run_orchestrator_eval.py  # Tool accuracy + goal accuracy
-│       ├── financial_rubrics.py   # Custom AspectCritic metrics (citation, risk, clarity)
-│       ├── push_scores.py         # Push RAGAS scores to Langfuse
-│       └── rag_dataset.json       # 10 curated Q&A pairs (NVDA, AAPL, MSFT, JPM)
+├── tests/                    # Test directory (cleared in v1.24)
 │
 ├── run_adk_web.bat           # Start all services
 ├── stop_servers.bat          # Stop all services
@@ -242,6 +228,7 @@ Key environment variables in `.env`:
 | `A2A_TIMEOUT` | `180.0` | Timeout for A2A communication (seconds) |
 | `LLM_BASE_URL` | `http://localhost:1234/v1` | LM Studio OpenAI-compatible endpoint |
 | `SEMANTIC_CACHE_ENABLED` | `false` | Enable ChromaDB semantic cache for repeated investment queries |
+| `EVAL_TRACE_ENABLED` | `True` | Master switch for sidecar RAGAS evals. Set to `False` to disable all per-agent runtime scoring with no code changes |
 | `MCP_SERVER_URL` | `http://localhost:8010/sse` | Unified MCP server SSE endpoint |
 
 ## Documentation
@@ -259,18 +246,7 @@ Key environment variables in `.env`:
 
 ## Testing
 
-```bash
-uv run pytest -v
-```
-
-64 tests covering: A2A discovery, agent card validation, orchestrator tools, sub-agent executors, LangGraph state graphs, RAG pipelines, CrewAI integration, distributed trace propagation, portfolio holdings extraction, and persistent memory layer (SQLite store, ticker briefs, portfolio persistence, performance tracking, cross-session memory search).
-
-RAGAS evaluation pipeline (offline, requires running services):
-
-```bash
-python tests/evaluation/run_rag_eval.py --ticker NVDA
-python tests/evaluation/run_orchestrator_eval.py
-```
+No automated test suite. All test files removed in v1.24 — they were unmaintained fixtures from earlier architecture iterations that no longer matched the current codebase. Testing is performed manually via the ADK Web UI.
 
 ## License
 

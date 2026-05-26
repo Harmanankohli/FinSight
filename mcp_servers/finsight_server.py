@@ -1,3 +1,11 @@
+"""Unified MCP data server providing financial data tools.
+
+Exposes stock prices, financials, SEC EDGAR filings, news sentiment, ticker
+resolution, and a hardened Python sandbox — all over the Model Context Protocol.
+
+Agents consume these tools through the FastMCP SSE endpoint; no REST layer needed.
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -40,9 +48,15 @@ setup_file_logging("mcp")
 logger = logging.getLogger(__name__)
 app = FastMCP("finsight-mcp")
 
+# Bind to all interfaces by default so the containerised MCP SSE endpoint is
+# reachable from any agent process — 8010 avoids collisions with common ports.
 HOST = os.environ.get("MCP_HOST", "0.0.0.0")
 PORT = int(os.environ.get("MCP_PORT", "8010"))
+# Agent cards live in the parent project root, not inside mcp_servers/, to keep
+# them editable by non-engineers who may not know the server layout.
 AGENT_CARDS_DIR = Path(__file__).resolve().parent.parent / "agent_cards"
+# all-MiniLM-L6-v2: 23 MB (vs 80+ MB for larger models), 384-dim, fast CPU
+# inference — good enough for agent card semantic search without GPU cost.
 EMBED_MODEL_NAME = os.environ.get("EMBED_MODEL", "all-MiniLM-L6-v2")
 
 
@@ -60,6 +74,7 @@ class _TTLCache:
         self._lock = threading.Lock()
 
     def get(self, key):
+        """Return cached value if within TTL; evict stale entries on access."""
         with self._lock:
             if key in self._store:
                 val, ts = self._store[key]
@@ -70,6 +85,7 @@ class _TTLCache:
         return None
 
     def set(self, key, val):
+        """Insert/update entry, evicting LRU item if at maxsize."""
         with self._lock:
             if key in self._store:
                 self._store.move_to_end(key)
@@ -78,10 +94,15 @@ class _TTLCache:
             self._store[key] = (val, time.monotonic())
 
 
+# Prices change every few minutes — 5 min TTL keeps data fresh without hammering Yahoo.
 _cache_prices      = _TTLCache(ttl=300)        # 5 min
+# Financials (balance sheet, income statement) only change quarterly — 24 h is plenty.
 _cache_financials  = _TTLCache(ttl=86400)      # 24 h
+# News headlines publish every few minutes — 15 min balances freshness vs cache utility.
 _cache_news        = _TTLCache(ttl=900)        # 15 min
+# Filing content is immutable once filed — cache permanently with LRU-200 eviction.
 _cache_filing      = _TTLCache(ttl=None, maxsize=200)  # permanent LRU-200
+# Submission lists are large JSON blobs that change a few times daily — 6 h TTL.
 _cache_submissions = _TTLCache(ttl=21600)      # 6 h
 
 
@@ -89,6 +110,9 @@ _cache_submissions = _TTLCache(ttl=21600)      # 6 h
 # Lazy Agent Registry (no model download at import time)
 # ──────────────────────────────────────────────
 
+# Lazy initialisation: SentenceTransformer downloads ~80 MB on first call.
+# We defer everything until the first tool invocation so import time stays fast
+# and servers that never call find_agent don't pay the model download cost.
 _registry_lock = asyncio.Lock()
 _registry_ready = False
 _model_embed: SentenceTransformer | None = None
@@ -98,7 +122,11 @@ _df_registry: pd.DataFrame = pd.DataFrame(
 
 
 def _load_agent_cards() -> tuple[list[str], list[dict]]:
-    """Load agent card JSON files from AGENT_CARDS_DIR synchronously (called once)."""
+    """Load agent card JSON files from AGENT_CARDS_DIR synchronously (called once).
+    
+    Runs inside run_in_executor so the GIL doesn't block the event loop during
+    file I/O, even though the work is trivially fast for typical card counts.
+    """
     card_uris, agent_cards = [], []
     if not AGENT_CARDS_DIR.is_dir():
         logger.warning("Agent cards directory not found: %s", AGENT_CARDS_DIR)
@@ -122,8 +150,10 @@ def _load_agent_cards() -> tuple[list[str], list[dict]]:
 async def _ensure_registry() -> None:
     """Initialise the embedding model and registry DataFrame on first use."""
     global _registry_ready, _model_embed, _df_registry
+    # Fast path: avoid lock acquisition when already initialised.
     if _registry_ready:
         return
+    # Double-checked locking: only one coroutine downloads the model.
     async with _registry_lock:
         if _registry_ready:
             return
@@ -135,6 +165,7 @@ async def _ensure_registry() -> None:
                 return None, pd.DataFrame(
                     columns=["card_uri", "agent_card", "card_embeddings"]
                 )
+            # SentenceTransformer downloads ~80 MB on first call — delay until needed.
             model = SentenceTransformer(EMBED_MODEL_NAME)
             df = pd.DataFrame({"card_uri": card_uris, "agent_card": agent_cards})
             df["card_embeddings"] = df["agent_card"].apply(
@@ -156,6 +187,7 @@ async def _ensure_registry() -> None:
 )
 @observe()
 async def find_agent(query: str) -> str:
+    """Semantic search over agent cards: embed query, return highest cosine-similarity card."""
     await _ensure_registry()
     if _df_registry.empty or _model_embed is None:
         return json.dumps({"error": "No agent cards loaded"})
@@ -172,6 +204,7 @@ async def find_agent(query: str) -> str:
 
 @app.resource("resource://agent_cards/list", mime_type="application/json")
 async def get_agent_cards() -> dict:
+    """List all available agent card URIs as a JSON resource."""
     await _ensure_registry()
     return {
         "agent_cards": _df_registry["card_uri"].to_list()
@@ -182,6 +215,7 @@ async def get_agent_cards() -> dict:
 
 @app.resource("resource://agent_cards/{card_name}", mime_type="application/json")
 async def get_agent_card(card_name: str) -> dict:
+    """Retrieve a single agent card by name (e.g. resource://agent_cards/analyst)."""
     await _ensure_registry()
     if _df_registry.empty:
         return {"agent_card": None}
@@ -197,17 +231,17 @@ async def get_agent_card(card_name: str) -> dict:
 # ──────────────────────────────────────────────
 
 def _serialise_value(v: Any) -> Any:
-    """Recursively convert non-JSON-serialisable types."""
+    """Recursively convert non-JSON-serialisable types (NaN, inf, datetime, numpy)."""
     if isinstance(v, dict):
         return {_serialise_value(k): _serialise_value(val) for k, val in v.items()}
     if isinstance(v, (list, tuple)):
         return [_serialise_value(i) for i in v]
     if isinstance(v, float) and (v != v or v in (float("inf"), float("-inf"))):
-        return None
+        return None  # NaN and ±Inf are not valid JSON — replace with null.
     if hasattr(v, "isoformat"):
-        return v.isoformat()
+        return v.isoformat()  # datetime / Timestamp → ISO-8601 string.
     if isinstance(v, (np.integer,)):
-        return int(v)
+        return int(v)  # numpy int64/32/... → native Python int.
     if isinstance(v, (np.floating,)):
         return float(v)
     if isinstance(v, np.ndarray):
@@ -228,6 +262,7 @@ async def get_prices(ticker: str, period: str = "1y", interval: str = "1d") -> d
     Returns:
         dict with keys: ticker, period, data (list of OHLCV records with ISO dates)
     """
+    # Cache keyed on (ticker, period, interval) — 5 min TTL avoids stale prices.
     cache_key = (ticker.upper(), period, interval)
     cached = _cache_prices.get(cache_key)
     if cached is not None:
@@ -256,6 +291,7 @@ async def get_financials(ticker: str) -> dict:
     Returns:
         dict with keys: income_statement, balance_sheet, cash_flow, info
     """
+    # Financials don't change intraday — 24 h cache avoids redundant API calls.
     cache_key = (ticker.upper(),)
     cached = _cache_financials.get(cache_key)
     if cached is not None:
@@ -305,7 +341,7 @@ async def get_options_chain(ticker: str, expiration: str | None = None) -> dict:
                 "calls": chain.calls.to_dict(orient="records"),
                 "puts": chain.puts.to_dict(orient="records"),
             })
-        return {"expirations": list(stock.options)}
+        return {"expirations": list(stock.options)}  # No expiration given — just list available dates.
     except Exception as exc:
         logger.warning("get_options_chain failed for %s: %s", ticker, exc)
         return {"ticker": ticker, "error": str(exc)}
@@ -315,23 +351,31 @@ async def get_options_chain(ticker: str, expiration: str | None = None) -> dict:
 # SEC EDGAR Client
 # ──────────────────────────────────────────────
 
+# SEC EDGAR blocks requests without a valid User-Agent identifying the
+# requester — their robots.txt enforcement actively rate-limits non-compliant
+# clients. The contact email lets SEC reach us if we accidentally hammer them.
 _SEC_HEADERS = {
     "User-Agent": "FinSight Research (contact@finsight.com)",
     "Accept-Encoding": "gzip, deflate",
 }
 
-# Form types that contain structured financial statements.
-# Used as the default filter for get_financial_filings and RAG ingest guidance.
+# Only 10-K (annual) and 10-Q (quarterly) filings contain the full set of
+# financial statements (balance sheet, income statement, cash flow). 8-Ks are
+# unscheduled material events and are excluded from financial analysis.
 FINANCIAL_FORM_TYPES: frozenset[str] = frozenset({"10-K", "10-Q", "10-K/A", "10-Q/A"})
 
-# Form types whose primaryDocument is an XSLT stylesheet path rather than
-# an HTML filing. For these, use the accession-number index URL instead.
+# Forms 3/4/5 are insider ownership filings — their primaryDocument field
+# points to an XSLT renderer rather than the actual filing HTML. For these
+# we use the accession-number index page (the -index.htm URL) instead.
 _INDEX_ONLY_FORMS: frozenset[str] = frozenset({"3", "4", "5", "3/A", "4/A", "5/A"})
 
 
 class _EdgarClient:
-    """Async SEC EDGAR client with shared httpx session, cached ticker/title
-    maps, URL-safe edgar_url construction, and parallel-array bounds checking."""
+    """Async SEC EDGAR client managing ticker→CIK maps and filing retrieval.
+
+    Lazily initialises an httpx session, downloads the full SEC ticker map once,
+    constructs filing URLs (edgar raw vs inline XBRL), and retries on failure.
+    """
 
     def __init__(self) -> None:
         self._client: httpx.AsyncClient | None = None
@@ -342,6 +386,7 @@ class _EdgarClient:
         self._ticker_map_lock = asyncio.Lock()
 
     async def _get_client(self) -> httpx.AsyncClient:
+        """Lazy-init httpx session with double-checked lock (one connection per process)."""
         if self._client is None:
             async with self._client_lock:
                 if self._client is None:
@@ -354,6 +399,7 @@ class _EdgarClient:
         """Download {TICKER: cik} and {TICKER: title} maps once, then cache."""
         if self._ticker_map is not None:
             return self._ticker_map
+        # One-time download of ALL SEC-registered tickers (~10k entries at startup).
         async with self._ticker_map_lock:
             if self._ticker_map is not None:
                 return self._ticker_map
@@ -398,7 +444,9 @@ class _EdgarClient:
         safe_doc = urlquote(doc, safe="")
 
         if form in _INDEX_ONLY_FORMS or "/" in doc:
-            # Form 4 etc. store an XSLT path in primaryDocument — use index page.
+            # Forms 3/4/5 primaryDocument is an XSLT stylesheet path, not an HTML filing.
+# Using the index page avoids downloading a useless stylesheet that the agent
+# would have to parse through with no useful content.
             edgar_url = (
                 f"https://www.sec.gov/Archives/edgar/data/"
                 f"{cik_short}/{acc_clean}/{acc_num}-index.htm"
@@ -409,6 +457,7 @@ class _EdgarClient:
                 f"{cik_short}/{acc_clean}/{safe_doc}"
             )
 
+        # ix_url wraps the doc in SEC's inline XBRL viewer for structured data rendering.
         ix_url = (
             f"https://www.sec.gov/ix?doc=/Archives/edgar/data/"
             f"{cik_short}/{acc_clean}/{safe_doc}"
@@ -431,6 +480,7 @@ class _EdgarClient:
                 _cache_submissions.set(cik, result)
                 return result
             except Exception:
+                # Exponential backoff (1s, 2s) before raising on the 3rd failure.
                 if attempt < 2:
                     await asyncio.sleep(2 ** attempt)
                 else:
@@ -461,6 +511,7 @@ class _EdgarClient:
         dates    = recent.get("filingDate", [])
         docs     = recent.get("primaryDocument", [])
         acc_nums = recent.get("accessionNumber", [])
+        # SEC's JSON returns parallel arrays — bound-check against the shortest to avoid index errors.
         n = min(len(forms), len(dates), len(docs), len(acc_nums))
 
         result = []
@@ -549,6 +600,8 @@ class _EdgarClient:
 
         # If we still need more filings, page through older filing batches.
         # EDGAR stores older filings in separate paginated JSON files.
+        # Large filers (AAPL, MSFT) file dozens of 8-Ks per year — without pagination
+        # we'd never reach the 10-Ks buried in the older pages.
         files_meta = data.get("filings", {}).get("files", [])
         for file_meta in files_meta:
             if len(annual) >= annual_limit and len(quarterly) >= quarterly_limit:
@@ -591,6 +644,7 @@ class _EdgarClient:
     async def full_text_search(
         self, query: str, ticker: str | None = None
     ) -> dict:
+        """EDGAR full-text search via efts.sec.gov — indexes all filings."""
         try:
             params: dict = {"q": query}
             if ticker:
@@ -623,6 +677,7 @@ class _EdgarClient:
         self, edgar_url: str, ix_url: str | None = None
     ) -> dict:
         """Fetch and extract text content from an SEC EDGAR filing URL."""
+        # Try edgar_url first, fall back to ix_url if the direct URL fails.
         tried_urls = [edgar_url]
         if ix_url and ix_url != edgar_url:
             tried_urls.append(ix_url)
@@ -637,6 +692,7 @@ class _EdgarClient:
                 if "json" in content_type.lower():
                     text = json.dumps(resp.json(), indent=2)
                 elif "xml" in content_type.lower() or url.endswith((".xml", ".xsd")):
+                    # XBRL/XML filings — strip script/style/xbrldocument tags before text extraction.
                     try:
                         soup = BeautifulSoup(resp.text, "lxml-xml")
                     except Exception:
@@ -645,16 +701,18 @@ class _EdgarClient:
                         tag.decompose()
                     text = soup.get_text(separator=" ", strip=True)
                 else:
+                    # HTML filings — strip scripts, styles, noscripts to get clean readable text.
                     soup = BeautifulSoup(resp.text, "html.parser")
                     for tag in soup(["script", "style", "noscript"]):
                         tag.decompose()
                     text = soup.get_text(separator=" ", strip=True)
 
                 text = " ".join(text.split())
+                # Truncate at 50 KB to keep context windows manageable for the LLM agent.
                 if len(text) > 50000:
                     text = text[:50000] + "..."
                 if len(text.strip()) < 100:
-                    continue
+                    continue  # Empty result — try the next URL.
                 return {"url": url, "content": text, "length": len(text)}
             except Exception as exc:
                 logger.info("Tried %s, got: %s", url, exc)
@@ -667,6 +725,8 @@ class _EdgarClient:
         }
 
 
+# Module-level singleton — all MCP tools share one httpx session and one
+# ticker map to avoid redundant network connections and SEC rate-limit hits.
 _edgar = _EdgarClient()
 
 
@@ -786,6 +846,7 @@ async def get_filing_content(edgar_url: str, ix_url: str | None = None) -> dict:
     Returns:
         dict with keys: url, content (extracted text up to 50k chars), length, or error
     """
+    # Filing content is immutable once filed — permanent LRU cache.
     cached = _cache_filing.get(edgar_url)
     if cached is not None:
         logger.debug("Cache hit: get_filing_content(%s)", edgar_url[:80])
@@ -800,10 +861,17 @@ async def get_filing_content(edgar_url: str, ix_url: str | None = None) -> dict:
     return result
 
 
+# Guards against redundant pre-warms when multiple concurrent requests arrive
+# before _prewarm_ticker_map() finishes.
 _prewarm_done = False
 
 
 async def _prewarm_ticker_map() -> None:
+    """Pre-load the SEC ticker map at startup to avoid cold-start latency on first request.
+    
+    Without this, the first user query would pay a ~500ms penalty downloading
+    the full SEC company_tickers.json (~10k entries) synchronously.
+    """
     global _prewarm_done
     if _prewarm_done:
         return
@@ -855,6 +923,7 @@ _REVERSE_INDEX_LOCK = asyncio.Lock()
 
 
 def _normalize_company_name(name: str) -> str:
+    """Strip corporate suffixes and punctuation so "Apple Inc." -> "apple" matches "Apple". """
     import re as _re
     s = name.lower().strip()
     for _suffix in [
@@ -872,6 +941,7 @@ def _normalize_company_name(name: str) -> str:
 
 
 async def _build_reverse_index() -> list[tuple[str, str, str]]:
+    """Build (normalised_name, ticker, raw_title) index lazily with double-checked lock."""
     global _REVERSE_INDEX
     if _REVERSE_INDEX is not None:
         return _REVERSE_INDEX
@@ -883,6 +953,7 @@ async def _build_reverse_index() -> list[tuple[str, str, str]]:
         for ticker, title in (_edgar._title_map or {}).items():
             norm = _normalize_company_name(title)
             idx.append((norm, ticker, title))
+        # Sort longest-first so prefix matching prefers the most specific name.
         idx.sort(key=lambda x: -len(x[0]))
         _REVERSE_INDEX = idx
         logger.info("Built reverse index with %d entries", len(idx))
@@ -890,6 +961,7 @@ async def _build_reverse_index() -> list[tuple[str, str, str]]:
 
 
 async def _ticker_sec_lookup(query: str) -> dict | None:
+    """Match company name against the SEC ticker map with priority: exact→prefix→word_overlap→substring."""
     norm_query = _normalize_company_name(query)
     if not norm_query:
         return None
@@ -898,6 +970,7 @@ async def _ticker_sec_lookup(query: str) -> dict | None:
 
     best: tuple[int, str, str, str] | None = None
     for norm_title, ticker, title in idx:
+        # Priority 1: exact normalised name match (e.g. "JPMorgan Chase" -> JPM).
         if norm_title == norm_query:
             return {
                 "ticker": ticker,
@@ -905,10 +978,12 @@ async def _ticker_sec_lookup(query: str) -> dict | None:
                 "source": "sec",
                 "match": "exact",
             }
+        # Priority 2: prefix match -- "Micro" matches "Microsoft Corp" (shortest wins).
         if norm_title.startswith(norm_query):
             score = len(norm_title)
             if best is None or score < best[0]:
                 best = (score, ticker, title, "prefix")
+        # Priority 3: all query words appear in the title (any order).
         if not query_words:
             continue
         title_words = set(norm_title.split())
@@ -926,6 +1001,7 @@ async def _ticker_sec_lookup(query: str) -> dict | None:
             "match": best[3],
         }
 
+    # Priority 4: fallback — single-word substring / prefix of the longest query word.
     for word in sorted(query_words, key=len, reverse=True):
         for norm_title, ticker, title in idx:
             if norm_title.startswith(word):
@@ -946,6 +1022,8 @@ async def _ticker_sec_lookup(query: str) -> dict | None:
 
 
 import re as _re_module
+# Most NYSE/Nasdaq tickers are 1-5 uppercase letters; 1-2 letter suffix for
+# share classes (BRK.A, BF.B). Rejects crypto, currency pairs, indices.
 _STOCK_TICKER_RE = _re_module.compile(r"^[A-Z]{1,5}(\.[A-Z]{1,2})?$")
 
 
@@ -959,6 +1037,10 @@ async def _is_sec_ticker(symbol: str) -> bool:
 
 
 async def _ticker_yahoo_search(query: str) -> dict | None:
+    """Fallback ticker resolution via Yahoo Finance search API.
+
+    Three-pass preference order: major US exchange → SEC-registered → any plausible ticker.
+    """
     try:
         c = await _edgar._get_client()
         url = (
@@ -973,7 +1055,7 @@ async def _ticker_yahoo_search(query: str) -> dict | None:
         data = resp.json()
         quotes = data.get("quotes", [])
 
-        # Prefer quotes from major US exchanges
+        # Pass 1: prefer tickers listed on NYSE/Nasdaq major exchanges.
         for q in quotes:
             symbol = q.get("symbol", "")
             if not symbol or not _is_plausible_ticker(symbol):
@@ -989,7 +1071,7 @@ async def _ticker_yahoo_search(query: str) -> dict | None:
                     "source": "yfinance",
                 }
 
-        # Then any SEC-registered ticker
+        # Pass 2: any SEC-registered ticker (broader net than major exchanges).
         for q in quotes:
             symbol = q.get("symbol", "")
             if not symbol or not _is_plausible_ticker(symbol):
@@ -1003,7 +1085,7 @@ async def _ticker_yahoo_search(query: str) -> dict | None:
                     "source": "yfinance",
                 }
 
-        # Last resort: first plausible ticker
+        # Pass 3: any ticker that looks plausible (last resort).
         for q in quotes:
             symbol = q.get("symbol", "")
             if symbol and _is_plausible_ticker(symbol):
@@ -1034,6 +1116,7 @@ async def resolve_company_ticker(text: str) -> dict:
         dict with keys: ticker, company_name, source (sec/yfinance), match, or error
     """
     try:
+        # Two-tier: SEC (instant, local) → Yahoo (network, broader coverage).
         result = await _ticker_sec_lookup(text)
         if result:
             return result
@@ -1049,8 +1132,13 @@ async def resolve_company_ticker(text: str) -> dict:
 # Financial News Tools
 # ──────────────────────────────────────────────
 
+# VADER is rule-based (~1µs per headline), needs no GPU, no API keys, and
+# performs well on financial news where standard lexicons often fail on
+# domain-specific terms like "bearish", "beat estimates", "downgrade".
 _sentiment_analyzer = SentimentIntensityAnalyzer()
 
+# Three RSS feeds for broad financial news coverage (Yahoo, CNBC, MarketWatch).
+# All free, no API keys required, and cover the major financial news wires.
 _RSS_FEEDS: dict[str, str] = {
     "yahoo_finance": "https://finance.yahoo.com/news/rssindex",
     "cnbc_top": (
@@ -1062,7 +1150,7 @@ _RSS_FEEDS: dict[str, str] = {
 
 
 async def _fetch_rss(url: str, client: httpx.AsyncClient) -> dict:
-    """Async RSS fetch — no blocking I/O in feedparser.
+    """Async RSS fetch — feedparser.parse is synchronous but the HTTP GET is async.
 
     Returns a dict with:
       entries (list): parsed feed entries, empty on failure
@@ -1080,6 +1168,7 @@ async def _fetch_rss(url: str, client: httpx.AsyncClient) -> dict:
             }
         feed = feedparser.parse(resp.text)
         if feed.bozo and not feed.entries:
+            # bozo flag means malformed XML — only reject if we got 0 entries.
             return {
                 "entries": [],
                 "status": "parse_error",
@@ -1407,6 +1496,13 @@ async def get_earnings_calendar(ticker: str) -> dict:
 # Hardened Python Sandbox
 # ──────────────────────────────────────────────
 
+# Three layers of sandbox restriction, each targeting a different escape vector:
+#   _RESTRICTED_IMPORTS — modules that give filesystem, process, or network access
+#     (os, subprocess, socket) plus reflection/inspection tools (pickle, inspect).
+#   _RESTRICTED_CALLS  — builtin-level functions that bypass the AST sandbox
+#     (exec, eval, open, compile) or leak the execution environment (globals, vars).
+#   _RESTRICTED_ATTRS  — dangerous attribute chains on object instances
+#     (obj.__class__.__bases__.__subclasses__() is a well-known sandbox escape).
 _RESTRICTED_IMPORTS = frozenset([
     "os", "subprocess", "shutil", "socket", "ctypes",
     "importlib", "pickle", "inspect", "sys", "builtins",
@@ -1435,6 +1531,8 @@ def _check_code_safety(code: str) -> tuple[bool, str]:
     except SyntaxError as exc:
         return False, f"Syntax error: {exc}"
 
+    # AST-level analysis: catches dangerous constructs BEFORE execution.
+    # This is a static gate — the subprocess provides the real isolation.
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -1452,7 +1550,8 @@ def _check_code_safety(code: str) -> tuple[bool, str]:
                 return False, f"Restricted function: {fn.id}"
             if isinstance(fn, ast.Attribute) and fn.attr in _RESTRICTED_ATTRS:
                 return False, f"Restricted attribute: {fn.attr}"
-            # Block getattr(obj, '__dangerous__') with string literal
+            # getattr(obj, '__class__') is a common sandbox escape — block
+            # dunder attribute names passed as string literals to getattr.
             if isinstance(fn, ast.Name) and fn.id == "getattr":
                 if len(node.args) >= 2:
                     attr_arg = node.args[1]
@@ -1485,7 +1584,13 @@ def _check_code_safety(code: str) -> tuple[bool, str]:
 
 
 def _sandbox_preexec() -> None:
-    """OS-level resource limits applied in the child process (Unix only)."""
+    """OS-level resource limits applied in the child process (Unix only).
+    
+    25 s CPU time prevents infinite loops from hanging the server.
+    512 MB address space prevents memory-exhaustion attacks.
+    0 open file descriptors blocks filesystem writes even if the AST check
+    misses something (defence-in-depth for the subprocess boundary).
+    """
     try:
         resource.setrlimit(resource.RLIMIT_CPU, (25, 25))
         resource.setrlimit(resource.RLIMIT_AS, (512 * 1024 * 1024, 512 * 1024 * 1024))
@@ -1494,10 +1599,18 @@ def _sandbox_preexec() -> None:
         pass
 
 
+# The sandbox runs as a separate subprocess so OS-level resource limits
+# (CPU time, RAM, file descriptors) actually apply. A thread-level sandbox
+# would be vulnerable to GIL-bound resource starvation and can't isolate
+# segfaults from pandas/numpy's C extensions.
 _SANDBOX_RUNNER = """\
 import sys, json, math, statistics, itertools, collections, functools, \
        typing, datetime, random
 
+# Only these builtins are exposed — no open(), no exec(), no getattr().
+# This is the second defence layer after the AST check: even if a crafty
+# payload bypasses the static analysis, __builtins__ has been replaced
+# with a whitelist containing only safe, non-escaping functions.
 _SAFE_BUILTINS = {
     "print": print, "len": len, "range": range,
     "int": int, "float": float, "str": str, "bool": bool,
@@ -1515,6 +1628,10 @@ _SAFE_BUILTINS = {
     "NotImplementedError": NotImplementedError,
 }
 
+# User code is exec'd with __builtins__ replaced by the safe whitelist and a
+# limited set of data-science libraries. pandas and numpy are imported inside
+# the runner rather than passed in — that way they run under the subprocess
+# memory limits and don't pollute the main server's heap.
 _GLOBALS = {
     "__builtins__": _SAFE_BUILTINS,
     "pd": __import__("pandas"),
@@ -1563,13 +1680,22 @@ async def execute_python(code: str, timeout: int = 30) -> dict:
     if not safe:
         return {"success": False, "stdout": "", "stderr": reason, "result": None}
 
+    # Write runner to tempfile, not stdin pipe — this lets us pass it via
+    # subprocess.run with a file argument, which is more reliable than piping
+    # code through stdin across different Python installations.
     runner_fd, runner_path = tempfile.mkstemp(suffix=".py", text=True)
     try:
         with os.fdopen(runner_fd, "w", encoding="utf-8") as f:
             f.write(_SANDBOX_RUNNER)
 
+        # preexec_fn runs in the child process BEFORE exec() — only on Unix.
+        # Windows doesn't support setrlimit, so we skip resource limits there.
         preexec = _sandbox_preexec if sys.platform != "win32" else None
 
+        # -I  : isolated mode (no site-packages, no PYTHONPATH inheritance)
+        # -S  : don't run 'import site' at startup (faster, fewer escape vectors)
+        # Both flags together ensure the subprocess can't accidentally inherit
+        # dangerous modules from the parent's environment.
         proc = subprocess.run(
             [sys.executable, "-I", "-S", runner_path],
             input=code,
@@ -1638,6 +1764,13 @@ async def _health(scope, receive, send):
 
 
 def get_app():
+    """Thread-safe lazy singleton for the ASGI server app.
+    
+    The Starlette app wraps the FastMCP SSE endpoint alongside a /health route.
+    Lazily constructing it means uvicorn can import this module without
+    eagerly loading starlette into memory until the server actually starts.
+    Double-checked locking ensures only one caller creates the app wrapper.
+    """
     global _starlette_app
     if _starlette_app is None:
         with _app_lock:
@@ -1657,6 +1790,9 @@ def get_app():
     return _starlette_app
 
 
+# Entry point for `python finsight_server.py`. Uvicorn is imported lazily here
+# so that importing the module (e.g. for FastMCP SSE app refs) doesn't eagerly
+# pull in the ASGI runtime — keeps import chains clean for agent tests.
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(get_app(), host=HOST, port=PORT)

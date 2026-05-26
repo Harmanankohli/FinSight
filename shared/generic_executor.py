@@ -19,7 +19,13 @@ logger = logging.getLogger(__name__)
 
 
 class GenericAgentExecutor(AgentExecutor):
-    """Reusable A2A AgentExecutor that delegates all logic to a BaseAgent."""
+    """Reusable A2A AgentExecutor that delegates all logic to a BaseAgent.
+
+    Wraps the agent's ``stream()`` async generator into the A2A protocol
+    (TaskStatusUpdateEvent / TaskArtifactUpdateEvent) so any BaseAgent
+    subclass can participate in the A2A task lifecycle without writing
+    A2A boilerplate.
+    """
 
     def __init__(self, agent: BaseAgent):
         self.agent = agent
@@ -29,6 +35,14 @@ class GenericAgentExecutor(AgentExecutor):
         context: RequestContext,
         event_queue: EventQueue,
     ) -> None:
+        """Run the agent and emit A2A events over the event queue.
+
+        Translates the agent's stream() yielded dicts into:
+          - TASK_STATE_WORKING       — streaming progress
+          - TASK_STATE_COMPLETED      — final result with artifact
+          - TASK_STATE_FAILED         — error result with artifact
+          - input_required            — agent needs user input
+        """
         logger.info("Executing agent %s", self.agent.agent_name)
 
         query = context.get_user_input()
@@ -48,13 +62,18 @@ class GenericAgentExecutor(AgentExecutor):
             )
         )
 
+        # ── Stream event loop: each yielded dict from the agent maps to one of
+        #    three branches (complete / input-required / working progress). ──
         async for item in self.agent.stream(query, task.context_id, task.id):
             is_task_complete = item.get("is_task_complete", False)
             require_user_input = item.get("require_user_input", False)
 
+            # ── Branch 1: final result (success or error) ──
             if is_task_complete:
                 is_error = item.get("is_error", False)
                 content = item.get("content", {})
+                # Structured data (dict) → protobuf Struct so downstream A2A
+                # consumers receive typed fields rather than a raw text blob.
                 if item.get("response_type") == "data" and isinstance(content, dict):
                     s = Struct()
                     s.update(content)
@@ -85,6 +104,7 @@ class GenericAgentExecutor(AgentExecutor):
                 )
                 return
 
+            # ── Branch 2: agent requests user input before continuing ──
             if require_user_input:
                 await event_queue.enqueue_event(
                     TaskStatusUpdateEvent(
@@ -98,6 +118,7 @@ class GenericAgentExecutor(AgentExecutor):
                 )
                 return
 
+            # ── Branch 3: intermediate progress (streaming partial text) ──
             await event_queue.enqueue_event(
                 TaskStatusUpdateEvent(
                     task_id=task.id,
@@ -112,4 +133,5 @@ class GenericAgentExecutor(AgentExecutor):
     async def cancel(
         self, context: RequestContext, event_queue: EventQueue
     ) -> None:
+        """Cancel the current agent execution. Currently unsupported."""
         raise Exception("cancel not supported")

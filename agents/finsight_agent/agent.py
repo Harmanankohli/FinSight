@@ -1,3 +1,8 @@
+"""ADK callback layer for `adk web` mode.
+
+Handles post-turn memory persistence and orchestrator-level RAGAS eval.
+Bypassed entirely when running through FinSightAgentExecutor."""
+import asyncio
 import logging
 import sys
 from pathlib import Path
@@ -6,16 +11,163 @@ _src = str(Path(__file__).resolve().parent.parent.parent)
 if _src not in sys.path:
     sys.path.insert(0, _src)
 
+from google.genai import types
+
 from agent_1_adk.agent import root_agent
+from shared.config import EVAL_ENABLED
+from shared.runtime_eval import score_response as _eval_score_response
 
 __all__ = ["root_agent"]
 
 logger = logging.getLogger(__name__)
+
+
+async def _memory_cache_callback(callback_context) -> types.Content | None:
+    """Before-agent callback: short-circuit with today's cached brief if available."""
+    import json
+    from datetime import datetime
+    from shared.config import IST
+    from shared.memory import TickerMemory
+    from shared.ticker_utils import extract_ticker
+
+    def _log(msg):
+        logger.info(msg)
+        with open(_LOG_FILE, "a") as f:
+            f.write(f"[cache] {msg}\n")
+
+    _log("before_agent_callback fired")
+
+    session = callback_context.session
+    if not session or not session.events:
+        _log("no session or no events")
+        return None
+
+    user_text = ""
+    for event in reversed(session.events):
+        if getattr(event, "author", None) == "user":
+            content = getattr(event, "content", None)
+            if content and getattr(content, "parts", None):
+                text = "".join(p.text for p in content.parts if getattr(p, "text", None))
+                if text:
+                    user_text = text
+                    break
+
+    _log(f"user_text={user_text!r:.80}")
+
+    if not user_text:
+        return None
+
+    ticker = extract_ticker(user_text)
+    _log(f"ticker={ticker!r}")
+    if not ticker:
+        return None
+
+    tm = TickerMemory()
+    latest = await tm.get_latest(ticker, user_id=None)
+    _log(f"latest={latest is not None}")
+    if not latest:
+        return None
+
+    analysis_date = latest.get("analysis_date") or latest["created_at"][:10]
+    today = datetime.now(IST).date().isoformat()
+    _log(f"analysis_date={analysis_date!r} today={today!r} match={analysis_date == today}")
+    if analysis_date != today:
+        return None
+
+    rec = latest.get("recommendation", "UNKNOWN")
+    conf = latest.get("confidence", 0.5)
+
+    try:
+        data = json.loads(latest.get("brief_json", "{}"))
+        response_text = data.get("response_text", "")
+    except Exception:
+        response_text = ""
+
+    _log(f"rec={rec!r} conf={conf} rt_len={len(response_text)}")
+
+    if not response_text and rec == "UNKNOWN":
+        return None
+
+    cached = f"**{ticker} — {rec}** (confidence: {conf:.0%})"
+    if response_text:
+        cached += f"\n\n{response_text}"
+
+    _log(f"CACHE HIT — returning cached response for {ticker}")
+    return types.Content(role="model", parts=[types.Part.from_text(text=cached)])
+
+
 _LOGS_DIR = Path(__file__).resolve().parent.parent.parent / "logs"
 _LOGS_DIR.mkdir(exist_ok=True)
 _LOG_FILE = _LOGS_DIR / "memory_callback.log"
 
+# Module load marker — proves the new code was loaded
+with open(_LOG_FILE, "a") as _f:
+    from datetime import datetime as _dt
+    _f.write(f"\n=== MODULE LOADED at {_dt.now().isoformat()} ===\n")
 
+
+# Pulls the user query + the synthesized analysis text from session events.
+# Prefers the text co-located with the save_brief function call (the analysis the
+# LLM synthesized just before persisting), since later events (like the LLM's
+# post-tool acknowledgment) only contain a short "Brief saved..." confirmation.
+def _extract_query_and_response(events) -> tuple[str, str]:
+    """Pull first user message and the analysis text from session events."""
+    user_query = ""
+    save_brief_text = ""
+    fallback_text = ""
+    for event in events:
+        author = getattr(event, "author", None)
+        content = getattr(event, "content", None)
+        if not content or not getattr(content, "parts", None):
+            continue
+        text = "".join(p.text for p in content.parts if getattr(p, "text", None))
+
+        if not user_query and author == "user" and text:
+            user_query = text
+            continue
+
+        if author and author != "user":
+            has_save_brief = False
+            try:
+                for fn_call in event.get_function_calls():
+                    if fn_call.name == "save_brief":
+                        has_save_brief = True
+                        break
+            except Exception:
+                pass
+            if has_save_brief and text:
+                save_brief_text = text
+            elif text and len(text) > len(fallback_text):
+                fallback_text = text
+    return user_query, save_brief_text or fallback_text
+
+
+# Checks whether the turn called save_brief (vs a load_memory-only query that should not be persisted)
+def _is_analysis_turn(events) -> bool:
+    """True if the current turn produced a fresh analysis (called save_brief).
+
+    Walks back to the most recent user message and checks whether any tool
+    call after it was save_brief. A turn that only calls load_memory (i.e.
+    the user is asking about past recommendations) returns False.
+    """
+    last_user_idx = -1
+    for i in range(len(events) - 1, -1, -1):
+        if getattr(events[i], "author", None) == "user":
+            last_user_idx = i
+            break
+    if last_user_idx < 0:
+        return False
+    for event in events[last_user_idx + 1:]:
+        try:
+            for fn_call in event.get_function_calls():
+                if fn_call.name == "save_brief":
+                    return True
+        except Exception:
+            continue
+    return False
+
+
+# ADK invokes this after every agent turn. Non-analysis turns are skipped to avoid polluting long-term memory with casual chitchat queries.
 async def _persist_memory_callback(callback_context) -> None:
     """Persist session to memory after each agent turn.
 
@@ -37,6 +189,15 @@ async def _persist_memory_callback(callback_context) -> None:
             f.write("  No session or no events\n")
         return
 
+    # Skip persist/eval on non-analysis turns (e.g. user asking "what were my
+    # last recommendations?" which only calls load_memory). Otherwise the
+    # conversational query gets indexed and pollutes future memory searches.
+    if not _is_analysis_turn(session.events):
+        logger.info("Skipping persist + eval — turn did not call save_brief")
+        with open(_LOG_FILE, "a") as f:
+            f.write("  Skipped (non-analysis turn)\n")
+        return
+
     # Use ADK's Context.add_events_to_memory with correct signature
     try:
         await callback_context.add_events_to_memory(
@@ -55,5 +216,39 @@ async def _persist_memory_callback(callback_context) -> None:
         with open(_LOG_FILE, "a") as f:
             f.write(f"  add_events_to_memory failed: {e}\n")
 
+    # Overwrite the brief's short save_brief rationale with the full synthesized
+    # response so the same-day memory cache returns the rich text, not the summary.
+    user_query, response_text = _extract_query_and_response(session.events)
+    if response_text:
+        try:
+            from shared.memory import TickerMemory
+            from shared.ticker_utils import extract_ticker
 
+            ticker = extract_ticker(user_query)
+            if ticker:
+                tm = TickerMemory()
+                latest = await tm.get_latest(ticker, user_id=None)
+                if latest:
+                    updated = await tm.update_response_text(latest["id"], response_text)
+                    logger.info(
+                        "Updated brief response_text for %s (id=%s, len=%d, ok=%s)",
+                        ticker, latest["id"], len(response_text), updated,
+                    )
+        except Exception as e:
+            logger.warning("Failed to update brief response_text: %s", e)
+
+    # ── Orchestrator RAGAS eval (ADK Web path) ──────────────────────────
+    # ADK Web bypasses FinSightAgentExecutor, so the eval hook lives here.
+    if EVAL_ENABLED and user_query and response_text:
+        trace_id = None
+        try:
+            from shared.observability import get_langfuse_client
+            trace_id = get_langfuse_client().get_current_trace_id()
+        except Exception:
+            pass
+        asyncio.create_task(_eval_score_response(user_query, response_text, trace_id))
+        logger.info("Orchestrator eval scheduled (trace=%s)", trace_id)
+
+
+root_agent.before_agent_callback = _memory_cache_callback
 root_agent.after_agent_callback = _persist_memory_callback

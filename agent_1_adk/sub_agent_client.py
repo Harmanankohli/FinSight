@@ -56,6 +56,7 @@ class SubAgentClient:
     def __init__(self) -> None:
         self._agents: dict[str, dict[str, Any]] = {}
 
+    # Retry with backoff: handles slow-starting agents by retrying failed URLs up to 3 times
     async def discover(self, retries: int = 3, delay: float = 5.0) -> None:
         """Fetch agent cards from all seed URLs using ``A2ACardResolver``.
 
@@ -126,6 +127,7 @@ class SubAgentClient:
             "_http": None,
         }
 
+    # Matching priority: exact → case-insensitive → substring (fuzzy fallback for LLM typos)
     def resolve_agent_name(self, name: str) -> str | None:
         """Return the registered agent name that best matches `name`.
 
@@ -171,6 +173,7 @@ class SubAgentClient:
             for s in a["card"].skills
         ]
 
+    # Lazy init: creates A2A client on first use, caches for subsequent calls to same agent
     async def _get_a2a_client(self, agent_name: str) -> Any:
         entry = self._agents.get(agent_name)
         if not entry:
@@ -189,6 +192,7 @@ class SubAgentClient:
         entry["_http"] = http
         return entry["_client"]
 
+    # Streams A2A events (message / artifact / status / task) and returns the first terminal result
     async def send_message(self, agent_name: str, task_str: str) -> str:
         """Send a task to a remote agent and return its text response.
 
@@ -208,6 +212,7 @@ class SubAgentClient:
                 {"error": f"Failed to create client for '{agent_name}'"}
             )
 
+        # Propagate Langfuse trace context to sub-agents for end-to-end observability
         # --- Inject distributed trace context ---
         lf = get_langfuse_client()
         trace_id = lf.get_current_trace_id()
@@ -268,19 +273,7 @@ class SubAgentClient:
 
         latency_ms = round((time.monotonic() - t0) * 1000)
 
-        # Emit per-agent latency as a Langfuse span
-        try:
-            lf = get_langfuse_client()
-            lf.observation(
-                as_type="span",
-                name=f"sub-agent-{agent_name}",
-                input={"task": task_str[:200]},
-                output={"response": result_text[:200]},
-                metadata={"latency_ms": latency_ms, "agent": agent_name},
-            )
-        except Exception:
-            pass
-
+        # Capture sub-agent interactions as JSON traces for offline RAGAS batch evaluation
         # Record trace for RAGAS evaluation when enabled
         if _EVAL_TRACE_ENABLED:
             try:

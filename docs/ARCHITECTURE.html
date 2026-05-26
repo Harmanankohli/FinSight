@@ -61,20 +61,27 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 &#x2514;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2518;</pre>
 
 <h2>Orchestrator Architecture</h2>
-<p>The orchestrator (<code>agent_1_adk/</code>) uses a single <code>LlmAgent</code> with one <code>send_message</code> tool that delegates to sub-agents via A2A:</p>
+<p>The orchestrator (<code>agent_1_adk/</code>) uses a single <code>LlmAgent</code> with one <code>send_message</code> tool that delegates to sub-agents via A2A. Two parallel cache paths can short-circuit the LLM entirely on same-day repeat queries:</p>
 <pre>Module load &rarr; SubAgentClient.discover()
   &#x251C;&#x2500;&#x2500; A2ACardResolver(httpx.AsyncClient, url) per seed URL
   &#x251C;&#x2500;&#x2500; Returns typed AgentCard (protobuf)
   &#x2514;&#x2500;&#x2500; self.agents populated &rarr; instruction updated
 
 A2A Request &rarr; FinSightAgentExecutor.execute()
+  &rarr; _get_today_cached_text(ticker)  &mdash; [CACHE: return today brief if exists]
+  &rarr; _build_memory_context(query)    &mdash; inject [MEMORY CONTEXT] with [TODAY]/[STALE] tag
   &rarr; RUNNER.run_async(user_query)
   &rarr; LlmAgent (no pre-fetch)
+    &rarr; before_agent_callback: _memory_cache_callback  &mdash; [CACHE: return types.Content if today brief exists]
     &rarr; LLM calls send_message(agent_name, task) for each agent
     &rarr; SubAgentClient &rarr; A2A task to sub-agent
     &rarr; SubAgentClient &rarr; A2A response (text or data parts)
     &rarr; LLM calls next agent
     &rarr; LLM synthesizes BUY/HOLD/SELL
+  &rarr; after_agent_callback: _persist_memory_callback
+    &rarr; add_events_to_memory()
+    &rarr; update_response_text() &mdash; overwrite brief rationale with full analysis
+    &rarr; if EVAL_ENABLED: score_response()
   &rarr; COMPLETED with synthesis</pre>
 
 <h3>Key Design Choices</h3>
@@ -167,7 +174,7 @@ A2A Request &rarr; FinSightAgentExecutor.execute()
 </table>
 
 <h3>LangChain SQLiteCache (Tier 1B)</h3>
-<p><code>agent_3_langgraph/nodes.py</code> sets <code>SQLiteCache(database_path=".langchain_cache.db")</code> before the <code>ChatOpenAI</code> instance is used in <code>llm_summary_node</code>. Identical ticker+metrics inputs reuse cached LLM output without an LM Studio round-trip.</p>
+<p><code>agent_3_langgraph/nodes.py</code> sets <code>SQLiteCache(database_path="db/.langchain_cache.db")</code> before the <code>ChatOpenAI</code> instance is used in <code>llm_summary_node</code>. Identical ticker+metrics inputs reuse cached LLM output without an LM Studio round-trip.</p>
 
 <h3>Semantic Cache (Tier 1D)</h3>
 <p><code>shared/semantic_cache.py</code> &mdash; ChromaDB collection <code>finsight_semantic_cache</code> + <code>all-MiniLM-L6-v2</code> embedder (already in-use). Cosine similarity threshold: 0.95; TTL: 1 h; response stored up to 4000 chars in Chroma metadata.</p>
@@ -301,6 +308,13 @@ Sub-agents (agent_2, agent_3, agent_4)
 <h2>Runtime RAGAS Evaluation</h2>
 <p>After each agent produces a response, a fire-and-forget background task scores it using RAGAS metrics that require no ground-truth reference. Scores are pushed to Langfuse per-trace (linked by <code>trace_id</code>).</p>
 
+<h3>Feature flag</h3>
+<p>All sidecar evals are gated by <code>EVAL_TRACE_ENABLED</code> in <code>.env</code> (default <code>True</code>). The flag is exposed as <code>EVAL_ENABLED</code> in <code>shared/config.py</code>; every agent's <code>asyncio.create_task(_eval_*)</code> call site checks it. Set <code>EVAL_TRACE_ENABLED=False</code> to disable all per-agent runtime scoring with no code changes &mdash; useful for fast iteration when LM Studio judge calls add 5&ndash;180s of background work per query.</p>
+
+<h3>Orchestrator eval hook lives in <code>after_agent_callback</code></h3>
+<p>When the orchestrator runs through <code>adk web</code> (the path <code>run_adk_web.bat</code> uses), the ADK Web runner is responsible &mdash; <code>FinSightAgentExecutor</code> is never invoked. The orchestrator's eval is therefore scheduled from <code>agents/finsight_agent/agent.py</code>'s <code>_persist_memory_callback</code>, not from <code>agent_executor.py</code>. The callback first runs <code>_is_analysis_turn(session.events)</code>: if <code>save_brief</code> was not called in this turn (e.g. the user only asked "what were my last recommendations?"), both memory persist and eval are skipped to avoid polluting long-term memory with conversational queries.</p>
+<p><code>FinSightAgentExecutor</code> still keeps its eval call for completeness &mdash; it fires when an A2A client hits <code>agent_1_adk/main.py</code> directly. The A2A server is not started by <code>run_adk_web.bat</code> by default; start it manually with <code>uv run python -m agent_1_adk.main</code> if needed.</p>
+
 <table>
 <tr><th>Agent</th><th>Background Task</th><th>Metrics</th><th>Why Each Metric</th><th>Data Required</th></tr>
 <tr><td>Orchestrator</td><td><code>score_response()</code></td><td>AnswerRelevancy, citation_quality, risk_disclosure, recommendation_clarity, response_completeness</td><td>AnswerRelevancy: generic catch-all. citation_quality: unsubstantiated financial claims are worthless &mdash; must cite filing dates/amounts. risk_disclosure: no risk discussion means incomplete thesis. recommendation_clarity: core output is BUY/HOLD/SELL signal &mdash; ambiguous synthesis fails. response_completeness: must synthesize all 3 analysis types.</td><td><code>user_input</code>, <code>response</code></td></tr>
@@ -330,6 +344,7 @@ Sub-agents (agent_2, agent_3, agent_4)
 
 <h3>Langfuse Integration</h3>
 <p><code>_push_scores()</code> pushes each metric to <code>langfuse.create_score()</code> linked by <code>trace_id</code>. When <code>trace_id</code> is None (no active Langfuse trace), the push is skipped entirely to avoid &ldquo;Bad request&rdquo; errors from the cloud API with placeholder keys.</p>
+<p><strong>Score namespacing by agent</strong> &mdash; each score is pushed as <code>ragas/{agent}/{metric}</code> (e.g. <code>ragas/orchestrator/AnswerRelevancy</code>, <code>ragas/rag/Faithfulness</code>, <code>ragas/quant/FactualCorrectness</code>, <code>ragas/sentiment/catalyst_identification</code>). The previous flat <code>ragas/{metric}</code> naming made it impossible to distinguish the same metric across agents in Langfuse. Each <code>lf.create_score()</code> call also carries <code>comment="agent=&lt;name&gt;"</code> for additional structured filtering.</p>
 
 <h3>LM Studio Compatibility</h3>
 <p>RAGAS defaults to <code>instructor.Mode.JSON</code> which sends <code>response_format.type="json_object"</code> &mdash; LM Studio only supports <code>"json_schema"</code> or <code>"text"</code>. <code>_setup_ragas_clients()</code> patches with <code>instructor.Mode.JSON_SCHEMA</code>. HuggingFace embeddings are wrapped via a custom <code>_STEmbeddings</code> class (RAGAS 0.4.x <code>BaseRagasEmbedding</code>) to avoid a broken pydantic integration path.</p>
@@ -363,22 +378,33 @@ Sub-agents (agent_2, agent_3, agent_4)
 
 <h3>Session Persistence</h3>
 <p><code>DatabaseSessionService</code> (ADK native) replaces <code>InMemorySessionService</code>:</p>
-<pre>DatabaseSessionService(db_url="sqlite+aiosqlite:///./finsight_memory.db")</pre>
+<pre>DatabaseSessionService(db_url="sqlite+aiosqlite:///./db/finsight_memory.db")</pre>
 <p>All conversation events (user messages, agent responses, tool calls) are persisted to SQLite tables (<code>sessions</code>, <code>events</code>). Conversations survive server restarts.</p>
 
+<h3>Memory Cache Callback (before_agent_callback)</h3>
+<p>The fastest same-day cache path is the <code>before_agent_callback</code> registered as <code>root_agent.before_agent_callback = _memory_cache_callback</code>. It fires before the LLM runs, extracts the user&rsquo;s ticker from session events, and if today&rsquo;s brief has a valid <code>response_text</code>, returns <code>types.Content(role="model", parts=[...])</code> &mdash; the ADK runner accepts this as the agent response and skips the LLM entirely. This completes in ~200ms vs 30&ndash;60s for a full agent run.</p>
+
+<p>The executor-level path (<code>agent_1_adk/agent_executor.py</code>) has a parallel check via <code>_get_today_cached_text()</code> for A2A requests.</p>
+
+<h3>Response Text Overwrite</h3>
+<p>After the agent turn completes, <code>_persist_memory_callback</code> calls <code>TickerMemory.update_response_text(record_id, full_response)</code>. This overwrites the short <code>save_brief</code> rationale (an LLM-written summary) with the full synthesized analysis text. The same-day cache callback reads this <code>response_text</code>, so subsequent same-day queries return the rich analysis rather than an abbreviated rationale.</p>
+
 <h3>Memory Context Injection</h3>
-<p>Before each query, the executor injects memory context into the user message:</p>
-<pre>User Query &rarr; Executor._inject_memory_context(query)
+<p>When the cache callback misses (no today brief), the executor injects memory context into the user message:</p>
+<pre>User Query &rarr; Executor._build_memory_context(query)
   &#x251C;&#x2500;&#x2500; extract_ticker(query) &rarr; "NVDA"
-  &#x251C;&#x2500;&#x2500; TickerMemory.get_latest("NVDA") &rarr; last recommendation
+  &#x251C;&#x2500;&#x2500; TickerMemory.get_latest("NVDA") &rarr; last brief (with analysis_date)
+  &#x251C;&#x2500;&#x2500; Compare analysis_date with today
+  &#x2502;     [TODAY]  &rarr; tag as current; LLM MUST return directly (strict directive)
+  &#x2502;     [STALE]  &rarr; tag as outdated; LLM MUST call all agents fresh
   &#x251C;&#x2500;&#x2500; PortfolioStore.get() &rarr; current holdings
   &#x2514;&#x2500;&#x2500; Prepend: [MEMORY CONTEXT] ... [/MEMORY CONTEXT]
        &rarr; Runner receives augmented query</pre>
 <p>The memory context is compact (~300 tokens) and includes:</p>
 <ul>
-<li>Latest recommendation for the queried ticker (if exists)</li>
+<li>Latest recommendation for the queried ticker tagged <code>[TODAY]</code> or <code>[STALE]</code> based on <code>analysis_date</code></li>
 <li>Current portfolio holdings (labelled as background reference &mdash; not forwarded to sub-agents unless user explicitly requests portfolio analysis)</li>
-<li>Timestamp of last interaction</li>
+<li>When serving from today&rsquo;s cache (<code>[TODAY]</code>), the response is <strong>not</strong> re-saved to memory to prevent duplicate records</li>
 </ul>
 
 <h3>Component Architecture</h3>
@@ -410,17 +436,23 @@ runner = Runner(
 <tr><td><code>agent_1_adk/agent.py</code></td><td>System prompt includes memory usage instructions</td></tr>
 </table>
 
-<h3>Database File</h3>
+<h3>Database Files</h3>
 <ul>
-<li>Location: <code>finsight_memory.db</code> at project root</li>
-<li>Excluded from git via <code>.gitignore</code></li>
-<li>Auto-created on first use with schema migration</li>
+<li>All databases stored under the <code>db/</code> folder at the project root &mdash; the entire folder is excluded from git via <code>.gitignore</code></li>
+<li><code>db/finsight_memory.db</code> &mdash; ticker briefs, portfolios, performance records, ingested filings</li>
+<li><code>db/adk_sessions.db</code> &mdash; ADK conversation sessions and events (separated from memory data in v1.24 to prevent schema conflicts)</li>
+<li><code>db/chroma_db/</code> &mdash; ChromaDB vector store for SEC filing RAG and semantic cache</li>
+<li><code>db/.langchain_cache.db</code> &mdash; LangChain SQLiteCache for quant agent LLM responses</li>
+<li>All files auto-created on first run; <code>db/</code> directory created by <code>get_db()</code> via <code>path.parent.mkdir(parents=True, exist_ok=True)</code></li>
 </ul>
+
+<h3>Timezone</h3>
+<p>All datetime operations use <strong>IST (UTC+5:30)</strong>, defined as <code>IST = timezone(timedelta(hours=5, minutes=30), name="IST")</code> in <code>shared/config.py</code>. This applies to agent timestamps, memory created_at fields, analysis_date comparisons, and performance evaluation timestamps. Previously mixed UTC/local timestamps caused same-day cache mismatches on non-IST machines.</p>
 
 <h3>SQLite Schema</h3>
 <pre>sessions (id, user_id, created_at, updated_at)
 events (id, session_id, event_type, data, created_at)
-ticker_briefs (id, ticker, recommendation, confidence, response_text, created_at)
+ticker_briefs (id, ticker, recommendation, confidence, response_text, created_at, analysis_date)
 user_profiles (id, user_id, holdings_json, risk_profile, investment_horizon, updated_at)
 recommendation_records (id, ticker, recommendation, confidence, price_at_rec, created_at,
                         evaluated_at, realized_return)

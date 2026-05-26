@@ -32,6 +32,7 @@ from shared.config import ADK_MODEL
 
 from .agent import root_agent
 from .agent_executor import FinSightAgentExecutor
+from .agui_endpoint import make_agui_endpoint
 
 from shared.logging_config import setup_file_logging
 setup_file_logging("orchestrator")
@@ -73,11 +74,13 @@ agent_card = AgentCard(
 
 task_store = InMemoryTaskStore()
 
+# session_service: persists conversation turns; memory_service: enables semantic recall (load_memory tool)
 session_service = DatabaseSessionService(
-    db_url="sqlite+aiosqlite:///./finsight_memory.db"
+    db_url="sqlite+aiosqlite:///./db/adk_sessions.db"
 )
 memory_service = SQLiteMemoryService()
 
+# ADK Runner: ties agent, session persistence, and memory service together for execution
 runner = Runner(
     app_name=root_agent.name,
     agent=root_agent,
@@ -95,7 +98,9 @@ async def health(request):
     return JSONResponse({"status": "ok", "agent": "orchestrator"})
 
 
+# Three route groups: health check, AG-UI (RAGAS evaluation), and A2A protocol (sub-agent clients)
 routes = [Route("/health", health)]
+routes.append(Route("/agentic_chat", make_agui_endpoint(runner), methods=["POST"]))
 routes.extend(create_agent_card_routes(agent_card))
 routes.extend(create_jsonrpc_routes(request_handler, "/a2a"))
 
@@ -103,6 +108,7 @@ app = Starlette(routes=routes, debug=True)
 
 
 async def start_server(host: str, port: int) -> None:
+    # Initialize SQLite tables before accepting connections
     from shared.memory.store import get_db
     conn = await get_db()
     await init_db(conn)
