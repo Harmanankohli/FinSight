@@ -143,28 +143,23 @@ class FinSightAgentExecutor(AgentExecutor):
         # ── Input Guardrail: invalid ticker pre-check ────────────────────────
         if ticker_hint != "unknown":
             try:
-                from shared.mcp_client import get_shared_mcp
-                _mcp = await get_shared_mcp()
-                val_result = await _mcp.call_tool_by_name("validate_ticker", {"ticker": ticker_hint})
-                import json as _json
-                if hasattr(val_result, "content") and val_result.content:
-                    raw = val_result.content[0].text if hasattr(val_result.content[0], "text") else str(val_result.content[0])
-                    val_data = _json.loads(raw) if isinstance(raw, str) else raw
-                    if isinstance(val_data, dict) and not val_data.get("valid", True):
-                        task = context.current_task
-                        if not task:
-                            task = new_task_from_user_message(context.message)
-                            await event_queue.enqueue_event(task)
-                        updater = TaskUpdater(event_queue, task.id, task.context_id)
-                        await updater.update_status(
-                            TaskState.TASK_STATE_COMPLETED,
-                            new_text_message(
-                                f"Ticker '{ticker_hint}' was not found in SEC EDGAR. "
-                                "Please verify the ticker symbol and try again."
-                            ),
-                            final=True,
-                        )
-                        return
+                from shared.ticker_utils import validate_ticker as _validate_ticker
+                _valid, _, _err = await _validate_ticker(ticker_hint)
+                if not _valid:
+                    task = context.current_task
+                    if not task:
+                        task = new_task_from_user_message(context.message)
+                        await event_queue.enqueue_event(task)
+                    updater = TaskUpdater(event_queue, task.id, task.context_id)
+                    await updater.update_status(
+                        TaskState.TASK_STATE_COMPLETED,
+                        new_text_message(
+                            f"Ticker '{ticker_hint}' was not found in SEC EDGAR. "
+                            "Please verify the ticker symbol and try again."
+                        ),
+                        final=True,
+                    )
+                    return
             except Exception as _e:
                 logger.debug("Ticker pre-check failed (non-fatal): %s", _e)
 

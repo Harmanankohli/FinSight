@@ -128,6 +128,39 @@ async def resolve_ticker_via_mcp(mcp, query: str, exclude_ticker: str = "") -> t
     return "", ""
 
 
+async def validate_ticker(ticker: str) -> tuple[bool, str, str]:
+    """Module-level wrapper: validates ticker via shared MCP singleton.
+
+    Returns (valid, canonical_ticker, company_or_error).
+    On MCP failure, optimistically returns (True, ticker, "") so callers degrade gracefully.
+    """
+    if not ticker:
+        return False, "", "Could not identify a stock ticker from the query. Try using parentheses (AAPL) or $ prefix ($V)."
+    try:
+        from shared.mcp_client import get_shared_mcp
+        mcp = await get_shared_mcp()
+        return await validate_ticker_via_mcp(mcp, ticker)
+    except Exception as e:
+        import logging as _logging
+        _logging.getLogger(__name__).warning("MCP ticker validation failed, proceeding with regex guess: %s", e)
+        return True, ticker, ""
+
+
+async def resolve_ticker(query: str, exclude: str = "") -> tuple[str, str]:
+    """Module-level wrapper: resolves company name → ticker via shared MCP singleton.
+
+    Returns (ticker, company_name). Returns ("", "") on failure.
+    """
+    try:
+        from shared.mcp_client import get_shared_mcp
+        mcp = await get_shared_mcp()
+        return await resolve_ticker_via_mcp(mcp, query, exclude)
+    except Exception as e:
+        import logging as _logging
+        _logging.getLogger(__name__).warning("MCP ticker resolution failed: %s", e)
+        return "", ""
+
+
 def extract_holdings(query: str, exclude_ticker: str = "") -> list[str]:
     for pattern in _HOLDINGS_PATTERNS:
         m = pattern.search(query)

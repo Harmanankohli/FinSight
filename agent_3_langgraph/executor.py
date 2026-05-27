@@ -6,11 +6,10 @@ from collections.abc import AsyncIterable
 from langfuse.langchain import CallbackHandler
 
 from shared.base_agent import BaseAgent
-from shared.mcp_client import get_shared_mcp
 from shared.config import EVAL_ENABLED
 from shared.observability import get_langfuse_client
 from shared.runtime_eval import score_quant_response as _eval_quant_response
-from shared.ticker_utils import extract_ticker, extract_holdings, validate_ticker_via_mcp, resolve_ticker_via_mcp
+from shared.ticker_utils import extract_ticker, extract_holdings, validate_ticker, resolve_ticker
 from shared.trace_context import extract_trace_ids
 
 from .graph import QuantAnalysisGraph
@@ -41,24 +40,6 @@ class QuantAgent(BaseAgent):
                      ticker, result.get("recommendation"),
                      "ok" if result.get("dcf_valuation") else "null")
         return result
-
-    async def _validate_ticker(self, ticker: str) -> tuple[bool, str, str]:
-        if not ticker:
-            return False, "", "Could not identify a stock ticker from the query. Try using parentheses (AAPL) or $ prefix ($V)."
-        try:
-            mcp = await get_shared_mcp()
-            return await validate_ticker_via_mcp(mcp, ticker)
-        except Exception as e:
-            logger.warning("MCP ticker validation failed, proceeding with regex guess: %s", e)
-            return True, ticker, ""
-
-    async def _resolve_ticker(self, query: str, exclude_ticker: str = "") -> tuple[str, str]:
-        try:
-            mcp = await get_shared_mcp()
-            return await resolve_ticker_via_mcp(mcp, query, exclude_ticker)
-        except Exception as e:
-            logger.warning("MCP ticker resolution failed: %s", e)
-            return "", ""
 
     async def stream(
         self, query: str, context_id: str, task_id: str
@@ -97,11 +78,11 @@ class QuantAgent(BaseAgent):
                     "content": "Could not identify a stock ticker from the query. Try using parentheses (AAPL) or $ prefix ($V).",
                 }
 
-            valid, validated_ticker, company = await self._validate_ticker(ticker)
+            valid, validated_ticker, company = await validate_ticker(ticker)
             if not valid and not resolved:
-                ticker, _ = await self._resolve_ticker(query, exclude_ticker=ticker)
+                ticker, _ = await resolve_ticker(query, ticker)
                 if ticker:
-                    valid, validated_ticker, company = await self._validate_ticker(ticker)
+                    valid, validated_ticker, company = await validate_ticker(ticker)
 
             if not valid:
                 span.update(output={"error": f"Invalid ticker: {ticker}"})

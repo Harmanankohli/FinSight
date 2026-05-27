@@ -10,7 +10,7 @@ from shared.config import EVAL_ENABLED
 from shared.memory.store import is_filing_ingested, mark_filing_ingested
 from shared.observability import get_langfuse_client
 from shared.runtime_eval import score_rag_response as _eval_rag_response
-from shared.ticker_utils import extract_ticker, validate_ticker_via_mcp, resolve_ticker_via_mcp
+from shared.ticker_utils import extract_ticker, validate_ticker, resolve_ticker
 from shared.trace_context import extract_trace_ids
 
 from .document_ingestion import DocumentIngestionPipeline
@@ -108,24 +108,6 @@ class RAGAgent(BaseAgent):
         await self._ensure_ingested(ticker)
         return await self.index.query(ticker, query_text)
 
-    async def _validate_ticker(self, ticker: str) -> tuple[bool, str, str]:
-        if not ticker:
-            return False, "", "Could not identify a stock ticker from the query. Try using parentheses (AAPL) or $ prefix ($V)."
-        try:
-            mcp = await get_shared_mcp()
-            return await validate_ticker_via_mcp(mcp, ticker)
-        except Exception as e:
-            logger.warning("Ticker validation via MCP failed, proceeding with regex guess: %s", e)
-            return True, ticker, ""
-
-    async def _resolve_ticker(self, query: str, exclude_ticker: str = "") -> tuple[str, str]:
-        try:
-            mcp = await get_shared_mcp()
-            return await resolve_ticker_via_mcp(mcp, query, exclude_ticker)
-        except Exception as e:
-            logger.warning("MCP ticker resolution failed: %s", e)
-            return "", ""
-
     async def stream(
         self, query: str, context_id: str, task_id: str
     ) -> AsyncIterable[dict]:
@@ -151,7 +133,7 @@ class RAGAgent(BaseAgent):
             resolved = False
 
             if not ticker:
-                ticker, _ = await self._resolve_ticker(query)
+                ticker, _ = await resolve_ticker(query)
                 resolved = True
 
             if not ticker:
@@ -164,11 +146,11 @@ class RAGAgent(BaseAgent):
                     "content": "Could not identify a stock ticker from the query. Try using parentheses (AAPL) or $ prefix ($V).",
                 }
 
-            valid, validated_ticker, company = await self._validate_ticker(ticker)
+            valid, validated_ticker, company = await validate_ticker(ticker)
             if not valid and not resolved:
-                ticker, _ = await self._resolve_ticker(query, exclude_ticker=ticker)
+                ticker, _ = await resolve_ticker(query, ticker)
                 if ticker:
-                    valid, validated_ticker, company = await self._validate_ticker(ticker)
+                    valid, validated_ticker, company = await validate_ticker(ticker)
 
             if not valid:
                 span.update(output={"error": f"Invalid ticker: {ticker}"})
