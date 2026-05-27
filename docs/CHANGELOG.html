@@ -36,6 +36,32 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 
 <h1>Changelog</h1>
 
+<h2>v1.28 &mdash; Full Synthesis in save_brief + Cache-Hit on Company Names + RAG Latency Cut</h2>
+
+<h3 class="version">Full Synthesis Persistence</h3>
+<ul>
+<li><strong><code>save_brief</code> now stores full analysis</strong> (<code>agent_1_adk/agent.py</code>): New <code>_synthesis_text_from_context()</code> reads the longest LLM-generated text from <code>session.events</code> on the first write. Both ADK-web and A2A paths persist the complete BUY/HOLD/SELL analysis instead of the short rationale. Falls back to rationale only when no model output exists in the turn.</li>
+<li><strong><code>update_response_text</code> removed from <code>_persist_memory_callback</code></strong> (<code>agents/finsight_agent/agent.py</code>): The post-turn overwrite was unreliable (response-text extraction depended on event ordering) and blind to the A2A executor path (which doesn't fire <code>after_agent_callback</code>). Synthesis is now captured at <code>save_brief</code> time, which all paths call.</li>
+<li><strong>New test</strong>: <code>tests/unit/memory/test_save_brief_persists_synthesis.py</code> (2 test cases) &mdash; covers both the synthesis-wins case and the rationale-fallback case.</li>
+</ul>
+
+<h3 class="version">Ticker-Resolution Cache Fix</h3>
+<ul>
+<li><strong>_memory_cache_callback falls back to MCP resolve</strong> (<code>agents/finsight_agent/agent.py</code>): When the regex-extracted token misses in DB (e.g. user types &ldquo;VISA&rdquo; but the brief is stored under canonical &ldquo;V&rdquo;), the before-agent callback runs <code>resolve_company_ticker</code> and retries the cache lookup. Closes the asymmetry where <code>save_brief</code> dedup hit but the cache lookup missed.</li>
+</ul>
+
+<h3 class="version">RAG Latency Reduction (~5x)</h3>
+<ul>
+<li><strong><code>response_mode=&quot;compact&quot;</code> with <code>similarity_top_k=3</code></strong> (<code>agent_2_llamaindex/index_manager.py</code>): All three RAG query engines (SEC filings, financial filings, earnings) switched from default mode (N sequential <code>refine</code> calls) to <code>compact</code> &mdash; a single LLM call instead of one per retrieved chunk. <code>similarity_top_k</code> reduced from 5 to 3. Total LLM calls per RAG query: 1 (was up to 5).</li>
+</ul>
+
+<h3 class="version">Configuration Changes</h3>
+<ul>
+<li><strong>A2A timeouts bumped</strong> (<code>shared/config.py</code>): <code>A2A_TIMEOUT</code> 180&rarr;680s, <code>A2A_TIMEOUT_RAG</code> 60&rarr;600s, <code>A2A_TIMEOUT_QUANT</code> 90&rarr;600s, <code>A2A_TIMEOUT_SENTIMENT</code> 45&rarr;600s &mdash; tolerates slow local LLM inference without spurious timeouts.</li>
+<li><strong>Default model updated</strong> (<code>shared/config.py</code>): <code>LLM_MODEL</code> &rarr; <code>qwen/qwen3-30b-a3b-2507</code>, <code>ADK_MODEL</code> &rarr; <code>openai/qwen/qwen3-30b-a3b-2507</code>. Both already reflected in <code>.env.example</code>; default now matches.</li>
+<li><strong><code>.env.example</code> cleaned</strong> (<code>shared/config.py</code>): Removed unused <code>GOOGLE_API_KEY</code>.</li>
+</ul>
+
 <h2>v1.27 &mdash; Security Sandbox Hardening + 60 AST-Gate Tests</h2>
 
 <h3 class="version">Sandbox Extraction &amp; Hardening</h3>

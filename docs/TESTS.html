@@ -38,7 +38,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 
 <h1>Test Coverage</h1>
 
-<p><strong>~148 test cases</strong> across 11 test files &mdash; models, quant graph nodes, ticker utilities, TTL cache, rate limiter, trace context, memory store, and security sandbox.</p>
+<p><strong>~150 test cases</strong> across 12 test files &mdash; models, quant graph nodes, ticker utilities, TTL cache, rate limiter, trace context, memory store, security sandbox, and save_brief synthesis.</p>
 
 <h2>Running Tests</h2>
 <pre><code>pytest                          # all unit tests
@@ -63,9 +63,10 @@ pytest -m "not integration"     # unit tests only (default)</code></pre>
 &crarr;   &crarr; test_trace_context.py            # 8 &mdash; inject/extract round-trip, edge cases
 &crarr;   &crarr; memory/
 &crarr;       &crarr; test_memory_store.py         # 5 &mdash; table creation, indexes, WAL mode, idempotency
-&crarr;       &crarr; test_ticker_memory.py        # 7 &mdash; store/get_latest, history, flip detection</code></pre>
+&crarr;       &crarr; test_ticker_memory.py        # 7 &mdash; store/get_latest, history, flip detection
+&crarr;       &crarr; test_save_brief_persists_synthesis.py  # 2 &mdash; synthesis-wins, rationale-fallback</code></pre>
 
-<p><strong>Total: ~148 test cases across 11 test files.</strong></p>
+<p><strong>Total: ~150 test cases across 12 test files.</strong></p>
 
 <h2>Key Patterns</h2>
 <ul>

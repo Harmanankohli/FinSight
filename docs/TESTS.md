@@ -1,6 +1,6 @@
 # Test Coverage
 
-**~148 test cases across 11 test files.**
+**~150 test cases across 12 test files.**
 
 ## Running Tests
 
@@ -30,9 +30,10 @@ tests/
     ├── test_trace_context.py            # 8 — inject/extract round-trip, edge cases
     └── memory/
         ├── test_memory_store.py         # 5 — table creation, indexes, WAL mode, idempotency
-        └── test_ticker_memory.py        # 7 — store/get_latest, history, flip detection
+        ├── test_ticker_memory.py        # 7 — store/get_latest, history, flip detection
+        └── test_save_brief_persists_synthesis.py  # 2 — synthesis-wins, rationale-fallback
 
-**Total: ~148 test cases across 11 test files.**
+**Total: ~150 test cases across 12 test files.**
 
 ## Key Patterns
 

@@ -36,11 +36,11 @@ The callback checks for a valid `response_text` in the cached brief (populated b
 
 **Why two cache paths (callback + executor-level)?** The `before_agent_callback` only fires when the orchestrator runs through ADK's built-in runner (`adk web` path). A2A requests hitting `agent_1_adk/main.py` directly bypass ADK callbacks, so the executor-level `_get_today_cached_text()` provides the same short-circuit for that path.
 
-### Why `update_response_text` overwrite the brief after the turn?
+### Why the full synthesis is stored directly in `save_brief` instead of a post-turn overwrite?
 
-The `save_brief` tool is called *during* the LLM turn, before synthesis completes. At that point the LLM has only produced a brief rationale for the recommendation. The full synthesis (combining RAG, Quant, and Sentiment results) happens after `save_brief` returns. Without the overwrite, the same-day cache would return only the abbreviated rationale — a few sentences of justification — instead of the complete multi-paragraph analysis that the user originally saw.
+The original approach used `_persist_memory_callback` to overwrite the brief's `response_text` after the turn completed. This had two problems: (1) the overwrite was unreliable — it depended on extracting the right response text from session events after the LLM finished, and (2) it was blind to the A2A executor path, which doesn't fire `after_agent_callback`.
 
-The overwrite happens in `_persist_memory_callback` (after the turn), extracting the response text from session events and storing it into the existing brief via `tm.update_response_text()`. Subsequent same-day queries via `_memory_cache_callback` then return the full analysis.
+The fix moves the synthesis capture into `save_brief` itself. A new helper `_synthesis_text_from_context` reads the longest LLM-generated text from `session.events` at the time `save_brief` is called. Since `save_brief` is invoked *during* the LLM turn (after the tool response but before the turn ends), the session events already contain the model's full synthesized output. If no model text exists (edge case), it falls back to the rationale. The post-turn `update_response_text` overwrite was removed entirely. Both ADK-web and A2A paths now persist the full analysis because both call `save_brief`.
 
 ### Why programmatic dedup at `save_brief` and `_store_memory`?
 

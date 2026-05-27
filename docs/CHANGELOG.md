@@ -1,5 +1,27 @@
 # Changelog
 
+## v1.28 — Full Synthesis in save_brief + Cache-Hit on Company Names + RAG Latency Cut
+
+### Full Synthesis Persistence
+
+- **`save_brief` now stores full analysis** (`agent_1_adk/agent.py`): New `_synthesis_text_from_context()` reads the longest LLM-generated text from `session.events` on the first write. Both ADK-web and A2A paths persist the complete BUY/HOLD/SELL analysis instead of the short rationale. Falls back to rationale only when no model output exists in the turn.
+- **`update_response_text` removed from `_persist_memory_callback`** (`agents/finsight_agent/agent.py`): The post-turn overwrite was unreliable (response-text extraction depended on event ordering) and blind to the A2A executor path (which doesn't fire `after_agent_callback`). Synthesis is now captured at `save_brief` time, which all paths call.
+- **New test**: `tests/unit/memory/test_save_brief_persists_synthesis.py` (2 test cases) — covers both the synthesis-wins case and the rationale-fallback case.
+
+### Ticker-Resolution Cache Fix
+
+- **_memory_cache_callback falls back to MCP resolve** (`agents/finsight_agent/agent.py`): When the regex-extracted token misses in DB (e.g. user types "VISA" but the brief is stored under canonical "V"), the before-agent callback runs `resolve_company_ticker` and retries the cache lookup. Closes the asymmetry where `save_brief` dedup hit but the cache lookup missed.
+
+### RAG Latency Reduction (~5x)
+
+- **`response_mode="compact"` with `similarity_top_k=3`** (`agent_2_llamaindex/index_manager.py`): All three RAG query engines (SEC filings, financial filings, earnings) switched from default mode (N sequential `refine` calls) to `compact` — a single LLM call instead of one per retrieved chunk. `similarity_top_k` reduced from 5 to 3. Total LLM calls per RAG query: 1 (was up to 5).
+
+### Configuration Changes
+
+- **A2A timeouts bumped** (`shared/config.py`): `A2A_TIMEOUT` 180→680s, `A2A_TIMEOUT_RAG` 60→600s, `A2A_TIMEOUT_QUANT` 90→600s, `A2A_TIMEOUT_SENTIMENT` 45→600s — tolerates slow local LLM inference without spurious timeouts.
+- **Default model updated** (`shared/config.py`): `LLM_MODEL` → `qwen/qwen3-30b-a3b-2507`, `ADK_MODEL` → `openai/qwen/qwen3-30b-a3b-2507`. Both already reflected in `.env.example`; default now matches.
+- **`.env.example` cleaned** (`shared/config.py`): Removed unused `GOOGLE_API_KEY`.
+
 ## v1.27 — Security Sandbox Hardening + 60 AST-Gate Tests
 
 ### Sandbox Extraction & Hardening
