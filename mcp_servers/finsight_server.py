@@ -9,7 +9,6 @@ Agents consume these tools through the FastMCP SSE endpoint; no REST layer neede
 from __future__ import annotations
 
 import asyncio
-import ast
 import atexit
 import json
 import logging
@@ -17,9 +16,6 @@ import os
 import sys
 import subprocess
 import time
-
-if sys.platform != "win32":
-    import resource
 import tempfile
 import threading
 from datetime import datetime, timezone
@@ -1485,168 +1481,10 @@ async def get_earnings_calendar(ticker: str) -> dict:
 
 
 # ──────────────────────────────────────────────
-# Hardened Python Sandbox
+# Hardened Python Sandbox (logic in shared/sandbox.py)
 # ──────────────────────────────────────────────
 
-# Three layers of sandbox restriction, each targeting a different escape vector:
-#   _RESTRICTED_IMPORTS — modules that give filesystem, process, or network access
-#     (os, subprocess, socket) plus reflection/inspection tools (pickle, inspect).
-#   _RESTRICTED_CALLS  — builtin-level functions that bypass the AST sandbox
-#     (exec, eval, open, compile) or leak the execution environment (globals, vars).
-#   _RESTRICTED_ATTRS  — dangerous attribute chains on object instances
-#     (obj.__class__.__bases__.__subclasses__() is a well-known sandbox escape).
-_RESTRICTED_IMPORTS = frozenset([
-    "os", "subprocess", "shutil", "socket", "ctypes",
-    "importlib", "pickle", "inspect", "sys", "builtins",
-    "gc", "weakref", "atexit", "signal", "threading",
-    "multiprocessing", "pty", "tty", "termios", "fcntl",
-    "mmap", "resource", "pwd", "grp", "crypt",
-])
-
-_RESTRICTED_CALLS = frozenset([
-    "exec", "eval", "open", "__import__", "compile",
-    "globals", "locals", "vars", "dir", "delattr", "setattr",
-])
-
-_RESTRICTED_ATTRS = frozenset([
-    "system", "popen", "execv", "execve", "execl", "execvp",
-    "spawn", "spawnl", "fork", "forkpty", "exec", "eval",
-    "__class__", "__bases__", "__subclasses__", "__mro__",
-    "__globals__", "__builtins__", "__code__", "__closure__",
-    "__wrapped__",
-])
-
-
-def _check_code_safety(code: str) -> tuple[bool, str]:
-    try:
-        tree = ast.parse(code)
-    except SyntaxError as exc:
-        return False, f"Syntax error: {exc}"
-
-    # AST-level analysis: catches dangerous constructs BEFORE execution.
-    # This is a static gate — the subprocess provides the real isolation.
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                root = alias.name.split(".")[0]
-                if root in _RESTRICTED_IMPORTS:
-                    return False, f"Restricted import: {alias.name}"
-        if isinstance(node, ast.ImportFrom):
-            root = (node.module or "").split(".")[0]
-            if root in _RESTRICTED_IMPORTS:
-                return False, f"Restricted import from: {node.module}"
-
-        if isinstance(node, ast.Call):
-            fn = node.func
-            if isinstance(fn, ast.Name) and fn.id in _RESTRICTED_CALLS:
-                return False, f"Restricted function: {fn.id}"
-            if isinstance(fn, ast.Attribute) and fn.attr in _RESTRICTED_ATTRS:
-                return False, f"Restricted attribute: {fn.attr}"
-            # getattr(obj, '__class__') is a common sandbox escape — block
-            # dunder attribute names passed as string literals to getattr.
-            if isinstance(fn, ast.Name) and fn.id == "getattr":
-                if len(node.args) >= 2:
-                    attr_arg = node.args[1]
-                    if isinstance(attr_arg, ast.Constant) and isinstance(
-                        attr_arg.value, str
-                    ) and (
-                        attr_arg.value in _RESTRICTED_ATTRS
-                        or (
-                            attr_arg.value.startswith("__")
-                            and attr_arg.value.endswith("__")
-                        )
-                    ):
-                        return False, f"Restricted getattr: {attr_arg.value}"
-
-        if isinstance(node, ast.Attribute) and node.attr in _RESTRICTED_ATTRS:
-            return False, f"Restricted attribute access: {node.attr}"
-
-        if isinstance(node, ast.Subscript):
-            slice_node = node.slice
-            if isinstance(slice_node, ast.Constant) and isinstance(
-                slice_node.value, str
-            ):
-                val = slice_node.value
-                if val in _RESTRICTED_ATTRS or (
-                    val.startswith("__") and val.endswith("__")
-                ):
-                    return False, f"Restricted subscript key: {val}"
-
-    return True, ""
-
-
-def _sandbox_preexec() -> None:
-    """OS-level resource limits applied in the child process (Unix only).
-    
-    25 s CPU time prevents infinite loops from hanging the server.
-    512 MB address space prevents memory-exhaustion attacks.
-    0 open file descriptors blocks filesystem writes even if the AST check
-    misses something (defence-in-depth for the subprocess boundary).
-    """
-    try:
-        resource.setrlimit(resource.RLIMIT_CPU, (25, 25))
-        resource.setrlimit(resource.RLIMIT_AS, (512 * 1024 * 1024, 512 * 1024 * 1024))
-        resource.setrlimit(resource.RLIMIT_NOFILE, (0, 0))
-    except Exception:
-        pass
-
-
-# The sandbox runs as a separate subprocess so OS-level resource limits
-# (CPU time, RAM, file descriptors) actually apply. A thread-level sandbox
-# would be vulnerable to GIL-bound resource starvation and can't isolate
-# segfaults from pandas/numpy's C extensions.
-_SANDBOX_RUNNER = """\
-import sys, json, math, statistics, itertools, collections, functools, \
-       typing, datetime, random
-
-# Only these builtins are exposed — no open(), no exec(), no getattr().
-# This is the second defence layer after the AST check: even if a crafty
-# payload bypasses the static analysis, __builtins__ has been replaced
-# with a whitelist containing only safe, non-escaping functions.
-_SAFE_BUILTINS = {
-    "print": print, "len": len, "range": range,
-    "int": int, "float": float, "str": str, "bool": bool,
-    "list": list, "dict": dict, "tuple": tuple, "set": set,
-    "frozenset": frozenset, "bytes": bytes,
-    "enumerate": enumerate, "zip": zip, "map": map, "filter": filter,
-    "any": any, "all": all, "sum": sum, "min": min, "max": max,
-    "abs": abs, "round": round, "sorted": sorted, "reversed": reversed,
-    "repr": repr, "format": format, "hash": hash, "id": id,
-    "isinstance": isinstance,
-    "True": True, "False": False, "None": None,
-    "Exception": Exception, "ValueError": ValueError,
-    "TypeError": TypeError, "KeyError": KeyError,
-    "IndexError": IndexError, "StopIteration": StopIteration,
-    "NotImplementedError": NotImplementedError,
-}
-
-# User code is exec'd with __builtins__ replaced by the safe whitelist and a
-# limited set of data-science libraries. pandas and numpy are imported inside
-# the runner rather than passed in — that way they run under the subprocess
-# memory limits and don't pollute the main server's heap.
-_GLOBALS = {
-    "__builtins__": _SAFE_BUILTINS,
-    "pd": __import__("pandas"),
-    "np": __import__("numpy"),
-    "math": math, "json": json, "datetime": datetime,
-    "random": random, "statistics": statistics,
-    "itertools": itertools, "collections": collections,
-    "functools": functools, "typing": typing,
-}
-
-code = sys.stdin.read()
-_locals = {}
-try:
-    exec(code, _GLOBALS, _locals)
-    result = _locals.get("result")
-    print("__RESULT__:" + json.dumps({
-        "type": type(result).__name__ if result is not None else "NoneType",
-        "value": repr(result)[:2000],
-    }))
-except Exception:
-    import traceback
-    print("__ERROR__:" + traceback.format_exc(), file=sys.stderr)
-"""
+from shared.sandbox import run_sandbox as _run_sandbox
 
 
 @app.tool()
@@ -1668,71 +1506,7 @@ async def execute_python(code: str, timeout: int = 30) -> dict:
     Returns:
         dict with keys: success, stdout, stderr, result ({type, value})
     """
-    safe, reason = _check_code_safety(code)
-    if not safe:
-        return {"success": False, "stdout": "", "stderr": reason, "result": None}
-
-    # Write runner to tempfile, not stdin pipe — this lets us pass it via
-    # subprocess.run with a file argument, which is more reliable than piping
-    # code through stdin across different Python installations.
-    runner_fd, runner_path = tempfile.mkstemp(suffix=".py", text=True)
-    try:
-        with os.fdopen(runner_fd, "w", encoding="utf-8") as f:
-            f.write(_SANDBOX_RUNNER)
-
-        # preexec_fn runs in the child process BEFORE exec() — only on Unix.
-        # Windows doesn't support setrlimit, so we skip resource limits there.
-        preexec = _sandbox_preexec if sys.platform != "win32" else None
-
-        # -I  : isolated mode (no site-packages, no PYTHONPATH inheritance)
-        # -S  : don't run 'import site' at startup (faster, fewer escape vectors)
-        # Both flags together ensure the subprocess can't accidentally inherit
-        # dangerous modules from the parent's environment.
-        proc = subprocess.run(
-            [sys.executable, "-I", "-S", runner_path],
-            input=code,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            preexec_fn=preexec,
-        )
-    except subprocess.TimeoutExpired:
-        return {
-            "success": False,
-            "stdout": "",
-            "stderr": f"Timed out after {timeout}s",
-            "result": None,
-        }
-    except Exception as exc:
-        return {"success": False, "stdout": "", "stderr": str(exc), "result": None}
-    finally:
-        try:
-            os.unlink(runner_path)
-        except OSError:
-            pass
-
-    result: dict | None = None
-    clean_lines: list[str] = []
-    for line in proc.stdout.splitlines():
-        if line.startswith("__RESULT__:"):
-            try:
-                result = json.loads(line[len("__RESULT__:"):])
-            except json.JSONDecodeError:
-                result = {"raw": line[len("__RESULT__:"):]}
-        else:
-            clean_lines.append(line)
-
-    cleaned_stderr = "\n".join(
-        line[len("__ERROR__:"):] if line.startswith("__ERROR__:") else line
-        for line in proc.stderr.splitlines()
-    )
-
-    return {
-        "success": proc.returncode == 0,
-        "stdout": "\n".join(clean_lines),
-        "stderr": cleaned_stderr,
-        "result": result,
-    }
+    return await _run_sandbox(code, timeout)
 
 
 # ──────────────────────────────────────────────
