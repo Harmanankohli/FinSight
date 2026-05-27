@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
+from shared.trace_context import current_trace_id, current_session_id
+
 # Logs directory: one level up from shared/ at project-root/logs/
 _LOGS_DIR = Path(__file__).resolve().parent.parent / "logs"
 
@@ -26,8 +28,15 @@ class JsonFormatter(logging.Formatter):
             "logger": record.name,
             "message": record.getMessage(),
         }
-        # Structured extras picked up when set on the LogRecord (e.g. by #13 correlation IDs).
-        for k in ("trace_id", "session_id", "ticker", "latency_ms"):
+        # trace_id / session_id: prefer explicit extra= on the record, fall back to ContextVar
+        # so that any log line emitted after extract_trace_ids() automatically carries the ID.
+        trace_id = getattr(record, "trace_id", None) or current_trace_id.get()
+        session_id = getattr(record, "session_id", None) or current_session_id.get()
+        if trace_id:
+            payload["trace_id"] = trace_id
+        if session_id:
+            payload["session_id"] = session_id
+        for k in ("ticker", "latency_ms", "tool"):
             val = getattr(record, k, None)
             if val is not None:
                 payload[k] = val

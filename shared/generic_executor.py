@@ -1,6 +1,7 @@
 import logging
 
 from a2a.helpers import new_task_from_user_message, new_text_message
+from shared.trace_context import extract_trace_ids, current_trace_id, current_session_id
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.types import (
@@ -43,13 +44,20 @@ class GenericAgentExecutor(AgentExecutor):
           - TASK_STATE_FAILED         — error result with artifact
           - input_required            — agent needs user input
         """
-        logger.info("Executing agent %s", self.agent.agent_name)
-
         query = context.get_user_input()
         task = context.current_task
         if not task:
             task = new_task_from_user_message(context.message)
             await event_queue.enqueue_event(task)
+
+        # Populate ContextVars so log lines inside execute() carry the trace/session IDs.
+        trace_id_val, _, _ = extract_trace_ids(query)
+        if trace_id_val:
+            current_trace_id.set(trace_id_val)
+        if task and task.context_id:
+            current_session_id.set(task.context_id)
+
+        logger.info("Executing agent %s", self.agent.agent_name)
 
         await event_queue.enqueue_event(
             TaskStatusUpdateEvent(

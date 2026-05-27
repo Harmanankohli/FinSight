@@ -248,6 +248,7 @@ async def get_prices(ticker: str, period: str = "1y", interval: str = "1d") -> d
     Returns:
         dict with keys: ticker, period, data (list of OHLCV records with ISO dates)
     """
+    logger.info("Tool called", extra={"tool": "get_prices", "ticker": ticker})
     return await _cache_prices.get_or_fetch(
         f"prices:{ticker.upper()}:{period}:{interval}",
         lambda: _get_prices_uncached(ticker, period, interval),
@@ -289,6 +290,7 @@ async def get_financials(ticker: str) -> dict:
     Returns:
         dict with keys: income_statement, balance_sheet, cash_flow, info
     """
+    logger.info("Tool called", extra={"tool": "get_financials", "ticker": ticker})
     return await _cache_financials.get_or_fetch(
         f"financials:{ticker.upper()}",
         lambda: _get_financials_uncached(ticker),
@@ -732,6 +734,7 @@ async def get_company_filings(
     Returns:
         dict with keys: ticker, cik, filings (list of {form, filing_date, description, edgar_url, ix_url})
     """
+    logger.info("Tool called", extra={"tool": "get_company_filings", "ticker": ticker})
     try:
         types_list = (
             [t.strip() for t in form_types.split(",") if t.strip()]
@@ -1300,6 +1303,7 @@ async def get_news_sentiment(ticker: str, limit: int = 10) -> dict:
           positive_articles, negative_articles, neutral_articles,
           articles, feed_status (per-source diagnostics), source_used
     """
+    logger.info("Tool called", extra={"tool": "get_news_sentiment", "ticker": ticker})
     cache_key = f"news:{ticker.upper()}:{limit}"
     cached = _cache_news.get(cache_key)
     if cached is not None:

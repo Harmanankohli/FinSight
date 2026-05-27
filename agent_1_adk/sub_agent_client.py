@@ -34,7 +34,7 @@ _TERMINAL_STATES = {
 
 from shared.config import AGENT_SEED_URLS, A2A_TIMEOUT
 from shared.observability import get_langfuse_client
-from shared.trace_context import inject_trace_context
+from shared.trace_context import inject_trace_context, current_trace_id
 
 logger = logging.getLogger(__name__)
 
@@ -214,6 +214,8 @@ class SubAgentClient:
         lf = get_langfuse_client()
         trace_id = lf.get_current_trace_id()
         parent_span_id = lf.get_current_observation_id()
+        if trace_id:
+            current_trace_id.set(trace_id)
         if trace_id and parent_span_id:
             task_str = inject_trace_context(task_str, trace_id, parent_span_id)
             logger.debug(
