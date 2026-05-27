@@ -20,13 +20,11 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from shared.memory import SQLiteMemoryService, init_db
-from shared.observability import init_langfuse, shutdown_langfuse
+from shared.observability import init_langfuse, init_instrumentation, shutdown_langfuse
 
 init_langfuse(service_name="orchestrator")
 atexit.register(shutdown_langfuse)
-from openinference.instrumentation.google_adk import GoogleADKInstrumentor
-
-GoogleADKInstrumentor().instrument()
+init_instrumentation("orchestrator")
 
 from shared.config import ADK_MODEL
 

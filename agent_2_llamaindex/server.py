@@ -16,17 +16,12 @@ from shared.a2a_store import SQLiteTaskStore
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
 
 from shared.logging_config import setup_file_logging
-from shared.observability import init_langfuse, shutdown_langfuse
+from shared.observability import init_langfuse, init_instrumentation, shutdown_langfuse
 
 setup_file_logging("rag_agent")
 init_langfuse(service_name="rag_agent")
 atexit.register(shutdown_langfuse)
-from openinference.instrumentation.llama_index import LlamaIndexInstrumentor
-
-LlamaIndexInstrumentor().instrument()
-from opentelemetry.instrumentation.starlette import StarletteInstrumentor
-
-StarletteInstrumentor().instrument()
+init_instrumentation("rag")
 
 from starlette.responses import JSONResponse
 from starlette.routing import Route

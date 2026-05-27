@@ -7,9 +7,6 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
-
-HTTPXClientInstrumentor().instrument()
 
 from a2a.client import (
     A2ACardResolver,
