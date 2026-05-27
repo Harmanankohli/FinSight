@@ -1,4 +1,5 @@
 import asyncio
+import atexit
 import json
 import logging
 from dataclasses import dataclass
@@ -9,6 +10,44 @@ from mcp import ClientSession
 from mcp.client.sse import sse_client
 
 logger = logging.getLogger(__name__)
+
+# ── Process-wide singleton ────────────────────────────────────────────────────
+_global_client: "MCPClient | None" = None
+_client_lock = asyncio.Lock()
+
+
+async def get_shared_mcp() -> "MCPClient":
+    """Return the process-wide singleton MCPClient, connecting on first call.
+
+    Uses double-checked locking so concurrent first callers collapse into one
+    connect_all() instead of each paying the SSE handshake cost.
+    """
+    global _global_client
+    if _global_client is not None and _global_client._connected:
+        return _global_client
+    async with _client_lock:
+        if _global_client is None or not _global_client._connected:
+            from shared.config import MCP_SERVER_URL, MCP_TIMEOUT
+            _global_client = MCPClient(
+                configs=[MCPServerConfig(name="finsight-mcp", url=MCP_SERVER_URL)],
+                timeout=MCP_TIMEOUT,
+            )
+            await _global_client.connect_all()
+    return _global_client
+
+
+def _shutdown_mcp_sync() -> None:
+    """Best-effort MCP disconnect at process exit."""
+    if _global_client is None or not _global_client._connected:
+        return
+    try:
+        loop = asyncio.new_event_loop()
+        loop.run_until_complete(_global_client.disconnect_all())
+        loop.close()
+    except Exception:
+        pass
+
+atexit.register(_shutdown_mcp_sync)
 
 
 # Normalises MCP tool responses—which arrive as complex objects with
@@ -111,6 +150,7 @@ class MCPClient:
         self._cleanup_ctxs: dict[str, Any] = {}
         self._tool_registry: dict[str, str] = {}
         self._tool_definitions: dict[str, Any] = {}
+        self._connected = False
 
         if config_path:
             self._load_config(config_path)
@@ -125,6 +165,7 @@ class MCPClient:
     async def connect_all(self) -> None:
         for server in self.servers:
             await self._connect_server(server)
+        self._connected = True
 
     # Retries SSE connection with exponential backoff (2^attempt sec). Each
     # attempt creates a fresh transport session from scratch—stale state from
@@ -199,20 +240,30 @@ class MCPClient:
         )
 
     # Looks up the host server in the tool registry, then delegates to
-    # call_tool. This is the primary entry point for agents that only know
+    # call_tool. On connection errors, marks disconnected, reconnects once,
+    # and retries. This is the primary entry point for agents that only know
     # what they need, not where it lives.
     async def call_tool_by_name(
         self,
         tool_name: str,
         arguments: dict[str, Any] | None = None,
     ) -> Any:
-        server_name = self._tool_registry.get(tool_name)
-        if not server_name:
-            available = ", ".join(sorted(self._tool_registry))
-            raise MCPClientError(
-                f"Tool '{tool_name}' not found. Available tools: {available}"
-            )
-        return await self.call_tool(server_name, tool_name, arguments)
+        _RECONNECT_EXC = (ConnectionError, asyncio.IncompleteReadError, EOFError)
+        for attempt in range(2):
+            server_name = self._tool_registry.get(tool_name)
+            if not server_name:
+                available = ", ".join(sorted(self._tool_registry))
+                raise MCPClientError(
+                    f"Tool '{tool_name}' not found. Available tools: {available}"
+                )
+            try:
+                return await self.call_tool(server_name, tool_name, arguments)
+            except _RECONNECT_EXC as exc:
+                if attempt == 1:
+                    raise
+                logger.warning("MCP connection lost (%s); reconnecting…", exc)
+                self._connected = False
+                await self.connect_all()
 
     async def list_tools(self, server_name: str | None = None) -> list[Any]:
         if server_name:
@@ -297,3 +348,4 @@ class MCPClient:
         self._cleanup_ctxs.clear()
         self._tool_registry.clear()
         self._tool_definitions.clear()
+        self._connected = False

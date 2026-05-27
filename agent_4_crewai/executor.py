@@ -4,8 +4,8 @@ import logging
 from collections.abc import AsyncIterable
 
 from shared.base_agent import BaseAgent
-from shared.mcp_client import MCPClient, MCPServerConfig
-from shared.config import MCP_SERVER_URL, MCP_TIMEOUT, EVAL_ENABLED
+from shared.mcp_client import get_shared_mcp
+from shared.config import EVAL_ENABLED
 from shared.observability import get_langfuse_client
 from shared.runtime_eval import score_sentiment_response as _eval_sentiment_response
 from shared.ticker_utils import extract_ticker, validate_ticker_via_mcp, resolve_ticker_via_mcp
@@ -24,33 +24,14 @@ class SentimentAgent(BaseAgent):
             description="Synthesizes financial news sentiment, SEC insider trading signals, and investment narratives using CrewAI",
             content_types=["text", "application/json"],
         )
-        self._mcp = MCPClient(configs=[MCPServerConfig(name="finsight-mcp", url=MCP_SERVER_URL)], timeout=MCP_TIMEOUT)
-        self._wrapper = MCPClientWrapper(self._mcp)
-        self._connected = False
 
-    async def _connect(self):
-        if not self._connected:
-            await self._mcp.connect_all()
-            self._connected = True
-
-    async def _disconnect(self):
-        """Gracefully disconnect MCP client to prevent connection errors."""
-        if self._connected and self._mcp:
-            try:
-                await self._mcp.disconnect_all()
-                logger.debug("MCP client disconnected gracefully")
-            except Exception as e:
-                logger.debug("Error during MCP disconnect (non-critical): %s", e)
-            finally:
-                self._connected = False
-
-    async def _collect_data_parallel(self, ticker: str) -> dict:
+    async def _collect_data_parallel(self, ticker: str, mcp) -> dict:
         # Concurrent fetch: fires news sentiment and SEC filings requests in parallel via asyncio.gather
         results = {}
 
         async def call(tool, args):
             try:
-                r = await self._mcp.call_tool_by_name(tool, args)
+                r = await mcp.call_tool_by_name(tool, args)
                 if hasattr(r, "content"):
                     for item in r.content:
                         txt = item.text if hasattr(item, "text") else str(item)
@@ -61,8 +42,6 @@ class SentimentAgent(BaseAgent):
                 return {"raw": str(r)[:500]}
             except Exception as e:
                 return {"error": str(e)}
-
-        await self._connect()
 
         tasks = {
             "news": call("get_news_sentiment", {"ticker": ticker, "limit": 5}),
@@ -78,9 +57,11 @@ class SentimentAgent(BaseAgent):
 
     async def analyze(self, ticker: str, query_text: str) -> dict:
         # Orchestration: parallel data collection → CrewAI analysis → extract contexts for RAGAS eval
-        data = await self._collect_data_parallel(ticker)
+        mcp = await get_shared_mcp()
+        data = await self._collect_data_parallel(ticker, mcp)
         logger.info("Collected data for %s: %s", ticker, list(data.keys()))
-        crew_builder = SentimentIntelligenceCrew(self._wrapper)
+        wrapper = MCPClientWrapper(mcp)
+        crew_builder = SentimentIntelligenceCrew(wrapper)
         result = await crew_builder.analyze(ticker, precollected_data=data)
         result["_retrieved_contexts"] = _extract_sentiment_contexts(data)
         return result
@@ -89,16 +70,16 @@ class SentimentAgent(BaseAgent):
         if not ticker:
             return False, "", "Could not identify a stock ticker from the query. Try using parentheses (AAPL) or $ prefix ($V)."
         try:
-            await self._connect()
-            return await validate_ticker_via_mcp(self._mcp, ticker)
+            mcp = await get_shared_mcp()
+            return await validate_ticker_via_mcp(mcp, ticker)
         except Exception as e:
             logger.warning("MCP ticker validation failed, proceeding with regex guess: %s", e)
             return True, ticker, ""
 
     async def _resolve_ticker(self, query: str, exclude_ticker: str = "") -> tuple[str, str]:
         try:
-            await self._connect()
-            return await resolve_ticker_via_mcp(self._mcp, query, exclude_ticker)
+            mcp = await get_shared_mcp()
+            return await resolve_ticker_via_mcp(mcp, query, exclude_ticker)
         except Exception as e:
             logger.warning("MCP ticker resolution failed: %s", e)
             return "", ""
@@ -106,10 +87,7 @@ class SentimentAgent(BaseAgent):
     async def stream(
         self, query: str, context_id: str, task_id: str
     ) -> AsyncIterable[dict]:
-        try:
-            yield await self._build_response(query)
-        finally:
-            await self._disconnect()
+        yield await self._build_response(query)
 
     async def _build_response(self, query: str) -> dict:
         trace_id, parent_span_id, query = extract_trace_ids(query)

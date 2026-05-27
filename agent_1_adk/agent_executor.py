@@ -142,12 +142,9 @@ class FinSightAgentExecutor(AgentExecutor):
         # Fail fast on invalid tickers to avoid wasted agent calls downstream
         # ── Input Guardrail: invalid ticker pre-check ────────────────────────
         if ticker_hint != "unknown":
-            _mcp = None
             try:
-                from shared.mcp_client import MCPClient, MCPServerConfig
-                from shared.config import MCP_SERVER_URL
-                _mcp = MCPClient(configs=[MCPServerConfig(name="finsight-mcp", url=MCP_SERVER_URL)])
-                await _mcp.connect_all()
+                from shared.mcp_client import get_shared_mcp
+                _mcp = await get_shared_mcp()
                 val_result = await _mcp.call_tool_by_name("validate_ticker", {"ticker": ticker_hint})
                 import json as _json
                 if hasattr(val_result, "content") and val_result.content:
@@ -170,14 +167,6 @@ class FinSightAgentExecutor(AgentExecutor):
                         return
             except Exception as _e:
                 logger.debug("Ticker pre-check failed (non-fatal): %s", _e)
-            finally:
-                # Clean up temporary MCP connection
-                if _mcp is not None:
-                    try:
-                        await _mcp.disconnect_all()
-                        logger.debug("Temporary MCP connection closed")
-                    except Exception as cleanup_err:
-                        logger.debug("MCP cleanup error (non-critical): %s", cleanup_err)
 
         # Short-circuit identical queries via semantic similarity cache
         # ── Semantic cache check ─────────────────────────────────────────────

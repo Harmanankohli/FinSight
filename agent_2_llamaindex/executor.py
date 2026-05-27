@@ -5,8 +5,8 @@ from collections.abc import AsyncIterable
 from datetime import date, datetime, timezone
 
 from shared.base_agent import BaseAgent
-from shared.mcp_client import MCPClient, MCPServerConfig
-from shared.config import MCP_SERVER_URL, EVAL_ENABLED
+from shared.mcp_client import get_shared_mcp
+from shared.config import EVAL_ENABLED
 from shared.memory.store import is_filing_ingested, mark_filing_ingested
 from shared.observability import get_langfuse_client
 from shared.runtime_eval import score_rag_response as _eval_rag_response
@@ -27,7 +27,6 @@ class RAGAgent(BaseAgent):
             content_types=["text", "application/json"],
         )
         self.index = FinancialIndexManager()
-        self._mcp: MCPClient | None = None
         self._ingestion: DocumentIngestionPipeline | None = None
         self._last_ingestion: dict[str, date] = {}
 
@@ -36,12 +35,15 @@ class RAGAgent(BaseAgent):
         today = datetime.now(timezone.utc).date()
         if self._last_ingestion.get(ticker) == today:
             return
-        if not await self._ensure_mcp_connected():
+        try:
+            mcp = await get_shared_mcp()
+        except Exception as e:
+            logger.warning("MCP connect failed: %s", e)
             return
         if self._ingestion is None:
             self._ingestion = DocumentIngestionPipeline(self.index)
         try:
-            result = await self._mcp.call_tool_by_name(
+            result = await mcp.call_tool_by_name(
                 "get_company_filings",
                 {"ticker": ticker, "form_types": "10-K,10-Q,8-K", "limit": 5},
             )
@@ -66,7 +68,7 @@ class RAGAgent(BaseAgent):
                                 continue
                             if edgar_url:
                                 try:
-                                    content_result = await self._mcp.call_tool_by_name(
+                                    content_result = await mcp.call_tool_by_name(
                                         "get_filing_content",
                                         {"edgar_url": edgar_url, "ix_url": ix_url},
                                     )
@@ -106,44 +108,20 @@ class RAGAgent(BaseAgent):
         await self._ensure_ingested(ticker)
         return await self.index.query(ticker, query_text)
 
-    async def _ensure_mcp_connected(self) -> bool:
-        if self._mcp is None:
-            self._mcp = MCPClient(configs=[MCPServerConfig(name="finsight-mcp", url=MCP_SERVER_URL)])
-            try:
-                await self._mcp.connect_all()
-            except Exception as e:
-                logger.warning("MCP connect failed: %s", e)
-                self._mcp = None
-                return False
-        return True
-
-    async def _disconnect(self):
-        """Gracefully disconnect MCP client to prevent connection errors."""
-        if self._mcp is not None:
-            try:
-                await self._mcp.disconnect_all()
-                logger.debug("MCP client disconnected gracefully")
-            except Exception as e:
-                logger.debug("Error during MCP disconnect (non-critical): %s", e)
-            finally:
-                self._mcp = None
-
     async def _validate_ticker(self, ticker: str) -> tuple[bool, str, str]:
         if not ticker:
             return False, "", "Could not identify a stock ticker from the query. Try using parentheses (AAPL) or $ prefix ($V)."
-        if not await self._ensure_mcp_connected():
-            return True, ticker, ""
         try:
-            return await validate_ticker_via_mcp(self._mcp, ticker)
+            mcp = await get_shared_mcp()
+            return await validate_ticker_via_mcp(mcp, ticker)
         except Exception as e:
             logger.warning("Ticker validation via MCP failed, proceeding with regex guess: %s", e)
             return True, ticker, ""
 
     async def _resolve_ticker(self, query: str, exclude_ticker: str = "") -> tuple[str, str]:
-        if not await self._ensure_mcp_connected():
-            return "", ""
         try:
-            return await resolve_ticker_via_mcp(self._mcp, query, exclude_ticker)
+            mcp = await get_shared_mcp()
+            return await resolve_ticker_via_mcp(mcp, query, exclude_ticker)
         except Exception as e:
             logger.warning("MCP ticker resolution failed: %s", e)
             return "", ""
@@ -151,10 +129,7 @@ class RAGAgent(BaseAgent):
     async def stream(
         self, query: str, context_id: str, task_id: str
     ) -> AsyncIterable[dict]:
-        try:
-            yield await self._build_response(query)
-        finally:
-            await self._disconnect()
+        yield await self._build_response(query)
 
     async def _build_response(self, query: str) -> dict:
         trace_id, parent_span_id, query = extract_trace_ids(query)
