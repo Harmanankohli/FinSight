@@ -10,6 +10,7 @@ from shared.logging_config import logged
 from shared.config import EVAL_ENABLED
 from shared.observability import get_langfuse_client
 from shared.runtime_eval import score_quant_response as _eval_quant_response
+from shared.mcp_client import get_shared_mcp
 from shared.ticker_utils import extract_ticker, extract_holdings, validate_ticker, resolve_ticker
 from shared.trace_context import extract_trace_ids
 

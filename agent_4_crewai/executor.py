@@ -8,6 +8,7 @@ from shared.logging_config import logged
 from shared.config import EVAL_ENABLED
 from shared.observability import get_langfuse_client
 from shared.runtime_eval import score_sentiment_response as _eval_sentiment_response
+from shared.mcp_client import get_shared_mcp
 from shared.ticker_utils import extract_ticker, validate_ticker, resolve_ticker
 from shared.trace_context import extract_trace_ids
 
