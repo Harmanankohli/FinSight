@@ -58,6 +58,7 @@ class FinSightAgentExecutor(AgentExecutor):
 
     def __init__(self, runner: Runner) -> None:
         self._runner = runner
+        self._task: asyncio.Task | None = None
 
     async def _get_today_cached_text(self, ticker: str, user_id: str) -> str | None:
         """Return today's cached analysis text, or None if not available."""
@@ -99,6 +100,7 @@ class FinSightAgentExecutor(AgentExecutor):
     async def execute(
         self, context: RequestContext, event_queue: EventQueue
     ) -> None:
+        self._task = asyncio.current_task()
         context_id = context.context_id
         user_id = _resolve_user_id(context)
 
@@ -342,7 +344,8 @@ class FinSightAgentExecutor(AgentExecutor):
             )
 
     async def cancel(self, context, event_queue) -> None:
-        raise NotImplementedError("Cancellation is not supported")
+        if self._task and not self._task.done():
+            self._task.cancel()
 
     async def _add_events_to_memory(
         self, user_id: str, context_id: str, events: list
