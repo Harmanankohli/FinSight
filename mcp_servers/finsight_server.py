@@ -22,7 +22,6 @@ if sys.platform != "win32":
     import resource
 import tempfile
 import threading
-from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -41,6 +40,7 @@ from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
 from shared.config import SEC_USER_AGENT
 from shared.rate_limiter import TokenBucket
+from shared.ttl_cache import TTLCache
 from shared.observability import init_langfuse, shutdown_langfuse
 init_langfuse(service_name="mcp_server")
 atexit.register(shutdown_langfuse)
@@ -73,46 +73,11 @@ _rss_limiter = TokenBucket(rate=2, burst=4)       # RSS + Yahoo news fallback
 # TTL Cache
 # ──────────────────────────────────────────────
 
-class _TTLCache:
-    """Thread-safe in-process TTL cache backed by an OrderedDict LRU eviction."""
-
-    def __init__(self, ttl: float | None, maxsize: int = 200):
-        self._ttl = ttl
-        self._store: OrderedDict = OrderedDict()
-        self._maxsize = maxsize
-        self._lock = threading.Lock()
-
-    def get(self, key):
-        """Return cached value if within TTL; evict stale entries on access."""
-        with self._lock:
-            if key in self._store:
-                val, ts = self._store[key]
-                if self._ttl is None or time.monotonic() - ts < self._ttl:
-                    self._store.move_to_end(key)
-                    return val
-                del self._store[key]
-        return None
-
-    def set(self, key, val):
-        """Insert/update entry, evicting LRU item if at maxsize."""
-        with self._lock:
-            if key in self._store:
-                self._store.move_to_end(key)
-            elif len(self._store) >= self._maxsize:
-                self._store.popitem(last=False)
-            self._store[key] = (val, time.monotonic())
-
-
-# Prices change every few minutes — 5 min TTL keeps data fresh without hammering Yahoo.
-_cache_prices      = _TTLCache(ttl=300)        # 5 min
-# Financials (balance sheet, income statement) only change quarterly — 24 h is plenty.
-_cache_financials  = _TTLCache(ttl=86400)      # 24 h
-# News headlines publish every few minutes — 15 min balances freshness vs cache utility.
-_cache_news        = _TTLCache(ttl=900)        # 15 min
-# Filing content is immutable once filed — cache permanently with LRU-200 eviction.
-_cache_filing      = _TTLCache(ttl=None, maxsize=200)  # permanent LRU-200
-# Submission lists are large JSON blobs that change a few times daily — 6 h TTL.
-_cache_submissions = _TTLCache(ttl=21600)      # 6 h
+_cache_prices      = TTLCache(ttl_seconds=60)              # 1 min — intraday prices
+_cache_financials  = TTLCache(ttl_seconds=3600)            # 1 hr — quarterly data
+_cache_news        = TTLCache(ttl_seconds=300)             # 5 min — news headlines
+_cache_filing      = TTLCache(ttl_seconds=None, max_entries=200)  # permanent LRU-200
+_cache_submissions = TTLCache(ttl_seconds=21600)           # 6 hr — submission lists
 
 
 # ──────────────────────────────────────────────
@@ -258,6 +223,18 @@ def _serialise_value(v: Any) -> Any:
     return v
 
 
+async def _get_prices_uncached(ticker: str, period: str, interval: str) -> dict:
+    try:
+        await _yfinance_limiter.acquire()
+        stock = yf.Ticker(ticker)
+        hist = stock.history(period=period, interval=interval)
+        records = _serialise_value(hist.reset_index().to_dict(orient="records"))
+        return {"ticker": ticker, "period": period, "data": records}
+    except Exception as exc:
+        logger.warning("get_prices failed for %s: %s", ticker, exc)
+        return {"ticker": ticker, "period": period, "error": str(exc), "data": []}
+
+
 @app.tool()
 @observe()
 async def get_prices(ticker: str, period: str = "1y", interval: str = "1d") -> dict:
@@ -271,46 +248,17 @@ async def get_prices(ticker: str, period: str = "1y", interval: str = "1d") -> d
     Returns:
         dict with keys: ticker, period, data (list of OHLCV records with ISO dates)
     """
-    # Cache keyed on (ticker, period, interval) — 5 min TTL avoids stale prices.
-    cache_key = (ticker.upper(), period, interval)
-    cached = _cache_prices.get(cache_key)
-    if cached is not None:
-        logger.debug("Cache hit: get_prices(%s, %s, %s)", ticker, period, interval)
-        return cached
+    return await _cache_prices.get_or_fetch(
+        f"prices:{ticker.upper()}:{period}:{interval}",
+        lambda: _get_prices_uncached(ticker, period, interval),
+    )
+
+
+async def _get_financials_uncached(ticker: str) -> dict:
     try:
         await _yfinance_limiter.acquire()
         stock = yf.Ticker(ticker)
-        hist = stock.history(period=period, interval=interval)
-        records = _serialise_value(hist.reset_index().to_dict(orient="records"))
-        result = {"ticker": ticker, "period": period, "data": records}
-    except Exception as exc:
-        logger.warning("get_prices failed for %s: %s", ticker, exc)
-        result = {"ticker": ticker, "period": period, "error": str(exc), "data": []}
-    _cache_prices.set(cache_key, result)
-    return result
-
-
-@app.tool()
-@observe()
-async def get_financials(ticker: str) -> dict:
-    """Fetch financial statements and company info for a stock ticker.
-
-    Args:
-        ticker: Stock ticker symbol (e.g. NVDA, AAPL, MSFT)
-
-    Returns:
-        dict with keys: income_statement, balance_sheet, cash_flow, info
-    """
-    # Financials don't change intraday — 24 h cache avoids redundant API calls.
-    cache_key = (ticker.upper(),)
-    cached = _cache_financials.get(cache_key)
-    if cached is not None:
-        logger.debug("Cache hit: get_financials(%s)", ticker)
-        return cached
-    try:
-        await _yfinance_limiter.acquire()
-        stock = yf.Ticker(ticker)
-        result = _serialise_value({
+        return _serialise_value({
             "income_statement": stock.financials.to_dict()
             if stock.financials is not None
             else {},
@@ -324,12 +272,27 @@ async def get_financials(ticker: str) -> dict:
         })
     except Exception as exc:
         logger.warning("get_financials failed for %s: %s", ticker, exc)
-        result = {
+        return {
             "ticker": ticker, "error": str(exc),
             "income_statement": {}, "balance_sheet": {}, "cash_flow": {}, "info": {},
         }
-    _cache_financials.set(cache_key, result)
-    return result
+
+
+@app.tool()
+@observe()
+async def get_financials(ticker: str) -> dict:
+    """Fetch financial statements and company info for a stock ticker.
+
+    Args:
+        ticker: Stock ticker symbol (e.g. NVDA, AAPL, MSFT)
+
+    Returns:
+        dict with keys: income_statement, balance_sheet, cash_flow, info
+    """
+    return await _cache_financials.get_or_fetch(
+        f"financials:{ticker.upper()}",
+        lambda: _get_financials_uncached(ticker),
+    )
 
 
 @app.tool()
@@ -1337,7 +1300,7 @@ async def get_news_sentiment(ticker: str, limit: int = 10) -> dict:
           positive_articles, negative_articles, neutral_articles,
           articles, feed_status (per-source diagnostics), source_used
     """
-    cache_key = (ticker.upper(), limit)
+    cache_key = f"news:{ticker.upper()}:{limit}"
     cached = _cache_news.get(cache_key)
     if cached is not None:
         logger.debug("Cache hit: get_news_sentiment(%s)", ticker)
