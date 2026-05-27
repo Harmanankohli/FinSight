@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import sys
 from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
@@ -34,13 +35,18 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(payload, default=str)
 
 
-def setup_file_logging(service_name: str, level: int = logging.INFO) -> None:
+def setup_file_logging(service_name: str, level: int | None = None) -> None:
     """Configure the root logger to write to logs/<service_name>.log.
 
     Safe to call multiple times — duplicate handlers are skipped.
     StreamHandler uses plaintext (readable in terminals); file handler uses
     JSON lines (ingestible by log aggregators without custom parsers).
     """
+    if level is None:
+        env_key = f"LOG_LEVEL_{service_name.upper().replace('-', '_')}"
+        level_str = os.environ.get(env_key) or os.environ.get("LOG_LEVEL", "INFO")
+        level = getattr(logging, level_str.upper(), logging.INFO)
+
     _LOGS_DIR.mkdir(exist_ok=True)
     log_path = _LOGS_DIR / f"{service_name}.log"
 
