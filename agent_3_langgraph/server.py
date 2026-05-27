@@ -12,7 +12,7 @@ from starlette.applications import Starlette
 
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
-from a2a.server.tasks import InMemoryTaskStore
+from shared.a2a_store import SQLiteTaskStore
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
 
 from shared.logging_config import setup_file_logging
@@ -75,7 +75,7 @@ agent_card = AgentCard(
 
 request_handler = DefaultRequestHandler(
     agent_executor=GenericAgentExecutor(QuantAgent()),
-    task_store=InMemoryTaskStore(),
+    task_store=SQLiteTaskStore(),
     agent_card=agent_card,
 )
 

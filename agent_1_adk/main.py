@@ -11,7 +11,7 @@ import click
 import uvicorn
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
-from a2a.server.tasks import InMemoryTaskStore
+from shared.a2a_store import SQLiteTaskStore
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
 from google.adk.runners import Runner
 from google.adk.sessions import DatabaseSessionService
@@ -72,7 +72,7 @@ agent_card = AgentCard(
     ],
 )
 
-task_store = InMemoryTaskStore()
+task_store = SQLiteTaskStore()
 
 # session_service: persists conversation turns; memory_service: enables semantic recall (load_memory tool)
 session_service = DatabaseSessionService(

@@ -12,7 +12,7 @@ import aiosqlite
 
 DB_PATH = Path(__file__).resolve().parent.parent.parent / "db" / "finsight_memory.db"
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 CREATE_TABLES_SQL = """
 -- Stores structured InvestmentBrief objects. Written by TickerMemory, read by agent prompt builders.
@@ -79,6 +79,16 @@ CREATE TABLE IF NOT EXISTS ingested_filings (
 );
 
 CREATE INDEX IF NOT EXISTS idx_ingested_ticker ON ingested_filings(ticker);
+
+-- Persists A2A task payloads across process restarts. Replaces InMemoryTaskStore.
+CREATE TABLE IF NOT EXISTS a2a_tasks (
+    task_id TEXT PRIMARY KEY,
+    owner TEXT NOT NULL DEFAULT '',
+    payload TEXT NOT NULL,
+    updated_at TIMESTAMP NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_a2a_tasks_owner ON a2a_tasks(owner);
 """
 
 
@@ -156,6 +166,19 @@ async def init_db(conn: aiosqlite.Connection) -> None:
             ingested_at TIMESTAMP NOT NULL
         )""")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_ingested_ticker ON ingested_filings(ticker)")
+        await conn.commit()
+    except Exception:
+        pass
+
+    # Migration v4→v5: creates a2a_tasks table for persistent A2A task storage.
+    try:
+        await conn.execute("""CREATE TABLE IF NOT EXISTS a2a_tasks (
+            task_id TEXT PRIMARY KEY,
+            owner TEXT NOT NULL DEFAULT '',
+            payload TEXT NOT NULL,
+            updated_at TIMESTAMP NOT NULL
+        )""")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_a2a_tasks_owner ON a2a_tasks(owner)")
         await conn.commit()
     except Exception:
         pass
