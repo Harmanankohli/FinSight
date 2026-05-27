@@ -225,8 +225,10 @@ Key environment variables in `.env`:
 |---|---|---|
 | `ADK_MODEL` | `openai/qwen/qwen3-30b-a3b-2507` | LLM model for the orchestrator |
 | `AGENT_SEED_URLS` | `http://localhost:8002,http://localhost:8003,http://localhost:8004` | A2A agent discovery URLs |
-| `A2A_TIMEOUT` | `180.0` | Timeout for A2A communication (seconds) |
+| `A2A_TIMEOUT` | `680.0` | Timeout for A2A communication (seconds) |
 | `LLM_BASE_URL` | `http://localhost:1234/v1` | LM Studio OpenAI-compatible endpoint |
+| `LLM_API_KEY` | `lmstudio` | API key for LLM provider (LM Studio dummy value; replace for OpenAI/Anthropic) |
+| `SEC_USER_AGENT` | `FinSight Research (dev-mode-set-SEC_USER_AGENT)` | SEC EDGAR User-Agent header (format: `Your Name (your-email@example.com)`) |
 | `SEMANTIC_CACHE_ENABLED` | `false` | Enable ChromaDB semantic cache for repeated investment queries |
 | `EVAL_TRACE_ENABLED` | `True` | Master switch for sidecar RAGAS evals. Set to `False` to disable all per-agent runtime scoring with no code changes |
 | `MCP_SERVER_URL` | `http://localhost:8010/sse` | Unified MCP server SSE endpoint |
@@ -246,7 +248,7 @@ Key environment variables in `.env`:
 
 ## Testing
 
-No automated test suite. All test files removed in v1.24 — they were unmaintained fixtures from earlier architecture iterations that no longer matched the current codebase. Testing is performed manually via the ADK Web UI.
+**~148 test cases** across 11 test files — see [TESTS.md](docs/TESTS.md) for details.
 
 ## License
 

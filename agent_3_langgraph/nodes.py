@@ -417,7 +417,7 @@ async def format_output_node(state: QuantAnalysisState) -> dict:
 async def llm_summary_node(state: QuantAnalysisState) -> dict:
     # Calls local LLM to produce a 2-3 sentence natural language summary of the full quant analysis
     from langchain_openai import ChatOpenAI
-    from shared.config import LLM_MODEL, LLM_BASE_URL
+    from shared.config import LLM_MODEL, LLM_BASE_URL, LLM_API_KEY
 
     metrics = state.get("metrics", {})
     stress = state.get("stress_test_result")
@@ -444,7 +444,7 @@ async def llm_summary_node(state: QuantAnalysisState) -> dict:
         prompt += f"Stress test CVaR: {stress.get('cvar_95')}\n"
 
     try:
-        llm = ChatOpenAI(model=LLM_MODEL, base_url=LLM_BASE_URL, api_key="lmstudio", temperature=0.3, max_tokens=256)
+        llm = ChatOpenAI(model=LLM_MODEL, base_url=LLM_BASE_URL, api_key=LLM_API_KEY, temperature=0.3, max_tokens=256)
         response = await llm.ainvoke(prompt)
         summary = response.content if hasattr(response, "content") else str(response)
     except Exception as e:

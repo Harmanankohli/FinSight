@@ -67,9 +67,9 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <p>The callback checks for a valid <code>response_text</code> in the cached brief (populated by the <code>update_response_text</code> overwrite, see below). If only a recommendation exists without analysis text, it falls through to let the LLM run.</p>
 <p><strong>Why two cache paths (callback + executor-level)?</strong> The <code>before_agent_callback</code> only fires when the orchestrator runs through ADK&rsquo;s built-in runner (<code>adk web</code> path). A2A requests hitting <code>agent_1_adk/main.py</code> directly bypass ADK callbacks, so the executor-level <code>_get_today_cached_text()</code> provides the same short-circuit for that path.</p>
 
-<h3>Why <code>update_response_text</code> overwrite the brief after the turn?</h3>
-<p>The <code>save_brief</code> tool is called <em>during</em> the LLM turn, before synthesis completes. At that point the LLM has only produced a brief rationale for the recommendation. The full synthesis (combining RAG, Quant, and Sentiment results) happens after <code>save_brief</code> returns. Without the overwrite, the same-day cache would return only the abbreviated rationale &mdash; a few sentences of justification &mdash; instead of the complete multi-paragraph analysis that the user originally saw.</p>
-<p>The overwrite happens in <code>_persist_memory_callback</code> (after the turn), extracting the response text from session events and storing it into the existing brief via <code>tm.update_response_text()</code>. Subsequent same-day queries via <code>_memory_cache_callback</code> then return the full analysis.</p>
+<h3>Why the full synthesis is stored directly in <code>save_brief</code> instead of a post-turn overwrite?</h3>
+<p>The original approach used <code>_persist_memory_callback</code> to overwrite the brief&rsquo;s <code>response_text</code> after the turn completed. This had two problems: (1) the overwrite was unreliable &mdash; it depended on extracting the right response text from session events after the LLM finished, and (2) it was blind to the A2A executor path, which doesn&rsquo;t fire <code>after_agent_callback</code>.</p>
+<p>The fix moves the synthesis capture into <code>save_brief</code> itself. A new helper <code>_synthesis_text_from_context</code> reads the longest LLM-generated text from <code>session.events</code> at the time <code>save_brief</code> is called. Since <code>save_brief</code> is invoked <em>during</em> the LLM turn (after the tool response but before the turn ends), the session events already contain the model&rsquo;s full synthesized output. If no model text exists (edge case), it falls back to the rationale. The post-turn <code>update_response_text</code> overwrite was removed entirely. Both ADK-web and A2A paths now persist the full analysis because both call <code>save_brief</code>.</p>
 
 <h3>Why programmatic dedup at <code>save_brief</code> and <code>_store_memory</code>?</h3>
 <p>Two duplicate-prevention layers:</p>
@@ -117,7 +117,9 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <li>Offline evaluation fixtures that diverged from the live runtime behavior</li>
 <li>A2A communication patterns from the v1&ndash;v4 orchestrator architecture that were completely replaced</li>
 </ul>
-<p>Fixing them would require a full rewrite against the current codebase &mdash; essentially writing new tests from scratch while also removing all the old ones. Deleting the stale fixtures was the honest option rather than maintaining dead test code that would confuse future readers. A new test suite should be built from scratch against the current stable architecture.</p>
+<p>Fixing them would require a full rewrite against the current codebase &mdash; essentially writing new tests from scratch while also removing all the old ones. Deleting the stale fixtures was the honest option rather than maintaining dead test code that would confuse future readers.</p>
+
+<p><strong>Update (v1.26/v1.27)</strong>: ~148 tests now covering models, quant graph nodes, ticker utilities, TTL cache, rate limiter, trace context, memory store, and the security sandbox (60 AST-gate tests). See <a href="TESTS.html">TESTS.html</a> for details.</p>
 
 <h2>Same-Day Memory Cache &amp; analysis_date Column</h2>
 
@@ -791,6 +793,359 @@ Trace D: sentiment-agent-stream  [pid: 8004]   &larr; orphan</code></pre>
 <li><strong>RAG query prompts</strong> &mdash; so the LlamaIndex LLM knows the reference date for financial data</li>
 <li><strong>Quant summary prompt</strong> &mdash; so the LangGraph summary LLM frames analysis in correct temporal context</li>
 <li><strong>Sentiment crew tasks</strong> &mdash; so CrewAI agents know the current date when analyzing news and filings</li>
+</ul>
+
+<h2>SQLite Singleton Connection with Write Lock</h2>
+
+<h3>Why a singleton connection instead of open/close per call?</h3>
+<p>The original <code>get_db()</code> opened a new <code>aiosqlite</code> connection on every function call &mdash; every ticker lookup, portfolio read, memory search, and write created + tore down a connection. Under load, this meant 10&ndash;20 open/close cycles per query across the memory layer.</p>
+<p>SQLite connections are not free: each open acquires a file handle, sets pragmas (WAL, foreign_keys, busy_timeout), and runs schema migration. For a file-backed database, opening a connection also involves a filesystem <code>open()</code> call, which under concurrent access (multiple agents) causes lock contention on the <code>.db</code> file itself &mdash; even for reads.</p>
+<p>The singleton pattern eliminates this entirely: one connection is opened once, WAL mode and pragmas are set once, schema migration runs once. All subsequent calls &mdash; both reads and writes &mdash; reuse the same connection.</p>
+
+<h3>Why a separate write lock instead of relying on SQLite's internal locking?</h3>
+<p>SQLite in WAL mode supports concurrent reads but serializes writes at the OS level (one writer at a time). Without a lock, two concurrent <code>await conn.execute(&quot;INSERT ...&quot;)</code> calls hit <code>SQLITE_BUSY</code> and wait on <code>busy_timeout</code> (5000ms). With 3&ndash;4 agents writing simultaneously (store_brief, portfolio upsert, performance record, memory persist), this caused 5-second stalls.</p>
+<p>The <code>asyncio.Lock</code> (<code>write_lock()</code>) serializes writes at the Python level before they reach SQLite. The wait is near-instant (microseconds) instead of the full <code>busy_timeout</code> (milliseconds). Reads skip the lock entirely &mdash; they just call <code>get_db()</code> and query, no contention.</p>
+
+<h3>Why not connection pooling (multiple connections)?</h3>
+<p>SQLite is a single-writer database regardless of connection count. Multiple connections don't help writes &mdash; they only complicate the code with pool management, checkout/return patterns, and the risk of connection leaks. A single connection with a write lock is the simplest correct solution.</p>
+
+<h3>Why not use <code>sqlite3</code> threading modes?</h3>
+<p><code>aiosqlite</code> is async-first and already handles thread safety by running all operations on a dedicated background thread. The Python-level <code>asyncio.Lock</code> is an additional guard that prevents concurrent callers from queueing multiple writes on the aiosqlite thread &mdash; it's defense in depth, not a workaround for a missing feature.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>One connection, one schema migration, one set of pragmas</li>
+<li>Writes serialized via <code>asyncio.Lock</code> &mdash; no <code>SQLITE_BUSY</code> stalls</li>
+<li>Reads contention-free (WAL mode allows concurrent reads on a single connection)</li>
+<li>284 lines removed vs 304 added across 5 files &mdash; net reduction in connection-management boilerplate</li>
+<li><code>close_db()</code> for clean process shutdown (no dangling connections)</li>
+</ul>
+
+<h2>Token-Bucket Rate Limiter</h2>
+
+<h3>Why a token bucket instead of a fixed-delay sleep?</h3>
+<p>A fixed <code>await asyncio.sleep(0.125)</code> between calls (8/s) would guarantee the rate but wastes 125ms even when no other requests are competing. The token bucket allows <strong>bursts</strong>: 10 consecutive tool calls fire instantly, then the rate smooths to 8/s. This matches real traffic patterns &mdash; a quant analysis query triggers 3&ndash;5 SEC calls in quick succession (ticker map, submissions, filing content), then nothing for 30+ seconds. The burst handles the batch, the rate limit prevents bans.</p>
+
+<h3>Why separate limiters instead of one global rate limiter?</h3>
+<p>Three different APIs with three different rate limits and traffic patterns:</p>
+<table>
+<tr><th>Limiter</th><th>Rate</th><th>Burst</th><th>Applied to</th><th>Why</th></tr>
+<tr><td><code>_sec_limiter</code></td><td>8/s</td><td>10</td><td>5 EDGAR HTTP sites</td><td>SEC published limit is 10 req/s hard cap; 8/s with 10 burst is conservative while allowing filing batches</td></tr>
+<tr><td><code>_yfinance_limiter</code></td><td>4/s</td><td>8</td><td>4 yfinance tools</td><td>Yahoo has no published cap; 4/s avoids 429s that appeared under the old unthrottled pattern</td></tr>
+<tr><td><code>_rss_limiter</code></td><td>2/s</td><td>4</td><td>RSS feeds + Yahoo news fallback</td><td>News is the least latency-sensitive &mdash; cached by TTL, served stale-is-ok</td></tr>
+</table>
+<p>A single global limiter would throttle SEC filing fetches because a news RSS fetch happened at the same instant, even though the two APIs have independent rate limits.</p>
+
+<h3>Why the loop form instead of recursion?</h3>
+<p>The initial plan proposed <code>await asyncio.sleep(1.0 / self.rate); return await self.acquire()</code> &mdash; a recursive call. Under contention (all 5 SEC sites firing simultaneously), this recurses 5+ levels deep, risking <code>RecursionError</code>. The while-loop form is equivalent but iterative &mdash; no stack growth regardless of contention depth.</p>
+
+<h3>Why not <code>asyncio.Semaphore</code> for burst limiting?</h3>
+<p><code>asyncio.Semaphore</code> limits concurrency (how many tasks run simultaneously) but does <strong>not</strong> limit rate (how many requests per second). A semaphore of 4 allows 4 concurrent requests every microsecond &mdash; no rate enforcement. The token bucket enforces both: at most 10 in a burst, and at most 8/s averaged over time.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>Burst handling &mdash; batch filing requests don't trigger rate limiting</li>
+<li>Independent limiters &mdash; SEC congestion doesn't stall news RSS</li>
+<li>Iterative wait &mdash; no RecursionError under contention</li>
+<li>Zero dependencies &mdash; pure stdlib, 30 lines</li>
+<li>All sites protected &mdash; no unthrottled HTTP path to external APIs</li>
+</ul>
+
+<h2>Async TTL Cache with Single-Flight Dedup</h2>
+
+<h3>Why replace the existing <code>_TTLCache</code>?</h3>
+<p>The original <code>_TTLCache</code> used <code>threading.Lock</code> and had no deduplication. Under concurrent access (all three sub-agents calling <code>get_prices(&quot;NVDA&quot;)</code> simultaneously), each call missed the cache independently, producing 3 identical network requests. The new <code>TTLCache</code> is fully async, supports <code>get_or_fetch()</code> with single-flight dedup, and separates cache management from tool logic.</p>
+
+<h3>How single-flight dedup works</h3>
+<p>When 5 concurrent callers call <code>get_or_fetch(&quot;prices:NVDA:1y:1d&quot;, fetch)</code>:</p>
+<ol>
+<li><strong>Callers 1&ndash;5</strong>: All check <code>_data</code> &rarr; miss</li>
+<li><strong>Caller 1</strong>: Acquires lock, re-checks &rarr; still miss, creates <code>asyncio.Future</code>, stores in <code>_inflight</code>, spawns fetch task</li>
+<li><strong>Callers 2&ndash;5</strong>: Queue on lock; each acquires, re-checks &rarr; still miss, but find <code>key in _inflight</code> &rarr; return existing Future</li>
+<li><strong>All 5</strong>: <code>await fut</code> &mdash; all unblock when fetch completes</li>
+</ol>
+<p>Result: 1 network call instead of 5.</p>
+
+<h3>Why <code>asyncio.Future</code> instead of an Event or callback queue?</h3>
+<p><code>asyncio.Future</code> is awaitable by multiple coroutines simultaneously &mdash; all callers <code>await fut</code> and all wake on <code>set_result()</code>. An <code>Event</code> doesn't propagate return values. A callback queue requires manual fan-out.</p>
+
+<h3>Why not <code>@functools.lru_cache</code>?</h3>
+<p><code>lru_cache</code> is synchronous, has no TTL, and doesn't collapse concurrent calls.</p>
+
+<h3>Why keep separate cache instances per tool type?</h3>
+<table>
+<tr><th>Cache</th><th>TTL</th><th>Why</th></tr>
+<tr><td><code>_cache_prices</code></td><td>1 min</td><td>Intraday prices change every trade</td></tr>
+<tr><td><code>_cache_financials</code></td><td>1 hr</td><td>Quarterly data; 24h was unnecessarily long</td></tr>
+<tr><td><code>_cache_news</code></td><td>5 min</td><td>Headlines publish every few minutes</td></tr>
+<tr><td><code>_cache_filing</code></td><td>Permanent (LRU-200)</td><td>SEC filings are immutable once filed</td></tr>
+<tr><td><code>_cache_submissions</code></td><td>6 hr</td><td>Large JSON blobs changing a few times daily</td></tr>
+</table>
+
+<h3>Why <code>get()</code>/<code>set()</code> still exist alongside <code>get_or_fetch()</code>?</h3>
+<p>Some tools need conditional caching. <code>get_news_sentiment</code> only stores results when articles are found &mdash; empty results are not cached. The <code>get()</code>/<code>set()</code> pair gives tools fine-grained control over what gets cached.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>N concurrent callers &rarr; 1 network request (single-flight)</li>
+<li>Fully async &mdash; no blocking calls in async context</li>
+<li>Per-tool TTLs match data lifecycle</li>
+<li>Conditional caching via <code>get()</code>/<code>set()</code></li>
+<li>LRU eviction on <code>max_entries</code> &mdash; memory bounded</li>
+</ul>
+
+<h2>Structured JSON Logging</h2>
+
+<h3>Why JSON in the file handler but plaintext in the terminal?</h3>
+<p>Log aggregators (Loki, CloudWatch, Datadog) ingest JSON natively &mdash; no custom parsers needed. A JSON line <code>{"ts": "...", "level": "INFO", "message": "..."}</code> is immediately queryable by field. The same line as plaintext requires regex to extract fields.</p>
+<p>But JSON is painful to read in a terminal during development &mdash; it takes ~3x the horizontal space and wraps awkwardly. The dual-formatter approach gives both: terminals get plaintext, log files get JSON.</p>
+
+<h3>Why implement a custom <code>JsonFormatter</code> instead of using a library?</h3>
+<p>The <code>python-json-logger</code> library adds a dependency for ~40 lines of custom code. The custom formatter in 30 lines produces the exact payload shape needed, supports structured extras via <code>record.trace_id</code> etc., and serializes tracebacks as <code>exc</code> key.</p>
+
+<h3>Why UTC timestamps instead of local time?</h3>
+<p>Log aggregators operate in UTC internally. Local timestamps require timezone-aware parsing, fragile across DST changes and deployment regions. UTC ISO-8601 is unambiguous, sortable, and natively supported by every log system.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>JSON file logs ingestible without custom parsers</li>
+<li>Plaintext terminals remain readable</li>
+<li>Zero new dependencies (~30 lines of stdlib)</li>
+<li>Structured extras (trace_id, latency_ms) auto-included when present on LogRecord</li>
+<li>Backward compatible &mdash; <code>setup_file_logging(service_name)</code> signature unchanged</li>
+</ul>
+
+<h2>Per-Service Log Levels via Env</h2>
+
+<h3>Why <code>LOG_LEVEL_&lt;SERVICE&gt;</code> instead of a single <code>LOG_LEVEL</code>?</h3>
+<p>A single <code>LOG_LEVEL=DEBUG</code> makes every service chatty — with per-service overrides, you can debug one component at <code>DEBUG</code> while keeping everything else at <code>WARNING</code>, preserving signal-to-noise ratio.</p>
+
+<h3>Why env vars instead of a config file?</h3>
+<p>Log level is an operational concern. Env vars are the twelve-factor standard, trivially overridable per-process in deployment environments (Docker, Kubernetes, supervisor).</p>
+
+<h3>Why make <code>level</code> default <code>None</code> instead of <code>logging.INFO</code>?</h3>
+<p>The old default forced env-resolution boilerplate at every call site. Moving the default to <code>None</code> moves env resolution <em>inside</em> the function. Callers that pass <code>level=</code> explicitly still override env.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>Zero code changes at call sites — old <code>setup_file_logging("orchestrator")</code> just works</li>
+<li>Explicit <code>level=</code> still overrides env</li>
+<li>Environment-controlled — deploy-time config, no code edits</li>
+<li>Flexible — single global level with selective per-service overrides</li>
+</ul>
+
+<h2>Log Sanitization Filter</h2>
+
+<h3>Why a <code>logging.Filter</code> instead of scrubbing at the call site?</h3>
+<p>Call-site scrubbing requires every <code>logger.info("api_key=%s", key)</code> to remember to sanitize — easy to miss, especially in error paths. A <code>logging.Filter</code> is a single injection point guaranteed to run on every log line before it reaches the handler.</p>
+
+<h3>Why not use <code>record.exc_info</code>?</h3>
+<p><code>exc_info</code> is set automatically by the logging framework — it doesn't contain arbitrary user strings. The dangerous paths are <code>record.msg</code> (the format string) and <code>record.args</code> (the arguments injected via <code>%s</code>). Both are scrubbed before the formatter renders the final line.</p>
+
+<h3>Why these specific patterns?</h3>
+<p><code>api_key=</code>, <code>sk-</code>/<code>pk-</code> tokens (OpenAI-style), <code>Bearer</code> authorization headers, and <code>LANGFUSE_*_KEY</code> values cover every known secret type in the codebase. The regex approach avoids false positives on short tokens — <code>sk-</code> patterns require 20+ alphanumeric characters.</p>
+
+<h3>Why is args scrubbing needed separately?</h3>
+<p>Python logging's <code>%</code> formatting happens <em>after</em> the filter runs but <em>before</em> the formatter renders. Scrubbing only <code>record.msg</code> would miss secrets passed as <code>%s</code> arguments in <code>record.args</code>.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>Zero cooperation from callers — attach once, all logs scrubbed</li>
+<li>Both <code>record.msg</code> and <code>record.args</code> are sanitized</li>
+<li>Regex patterns specific enough to avoid false positives</li>
+<li>Attached to both terminal and file handlers — no leak path</li>
+</ul>
+
+<h2>SQLiteTaskStore</h2>
+
+<h3>Why wrap InMemoryTaskStore instead of going straight to SQLite?</h3>
+<p>The A2A <code>TaskStore</code> protocol has four hot-path operations: <code>get</code>, <code>list</code>, <code>save</code>, <code>delete</code>. <code>get</code> and <code>list</code> fire on every A2A request — querying SQLite for every read would add ~1–5ms per call. Wrapping <code>InMemoryTaskStore</code> means reads are O(1) dict lookups, SQLite only on writes and cold-start load.</p>
+
+<h3>Why double-checked locking on load?</h3>
+<p>N concurrent A2A requests arriving simultaneously on a cold server would all attempt to re-populate from SQLite. The <code>asyncio.Lock</code> + double-check pattern ensures exactly one coroutine does the load while others wait.</p>
+
+<h3>Why inline migration instead of a separate system?</h3>
+<p>Alembic is overkill for one SQLite database with 3 versions. Inline <code>CREATE TABLE IF NOT EXISTS</code> in <code>init_db()</code> is idempotent and requires zero tooling.</p>
+
+<h3>Why MessageToJson instead of protobuf binary?</h3>
+<p>JSON storage lets you inspect tasks with any SQLite tool. Protobuf binary would require the <code>.proto</code> definition to decode. Overhead (~200–500 bytes per task) is negligible.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>Fast reads — in-memory dict for hot path, SQLite only on writes</li>
+<li>Cold-start resilience — tasks survive process restart</li>
+<li>Thread-safe — double-checked async lock on lazy load</li>
+<li>Write contention serialized via existing <code>write_lock()</code></li>
+<li>Zero-dependency migration — inline <code>CREATE TABLE IF NOT EXISTS</code></li>
+<li>Human-readable payload storage (JSON, not protobuf binary)</li>
+</ul>
+
+<h2>Memory Pruning / Retention Policy</h2>
+
+<h3>Why prune on startup instead of a schedule?</h3>
+<p>Startup is the only guaranteed execution point — if the process hasn't started, no scheduler runs. The operation is wrapped in <code>try/except</code> so it never blocks the server from starting. A background schedule adds lifecycle complexity; startup pruning is simpler and sufficient for this scale.</p>
+
+<h3>Why no VACUUM?</h3>
+<p><code>VACUUM</code> rewrites the entire SQLite file, blocking all concurrent access for potentially seconds. During startup the orchestrator is initializing connections and accepting health checks — a multi-second lock would cause timeouts. Deleted rows leave free pages reused by future inserts.</p>
+
+<h3>Why prune three tables?</h3>
+<p><code>ticker_briefs</code>, <code>recommendation_records</code>, and <code>memory_entries</code> all grow independently. Pruning all three keeps the entire DB bounded. Old conversation history degrades <code>load_memory</code> usefulness anyway.</p>
+
+<h3>Why <code>created_at</code> not <code>updated_at</code>?</h3>
+<p><code>created_at</code> is immutable after insert. <code>updated_at</code> could theoretically change, creating edge cases where a recent update preserves an objectively old record.</p>
+
+<h3>Why env var instead of a config constant?</h3>
+<p>Retention policy is an operational decision. An env var lets different deployments (dev: 7 days, staging: 30, prod: 90) configure without code changes.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>Startup-triggered — guaranteed execution before any work</li>
+<li>Best-effort — exception-safe, never blocks server start</li>
+<li>No VACUUM — avoids startup lock contention</li>
+<li>Prunes all three memory tables — bounded DB growth</li>
+<li>Configurable — env var with 90-day default</li>
+</ul>
+
+<h2>MCP Client Singleton with Auto-Reconnect</h2>
+
+<h3>Why a process-wide singleton instead of per-request?</h3>
+<p>Each <code>MCPClient.connect_all()</code> performs an SSE handshake taking ~100&ndash;500ms. Over 4 agents &times; N requests per analysis, this adds 1&ndash;2 seconds per user query. A singleton means one handshake at cold start; all subsequent calls reuse the established SSE stream.</p>
+
+<h3>Why double-checked locking?</h3>
+<p>The first check (unlocked) is a fast-path O(1) return. The locked check handles N concurrent first-callers — only one creates the client. Without the second check, N callers create N clients. Pattern:</p>
+<pre>if connected: return
+async with lock:
+    if not connected: create + connect
+    return</pre>
+
+<h3>Why reconnect on <code>ConnectionError</code>+<code>EOFError</code> only?</h3>
+<p>Narrow exception list ensures only transient connection issues trigger reconnect. Reconnecting on every exception type would mask programming bugs.</p>
+
+<h3>Why retry limit of 1?</h3>
+<p>If the MCP server is down, unlimited retries hang every tool call. One reconnect handles the common transient-blip case. After 2 failures, error propagates for application-level retry.</p>
+
+<h3>Why <code>atexit</code> instead of async cleanup?</h3>
+<p><code>atexit</code> is synchronous — uses a temporary event loop for disconnect. This is best-effort; if the main loop is already closed, the hook won't block process exit.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>Eliminates per-request SSE overhead (~100&ndash;500ms saved per A2A call)</li>
+<li>Double-checked lock — safe for N concurrent first callers</li>
+<li>Auto-reconnect on transient failures (narrow exception set)</li>
+<li>Single retry — fails fast on persistent outages</li>
+<li><code>atexit</code> hook — best-effort clean shutdown</li>
+<li>&minus;131 lines of boilerplate across 4 executor files</li>
+</ul>
+
+<h2>Lazy OpenTelemetry Instrumentation</h2>
+
+<h3>Why lazy instead of module-level instrument()?</h3>
+<p>Module-level <code>*Instrumentor().instrument()</code> fires at import time — a pytest import triggers OTel span processors, exporter threads, and OTLP connections even when no tracing is needed. This breaks test isolation. Moving to <code>init_instrumentation()</code> with deferred imports means test code can import any module without side effects.</p>
+
+<h3>Why a set guard instead of a bool?</h3>
+<p>A set supports multiple agent types in the same process (useful for tests that import multiple server modules). Each type is instrumented exactly once.</p>
+
+<h3>Why not use <code>OTEL_PYTHON_DISABLED_INSTRUMENTATIONS</code>?</h3>
+<p>OTel's env var skips <code>instrument()</code> but doesn't defer imports — the instrumentor classes are still loaded at module level. The actual fix for test isolation is keeping imports deferred.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>Test imports have zero OTel side-effects</li>
+<li>Deferred imports — instrumentor packages loaded only when needed</li>
+<li>Set-based guard — idempotent across multiple calls</li>
+<li>Per-agent-type instrumentation — each server gets only what it needs</li>
+<li>Backward compatible — all traces still appear in Langfuse</li>
+</ul>
+
+<h2>Correlation-ID Propagation via ContextVar</h2>
+
+<h3>Why ContextVar instead of explicit parameter passing?</h3>
+<p>The trace_id is needed in dozens of locations across executors, MCP handlers, and log formatters. Passing it explicitly would require hundreds of signature changes. A <code>contextvars.ContextVar</code> makes it implicitly available to any code in the same async context — the exact use case it was designed for.</p>
+
+<h3>Why both trace_id and session_id?</h3>
+<p><code>trace_id</code> correlates a single user query across all sub-agents and MCP calls. <code>session_id</code> groups log lines by the ADK conversation session (multiple turns).</p>
+
+<h3>Why fallback in JsonFormatter?</h3>
+<p>Two-tier (<code>record.trace_id</code> → <code>current_trace_id.get()</code>) supports both explicit <code>extra=</code> on specific log lines and automatic correlation for all log lines emitted after ContextVar is set.</p>
+
+<h3>Why generic_executor sets both IDs?</h3>
+<p>It's the single entry point for all A2A requests to any sub-agent. Setting ContextVars there guarantees every sub-agent gets automatic correlation without each implementing its own logic.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>Zero parameter changes — trace_id flows implicitly via ContextVar</li>
+<li>Two-tier fallback — explicit <code>extra=</code> still overrides ContextVar</li>
+<li>generic_executor sets both IDs — single coverage point for all sub-agents</li>
+<li>extract_trace_ids() sets ContextVar — coverage for orchestrator path</li>
+<li>MCP tool log lines include structured <code>tool</code> and <code>ticker</code> fields</li>
+</ul>
+
+<h2>Deduplicate Ticker Validation</h2>
+
+<h3>Why shared functions instead of inheritance?</h3>
+<p>The 4 executors have different base classes (ADK AgentExecutor, LlamaIndex BaseAgent, LangGraph BaseAgent, CrewAI BaseAgent). Shared functions in <code>shared/ticker_utils.py</code> are pure composition — no inheritance or mixins needed.</p>
+
+<h3>Why return (True, ticker, "") on MCP failure?</h3>
+<p>Optimistic degrade — if MCP is down, the system still tries with a regex-based ticker guess rather than failing. Only the orchestrator's input guardrail is strict; other agents can produce useful responses without validated ticker data.</p>
+
+<h3>Why both <code>validate_ticker()</code> and <code>validate_ticker_via_mcp()</code>?</h3>
+<p>The <code>_via_mcp</code> variant is the low-level function for callers managing their own MCP lifecycle. The high-level wrapper handles MCP singleton internally. Both exist; callers choose.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>~80 lines of copy-paste removed from 4 executors</li>
+<li>Shared functions — fix once, run everywhere</li>
+<li>Optimistic degrade on MCP failure — (True, ticker, "") instead of crashing</li>
+<li>Low-level _via_mcp variants still available</li>
+</ul>
+
+<h2>Unified <code>@logged</code> Timing Decorator</h2>
+
+<h3>Why a decorator instead of explicit <code>time.monotonic()</code> calls?</h3>
+<p>Every hot path needs the same pattern: save t0, run, compute latency, log with <code>extra={"latency_ms": ...}</code>. A decorator eliminates boilerplate and ensures consistent format — all Exit lines have the same structure and structured field.</p>
+
+<h3>Why not decorate async generators?</h3>
+<p>Wrapping an async generator with a decorator that calls <code>await fn()</code> consumes it immediately. The inner <code>_build_response()</code> (a plain <code>async def</code>) is decorated instead.</p>
+
+<h3>Why <code>__qualname__</code> instead of <code>__name__</code>?</h3>
+<p><code>RAGAgent._build_response</code> disambiguates from <code>QuantAgent._build_response</code> without manual labeling.</p>
+
+<h3>Why Enter/Exit/Fail?</h3>
+<p>Three states cover the full lifecycle. Fail captures exception + latency before propagation — useful info lost in a normal traceback.</p>
+
+<h3>Why not capture <code>CancelledError</code>?</h3>
+<p>Cancellation noise should propagate immediately without logging. The <code>except Exception</code> clause intentionally excludes <code>BaseException</code> subclasses.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>Consistent Enter/Exit/Fail format across all hot paths</li>
+<li>Structured <code>latency_ms</code> field in JSON file logs</li>
+<li><code>grep "Exit" logs/*.log</code> → full-system latency report</li>
+<li><code>__qualname__</code> disambiguation for same-named methods</li>
+<li><code>CancelledError</code> and <code>KeyboardInterrupt</code> pass through unlogged</li>
+</ul>
+
+<h2>Cancellation Support + Per-Agent Timeouts</h2>
+
+<h3>Why store <code>asyncio.current_task()</code> instead of <code>all_tasks()</code>?</h3>
+<p><code>all_tasks()</code> includes unrelated background tasks (MCP keepalive, Langfuse flush). <code>current_task()</code> guarantees cancelling exactly the right task.</p>
+
+<h3>Why <code>wait_for()</code> with a timeout map instead of <code>asyncio.timeout()</code>?</h3>
+<p><code>asyncio.timeout()</code> is 3.11+ only. <code>wait_for()</code> is cross-version compatible. The timeout map uses substring matching so "rag" / "quant" / "sentiment" agent names automatically get the right timeout.</p>
+
+<h3>Why move eval-trace writes to <code>finally</code>?</h3>
+<p>Before, timeout exceptions jumped past the trace write. Moving to <code>finally</code> ensures traces are persisted even on timeout or cancellation.</p>
+
+<h3>Why TimeoutError returns JSON instead of raising?</h3>
+<p>A JSON payload <code>{"error": "agent_timeout", ...}</code> lets the LLM incorporate the timeout into its final response. Raising would propagate through A2A and produce a generic error.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li><code>cancel()</code> works on both executors — replaces <code>NotImplementedError</code></li>
+<li>Per-agent timeouts — one slow agent doesn't stall the pipeline</li>
+<li>Clean timeout payload — JSON instead of crash</li>
+<li>Eval traces persisted even on timeout/cancellation</li>
+<li>Backward compatible — existing <code>A2A_TIMEOUT</code> still applies as fallback</li>
 </ul>
 
 <h2>Persistent Memory Layer</h2>

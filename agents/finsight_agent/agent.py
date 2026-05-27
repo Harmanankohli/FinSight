@@ -65,6 +65,22 @@ async def _memory_cache_callback(callback_context) -> types.Content | None:
     tm = TickerMemory()
     latest = await tm.get_latest(ticker, user_id=None)
     _log(f"latest={latest is not None}")
+
+    # Regex extracted a company-name token (e.g. "VISA") that isn't the
+    # canonical ticker ("V"). Fall back to MCP company-name resolution
+    # so the cached brief is still returned instead of re-running agents.
+    if not latest:
+        try:
+            from shared.ticker_utils import resolve_ticker
+            resolved, _company = await resolve_ticker(user_text)
+            if resolved and resolved.upper() != ticker.upper():
+                _log(f"regex={ticker!r} resolved={resolved!r}")
+                ticker = resolved.upper()
+                latest = await tm.get_latest(ticker, user_id=None)
+                _log(f"latest_after_resolve={latest is not None}")
+        except Exception as e:
+            _log(f"resolve_ticker failed: {e}")
+
     if not latest:
         return None
 
@@ -107,39 +123,42 @@ with open(_LOG_FILE, "a") as _f:
 
 
 # Pulls the user query + the synthesized analysis text from session events.
-# Prefers the text co-located with the save_brief function call (the analysis the
-# LLM synthesized just before persisting), since later events (like the LLM's
-# post-tool acknowledgment) only contain a short "Brief saved..." confirmation.
+# Uses the LONGEST LLM text from the current turn (events after the last user
+# message) rather than text co-located with save_brief, because ADK often
+# splits the big analysis and the function call into separate events — the
+# event that actually fires save_brief may only contain a short acknowledgment
+# like "Brief saved." while the full analysis is in the preceding event.
 def _extract_query_and_response(events) -> tuple[str, str]:
-    """Pull first user message and the analysis text from session events."""
+    """Pull the last user query and the longest LLM response from the current turn."""
+    # Find the last user message index so we scope to the current turn only.
+    last_user_idx = -1
+    for i in range(len(events) - 1, -1, -1):
+        if getattr(events[i], "author", None) == "user":
+            last_user_idx = i
+            break
+
     user_query = ""
-    save_brief_text = ""
-    fallback_text = ""
-    for event in events:
+    if last_user_idx >= 0:
+        content = getattr(events[last_user_idx], "content", None)
+        if content and getattr(content, "parts", None):
+            user_query = "".join(
+                p.text for p in content.parts if getattr(p, "text", None)
+            )
+
+    # Take the longest LLM text produced after the last user message.
+    best_text = ""
+    for event in events[last_user_idx + 1:]:
         author = getattr(event, "author", None)
+        if not author or author == "user":
+            continue
         content = getattr(event, "content", None)
         if not content or not getattr(content, "parts", None):
             continue
         text = "".join(p.text for p in content.parts if getattr(p, "text", None))
+        if len(text) > len(best_text):
+            best_text = text
 
-        if not user_query and author == "user" and text:
-            user_query = text
-            continue
-
-        if author and author != "user":
-            has_save_brief = False
-            try:
-                for fn_call in event.get_function_calls():
-                    if fn_call.name == "save_brief":
-                        has_save_brief = True
-                        break
-            except Exception:
-                pass
-            if has_save_brief and text:
-                save_brief_text = text
-            elif text and len(text) > len(fallback_text):
-                fallback_text = text
-    return user_query, save_brief_text or fallback_text
+    return user_query, best_text
 
 
 # Checks whether the turn called save_brief (vs a load_memory-only query that should not be persisted)
@@ -216,29 +235,9 @@ async def _persist_memory_callback(callback_context) -> None:
         with open(_LOG_FILE, "a") as f:
             f.write(f"  add_events_to_memory failed: {e}\n")
 
-    # Overwrite the brief's short save_brief rationale with the full synthesized
-    # response so the same-day memory cache returns the rich text, not the summary.
-    user_query, response_text = _extract_query_and_response(session.events)
-    if response_text:
-        try:
-            from shared.memory import TickerMemory
-            from shared.ticker_utils import extract_ticker
-
-            ticker = extract_ticker(user_query)
-            if ticker:
-                tm = TickerMemory()
-                latest = await tm.get_latest(ticker, user_id=None)
-                if latest:
-                    updated = await tm.update_response_text(latest["id"], response_text)
-                    logger.info(
-                        "Updated brief response_text for %s (id=%s, len=%d, ok=%s)",
-                        ticker, latest["id"], len(response_text), updated,
-                    )
-        except Exception as e:
-            logger.warning("Failed to update brief response_text: %s", e)
-
     # ── Orchestrator RAGAS eval (ADK Web path) ──────────────────────────
     # ADK Web bypasses FinSightAgentExecutor, so the eval hook lives here.
+    user_query, response_text = _extract_query_and_response(session.events)
     if EVAL_ENABLED and user_query and response_text:
         trace_id = None
         try:

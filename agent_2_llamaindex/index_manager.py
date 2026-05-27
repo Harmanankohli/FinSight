@@ -15,7 +15,7 @@ from llama_index.vector_stores.chroma import ChromaVectorStore
 import chromadb
 
 
-from shared.config import LLM_MODEL, EMBED_MODEL, CHROMA_DIR, LLM_BASE_URL
+from shared.config import LLM_MODEL, EMBED_MODEL, CHROMA_DIR, LLM_BASE_URL, LLM_API_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,7 @@ class FinancialIndexManager:
         self.llm = OpenAILike(
             model=LLM_MODEL,
             api_base=LLM_BASE_URL,
-            api_key="lmstudio",
+            api_key=LLM_API_KEY,
             request_timeout=600.0,
             is_chat_model=True,
         )
@@ -61,7 +61,9 @@ class FinancialIndexManager:
             filters=[ExactMatchFilter(key="ticker", value=ticker)]
         )
         index = self._get_or_create_index("sec_filings")
-        engine = index.as_query_engine(similarity_top_k=5, filters=filters)
+        engine = index.as_query_engine(
+            similarity_top_k=3, filters=filters, response_mode="compact"
+        )
         today = date.today().isoformat()
         try:
             response = await engine.aquery(
@@ -108,7 +110,9 @@ class FinancialIndexManager:
             filters=[ExactMatchFilter(key="ticker", value=ticker)]
         )
         index = self._get_or_create_index("sec_filings")
-        engine = index.as_query_engine(similarity_top_k=5, filters=filters)
+        engine = index.as_query_engine(
+            similarity_top_k=3, filters=filters, response_mode="compact"
+        )
         today = date.today().isoformat()
         response = await engine.aquery(
             f"Today's date: {today}.\nFor {ticker}: {query_text}\nCite specific filing sections."
@@ -135,7 +139,7 @@ class FinancialIndexManager:
     async def query_earnings(self, ticker: str, query_text: str) -> dict:
         # Earnings collection uses same metadata filter pattern but no cross-ticker validation
         index = self._get_or_create_index("earnings")
-        engine = index.as_query_engine(similarity_top_k=5)
+        engine = index.as_query_engine(similarity_top_k=3, response_mode="compact")
         response = await engine.aquery(
             f"For {ticker}: {query_text}\nReference specific earnings call sections."
         )

@@ -73,3 +73,41 @@ def shutdown_langfuse() -> None:
     if _initialized and _langfuse_client:
         _langfuse_client.flush()
         _langfuse_client.shutdown()
+
+
+_instrumented: set[str] = set()
+
+
+def init_instrumentation(agent_type: str) -> None:
+    """Lazily instrument the current process for the given agent type.
+
+    Called once per process from each server's startup path.  All imports are
+    deferred so that importing a server module in pytest does not trigger OTel
+    side-effects (e.g. OTLP exporter connections or span processor threads).
+    """
+    if agent_type in _instrumented:
+        return
+    _instrumented.add(agent_type)
+    if agent_type == "orchestrator":
+        from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+        from openinference.instrumentation.google_adk import GoogleADKInstrumentor
+        HTTPXClientInstrumentor().instrument()
+        GoogleADKInstrumentor().instrument()
+    elif agent_type == "rag":
+        from openinference.instrumentation.llama_index import LlamaIndexInstrumentor
+        from opentelemetry.instrumentation.starlette import StarletteInstrumentor
+        LlamaIndexInstrumentor().instrument()
+        StarletteInstrumentor().instrument()
+    elif agent_type == "quant":
+        from opentelemetry.instrumentation.starlette import StarletteInstrumentor
+        StarletteInstrumentor().instrument()
+        try:
+            from openinference.instrumentation.langchain import LangChainInstrumentor
+            LangChainInstrumentor().instrument()
+        except ImportError:
+            pass
+    elif agent_type == "sentiment":
+        from openinference.instrumentation.crewai import CrewAIInstrumentor
+        from opentelemetry.instrumentation.starlette import StarletteInstrumentor
+        CrewAIInstrumentor().instrument(skip_dep_check=True)
+        StarletteInstrumentor().instrument()

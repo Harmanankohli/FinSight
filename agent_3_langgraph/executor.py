@@ -6,11 +6,12 @@ from collections.abc import AsyncIterable
 from langfuse.langchain import CallbackHandler
 
 from shared.base_agent import BaseAgent
-from shared.mcp_client import MCPClient, MCPServerConfig
-from shared.config import MCP_SERVER_URL, MCP_TIMEOUT, EVAL_ENABLED
+from shared.logging_config import logged
+from shared.config import EVAL_ENABLED
 from shared.observability import get_langfuse_client
 from shared.runtime_eval import score_quant_response as _eval_quant_response
-from shared.ticker_utils import extract_ticker, extract_holdings, validate_ticker_via_mcp, resolve_ticker_via_mcp
+from shared.mcp_client import get_shared_mcp
+from shared.ticker_utils import extract_ticker, extract_holdings, validate_ticker, resolve_ticker
 from shared.trace_context import extract_trace_ids
 
 from .graph import QuantAnalysisGraph
@@ -26,70 +27,28 @@ class QuantAgent(BaseAgent):
             content_types=["text", "application/json"],
         )
         self.graph = QuantAnalysisGraph()
-        self._mcp: MCPClient | None = None
-        self._connected = False
-
-    async def _ensure_connected(self):
-        # Connection lifecycle: single MCPClient reused across graph runs, disconnected on stream exit
-        if not self._connected:
-            self._mcp = MCPClient(configs=[MCPServerConfig(name="finsight-mcp", url=MCP_SERVER_URL)], timeout=MCP_TIMEOUT)
-            await self._mcp.connect_all()
-            self._connected = True
-
-    async def _disconnect(self):
-        """Gracefully disconnect MCP client to prevent connection errors."""
-        if self._connected and self._mcp:
-            try:
-                await self._mcp.disconnect_all()
-                logger.debug("MCP client disconnected gracefully")
-            except Exception as e:
-                logger.debug("Error during MCP disconnect (non-critical): %s", e)
-            finally:
-                self._connected = False
-                self._mcp = None
 
     async def analyze(self, ticker: str, period: str = "5y", portfolio_holdings: list[str] | None = None, trace_ctx: dict | None = None) -> dict:
-        logger.info("Quant analysis starting for %s (period=%s, holdings=%s, mcp_connected=%s)", ticker, period, portfolio_holdings, self._connected)
-        # Lazy MCP connection: connected on first analyze call, reused across calls
-        await self._ensure_connected()
+        logger.info("Quant analysis starting for %s (period=%s, holdings=%s)", ticker, period, portfolio_holdings)
+        mcp = await get_shared_mcp()
 
         # Langfuse CallbackHandler is nested under the parent agent span via trace_ctx
         langfuse_handler = CallbackHandler(trace_context=trace_ctx)
         result = await self.graph.run(
             ticker, period=period, portfolio_holdings=portfolio_holdings,
-            mcp_client=self._mcp, langfuse_handler=langfuse_handler,
+            mcp_client=mcp, langfuse_handler=langfuse_handler,
         )
         logger.info("Quant analysis complete for %s: rec=%s, dcf=%s",
                      ticker, result.get("recommendation"),
                      "ok" if result.get("dcf_valuation") else "null")
         return result
 
-    async def _validate_ticker(self, ticker: str) -> tuple[bool, str, str]:
-        if not ticker:
-            return False, "", "Could not identify a stock ticker from the query. Try using parentheses (AAPL) or $ prefix ($V)."
-        try:
-            await self._ensure_connected()
-            return await validate_ticker_via_mcp(self._mcp, ticker)
-        except Exception as e:
-            logger.warning("MCP ticker validation failed, proceeding with regex guess: %s", e)
-            return True, ticker, ""
-
-    async def _resolve_ticker(self, query: str, exclude_ticker: str = "") -> tuple[str, str]:
-        try:
-            await self._ensure_connected()
-            return await resolve_ticker_via_mcp(self._mcp, query, exclude_ticker)
-        except Exception as e:
-            logger.warning("MCP ticker resolution failed: %s", e)
-            return "", ""
-
     async def stream(
         self, query: str, context_id: str, task_id: str
     ) -> AsyncIterable[dict]:
-        try:
-            yield await self._build_response(query)
-        finally:
-            await self._disconnect()
+        yield await self._build_response(query)
 
+    @logged()
     async def _build_response(self, query: str) -> dict:
         trace_id, parent_span_id, query = extract_trace_ids(query)
 
@@ -122,11 +81,11 @@ class QuantAgent(BaseAgent):
                     "content": "Could not identify a stock ticker from the query. Try using parentheses (AAPL) or $ prefix ($V).",
                 }
 
-            valid, validated_ticker, company = await self._validate_ticker(ticker)
+            valid, validated_ticker, company = await validate_ticker(ticker)
             if not valid and not resolved:
-                ticker, _ = await self._resolve_ticker(query, exclude_ticker=ticker)
+                ticker, _ = await resolve_ticker(query, ticker)
                 if ticker:
-                    valid, validated_ticker, company = await self._validate_ticker(ticker)
+                    valid, validated_ticker, company = await validate_ticker(ticker)
 
             if not valid:
                 span.update(output={"error": f"Invalid ticker: {ticker}"})
@@ -172,5 +131,3 @@ class QuantAgent(BaseAgent):
                     "require_user_input": False,
                     "content": f"Quant analysis failed: {e}",
                 }
-
-

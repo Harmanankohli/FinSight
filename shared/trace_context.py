@@ -7,10 +7,14 @@ prefix before processing, preserving parent-child span relationships
 across the agent DAG.
 """
 
+import contextvars
 import json
 import logging
 
 logger = logging.getLogger(__name__)
+
+current_trace_id: contextvars.ContextVar[str | None] = contextvars.ContextVar("trace_id", default=None)
+current_session_id: contextvars.ContextVar[str | None] = contextvars.ContextVar("session_id", default=None)
 
 # Sentinel separator: a marker between the JSON prefix and the real task text.
 # Using a triple-angled delimiter + newline makes accidental collisions with
@@ -56,8 +60,16 @@ def extract_trace_context(task_text: str) -> tuple[dict | None, str]:
 
 
 def extract_trace_ids(task_text: str) -> tuple[str | None, str | None, str]:
-    """Convenience: extract only trace_id + parent_span_id + clean text."""
+    """Convenience: extract only trace_id + parent_span_id + clean text.
+
+    Also sets current_trace_id ContextVar so log lines emitted after this
+    call automatically include the trace_id without manual extra= passing.
+    """
     trace_ctx, clean_query = extract_trace_context(task_text)
     if trace_ctx:
-        return trace_ctx.get("trace_id"), trace_ctx.get("parent_span_id"), clean_query
+        trace_id = trace_ctx.get("trace_id")
+        parent_span_id = trace_ctx.get("parent_span_id")
+        if trace_id:
+            current_trace_id.set(trace_id)
+        return trace_id, parent_span_id, clean_query
     return None, None, clean_query

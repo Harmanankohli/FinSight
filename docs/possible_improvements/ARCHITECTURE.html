@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FinSight — Architecture Improvements</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:1.7;color:#2c2c2c;background:#faf8f5;padding:2rem 1rem}
+.container{max-width:740px;margin:0 auto}
+h1,h2,h3,h4{font-family:Georgia,"Times New Roman",serif;color:#1a1a1a;line-height:1.3}
+h1{font-size:2.2rem;margin-bottom:.25rem;border-bottom:2px solid #e8dcc8;padding-bottom:.5rem}
+h2{font-size:1.5rem;margin-top:2.5rem;margin-bottom:.75rem}
+h3{font-size:1.2rem;margin-top:1.5rem;margin-bottom:.5rem}
+h4{font-size:1.05rem;margin-top:1.2rem;margin-bottom:.4rem}
+p{margin-bottom:1rem;color:#444}
+a{color:#8b6f4e;text-decoration:none;font-weight:500}
+a:hover{text-decoration:underline}
+code{background:#f0ebe3;padding:.15em .4em;border-radius:3px;font-size:.875em;font-family:"SF Mono","Fira Code","Fira Mono",monospace}
+pre{background:#f0ebe3;padding:1rem;border-radius:6px;overflow-x:auto;margin-bottom:1rem;font-size:.875em;line-height:1.5}
+pre code{background:0 0;padding:0}
+table{width:100%;border-collapse:collapse;margin-bottom:1rem;font-size:.925rem}
+th,td{padding:.5rem .75rem;text-align:left;border-bottom:1px solid #e0d8cc}
+th{background:#f0ebe3;font-weight:600}
+ul,ol{margin-bottom:1rem;padding-left:1.5rem}
+li{margin-bottom:.25rem}
+hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
+.header-nav{margin-bottom:2rem;padding-bottom:1rem;border-bottom:1px solid #e0d8cc}
+.header-nav a{margin-right:1.2rem;font-size:.9rem}
+.tag{display:inline-block;font-size:.75rem;padding:.15em .6em;border-radius:3px;font-weight:600;margin-right:.4rem}
+.tag-data{background:#e3f0e3;color:#2a6b2a}
+.tag-sec{background:#fce8d9;color:#8b4513}
+.tag-code{background:#e0e6f0;color:#2c4a7c}
+.tag-rel{background:#f0e0e8;color:#7a2c5a}
+.effort{font-size:.85rem;color:#888;margin-bottom:.25rem}
+@media(max-width:600px){body{padding:1rem}h1{font-size:1.8rem}table{font-size:.85rem}}
+</style>
+</head>
+<body>
+<div class="container">
+<div class="header-nav">
+<a href="../index.html">Home</a><a href="../ARCHITECTURE.html">Architecture</a><a href="../AGENTS.html">Agents</a><a href="LOGGING.html">Logging</a>
+</div>
+
+<h1>Architecture Improvements</h1>
+<p>Twelve targeted improvements to the current architecture, excluding the framework-proliferation topic (design intent). Ordered by category — each includes problem location, proposed change, and effort estimate.</p>
+
+<hr>
+
+<!-- ============================================================ -->
+<!-- DATA & CONNECTIONS                                            -->
+<!-- ============================================================ -->
+<h2>Data &amp; Connections</h2>
+
+<!-- ──────────────────────────────────────────────────────────── -->
+<h3><s>1. SQLite Connection Pooling</s> ✅ IMPLEMENTED (v1.25)</h3>
+<p class="effort"><span class="tag tag-data">data</span> Effort: small (~20 lines, 1 file)</p>
+
+<p><strong>Problem</strong>: <code>shared/memory/store.py:84-96</code> — <code>get_db()</code> opens a brand-new <code>aiosqlite</code> connection on every call with no pooling. Every ticker lookup, portfolio read, filing-dedup check, and performance write creates + tears down a connection. SQLite serializes all writes even with WAL mode — under concurrent requests, <code>busy_timeout=5000</code> causes 5-second stalls when writes queue up.</p>
+
+<pre># Current: new connection per call
+conn = await get_db()       # open
+cursor = await conn.execute(...)
+result = cursor.fetchone()
+await conn.close()          # close
+
+# Dozens of these per query across 5 services, all contending on the same .db file.</pre>
+
+<p><strong>Proposed change</strong>: Use a single long-lived connection with an <code>asyncio.Lock</code> for writes, or add <code>aiosqlite</code> connection pooling (e.g., a pool of 2-3 connections with a context manager). Since <code>aiosqlite</code> has no built-in pool, the simplest approach is a module-level global connection, opened lazily, with explicit <code>async with write_lock:</code> around mutations.</p>
+
+<pre># shared/memory/store.py — proposed:
+import asyncio
+from contextlib import asynccontextmanager
+
+_db_conn = None
+_db_lock = asyncio.Lock()
+
+async def get_db(path=DB_PATH):
+    global _db_conn
+    if _db_conn is None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _db_conn = await aiosqlite.connect(str(path))
+        await _db_conn.execute("PRAGMA journal_mode=WAL")
+        await _db_conn.execute("PRAGMA foreign_keys=ON")
+        await _db_conn.execute("PRAGMA busy_timeout=5000")
+        await init_db(_db_conn)
+    return _db_conn
+
+# Callers that write must acquire the lock:
+async with _db_lock:
+    conn = await get_db()
+    await conn.execute("INSERT ...")</pre>
+
+<p><strong>Files to touch</strong>: <code>shared/memory/store.py</code>, <code>shared/memory/ticker_memory.py</code>, <code>shared/memory/portfolio_store.py</code>, <code>shared/memory/performance_tracker.py</code>, <code>shared/memory/memory_service.py</code> — remove <code>await conn.close()</code> from all callers.</p>
+
+<!-- ──────────────────────────────────────────────────────────── -->
+<h3><s>2. MCP Client as Long-Lived Singleton</s> ✅ IMPLEMENTED (v1.25)</h3>
+<p>MCP client is now a process-wide singleton via <code>get_shared_mcp()</code> with double-checked async lock, auto-reconnect, and <code>atexit</code> shutdown hook. All 4 executors use it.</p>
+
+<!-- ──────────────────────────────────────────────────────────── -->
+<h3><s>3. Rate Limiting</s> ✅ IMPLEMENTED (v1.25)</h3>
+<p class="effort"><span class="tag tag-data">data</span> Effort: small (~40 lines, 1 file)</p>
+
+<p><strong>Problem</strong>: No rate limiting anywhere. 10 concurrent users → 10 simultaneous <code>yfinance</code> API calls + 10 SEC EDGAR requests. SEC EDGAR specifically rate-limits to ~10 requests/second with a hard ban for exceeding it. Yahoo Finance has undocumented rate limits that return HTTP 429 under load.</p>
+
+<p>Hot paths with no throttling:</p>
+<ul>
+<li><code>mcp_servers/finsight_server.py:272-280</code> — <code>get_prices()</code> calls yfinance</li>
+<li><code>mcp_servers/finsight_server.py:475-490</code> — <code>_fetch_submissions()</code> calls SEC EDGAR with 3-attempt retry but no rate limiting between retries</li>
+<li><code>mcp_servers/finsight_server.py:1152-1180</code> — <code>_fetch_rss()</code> fires all 3 RSS feeds without staggering</li>
+</ul>
+
+<p><strong>Proposed change</strong>: Add a token-bucket rate limiter to <code>shared/</code> and wrap the SEC EDGAR client and RSS fetcher. The MCP server's <code>_EdgarClient</code> is the single point of contact — one limiter there protects all callers.</p>
+
+<pre># shared/rate_limiter.py — proposed:
+import asyncio
+import time
+
+class TokenBucket:
+    def __init__(self, rate: float, burst: int):
+        self.rate = rate
+        self.burst = burst
+        self.tokens = burst
+        self.last = time.monotonic()
+        self._lock = asyncio.Lock()
+
+    async def acquire(self):
+        async with self._lock:
+            now = time.monotonic()
+            self.tokens = min(self.burst, self.tokens + (now - self.last) * self.rate)
+            self.last = now
+            if self.tokens >= 1:
+                self.tokens -= 1
+                return
+        # Wait for next token
+        await asyncio.sleep(1.0 / self.rate)
+        return await self.acquire()
+
+# Usage in _EdgarClient:
+_sec_limiter = TokenBucket(rate=8, burst=10)  # 8 req/s, burst 10
+
+async def _fetch_submissions(self, cik, ticker):
+    await _sec_limiter.acquire()
+    ...</pre>
+
+<hr>
+
+<!-- ============================================================ -->
+<!-- SECURITY & CONFIG                                             -->
+<!-- ============================================================ -->
+<h2>Security &amp; Configuration</h2>
+
+<!-- ──────────────────────────────────────────────────────────── -->
+<h3><s>4. SEC EDGAR User-Agent Compliance</s> ✅ IMPLEMENTED (v1.25)</h3>
+<p class="effort"><span class="tag tag-sec">security</span> Effort: trivial (~1 line)</p>
+
+<p><strong>Problem</strong>: <code>mcp_servers/finsight_server.py:358</code> — the SEC EDGAR client sends:</p>
+
+<pre>_SEC_HEADERS = {
+    "User-Agent": "FinSight Research (contact@finsight.com)",
+    ...
+}</pre>
+
+<p><code>contact@finsight.com</code> is not a resolving domain. SEC EDGAR <code>robots.txt</code> explicitly requires a valid User-Agent with contact information. If SEC reviews the traffic source and the domain doesn't resolve, they may block the IP address entirely. This is not theoretical — SEC actively enforces this for high-volume crawlers.</p>
+
+<p><strong>Proposed change</strong>: Replace with a real contact email address or a documented dev-mode placeholder that warns when used.</p>
+
+<pre># Option A: real contact
+"User-Agent": "FinSight Research (your.name@yourdomain.com)"
+
+# Option B: env var with warning
+import os
+_user_agent = os.environ.get(
+    "SEC_USER_AGENT",
+    "FinSight Research (dev-mode — set SEC_USER_AGENT env var for production)"
+)
+if "dev-mode" in _user_agent:
+    logger.warning("SEC User-Agent is dev-mode placeholder — may be blocked")
+_SEC_HEADERS = {"User-Agent": _user_agent}
+</pre>
+
+<!-- ──────────────────────────────────────────────────────────── -->
+<h3><s>5. Hardcoded <code>api_key="lmstudio"</code></s> ✅ IMPLEMENTED (v1.25)</h3>
+<p class="effort"><span class="tag tag-sec">security</span> Effort: trivial (~4 files, 1 line each)</p>
+
+<p><strong>Problem</strong>: <code>api_key="lmstudio"</code> is hardcoded in 4 files. While LM Studio doesn't validate API keys, these strings are:</p>
+<ul>
+<li>A maintenance hazard when switching to a real provider (OpenAI, Anthropic, etc.)</li>
+<li>Present in DEBUG-level logs (no sanitizer currently exists)</li>
+<li>Copied into source control — a real API key would be a leak</li>
+</ul>
+
+<p>Locations:</p>
+<ul>
+<li><code>agent_1_adk/agent.py:21</code></li>
+<li><code>agent_2_llamaindex/index_manager.py:28</code></li>
+<li><code>agent_4_crewai/crew.py:15</code></li>
+<li><code>agent_3_langgraph/nodes.py</code> (likely similar pattern)</li>
+</ul>
+
+<p><strong>Proposed change</strong>: Read from <code>shared/config.py</code> as <code>LLM_API_KEY</code> env var, defaulting to <code>"lmstudio"</code> for backward compatibility.</p>
+
+<pre># shared/config.py — add:
+LLM_API_KEY = os.environ.get("LLM_API_KEY", "lmstudio")
+
+# Every agent reads:
+from shared.config import LLM_API_KEY
+# then: api_key=LLM_API_KEY</pre>
+
+<!-- ──────────────────────────────────────────────────────────── -->
+<h3>6. Hardcoded <code>HF_HUB_OFFLINE=1</code></h3>
+<p class="effort"><span class="tag tag-sec">security</span> Effort: small (~5 lines, 1 file)</p>
+
+<p><strong>Problem</strong>: <code>shared/config.py:28</code> forces HuggingFace Hub offline mode:</p>
+
+<pre>os.environ.setdefault("HF_HUB_OFFLINE", "1")</pre>
+
+<p>If any embedding model (<code>all-MiniLM-L6-v2</code>, <code>cross-encoder/ms-marco-MiniLM-L-6-v2</code>) isn't cached locally, the system fails silently — <code>SentenceTransformer</code> raises a connection error, caught somewhere as <code>logger.warning</code>, and the agent returns a degraded response (no RAG, no semantic cache, no agent registry search). Fine for a stable dev environment. Breaks on first deploy to a fresh machine.</p>
+
+<p><strong>Proposed change</strong>: Keep the offline default but add a startup check that warns if required models are missing from local cache, with instructions to pre-download or set <code>HF_HUB_OFFLINE=0</code>.</p>
+
+<pre># shared/config.py — proposed addition:
+_MODEL_CHECKED = False
+
+def check_embedding_models():
+    global _MODEL_CHECKED
+    if _MODEL_CHECKED:
+        return
+    _MODEL_CHECKED = True
+    from pathlib import Path
+    import os
+    cache_dir = Path.home() / ".cache" / "huggingface" / "hub"
+    model_ids = [
+        f"sentence-transformers/{EMBED_MODEL}",
+        f"cross-encoder/{RERANKER_MODEL.split('/')[-1]}",
+    ]
+    for mid in model_ids:
+        # Snapshot folder pattern: models--sentence-transformers--all-MiniLM-L6-v2
+        safe = mid.replace("/", "--")
+        model_path = cache_dir / f"models--{safe}"
+        if not model_path.exists():
+            logger.warning(
+                "Embedding model '%s' not found in HF cache (%s). "
+                "Set HF_HUB_OFFLINE=0 in .env to auto-download, or run: "
+                "python -c \"from sentence_transformers import SentenceTransformer; "
+                "SentenceTransformer('%s')\"",
+                mid, model_path, mid,
+            )</pre>
+
+<hr>
+
+<!-- ============================================================ -->
+<!-- CODE QUALITY                                                 -->
+<!-- ============================================================ -->
+<h2>Code Quality</h2>
+
+<!-- ──────────────────────────────────────────────────────────── -->
+<h3><s>7. Duplicated Ticker Validation Logic</s> ✅ IMPLEMENTED (v1.25)</h3>
+<p>Ticker validation and resolution are now shared functions in <code>shared/ticker_utils.py</code>, using the MCP singleton. All 4 executors call the same code.</p>
+
+<!-- ──────────────────────────────────────────────────────────── -->
+<h3>8. Inconsistent Error Propagation</h3>
+<p class="effort"><span class="tag tag-code">code</span> Effort: medium (across 5+ files)</p>
+
+<p><strong>Problem</strong>: The same failure travels through three different error formats depending on which layer catches it:</p>
+
+<table>
+<tr><th>Layer</th><th>Error Format</th><th>Example</th></tr>
+<tr><td>MCP tools</td><td><code>{"error": str}</code> in result dict</td><td><code>{"ticker":"XXX","error":"Tool failed: ...","data":[]}</code></td></tr>
+<tr><td>GenericAgentExecutor</td><td>TaskState.FAILED + text message</td><td>A2A <code>TaskStatusUpdateEvent</code> with <code>state=FAILED</code></td></tr>
+<tr><td>SubAgentClient</td><td><code>{"error": str}</code> JSON string</td><td><code>'{"error": "Agent failed: ..."}'</code></td></tr>
+<tr><td>Orchestrator executor</td><td>Mixed — text or <code>error</code> key</td><td>Sometimes TaskState.FAILED, sometimes text</td></tr>
+</table>
+
+<p>An A2A tool failure at the MCP level is wrapped in a dict, serialized to JSON, sent over SSE, parsed by the agent, re-wrapped in an A2A artifact, serialized to protobuf, sent over HTTP, parsed by <code>SubAgentClient</code>, re-serialized as JSON string, returned to the LLM as a function result, and finally the LLM decides how to surface it. Each hop changes the shape.</p>
+
+<p><strong>Proposed change</strong>: Standardize on a single error envelope class in <code>shared/models.py</code> that all layers produce. The A2A layer is the boundary — errors crossing it should use a consistent schema.</p>
+
+<pre># shared/models.py — proposed addition:
+from dataclasses import dataclass
+
+@dataclass
+class AgentError:
+    """Standard error envelope across all FinSight services."""
+    code: str          # "MCP_TIMEOUT", "INVALID_TICKER", "AGENT_UNAVAILABLE"
+    message: str       # Human-readable description
+    detail: dict | None = None  # Optional structured context
+
+    def to_dict(self) -> dict:
+        return {"error": self.code, "message": self.message,
+                "detail": self.detail or {}}
+
+    @staticmethod
+    def from_a2a(task) -> "AgentError":
+        """Parse A2A terminal state into AgentError."""
+        ...</pre>
+
+<p>Scope is medium because it touches every error-return path. Best done as a dedicated refactor pass, not mixed with feature work.</p>
+
+<!-- ──────────────────────────────────────────────────────────── -->
+<h3><s>9. Import-Time Side Effects (OpenTelemetry)</s> ✅ IMPLEMENTED (v1.25)</h3>
+<p>OTel instrumentation is now lazy via <code>init_instrumentation()</code> in <code>shared/observability.py</code>. Imports are deferred; instrumentors fire at startup, not at module import.</p>
+
+<!-- ──────────────────────────────────────────────────────────── -->
+<h3>10. Redundant Memory Persistence Paths</h3>
+<p class="effort"><span class="tag tag-code">code</span> Effort: medium (~40 lines removed)</p>
+
+<p><strong>Problem</strong>: The same conversation events are written to memory three ways on every analysis turn:</p>
+
+<table>
+<tr><th>Path</th><th>Location</th><th>What it does</th></tr>
+<tr><td>1. <code>after_agent_callback</code></td><td><code>agents/finsight_agent/agent.py:202-216</code></td><td><code>callback_context.add_events_to_memory()</code></td></tr>
+<tr><td>2. Executor fallback</td><td><code>agent_1_adk/agent_executor.py:253-257</code></td><td><code>_add_events_to_memory()</code> — get_session → add_session_to_memory()</td></tr>
+<tr><td>3. Direct persist</td><td><code>agent_1_adk/agent_executor.py:507-530</code></td><td><code>_persist_to_memory()</code> — add_events_to_memory directly</td></tr>
+</table>
+
+<p>Paths 2 and 3 were added as reliability fixes when the callback path was unreliable. Now all three fire on every turn. This triples write load on SQLite and makes the memory layer harder to reason about — which path actually controls what gets stored?</p>
+
+<p><strong>Proposed change</strong>: Consolidate to a single path. The <code>after_agent_callback</code> is the canonical path for ADK Web UI mode. The executor paths (2, 3) should only fire when the standalone A2A server (<code>agent_1_adk/main.py</code>) is started directly — and should be gated by a flag.</p>
+
+<pre># agent_1_adk/agent_executor.py — proposed:
+# Remove the redundant paths. Keep only the callback path for ADK Web UI.
+# For A2A mode, add a single _add_session_to_memory() that replaces both
+# _add_events_to_memory and _persist_to_memory.</pre>
+
+<hr>
+
+<!-- ============================================================ -->
+<!-- RELIABILITY                                                  -->
+<!-- ============================================================ -->
+<h2>Reliability</h2>
+
+<!-- ──────────────────────────────────────────────────────────── -->
+<h3><s>11. Cancellation</s> ✅ IMPLEMENTED (v1.25)</h3>
+<p>Both executors now implement <code>cancel()</code> with <code>asyncio.Task.cancel()</code> + <code>TASK_STATE_CANCELED</code>. Per-agent timeouts in <code>SubAgentClient</code> prevent one slow agent from stalling the pipeline.</p>
+
+<!-- ──────────────────────────────────────────────────────────── -->
+<h3><s>12. InMemoryTaskStore</s> ✅ IMPLEMENTED (v1.25)</h3>
+<p>Tasks now persist across restarts via <code>SQLiteTaskStore</code> in <code>shared/a2a_store.py</code>. All four agent servers use it.</p>
+
+<h2>Effort Summary</h2>
+
+<table>
+<tr><th>#</th><th>Improvement</th><th>Effort</th><th>Files To Touch</th></tr>
+<tr><td>1</td><td>SQLite connection pooling</td><td>small</td><td><code>shared/memory/store.py</code> + 4 memory modules</td></tr>
+<tr><td>2</td><td>MCP client as singleton → ✅ singleton+reconnect</td><td>medium</td><td><code>shared/mcp_client.py</code> + 4 agent executors</td></tr>
+<tr><td>3</td><td>Rate limiting</td><td>small</td><td><code>shared/rate_limiter.py</code> (new) + <code>finsight_server.py</code></td></tr>
+<tr><td>4</td><td>SEC EDGAR User-Agent</td><td>trivial</td><td><code>mcp_servers/finsight_server.py</code></td></tr>
+<tr><td>5</td><td>Hardcoded api_key</td><td>trivial</td><td><code>shared/config.py</code> + 4 agent files</td></tr>
+<tr><td>6</td><td>HF_HUB_OFFLINE check</td><td>small</td><td><code>shared/config.py</code></td></tr>
+<tr><td>7</td><td>Deduplicate ticker logic → ✅ shared functions</td><td>medium</td><td><code>shared/ticker_utils.py</code> + 4 agent executors</td></tr>
+<tr><td>8</td><td>Error propagation</td><td>medium</td><td><code>shared/models.py</code> + 5+ files</td></tr>
+<tr><td>9</td><td>Import-time side effects → ✅ lazy OTel</td><td>small</td><td><code>shared/observability.py</code> + 4 server entry points</td></tr>
+<tr><td>10</td><td>Redundant memory paths</td><td>medium</td><td><code>agent_1_adk/agent_executor.py</code> + <code>agents/finsight_agent/agent.py</code></td></tr>
+<tr><td>11</td><td>Cancellation → ✅ cancel+timeouts</td><td>medium</td><td><code>shared/generic_executor.py</code> + <code>agent_1_adk/agent_executor.py</code> + <code>sub_agent_client.py</code></td></tr>
+<tr><td>12</td><td>InMemoryTaskStore → ✅ SQLiteTaskStore</td><td>small</td><td><code>shared/a2a_store.py</code> + 4 server entry points</td></tr>
+</table>
+
+<hr>
+<p style="font-size:.85rem;color:#888"><a href="../index.html">Back to docs hub</a></p>
+</div>
+</body>
+</html>

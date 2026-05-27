@@ -11,7 +11,7 @@ import click
 import uvicorn
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
-from a2a.server.tasks import InMemoryTaskStore
+from shared.a2a_store import SQLiteTaskStore
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
 from google.adk.runners import Runner
 from google.adk.sessions import DatabaseSessionService
@@ -20,13 +20,11 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from shared.memory import SQLiteMemoryService, init_db
-from shared.observability import init_langfuse, shutdown_langfuse
+from shared.observability import init_langfuse, init_instrumentation, shutdown_langfuse
 
 init_langfuse(service_name="orchestrator")
 atexit.register(shutdown_langfuse)
-from openinference.instrumentation.google_adk import GoogleADKInstrumentor
-
-GoogleADKInstrumentor().instrument()
+init_instrumentation("orchestrator")
 
 from shared.config import ADK_MODEL
 
@@ -72,7 +70,7 @@ agent_card = AgentCard(
     ],
 )
 
-task_store = InMemoryTaskStore()
+task_store = SQLiteTaskStore()
 
 # session_service: persists conversation turns; memory_service: enables semantic recall (load_memory tool)
 session_service = DatabaseSessionService(
@@ -109,11 +107,17 @@ app = Starlette(routes=routes, debug=True)
 
 async def start_server(host: str, port: int) -> None:
     # Initialize SQLite tables before accepting connections
-    from shared.memory.store import get_db
-    conn = await get_db()
-    await init_db(conn)
-    await conn.close()
+    from shared.memory.store import get_db, prune_old_records
+    await get_db()
     logger.info("Memory layer initialized with persistent SQLite storage")
+
+    # Best-effort pruning on startup — keeps DB from growing unbounded over months.
+    try:
+        deleted = await prune_old_records()
+        if any(deleted.values()):
+            logger.info("Pruned old memory records: %s", deleted)
+    except Exception:
+        logger.warning("Memory pruning failed (non-fatal)", exc_info=True)
 
     config = uvicorn.Config(app, host=host, port=port, log_level="info")
     server = uvicorn.Server(config)

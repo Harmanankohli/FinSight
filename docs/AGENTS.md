@@ -22,7 +22,7 @@ The orchestrator uses a single `LlmAgent` with one `send_message` tool. The LLM 
 7. **Output guardrails** — Responses shorter than 50 chars trigger `TASK_STATE_FAILED`. Missing BUY/HOLD/SELL signal emits a Langfuse warning with `missing_signal: true`.
 8. **Synthesizes results** — LLM collects all outputs and produces a BUY/HOLD/SELL recommendation
 9. **Auto-save** — After each response, persists ticker brief, portfolio holdings, and performance record (with live price snapshot via yfinance) to SQLite. Fires background task to evaluate past recommendations.
-10. **Memory persist + Runtime RAGAS evaluation + response_text overwrite** — All run from `after_agent_callback` in `agents/finsight_agent/agent.py`. The callback first checks `_is_analysis_turn()` (was `save_brief` called in this turn?) — non-analysis turns like "what were my last recommendations?" skip persist + eval to avoid memory pollution. Analysis turns then call `add_events_to_memory()`, overwrite the brief's `response_text` with the full synthesized analysis via `tm.update_response_text()`, and fire `asyncio.create_task(_eval_score_response(...))` with 5 metrics. All gated globally by `EVAL_TRACE_ENABLED`. Scores pushed to Langfuse under `ragas/orchestrator/<metric>`.
+10. **Memory persist + Runtime RAGAS evaluation** — All run from `after_agent_callback` in `agents/finsight_agent/agent.py`. The callback first checks `_is_analysis_turn()` (was `save_brief` called in this turn?) — non-analysis turns like "what were my last recommendations?" skip persist + eval to avoid memory pollution. Analysis turns then call `add_events_to_memory()` and fire `asyncio.create_task(_eval_score_response(...))` with 5 metrics. The full synthesis text is stored directly by `save_brief` (reads longest LLM text from session events) — the post-turn `update_response_text` overwrite was removed. All gated globally by `EVAL_TRACE_ENABLED`. Scores pushed to Langfuse under `ragas/orchestrator/<metric>`.
 
 All A2A communication uses `ClientFactory` + `BaseClient` from the official `a2a-sdk`. Streaming events are handled correctly: intermediate SUBMITTED/WORKING events are skipped, only `artifact_update` events (data or text) and terminal `status_update` events are returned to the LLM.
 
@@ -52,10 +52,12 @@ FinSightAgentExecutor:
 
 before_agent_callback (ADK Web UI path — fires before LLM every turn):
   → _memory_cache_callback(callback_context)
-       → Extract user ticker from session.events
+       → Extract user ticker from session.events (regex)
        → TickerMemory.get_latest(ticker, user_id=None)
-         ├── today's cache exists with response_text → return types.Content directly (short-circuit)
-         └── no cache → return None (let LLM run)
+         ├── hit → return types.Content directly (short-circuit)
+         ├── miss → fall back to MCP resolve_company_ticker for company-name tokens
+         │          (e.g. "VISA" → canonical "V") then retry cache lookup
+         └── still miss → return None (let LLM run)
 
 Executor-level cache (A2A path — agent_1_adk/agent_executor.py):
   A2A Request → execute()
@@ -68,7 +70,6 @@ after_agent_callback (ADK web UI path — primary path; run_adk_web.bat no longe
        └── Yes →
             → callback_context.add_events_to_memory(events=session.events, custom_metadata={...})
             → SQLiteMemoryService.add_events_to_memory() → memory_entries table
-            → TickerMemory.update_response_text(record_id, full_response) — overwrite brief with full analysis
             → if EVAL_ENABLED: asyncio.create_task(score_response(query, response, trace_id))
                  → ragas/orchestrator/{AnswerRelevancy, citation_quality, risk_disclosure,
                                        recommendation_clarity, response_completeness}

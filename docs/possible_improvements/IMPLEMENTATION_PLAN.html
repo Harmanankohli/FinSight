@@ -1,0 +1,1344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FinSight — Implementation Plan</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:1.7;color:#2c2c2c;background:#faf8f5;padding:2rem 1rem}
+.container{max-width:740px;margin:0 auto}
+h1,h2,h3,h4{font-family:Georgia,"Times New Roman",serif;color:#1a1a1a;line-height:1.3}
+h1{font-size:2.2rem;margin-bottom:.25rem;border-bottom:2px solid #e8dcc8;padding-bottom:.5rem}
+h2{font-size:1.5rem;margin-top:2.5rem;margin-bottom:.75rem}
+h3{font-size:1.2rem;margin-top:1.5rem;margin-bottom:.5rem}
+h4{font-size:1.05rem;margin-top:1.2rem;margin-bottom:.4rem}
+p{margin-bottom:1rem;color:#444}
+a{color:#8b6f4e;text-decoration:none;font-weight:500}
+a:hover{text-decoration:underline}
+code{background:#f0ebe3;padding:.15em .4em;border-radius:3px;font-size:.875em;font-family:"SF Mono","Fira Code","Fira Mono",monospace}
+pre{background:#f0ebe3;padding:1rem;border-radius:6px;overflow-x:auto;margin-bottom:1rem;font-size:.875em;line-height:1.5}
+pre code{background:0 0;padding:0}
+table{width:100%;border-collapse:collapse;margin-bottom:1rem;font-size:.925rem}
+th,td{padding:.5rem .75rem;text-align:left;border-bottom:1px solid #e0d8cc}
+th{background:#f0ebe3;font-weight:600}
+ul,ol{margin-bottom:1rem;padding-left:1.5rem}
+li{margin-bottom:.25rem}
+hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
+.header-nav{margin-bottom:2rem;padding-bottom:1rem;border-bottom:1px solid #e0d8cc}
+.header-nav a{margin-right:1.2rem;font-size:.9rem}
+.tag{display:inline-block;font-size:.75rem;padding:.15em .6em;border-radius:3px;font-weight:600;margin-right:.4rem}
+.tag-tier0{background:#e3f0e3;color:#2a6b2a}
+.tag-tier1{background:#e0e6f0;color:#2c4a7c}
+.tag-tier2{background:#fce8d9;color:#8b4513}
+.tag-tier3{background:#f0d8d8;color:#7a2c2c}
+.tag-skip{background:#e8e8e8;color:#666}
+.effort{font-size:.85rem;color:#888;margin-bottom:.25rem}
+.index-list{columns:2;column-gap:2rem;margin-bottom:1.5rem;padding-left:0;list-style:none}
+.index-list li{margin-bottom:.2rem;break-inside:avoid}
+.index-list a{font-size:.925rem}
+@media(max-width:600px){body{padding:1rem}h1{font-size:1.8rem}table{font-size:.85rem}.index-list{columns:1}}
+</style>
+</head>
+<body>
+<div class="container">
+<div class="header-nav">
+<a href="../index.html">Home</a><a href="../ARCHITECTURE.html">Architecture</a><a href="../AGENTS.html">Agents</a><a href="LOGGING.html">Logging</a><a href="IMPLEMENTATION_PLAN.html">Implementation Plan</a>
+</div>
+
+<h1>Implementation Plan</h1>
+<p>Detailed, step-by-step plan for each improvement. Ordered low → high effort.
+Each activity is self-contained: goal, files, steps, verification, rollback.</p>
+
+<p><strong>Scope filter applied</strong>: items rated "overengineered for project scale" in the
+prior assessment are listed at the bottom with a "skip" note and rationale —
+they are not detailed here. Re-include them later only if usage patterns
+justify the cost.</p>
+
+<p><strong>Test status</strong>: ~148 tests now covering core primitives + security sandbox. See <code>docs/TESTS.html</code>.</p>
+
+<hr>
+
+<h2>Index</h2>
+
+<p><strong>Tier 0 — Trivial (~10–30 min each)</strong></p>
+<ol class="index-list">
+<li><a href="#s1">SEC EDGAR User-Agent env var</a></li>
+<li><a href="#s2">Hardcoded <code>api_key=&quot;lmstudio&quot;</code> → env var</a></li>
+</ol>
+
+<p><strong>Tier 1 — Small (~1–2 hrs each)</strong></p>
+<ol class="index-list" start="3">
+<li><a href="#s3">SQLite long-lived connection + write lock</a></li>
+<li><s><a href="#s4">Token-bucket rate limiter (SEC + yfinance + RSS)</a></s> ✅ DONE (v1.25)</li>
+<li><s><a href="#s5">yfinance / news TTL cache</a></s> ✅ DONE (v1.25)</li>
+<li><s><a href="#s6">Structured JSON logging</a></s> ✅ DONE (v1.25)</li>
+<li><s><a href="#s7">Per-service log levels via env</a></s> ✅ DONE (v1.25)</li>
+<li><s><a href="#s8">Log sanitization filter</a></s> ✅ DONE (v1.25)</li>
+<li><s><a href="#s9"><code>SQLiteTaskStore</code> replacing <code>InMemoryTaskStore</code></a></s> ✅ DONE (v1.25)</li>
+<li><s><a href="#s10">Memory pruning / retention policy</a></s> ✅ DONE (v1.25)</li>
+</ol>
+
+<p><strong>Tier 2 — Medium (~½ day each)</strong></p>
+<ol class="index-list" start="11">
+<li><s><a href="#s11">MCP client singleton with auto-reconnect</a></s> ✅ DONE (v1.25)</li>
+<li><s><a href="#s12">Lazy OpenTelemetry instrumentation</a></s> ✅ DONE (v1.25)</li>
+<li><s><a href="#s13">Correlation-ID propagation via ContextVar</a></s> ✅ DONE (v1.25)</li>
+<li><s><a href="#s14">Deduplicate ticker validation across executors</a></s> ✅ DONE (v1.25)</li>
+<li><s><a href="#s15">Unified <code>@logged</code> timing decorator</a></s> ✅ DONE (v1.25)</li>
+<li><s><a href="#s16">Cancellation support + per-agent timeout</a></s> ✅ DONE (v1.25)</li>
+</ol>
+
+<p><strong>Tier 3 — Larger</strong></p>
+<ol class="index-list" start="17">
+<li><del><a href="#s17">Test suite — pragmatic starter set</a></del> ✅ DONE (v1.26)</li>
+<li><del><a href="#s18">Security sandbox hardening + tests</a></del> ✅ DONE (v1.27)</li>
+</ol>
+
+<p><a href="#skipped">Skipped (with rationale)</a></p>
+
+<hr>
+
+<!-- ──────────────────────────────────────────────────────────── -->
+<!-- TIER 0                                                       -->
+<!-- ──────────────────────────────────────────────────────────── -->
+<h2 id="s1"><s>1. SEC EDGAR User-Agent env var</s> ✅ DONE (v1.25)</h2>
+<p class="effort"><span class="tag tag-tier0">tier 0</span> Effort: ~10–30 min</p>
+
+<p><strong>Goal</strong>: Stop SEC blocking the system due to non-compliant <code>contact@finsight.com</code>
+placeholder. SEC enforces real contact emails in User-Agent headers.</p>
+
+<p><strong>Files to touch</strong></p>
+<ul>
+<li><code>shared/config.py</code></li>
+<li><code>mcp_servers/finsight_server.py:318</code> (definition of <code>_SEC_HEADERS</code>)</li>
+<li><code>.env.example</code> (or create one)</li>
+</ul>
+
+<p><strong>Steps</strong></p>
+
+<ol>
+<li>Add to <code>shared/config.py</code>, near the SEC section (line ~61):</li>
+</ol>
+<pre>SEC_USER_AGENT = os.environ.get(
+    "SEC_USER_AGENT",
+    "FinSight Research (dev-mode-set-SEC_USER_AGENT)",
+)</pre>
+
+<ol start="2">
+<li>In <code>shared/config.py.validate()</code>, add a warning when the placeholder is in use:</li>
+</ol>
+<pre>if "dev-mode" in SEC_USER_AGENT:
+    logging.getLogger(__name__).warning(
+        "SEC_USER_AGENT is placeholder — SEC may rate-limit or block. "
+        "Set SEC_USER_AGENT='Your Name (your-email@example.com)' in .env"
+    )</pre>
+
+<ol start="3">
+<li>In <code>mcp_servers/finsight_server.py</code>, replace lines 318–320:</li>
+</ol>
+<pre>from shared.config import SEC_USER_AGENT
+_SEC_HEADERS = {"User-Agent": SEC_USER_AGENT}</pre>
+
+<ol start="4">
+<li>Add <code>SEC_USER_AGENT=</code> to <code>.env.example</code> with a comment about format.</li>
+</ol>
+
+<p><strong>Verification</strong></p>
+<ul>
+<li>Start MCP server with <code>SEC_USER_AGENT</code> unset → warning appears in logs.</li>
+<li>Start with <code>SEC_USER_AGENT="Test User (test@example.com)"</code> → no warning, header is set correctly (verify with a SEC tool call and inspecting request headers in logs).</li>
+</ul>
+
+<p><strong>Rollback</strong>: revert the 3 edits; no schema or state changes.</p>
+
+<hr>
+
+<h2 id="s2"><s>2. Hardcoded <code>api_key="lmstudio"</code> → env var</s> ✅ DONE (v1.25)</h2>
+<p class="effort"><span class="tag tag-tier0">tier 0</span> Effort: ~10–30 min</p>
+
+<p><strong>Goal</strong>: Single source of truth for LLM API key. Also unblocks pointing the
+system at OpenAI/Anthropic without code edits (it's not really a "secret leak"
+issue — <code>lmstudio</code> is the LM Studio dummy value — but the maintenance cost is
+real).</p>
+
+<p><strong>Files to touch</strong></p>
+<ul>
+<li><code>shared/config.py</code></li>
+<li><code>agent_2_llamaindex/index_manager.py:28</code></li>
+<li><code>agent_3_langgraph/nodes.py:439</code></li>
+<li><code>agent_4_crewai/crew.py:15</code></li>
+</ul>
+
+<p><strong>Steps</strong></p>
+
+<ol>
+<li>In <code>shared/config.py</code>, near LLM section:</li>
+</ol>
+<pre>LLM_API_KEY = os.environ.get("LLM_API_KEY", "lmstudio")</pre>
+
+<ol start="2">
+<li>In each of the 3 files:
+<ul>
+<li>Add <code>from shared.config import LLM_API_KEY</code> (or extend existing import).</li>
+<li>Replace <code>api_key="lmstudio"</code> with <code>api_key=LLM_API_KEY</code>.</li>
+</ul>
+</li>
+<li>Add <code>LLM_API_KEY=lmstudio</code> to <code>.env.example</code> with a comment that it's a placeholder for LM Studio's local server.</li>
+</ol>
+
+<p><strong>Verification</strong></p>
+<ul>
+<li><code>python -c "from shared.config import LLM_API_KEY; print(LLM_API_KEY)"</code> → prints "lmstudio" by default, or the env-overridden value.</li>
+<li>Boot agents → no behavior change with default. Set <code>LLM_API_KEY=test-key</code> → visible in agent boot logs if you log it (don't — add to sanitization filter in <a href="#s8">#8</a>).</li>
+</ul>
+
+<p><strong>Rollback</strong>: revert 4 edits.</p>
+
+<hr>
+
+<!-- ──────────────────────────────────────────────────────────── -->
+<!-- TIER 1                                                       -->
+<!-- ──────────────────────────────────────────────────────────── -->
+<h2 id="s3"><s>3. SQLite long-lived connection + write lock</s> ✅ DONE (v1.25)</h2>
+<p class="effort"><span class="tag tag-tier1">tier 1</span> Effort: ~1–2 hrs</p>
+
+<p><strong>Goal</strong>: Eliminate the open-close-per-call pattern in <code>shared/memory/</code>.
+Reduces lock contention; small but clean win.</p>
+
+<p><strong>Files to touch</strong></p>
+<ul>
+<li><code>shared/memory/store.py</code> (the core change)</li>
+<li><code>shared/memory/ticker_memory.py</code> (remove 4 <code>await conn.close()</code> calls at lines 47, 83, 125, 167)</li>
+<li><code>shared/memory/portfolio_store.py</code> (remove 3 closes at lines 40, 82, 111)</li>
+<li><code>shared/memory/performance_tracker.py</code> (remove 5 closes at lines 57, 74, 96, 137, 205)</li>
+<li><code>shared/memory/memory_service.py</code> (remove 3 closes at lines 81, 137, 224)</li>
+<li><code>shared/memory/store.py</code> (remove its own closes at lines 137, 151)</li>
+</ul>
+
+<p><strong>Steps</strong></p>
+
+<ol>
+<li>In <code>shared/memory/store.py</code>, replace <code>get_db()</code> with a singleton:</li>
+</ol>
+<pre>import asyncio
+
+_db_conn: aiosqlite.Connection | None = None
+_db_lock = asyncio.Lock()
+_init_lock = asyncio.Lock()
+
+async def get_db(path: Path = DB_PATH) -> aiosqlite.Connection:
+    global _db_conn
+    if _db_conn is not None:
+        return _db_conn
+    async with _init_lock:
+        if _db_conn is not None:
+            return _db_conn
+        path.parent.mkdir(parents=True, exist_ok=True)
+        conn = await aiosqlite.connect(str(path))
+        await conn.execute("PRAGMA journal_mode=WAL")
+        await conn.execute("PRAGMA foreign_keys=ON")
+        await conn.execute("PRAGMA busy_timeout=5000")
+        await init_db(conn)
+        _db_conn = conn
+    return _db_conn
+
+async def close_db() -> None:
+    """Optional: call at process shutdown."""
+    global _db_conn
+    if _db_conn is not None:
+        await _db_conn.close()
+        _db_conn = None</pre>
+
+<ol start="2">
+<li>Add a <code>write_lock()</code> helper for callers performing writes:</li>
+</ol>
+<pre>def write_lock() -> asyncio.Lock:
+    return _db_lock</pre>
+
+<ol start="3">
+<li>In every writer (e.g. <code>ticker_memory.store_brief</code>), wrap the write block:</li>
+</ol>
+<pre>from shared.memory.store import get_db, write_lock
+
+async def store_brief(self, ...):
+    async with write_lock():
+        conn = await get_db(self._db_path)
+        await conn.execute(...)
+        await conn.commit()</pre>
+
+<ol start="4">
+<li>Remove all <code>await conn.close()</code> calls (the 17 locations grep'd above).</li>
+<li>Reads do <strong>not</strong> need the lock; just <code>conn = await get_db(...)</code> then query.</li>
+<li>Register <code>close_db</code> at process shutdown in each server entry point (<code>main.py</code> / <code>server.py</code>) via <code>atexit</code> or FastAPI lifespan.</li>
+</ol>
+
+<p><strong>Verification</strong></p>
+<ul>
+<li><code>tests/test_memory_concurrency.py</code> (new, ~30 lines): spawn 20 concurrent <code>store_brief</code> calls with different tickers, assert all rows present.</li>
+<li>Manually: <code>sqlite3 finsight_memory.db "SELECT count(*) FROM ticker_briefs"</code> before/after a multi-query orchestrator run.</li>
+</ul>
+
+<p><strong>Risks</strong></p>
+<ul>
+<li>A single connection serializes everything. If you ever introduce long-running read transactions, they'll block writes. Mitigation: keep writes short (current writes are already single-statement).</li>
+<li>Forgetting to wrap a writer with <code>write_lock()</code> is a silent race. Mitigation: grep for <code>INSERT|UPDATE|DELETE</code> in <code>shared/memory/</code> and confirm each is inside a <code>write_lock()</code> block.</li>
+</ul>
+
+<p><strong>Rollback</strong>: revert <code>store.py</code> + restore <code>await conn.close()</code> calls in 4 modules.</p>
+
+<hr>
+
+<h2 id="s4"><s>4. Token-bucket rate limiter</s> ✅ DONE (v1.25)</h2>
+<p class="effort"><span class="tag tag-tier1">tier 1</span> Effort: ~1–2 hrs</p>
+
+<p><strong>Goal</strong>: Stop SEC IP bans and Yahoo 429s by enforcing a soft request ceiling.</p>
+
+<p><strong>Files to touch</strong></p>
+<ul>
+<li><code>shared/rate_limiter.py</code> (new, ~40 lines)</li>
+<li><code>mcp_servers/finsight_server.py</code> (apply to 3 hot paths)</li>
+</ul>
+
+<p><strong>Steps</strong></p>
+
+<ol>
+<li>Create <code>shared/rate_limiter.py</code>:</li>
+</ol>
+<pre>import asyncio
+import time
+
+class TokenBucket:
+    def __init__(self, rate: float, burst: int):
+        self.rate = rate
+        self.burst = burst
+        self.tokens = float(burst)
+        self.last = time.monotonic()
+        self._lock = asyncio.Lock()
+
+    async def acquire(self) -> None:
+        while True:
+            async with self._lock:
+                now = time.monotonic()
+                self.tokens = min(
+                    self.burst,
+                    self.tokens + (now - self.last) * self.rate,
+                )
+                self.last = now
+                if self.tokens >= 1:
+                    self.tokens -= 1
+                    return
+                deficit = 1 - self.tokens
+            await asyncio.sleep(deficit / self.rate)</pre>
+
+<ol start="2">
+<li>In <code>mcp_servers/finsight_server.py</code>, add module-level limiters:</li>
+</ol>
+<pre>from shared.rate_limiter import TokenBucket
+_sec_limiter = TokenBucket(rate=8, burst=10)      # SEC: 10 req/s hard limit
+_yfinance_limiter = TokenBucket(rate=4, burst=8)
+_rss_limiter = TokenBucket(rate=2, burst=4)</pre>
+
+<ol start="3">
+<li>Before each SEC HTTP call (search for <code>_SEC_HEADERS</code> usage):</li>
+</ol>
+<pre>await _sec_limiter.acquire()
+resp = await client.get(...)</pre>
+
+<ol start="4">
+<li>Before each yfinance call (lines ~272–280 area, <code>get_prices</code>):</li>
+</ol>
+<pre>await _yfinance_limiter.acquire()</pre>
+
+<ol start="5">
+<li>Before each RSS fetch in <code>_fetch_rss</code> (line ~1152):</li>
+</ol>
+<pre>await _rss_limiter.acquire()</pre>
+
+<p><strong>Verification</strong></p>
+<ul>
+<li>Spawn 50 concurrent <code>get_prices</code> calls in a script; observe wall time ≈ <code>50 / rate</code> seconds rather than all firing instantly.</li>
+<li>Tail logs while running a full orchestrator query → no 429 / 403 from Yahoo or SEC.</li>
+</ul>
+
+<p><strong>Risks</strong></p>
+<ul>
+<li>Too restrictive limiter blocks legitimate concurrent users. Mitigation: pick rates conservatively (SEC's stated cap is 10/s, leave headroom).</li>
+<li>TokenBucket recursion in original doc is a stack-blowup risk under contention; the loop form above avoids that.</li>
+</ul>
+
+<p><strong>Rollback</strong>: delete the <code>acquire()</code> calls; rate limiter file can remain unused.</p>
+
+<hr>
+
+<h2 id="s5"><s>5. yfinance / news TTL cache</s> ✅ DONE (v1.25)</h2>
+<p class="effort"><span class="tag tag-tier1">tier 1</span> Effort: ~1–2 hrs</p>
+
+<p><strong>Goal</strong>: Same ticker requested 3× in one orchestrator turn → 1 actual network
+call. Biggest perf/effort ratio in the whole plan.</p>
+
+<p><strong>Files to touch</strong></p>
+<ul>
+<li><code>shared/ttl_cache.py</code> (new, ~40 lines)</li>
+<li><code>mcp_servers/finsight_server.py</code> (apply to <code>get_prices</code>, <code>get_financials</code>, <code>_fetch_rss</code>, <code>get_news_sentiment</code>)</li>
+</ul>
+
+<p><strong>Steps</strong></p>
+
+<ol>
+<li>Create <code>shared/ttl_cache.py</code>:</li>
+</ol>
+<pre>import asyncio
+import time
+from typing import Any, Callable, Awaitable
+
+class TTLCache:
+    def __init__(self, ttl_seconds: float, max_entries: int = 512):
+        self.ttl = ttl_seconds
+        self.max_entries = max_entries
+        self._data: dict[str, tuple[float, Any]] = {}
+        self._lock = asyncio.Lock()
+        self._inflight: dict[str, asyncio.Future] = {}
+
+    async def get_or_fetch(
+        self, key: str, fetch: Callable[[], Awaitable[Any]]
+    ) -> Any:
+        now = time.monotonic()
+        entry = self._data.get(key)
+        if entry and now - entry[0] < self.ttl:
+            return entry[1]
+
+        # Single-flight: collapse concurrent misses into one fetch.
+        async with self._lock:
+            if key in self._inflight:
+                fut = self._inflight[key]
+            else:
+                fut = asyncio.get_event_loop().create_future()
+                self._inflight[key] = fut
+                asyncio.create_task(self._fetch_and_store(key, fetch, fut))
+        return await fut
+
+    async def _fetch_and_store(self, key, fetch, fut):
+        try:
+            value = await fetch()
+            self._data[key] = (time.monotonic(), value)
+            if len(self._data) > self.max_entries:
+                # Drop oldest (cheap approximation: pop arbitrary).
+                self._data.pop(next(iter(self._data)))
+            fut.set_result(value)
+        except Exception as exc:
+            fut.set_exception(exc)
+        finally:
+            self._inflight.pop(key, None)</pre>
+
+<ol start="2">
+<li>In <code>mcp_servers/finsight_server.py</code>:</li>
+</ol>
+<pre>from shared.ttl_cache import TTLCache
+_prices_cache = TTLCache(ttl_seconds=60)          # 1 min — intraday OK
+_financials_cache = TTLCache(ttl_seconds=3600)    # 1 hr — quarterly data
+_news_cache = TTLCache(ttl_seconds=300)           # 5 min</pre>
+
+<ol start="3">
+<li>Wrap each hot tool. Example for <code>get_prices</code>:</li>
+</ol>
+<pre>@mcp.tool()
+async def get_prices(ticker: str, period: str = "1y", ...) -> dict:
+    key = f"prices:{ticker}:{period}:{interval}"
+    return await _prices_cache.get_or_fetch(
+        key, lambda: _get_prices_uncached(ticker, period, interval),
+    )</pre>
+<p>Rename the current body to <code>_get_prices_uncached</code>.</p>
+
+<ol start="4">
+<li>Repeat for <code>get_financials</code>, <code>get_news_sentiment</code>.</li>
+<li><strong>Do not cache</strong> <code>validate_ticker</code> or <code>execute_python</code> — both have correctness or security implications.</li>
+</ol>
+
+<p><strong>Verification</strong></p>
+<ul>
+<li>Two consecutive <code>get_prices("AAPL")</code> calls → 2nd returns in &lt;5ms vs &gt;200ms.</li>
+<li>20 concurrent identical calls → only one shows up in yfinance logs.</li>
+<li>Wait 65s; call again → fresh fetch (TTL expiry works).</li>
+</ul>
+
+<p><strong>Risks</strong></p>
+<ul>
+<li>Stale data during a fast-moving market event. Mitigation: keep TTL short for prices (60s) and add a <code>force_refresh</code> flag if needed later.</li>
+<li>Memory grows unbounded if <code>max_entries</code> accidentally large. Default 512 is fine for normal use.</li>
+</ul>
+
+<p><strong>Rollback</strong>: delete the cache calls; uncached functions still work.</p>
+
+<hr>
+
+<h2 id="s6"><s>6. Structured JSON logging</s> ✅ DONE (v1.25)</h2>
+<p class="effort"><span class="tag tag-tier1">tier 1</span> Effort: ~1–2 hrs</p>
+
+<p><strong>Goal</strong>: Make logs ingestible by Loki/CloudWatch/Datadog without custom
+parsers. Foundation for <a href="#s13">#13</a> (correlation IDs).</p>
+
+<p><strong>Files to touch</strong></p>
+<ul>
+<li><code>shared/logging_config.py</code> only.</li>
+</ul>
+
+<p><strong>Steps</strong></p>
+
+<ol>
+<li>Add a JSON formatter class at the top of <code>shared/logging_config.py</code>:</li>
+</ol>
+<pre>import json
+from datetime import datetime, timezone
+
+class JsonFormatter(logging.Formatter):
+    def __init__(self, service_name: str):
+        super().__init__()
+        self.service_name = service_name
+
+    def format(self, record: logging.LogRecord) -> str:
+        payload = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "level": record.levelname,
+            "service": self.service_name,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        # Pick up structured extras (used by #13 correlation IDs).
+        for k in ("trace_id", "session_id", "ticker", "latency_ms"):
+            val = getattr(record, k, None)
+            if val is not None:
+                payload[k] = val
+        if record.exc_info:
+            payload["exc"] = self.formatException(record.exc_info)
+        return json.dumps(payload, default=str)</pre>
+
+<ol start="2">
+<li>Update <code>setup_file_logging</code>: pass <code>service_name</code> to <code>JsonFormatter</code> for the file handler. Keep the existing plaintext formatter for the StreamHandler so terminal output stays readable.</li>
+<li>Test by running an agent and inspecting <code>logs/&lt;service&gt;.log</code> — each line should be valid JSON parseable by <code>jq</code>.</li>
+</ol>
+
+<p><strong>Verification</strong></p>
+<pre>tail -1 logs/orchestrator.log | python -m json.tool</pre>
+<p>Should print formatted JSON, not error.</p>
+
+<p><strong>Rollback</strong>: swap the formatter back to the old <code>logging.Formatter</code>.</p>
+
+<hr>
+
+<h2 id="s7"><s>7. Per-service log levels via env</s> ✅ DONE (v1.25)</h2>
+<p class="effort"><span class="tag tag-tier1">tier 1</span> Effort: ~1–2 hrs</p>
+
+<p><strong>Goal</strong>: Crank up MCP server debugging without flooding orchestrator logs.</p>
+
+<p><strong>Files to touch</strong></p>
+<ul>
+<li><code>shared/logging_config.py</code></li>
+<li><code>.env.example</code></li>
+</ul>
+
+<p><strong>Steps</strong></p>
+
+<ol>
+<li>In <code>setup_file_logging</code>, replace <code>level: int = logging.INFO</code> with env lookup:</li>
+</ol>
+<pre>def setup_file_logging(service_name: str, level: int | None = None) -> None:
+    if level is None:
+        env_key = f"LOG_LEVEL_{service_name.upper().replace('-', '_')}"
+        level_str = os.environ.get(env_key) or os.environ.get("LOG_LEVEL", "INFO")
+        level = getattr(logging, level_str.upper(), logging.INFO)
+    ...</pre>
+
+<ol start="2">
+<li>Document in <code>.env.example</code>:</li>
+</ol>
+<pre># Global default
+LOG_LEVEL=INFO
+# Per-service overrides (uppercase service name)
+# LOG_LEVEL_ORCHESTRATOR=DEBUG
+# LOG_LEVEL_MCP=DEBUG
+# LOG_LEVEL_QUANT=WARNING</pre>
+
+<p><strong>Verification</strong></p>
+<ul>
+<li><code>LOG_LEVEL_MCP=DEBUG</code> then start MCP server → DEBUG lines appear in <code>logs/mcp.log</code> only; other services unchanged.</li>
+</ul>
+
+<p><strong>Rollback</strong>: hardcode <code>level=logging.INFO</code> again.</p>
+
+<hr>
+
+<h2 id="s8"><s>8. Log sanitization filter</s> ✅ DONE (v1.25)</h2>
+<p class="effort"><span class="tag tag-tier1">tier 1</span> Effort: ~1–2 hrs</p>
+
+<p><strong>Goal</strong>: Defense in depth — scrub known secret patterns before write.</p>
+
+<p><strong>Files to touch</strong></p>
+<ul>
+<li><code>shared/logging_config.py</code></li>
+</ul>
+
+<p><strong>Steps</strong></p>
+
+<ol>
+<li>Add at top of <code>shared/logging_config.py</code>:</li>
+</ol>
+<pre>import re
+
+class SanitizeFilter(logging.Filter):
+    _PATTERNS = [
+        (re.compile(r"(api_key\s*=\s*)['\"]?[^'\"\s,)]+['\"]?"), r"\1***"),
+        (re.compile(r"sk-[A-Za-z0-9]{20,}"), "sk-***"),
+        (re.compile(r"pk-[A-Za-z0-9]{20,}"), "pk-***"),
+        (re.compile(r"(Authorization:\s*Bearer\s+)\S+"), r"\1***"),
+        (re.compile(r"(LANGFUSE_(?:PUBLIC|SECRET)_KEY\s*[=:]\s*)\S+"), r"\1***"),
+    ]
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.msg, str):
+            for pat, repl in self._PATTERNS:
+                record.msg = pat.sub(repl, record.msg)
+        if record.args:
+            new_args = []
+            for a in record.args:
+                if isinstance(a, str):
+                    for pat, repl in self._PATTERNS:
+                        a = pat.sub(repl, a)
+                new_args.append(a)
+            record.args = tuple(new_args)
+        return True</pre>
+
+<ol start="2">
+<li>In <code>setup_file_logging</code>, attach to both handlers:</li>
+</ol>
+<pre>sanitize = SanitizeFilter()
+sh.addFilter(sanitize)
+fh.addFilter(sanitize)</pre>
+
+<p><strong>Verification</strong></p>
+<ul>
+<li><code>logger.info("user api_key=sk-secret-real-key-here")</code> → log line shows <code>api_key=***</code>.</li>
+</ul>
+
+<p><strong>Rollback</strong>: detach the filter.</p>
+
+<hr>
+
+<h2 id="s9"><s>9. <code>SQLiteTaskStore</code></s> ✅ DONE (v1.25)</h2>
+<p class="effort"><span class="tag tag-tier1">tier 1</span> Effort: ~1–2 hrs</p>
+
+<p><strong>Goal</strong>: Sub-agent A2A tasks survive restart instead of vanishing.</p>
+
+<p><strong>Files to touch</strong></p>
+<ul>
+<li><code>shared/a2a_store.py</code> (new)</li>
+<li><code>agent_1_adk/main.py:75</code></li>
+<li><code>agent_2_llamaindex/server.py:85</code></li>
+<li><code>agent_3_langgraph/server.py:78</code></li>
+<li><code>agent_4_crewai/server.py:74</code></li>
+</ul>
+
+<p><strong>Steps</strong></p>
+
+<ol>
+<li>Read the <code>a2a.server.tasks.TaskStore</code> protocol (just open one in venv site-packages to see the abstract methods). At minimum: <code>save</code>, <code>get</code>, <code>delete</code>.</li>
+<li>Create <code>shared/a2a_store.py</code> implementing each method against a single SQLite table <code>a2a_tasks(task_id TEXT PRIMARY KEY, payload TEXT, updated_at TS)</code>. Use the same <code>get_db()</code> from <a href="#s3">#3</a> (after #3 lands).</li>
+<li>Add table creation to <code>CREATE_TABLES_SQL</code> in <code>shared/memory/store.py</code> and bump <code>SCHEMA_VERSION</code> to 3.</li>
+<li>In each server entry point, swap:</li>
+</ol>
+<pre>- task_store = InMemoryTaskStore()
++ from shared.a2a_store import SQLiteTaskStore
++ task_store = SQLiteTaskStore()</pre>
+
+<p><strong>Verification</strong></p>
+<ul>
+<li>Start agent, send a long-running A2A task, kill the process, restart, query task status → returns the in-progress task instead of "not found".</li>
+</ul>
+
+<p><strong>Risks</strong></p>
+<ul>
+<li>SQLite write latency now on the A2A hot path. Mitigation: depends on <a href="#s3">#3</a> already being in place.</li>
+</ul>
+
+<p><strong>Rollback</strong>: swap back to <code>InMemoryTaskStore</code> in the 4 entry points; the table sticks around harmlessly.</p>
+
+<hr>
+
+<h2 id="s10"><s>10. Memory pruning / retention policy</s> ✅ DONE (v1.25)</h2>
+<p class="effort"><span class="tag tag-tier1">tier 1</span> Effort: ~1–2 hrs</p>
+
+<p><strong>Goal</strong>: <code>ticker_briefs</code> and <code>recommendation_records</code> grow unbounded.
+Cap retention so the DB doesn't bloat over months.</p>
+
+<p><strong>Files to touch</strong></p>
+<ul>
+<li><code>shared/memory/store.py</code> (add a <code>prune()</code> function)</li>
+<li><code>agent_1_adk/main.py</code> (call at startup or schedule)</li>
+</ul>
+
+<p><strong>Steps</strong></p>
+
+<ol>
+<li>In <code>shared/memory/store.py</code>:</li>
+</ol>
+<pre>from datetime import datetime, timedelta
+
+async def prune_old_records(days: int = 90) -> dict[str, int]:
+    cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+    conn = await get_db()
+    async with write_lock():
+        deleted = {}
+        for table in ("ticker_briefs", "recommendation_records", "memory_entries"):
+            cur = await conn.execute(
+                f"DELETE FROM {table} WHERE created_at < ?", (cutoff,),
+            )
+            deleted[table] = cur.rowcount
+        await conn.execute("VACUUM")
+        await conn.commit()
+    return deleted</pre>
+
+<ol start="2">
+<li>Expose retention window via env: <code>MEMORY_RETENTION_DAYS=90</code>.</li>
+<li>Call <code>prune_old_records()</code> once on orchestrator startup (best-effort, wrapped in try/except).</li>
+</ol>
+
+<p><strong>Verification</strong></p>
+<ul>
+<li>Insert a row with <code>created_at</code> 100 days ago, run <code>prune_old_records(90)</code>, confirm row deleted.</li>
+</ul>
+
+<p><strong>Risks</strong></p>
+<ul>
+<li><code>VACUUM</code> rewrites the entire file. Don't run it on every startup — gate it behind a "last vacuum &gt; 7 days ago" check, or call it manually.</li>
+</ul>
+
+<p><strong>Rollback</strong>: stop calling <code>prune_old_records</code>; data stays.</p>
+
+<hr>
+
+<!-- ──────────────────────────────────────────────────────────── -->
+<!-- TIER 2                                                       -->
+<!-- ──────────────────────────────────────────────────────────── -->
+<h2 id="s11"><s>11. MCP client singleton with auto-reconnect</s> ✅ DONE (v1.25)</h2>
+<p class="effort"><span class="tag tag-tier2">tier 2</span> Effort: ~½ day</p>
+
+<p><strong>Goal</strong>: Eliminate per-request SSE connect/disconnect (~100–500ms) AND avoid
+the "fragile singleton" failure mode (connection drops kill the whole agent
+until restart).</p>
+
+<p><strong>Files to touch</strong></p>
+<ul>
+<li><code>shared/mcp_client.py</code> (add singleton helpers, add reconnect logic)</li>
+<li><code>agent_1_adk/agent_executor.py</code> (line ~108: drop local MCPClient construction)</li>
+<li><code>agent_2_llamaindex/executor.py</code> (line ~108: same)</li>
+<li><code>agent_3_langgraph/executor.py</code> (line ~34: same)</li>
+<li><code>agent_4_crewai/executor.py</code> (line ~27: same)</li>
+</ul>
+
+<p><strong>Steps</strong></p>
+
+<ol>
+<li>In <code>shared/mcp_client.py</code>, add at module level:</li>
+</ol>
+<pre>_global_client: MCPClient | None = None
+_client_lock = asyncio.Lock()
+
+async def get_shared_mcp() -> MCPClient:
+    global _global_client
+    if _global_client is not None and _global_client._connected:
+        return _global_client
+    async with _client_lock:
+        if _global_client is None or not _global_client._connected:
+            from shared.config import MCP_SERVER_URL, MCP_TIMEOUT
+            _global_client = MCPClient(
+                configs=[MCPServerConfig(name="finsight-mcp", url=MCP_SERVER_URL)],
+                timeout=MCP_TIMEOUT,
+            )
+            await _global_client.connect_all()
+    return _global_client</pre>
+
+<ol start="2">
+<li>Add a <code>_connected: bool</code> attribute to <code>MCPClient.__init__</code>, set True after <code>connect_all</code> succeeds, False inside any catch block where the SSE stream dies.</li>
+<li>Wrap <code>call_tool_by_name</code> so that on <code>ConnectionError</code>/<code>ClosedResourceError</code>/<code>asyncio.IncompleteReadError</code>, it sets <code>_connected = False</code>, reconnects once, and retries the call. After 2 failures, raise.</li>
+<li>In each of the 4 executors:
+<ul>
+<li>Remove the constructor's <code>self._mcp = MCPClient(...)</code> line.</li>
+<li>Replace <code>self._mcp</code> usages with <code>await get_shared_mcp()</code>.</li>
+<li>Delete <code>_ensure_connected</code> and <code>_disconnect</code> methods.</li>
+<li>Remove the <code>await self._disconnect()</code> cleanup blocks.</li>
+</ul>
+</li>
+<li>Add a process-shutdown hook (atexit or lifespan) that calls <code>await _global_client.disconnect_all()</code> if non-None.</li>
+</ol>
+
+<p><strong>Verification</strong></p>
+<ul>
+<li>Start orchestrator + sub-agents. Run a query, watch MCP server logs → one SSE connection per agent, no churn.</li>
+<li>Kill MCP server mid-query, restart it within 5s → next query succeeds (reconnect worked).</li>
+<li>Run 10 sequential queries → no leaked connections (<code>netstat</code> should show 5 total SSE connections — one per agent).</li>
+</ul>
+
+<p><strong>Risks</strong></p>
+<ul>
+<li>Auto-reconnect with stale auth/credentials can loop. Mitigation: the cap of 2 retries before raising.</li>
+<li>Concurrent first-call: handled by <code>_client_lock</code> double-checked pattern.</li>
+</ul>
+
+<p><strong>Rollback</strong>: restore per-executor <code>MCPClient</code> construction; delete the singleton helpers.</p>
+
+<hr>
+
+<h2 id="s12"><s>12. Lazy OpenTelemetry instrumentation</s> ✅ DONE (v1.25)</h2>
+<p class="effort"><span class="tag tag-tier2">tier 2</span> Effort: ~½ day</p>
+
+<p><strong>Goal</strong>: Stop fire-on-import behaviour so <code>pytest</code> can load modules without
+hitting OTel side effects. Prerequisite for <a href="#s17">#17</a>.</p>
+
+<p><strong>Files to touch</strong></p>
+<ul>
+<li><code>shared/observability.py</code> (add <code>init_instrumentation</code>)</li>
+<li><code>agent_1_adk/sub_agent_client.py:12</code> (remove top-level <code>HTTPXClientInstrumentor().instrument()</code>)</li>
+<li><code>agent_2_llamaindex/server.py:26,29</code> (remove <code>LlamaIndexInstrumentor().instrument()</code> + <code>StarletteInstrumentor().instrument()</code>)</li>
+<li><code>agent_3_langgraph/server.py:26,30</code> (remove <code>StarletteInstrumentor().instrument()</code> + <code>LangChainInstrumentor().instrument()</code>)</li>
+<li><code>agent_4_crewai/server.py:26,29</code> (remove <code>CrewAIInstrumentor().instrument()</code> + <code>StarletteInstrumentor().instrument()</code>)</li>
+<li>Each server's <code>main()</code> / startup hook to call <code>init_instrumentation(...)</code></li>
+</ul>
+
+<p><strong>Steps</strong></p>
+
+<ol>
+<li>In <code>shared/observability.py</code> add:</li>
+</ol>
+<pre>_instrumented: set[str] = set()
+
+def init_instrumentation(agent_type: str) -> None:
+    if agent_type in _instrumented:
+        return
+    _instrumented.add(agent_type)
+    if agent_type == "orchestrator":
+        from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+        HTTPXClientInstrumentor().instrument()
+    elif agent_type == "rag":
+        from openinference.instrumentation.llama_index import LlamaIndexInstrumentor
+        from opentelemetry.instrumentation.starlette import StarletteInstrumentor
+        LlamaIndexInstrumentor().instrument()
+        StarletteInstrumentor().instrument()
+    elif agent_type == "quant":
+        from opentelemetry.instrumentation.starlette import StarletteInstrumentor
+        StarletteInstrumentor().instrument()
+        try:
+            from openinference.instrumentation.langchain import LangChainInstrumentor
+            LangChainInstrumentor().instrument()
+        except ImportError:
+            pass
+    elif agent_type == "sentiment":
+        from openinference.instrumentation.crewai import CrewAIInstrumentor
+        from opentelemetry.instrumentation.starlette import StarletteInstrumentor
+        CrewAIInstrumentor().instrument(skip_dep_check=True)
+        StarletteInstrumentor().instrument()</pre>
+
+<ol start="2">
+<li>In each server's <code>main()</code> (or the Starlette app factory <code>get_app()</code>), call <code>init_instrumentation("rag")</code> (or matching agent type) BEFORE constructing the app.</li>
+<li>In <code>agent_1_adk/sub_agent_client.py</code>, move the instrumentation call into the <code>SubAgentClient.__init__</code> or the orchestrator's startup, gated on a one-shot flag.</li>
+<li>Remove all module-level <code>*Instrumentor().instrument()</code> calls.</li>
+</ol>
+
+<p><strong>Verification</strong></p>
+<ul>
+<li><code>python -c "import agent_2_llamaindex.server"</code> → no Langfuse / OTel spans emitted (used to happen at import).</li>
+<li>Boot agents normally → Langfuse dashboard still shows full traces.</li>
+</ul>
+
+<p><strong>Risks</strong></p>
+<ul>
+<li>Forget to call <code>init_instrumentation</code> in one server → that agent silently loses OTel coverage. Mitigation: assertion or warning if the corresponding Langfuse spans don't appear; covered by your existing eval traces.</li>
+</ul>
+
+<p><strong>Rollback</strong>: restore the top-level <code>*.instrument()</code> calls; remove <code>init_instrumentation</code> calls from main().</p>
+
+<hr>
+
+<h2 id="s13"><s>13. Correlation-ID propagation</s> ✅ DONE (v1.25)</h2>
+<p class="effort"><span class="tag tag-tier2">tier 2</span> Effort: ~½ day</p>
+
+<p><strong>Goal</strong>: One <code>grep &lt;trace_id&gt; logs/*.log</code> returns the entire cross-service flow.</p>
+
+<p><strong>Files to touch</strong></p>
+<ul>
+<li><code>shared/trace_context.py</code> (add ContextVar)</li>
+<li><code>shared/logging_config.py</code> (read ContextVar in formatter — already plumbed by <a href="#s6">#6</a>)</li>
+<li><code>agent_1_adk/sub_agent_client.py</code> (set ContextVar when injecting trace)</li>
+<li><code>shared/generic_executor.py</code> (set ContextVar when extracting trace from inbound task)</li>
+<li><code>mcp_servers/finsight_server.py</code> (read+log incoming trace_id on each tool call)</li>
+</ul>
+
+<p><strong>Steps</strong></p>
+
+<ol>
+<li>In <code>shared/trace_context.py</code> add:</li>
+</ol>
+<pre>import contextvars
+
+current_trace_id: contextvars.ContextVar[str | None] = \
+    contextvars.ContextVar("trace_id", default=None)
+current_session_id: contextvars.ContextVar[str | None] = \
+    contextvars.ContextVar("session_id", default=None)</pre>
+
+<ol start="2">
+<li>In the trace injection helper (wherever <code>inject_trace_context</code> lives): before sending: read current <code>current_trace_id.get()</code> if caller didn't pass one.</li>
+<li>In the trace extraction helper (<code>extract_trace_context</code>): after successfully parsing, call <code>current_trace_id.set(trace_id)</code> and <code>current_session_id.set(session_id)</code>.</li>
+<li>In <code>JsonFormatter.format</code> (already added in <a href="#s6">#6</a>), the lines for <code>trace_id</code> and <code>session_id</code> should also check the ContextVar:</li>
+</ol>
+<pre>payload["trace_id"] = getattr(record, "trace_id", None) or current_trace_id.get()
+payload["session_id"] = getattr(record, "session_id", None) or current_session_id.get()</pre>
+
+<ol start="5">
+<li>In MCP tool handlers, log the incoming trace if present:</li>
+</ol>
+<pre>logger.info("Tool called", extra={"tool": "get_prices", "ticker": ticker})</pre>
+<p>The formatter pulls in <code>trace_id</code> from ContextVar automatically.</p>
+
+<p><strong>Verification</strong></p>
+<ul>
+<li>Submit a query, capture the orchestrator's trace_id from Langfuse, then <code>grep &lt;trace_id&gt; logs/*.log</code> → returns lines from orchestrator, RAG, quant, sentiment, and MCP all stitched together.</li>
+</ul>
+
+<p><strong>Risks</strong></p>
+<ul>
+<li>ContextVar doesn't survive <code>asyncio.create_task()</code> boundaries automatically in all Python versions. Mitigation: in tasks where it matters, explicitly pass the trace_id and re-set it inside the task.</li>
+</ul>
+
+<p><strong>Rollback</strong>: leave the ContextVar in place but stop reading it in the formatter; logs revert to non-correlated.</p>
+
+<hr>
+
+<h2 id="s14"><s>14. Deduplicate ticker validation</s> ✅ DONE (v1.25)</h2>
+<p class="effort"><span class="tag tag-tier2">tier 2</span> Effort: ~½ day</p>
+
+<p><strong>Goal</strong>: Remove ~80 lines of copy-paste from 4 executors. Fix-once-runs-everywhere.</p>
+
+<p><strong>Files to touch</strong></p>
+<ul>
+<li><code>shared/ticker_utils.py</code> (add lifecycle-aware wrappers)</li>
+<li><code>agent_1_adk/agent_executor.py:144-179</code> (replace <code>_validate_ticker</code>, <code>_resolve_ticker</code>, <code>_disconnect</code>)</li>
+<li><code>agent_2_llamaindex/executor.py:131-149</code> (same)</li>
+<li><code>agent_3_langgraph/executor.py:67-83</code> (same)</li>
+<li><code>agent_4_crewai/executor.py:88-104</code> (same)</li>
+</ul>
+
+<p><strong>Steps</strong></p>
+
+<ol>
+<li>Depends on <a href="#s11">#11</a> (MCP singleton). After #11 lands, add to <code>shared/ticker_utils.py</code>:</li>
+</ol>
+<pre>from shared.mcp_client import get_shared_mcp
+
+async def validate_ticker(ticker: str) -> tuple[bool, str, str]:
+    mcp = await get_shared_mcp()
+    return await validate_ticker_via_mcp(mcp, ticker)
+
+async def resolve_ticker(query: str, exclude: str = "") -> tuple[str, str]:
+    mcp = await get_shared_mcp()
+    return await resolve_ticker_via_mcp(mcp, query, exclude)</pre>
+
+<ol start="2">
+<li>In each of the 4 executors:
+<ul>
+<li>Replace calls to <code>self._validate_ticker(t)</code> with <code>await validate_ticker(t)</code>.</li>
+<li>Replace calls to <code>self._resolve_ticker(q)</code> with <code>await resolve_ticker(q)</code>.</li>
+<li>Delete the private methods.</li>
+</ul>
+</li>
+<li>Re-run the existing eval traces (or a fresh query) to confirm behavior.</li>
+</ol>
+
+<p><strong>Verification</strong></p>
+<ul>
+<li>Query "Analyze NVDA" → ticker NVDA correctly validated.</li>
+<li>Query "Analyze the chip company NVIDIA" → resolver returns NVDA.</li>
+<li>Query with invalid ticker "Analyze ZZZZZ" → graceful error message.</li>
+</ul>
+
+<p><strong>Rollback</strong>: restore the per-executor private methods.</p>
+
+<hr>
+
+<h2 id="s15"><s>15. Unified <code>@logged</code> timing decorator</s> ✅ DONE (v1.25)</h2>
+<p class="effort"><span class="tag tag-tier2">tier 2</span> Effort: ~½ day</p>
+
+<p><strong>Goal</strong>: Consistent enter/exit/latency lines on hot paths without manual
+<code>time.monotonic()</code> plumbing.</p>
+
+<p><strong>Files to touch</strong></p>
+<ul>
+<li><code>shared/logging_config.py</code> (add decorator)</li>
+<li>Apply selectively (don't carpet-bomb the codebase): MCP tools in <code>mcp_servers/finsight_server.py</code>, the <code>stream()</code> method in each sub-agent's executor.</li>
+</ul>
+
+<p><strong>Steps</strong></p>
+
+<ol>
+<li>In <code>shared/logging_config.py</code>:</li>
+</ol>
+<pre>import functools
+import time
+
+def logged(level: int = logging.INFO):
+    def decorator(fn):
+        @functools.wraps(fn)
+        async def wrapper(*args, **kwargs):
+            logger = logging.getLogger(fn.__module__)
+            logger.log(level, "Enter %s", fn.__qualname__)
+            t0 = time.monotonic()
+            try:
+                result = await fn(*args, **kwargs)
+                elapsed = (time.monotonic() - t0) * 1000
+                logger.log(
+                    level, "Exit %s (%.0fms)", fn.__qualname__, elapsed,
+                    extra={"latency_ms": int(elapsed)},
+                )
+                return result
+            except Exception as exc:
+                elapsed = (time.monotonic() - t0) * 1000
+                logger.log(
+                    level, "Fail %s (%.0fms): %s",
+                    fn.__qualname__, elapsed, exc,
+                    extra={"latency_ms": int(elapsed)},
+                )
+                raise
+        return wrapper
+    return decorator</pre>
+
+<ol start="2">
+<li>Annotate hot paths. <strong>Do not</strong> annotate every function — only:
+<ul>
+<li>All <code>@mcp.tool()</code> handlers in <code>finsight_server.py</code></li>
+<li><code>executor.stream()</code> in each sub-agent</li>
+<li><code>SubAgentClient.send_message</code></li>
+</ul>
+</li>
+</ol>
+
+<p><strong>Verification</strong></p>
+<ul>
+<li>Run a query, <code>grep "Exit" logs/*.log</code> → see latencies. JSON formatter emits <code>latency_ms</code> as a structured field.</li>
+</ul>
+
+<p><strong>Risks</strong></p>
+<ul>
+<li>Over-decoration creates log noise. Keep scope tight.</li>
+</ul>
+
+<p><strong>Rollback</strong>: remove the <code>@logged()</code> annotations; decorator can stay unused.</p>
+
+<hr>
+
+<h2 id="s16"><s>16. Cancellation support</s> ✅ DONE (v1.25)</h2>
+<p class="effort"><span class="tag tag-tier2">tier 2</span> Effort: ~½ day</p>
+
+<p><strong>Goal</strong>: Aborted requests actually cancel. Currently <code>cancel()</code> raises
+<code>NotImplementedError</code> and hung sub-agents stall the whole orchestrator for
+180s.</p>
+
+<p><strong>Files to touch</strong></p>
+<ul>
+<li><code>shared/generic_executor.py:133-137</code></li>
+<li><code>agent_1_adk/agent_executor.py:360-361</code></li>
+<li><code>agent_1_adk/sub_agent_client.py</code> (per-agent timeout)</li>
+<li><code>shared/config.py</code> (add per-agent timeout vars)</li>
+</ul>
+
+<p><strong>Steps</strong></p>
+
+<ol>
+<li>In <code>GenericAgentExecutor</code>:</li>
+</ol>
+<pre>def __init__(self, agent: BaseAgent):
+    self.agent = agent
+    self._task: asyncio.Task | None = None
+
+async def execute(self, context, event_queue):
+    self._task = asyncio.current_task()
+    try:
+        ...
+    except asyncio.CancelledError:
+        await event_queue.enqueue_event(TaskStatusUpdateEvent(
+            task_id=context.task_id,
+            status=TaskStatus(state=TaskState.TASK_STATE_CANCELED),
+        ))
+        raise
+
+async def cancel(self, context, event_queue):
+    if self._task and not self._task.done():
+        self._task.cancel()</pre>
+
+<ol start="2">
+<li>Mirror the same pattern in <code>FinSightAgentExecutor</code>.</li>
+<li>In <code>shared/config.py</code>:</li>
+</ol>
+<pre>A2A_TIMEOUT_RAG = float(os.environ.get("A2A_TIMEOUT_RAG", "60.0"))
+A2A_TIMEOUT_QUANT = float(os.environ.get("A2A_TIMEOUT_QUANT", "90.0"))
+A2A_TIMEOUT_SENTIMENT = float(os.environ.get("A2A_TIMEOUT_SENTIMENT", "45.0"))</pre>
+
+<ol start="4">
+<li>In <code>SubAgentClient.send_message</code>, pick timeout by agent name and wrap:</li>
+</ol>
+<pre>timeout_map = {
+    "rag": A2A_TIMEOUT_RAG,
+    "quant": A2A_TIMEOUT_QUANT,
+    "sentiment": A2A_TIMEOUT_SENTIMENT,
+}
+timeout = timeout_map.get(agent_short_name, A2A_TIMEOUT)
+try:
+    return await asyncio.wait_for(self._send(...), timeout=timeout)
+except asyncio.TimeoutError:
+    return {"error": "agent_timeout", "agent": agent_name, "timeout": timeout}</pre>
+
+<p><strong>Verification</strong></p>
+<ul>
+<li>Add a deliberate <code>await asyncio.sleep(120)</code> in the RAG agent's <code>stream()</code>, set <code>A2A_TIMEOUT_RAG=10</code>, run a query → orchestrator gets back a clean <code>agent_timeout</code> error after ~10s, not 180s.</li>
+</ul>
+
+<p><strong>Risks</strong></p>
+<ul>
+<li>Cancellation during a SQLite write could leave a partial state. Mitigation: use <code>write_lock()</code> from <a href="#s3">#3</a> — locks release on cancel, and writes are single-statement so atomicity is preserved.</li>
+</ul>
+
+<p><strong>Rollback</strong>: revert per-agent timeouts; restore <code>NotImplementedError</code> in <code>cancel()</code>.</p>
+
+<hr>
+
+<!-- ──────────────────────────────────────────────────────────── -->
+<!-- TIER 3                                                       -->
+<!-- ──────────────────────────────────────────────────────────── -->
+<h2 id="s17"><del>17. Test suite — pragmatic starter set</del> ✅ DONE (v1.26)</h2>
+<p class="effort"><span class="tag tag-tier3">tier 3</span> Effort: ~½–1 day</p>
+
+<p><strong>Goal</strong>: Starting from zero tests, build a <em>useful</em> test
+foundation — not the 280-test giga-plan. Focus: pure functions, numerical
+correctness, security boundary, and one integration smoke test.</p>
+
+<p><strong>Prerequisite</strong>: <a href="#s12">#12</a> (lazy OTel) — otherwise pytest imports
+trigger global instrumentation.</p>
+
+<p><strong>Result</strong>: 88 tests across 10 files. All files listed below created with the exact scope specified. See <a href="../TESTS.html">TESTS.html</a>.</p>
+
+<p><strong>Files to touch / create</strong></p>
+<ul>
+<li><code>tests/conftest.py</code></li>
+<li><code>tests/unit/test_ticker_utils.py</code></li>
+<li><code>tests/unit/test_trace_context.py</code></li>
+<li><code>tests/unit/test_models.py</code></li>
+<li><code>tests/unit/test_ttl_cache.py</code> (after <a href="#s5">#5</a>)</li>
+<li><code>tests/unit/test_rate_limiter.py</code> (after <a href="#s4">#4</a>)</li>
+<li><code>tests/unit/memory/test_memory_store.py</code></li>
+<li><code>tests/unit/memory/test_ticker_memory.py</code></li>
+<li><code>tests/unit/test_quant_graph_nodes.py</code></li>
+<li><code>tests/integration/test_mcp_server_smoke.py</code></li>
+<li><code>tests/security/test_sandbox.py</code> (see <a href="#s18">#18</a> — split into its own activity)</li>
+<li><code>pyproject.toml</code> (markers + asyncio mode)</li>
+</ul>
+
+<p><strong>Steps</strong></p>
+
+<ol>
+<li><code>pyproject.toml</code> additions:</li>
+</ol>
+<pre>[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+    "external: requires network (SEC, Yahoo)",
+    "integration: requires running services",
+    "security: security-critical tests",
+]</pre>
+
+<ol start="2">
+<li><code>tests/conftest.py</code>:</li>
+</ol>
+<pre>import pytest
+import aiosqlite
+
+@pytest.fixture(autouse=True)
+def _clean_env(monkeypatch):
+    monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-lf-test")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-lf-test")
+
+@pytest.fixture
+async def memory_db(tmp_path):
+    from shared.memory.store import init_db
+    conn = await aiosqlite.connect(":memory:")
+    await init_db(conn)
+    yield conn
+    await conn.close()</pre>
+
+<ol start="3">
+<li><strong>Phase A — pure functions</strong> (no mocks needed):
+<ul>
+<li><code>test_ticker_utils.py</code>: ~12 cases. Format validation (<code>AAPL</code>, <code>BRK.B</code>, too long, lowercase), stop-word rejection (<code>SEC</code>, <code>EPS</code>), extraction (parens, <code>$TICKER</code>, "for NVDA"), holdings extraction with/without <code>exclude</code>.</li>
+<li><code>test_trace_context.py</code>: inject → extract round-trip; reject malformed.</li>
+<li><code>test_models.py</code>: Pydantic model construction + <code>model_dump</code>/<code>model_validate</code> round-trips for <code>QueryContext</code>, <code>RAGInsights</code>, <code>QuantMetrics</code>, <code>InvestmentBrief</code>.</li>
+</ul>
+</li>
+<li><strong>Phase B — small mocked utilities</strong>:
+<ul>
+<li><code>test_ttl_cache.py</code>: hit, miss, expiry, single-flight (10 concurrent misses → 1 fetch).</li>
+<li><code>test_rate_limiter.py</code>: <code>acquire()</code> 10× immediately consumes the burst, then enforces rate.</li>
+</ul>
+</li>
+<li><strong>Phase C — memory layer</strong> (in-memory SQLite):
+<ul>
+<li><code>test_memory_store.py</code>: <code>init_db</code> creates tables, idempotent, schema_version.</li>
+<li><code>test_ticker_memory.py</code>: store_brief → get_latest → has_changed cycle.</li>
+</ul>
+</li>
+<li><strong>Phase D — numerical correctness</strong> (quant graph nodes are pure):
+<ul>
+<li><code>test_quant_graph_nodes.py</code>: feed known price arrays, assert Sharpe / VaR / CVaR / beta within tolerance. Mock LLM call in <code>llm_summary_node</code>.</li>
+</ul>
+</li>
+<li><strong>Phase E — integration smoke</strong>:
+<ul>
+<li><code>test_mcp_server_smoke.py</code> (marked <code>@pytest.mark.integration</code>): boot MCP server in-process, hit <code>/health</code>, call <code>validate_ticker("AAPL")</code> (needs network — also mark <code>@pytest.mark.external</code>).</li>
+</ul>
+</li>
+</ol>
+
+<p><strong>Target shape</strong>: ~50–80 tests total, ~1000–1500 lines. Runs in &lt;10s locally for the non-network markers.</p>
+
+<p><strong>Verification</strong></p>
+<ul>
+<li><code>pytest tests/unit -v</code> → all green, &lt;5s wall time.</li>
+<li><code>pytest tests/ -m "not external"</code> → green without network.</li>
+</ul>
+
+<p><strong>Risks</strong></p>
+<ul>
+<li>Phase D tests will be sensitive to random seeds / numerical precision. Mitigation: use <code>pytest.approx(..., rel=1e-3)</code>.</li>
+</ul>
+
+<p><strong>Rollback</strong>: delete <code>tests/</code> again; nothing else depends on it.</p>
+
+<hr>
+
+<h2 id="s18"><del>18. Security sandbox hardening + tests</del> ✅ DONE (v1.27)</h2>
+<p class="effort"><span class="tag tag-tier3">tier 3</span> Effort: ~½–1 day</p>
+
+<p><strong>Goal</strong>: <code>execute_python</code> is the most attackable surface in the system. It
+already has AST-level blocking, but it needs explicit tests covering known
+escape patterns. This is split out from <a href="#s17">#17</a> because it deserves its own
+attention.</p>
+
+<p><strong>Result</strong>: 60+ security tests. Sandbox logic extracted from inline in <code>finsight_server.py</code> to <code>shared/sandbox.py</code>. Expanded import blocklist from ~20 to ~44 modules. Tests cover every restricted import, builtin, dunder escape, getattr/subscript bypass, plus 4 integration tests spawning the actual subprocess.</p>
+
+<p><strong>Files to touch</strong></p>
+<ul>
+<li>Inspect <code>mcp_servers/finsight_server.py</code> <code>execute_python</code> implementation (search for the function definition).</li>
+<li><code>tests/security/test_sandbox.py</code> (new)</li>
+</ul>
+
+<p><strong>Steps</strong></p>
+
+<ol>
+<li>Read the current <code>execute_python</code> implementation top-to-bottom. Document what's blocked (AST node types, import names, attribute names).</li>
+<li>Write <code>tests/security/test_sandbox.py</code> with these cases (each should fail with a sandbox-block error, not actually execute):
+<ul>
+<li><code>import os; os.system("dir")</code></li>
+<li><code>__import__("os").system("dir")</code></li>
+<li><code>open("test.txt", "w")</code></li>
+<li><code>import subprocess</code></li>
+<li><code>import socket; socket.socket()</code></li>
+<li><code>eval("1+1")</code></li>
+<li><code>exec("print('hi')")</code></li>
+<li><code>().__class__.__bases__[0].__subclasses__()</code> (class-walking escape)</li>
+<li><code>compile("import os", "&lt;test&gt;", "exec")</code></li>
+</ul>
+</li>
+<li>Positive cases (should succeed):
+<ul>
+<li><code>2 + 2</code> → <code>4</code></li>
+<li><code>[i**2 for i in range(10)]</code> → list</li>
+<li><code>import math; math.sqrt(2)</code> → 1.414...</li>
+</ul>
+</li>
+<li>Resource-bound cases:
+<ul>
+<li>Infinite loop → times out within a hard cap (e.g. 5s).</li>
+<li><code>[0] * 10**9</code> → memory cap triggers error, not OOM-kills the MCP server.</li>
+</ul>
+</li>
+<li>For any test that passes when it shouldn't, FILE A FIX before merging. Each class-walking or <code>__import__</code> bypass is a real CVE-class issue.</li>
+</ol>
+
+<p><strong>Verification</strong></p>
+<ul>
+<li><code>pytest tests/security -v</code> → all green.</li>
+<li>Manually try a known escape in the MCP tool from a client → blocked.</li>
+</ul>
+
+<p><strong>Risks</strong></p>
+<ul>
+<li>Sandbox tightening can break legitimate quant computations. Mitigation: the positive-case tests above; add more if real workflows break.</li>
+</ul>
+
+<p><strong>Rollback</strong>: revert sandbox changes; tests will go red and you'll know the posture got weaker.</p>
+
+<hr>
+
+<!-- ──────────────────────────────────────────────────────────── -->
+<!-- SKIPPED                                                      -->
+<!-- ──────────────────────────────────────────────────────────── -->
+<h2 id="skipped">Skipped (with rationale)</h2>
+
+<p>The following items from the source docs are intentionally not detailed:</p>
+
+<table>
+<thead>
+<tr><th>#</th><th>Item</th><th>Rationale</th></tr>
+</thead>
+<tbody>
+<tr><td>—</td><td><code>HF_HUB_OFFLINE</code> warning</td><td>Cosmetic. Current behavior matches actual deployment model (local cached models).</td></tr>
+<tr><td>—</td><td>Async QueueHandler logging</td><td>"50–100ms disk stalls" claim is off by ~50× on local SSD. Premature optimization.</td></tr>
+<tr><td>—</td><td><code>AgentError</code> unification</td><td>Cosmetic. Doesn't unblock any feature. Three error shapes are ugly but functional.</td></tr>
+<tr><td>—</td><td>Memory-persistence path consolidation</td><td>Mostly aesthetic once <a href="#s3">#3</a> (connection pooling) lands. SQLite triple-writes are not a real bottleneck.</td></tr>
+<tr><td>—</td><td>Configurable LLM provider</td><td>YAGNI unless actively migrating off LM Studio. <a href="#s2">#2</a> handles 90% of the value.</td></tr>
+<tr><td>—</td><td>Docker compose orchestration</td><td><code>run_adk_web.bat</code> works; this is "nice to have" not "fixes a problem."</td></tr>
+<tr><td>—</td><td>Full 280-test plan from <code>TEST_PLAN.md</code></td><td>Sized for a production team. <a href="#s17">#17</a> is the right scope for this project.</td></tr>
+</tbody>
+</table>
+
+<p>Revisit any of these if the project's scale or deployment target changes.</p>
+
+<hr>
+
+<!-- ──────────────────────────────────────────────────────────── -->
+<!-- SCHEDULE                                                     -->
+<!-- ──────────────────────────────────────────────────────────── -->
+<h2>Suggested execution sequence</h2>
+
+<p>A reasonable cadence (assuming solo dev, ~2–4 hrs/day):</p>
+
+<table>
+<thead>
+<tr><th>Day</th><th>Activities</th></tr>
+</thead>
+<tbody>
+<tr><td>1</td><td><a href="#s1">#1</a>, <a href="#s2">#2</a>, <a href="#s6">#6</a>, <a href="#s7">#7</a>, <a href="#s8">#8</a> (config + logging foundation)</td></tr>
+<tr><td>2</td><td><a href="#s3">#3</a>, <a href="#s4">#4</a>, <a href="#s5">#5</a> (data layer + perf)</td></tr>
+<tr><td>3</td><td><a href="#s9">#9</a>, <a href="#s10">#10</a> (persistence completeness)</td></tr>
+<tr><td>4</td><td><a href="#s12">#12</a> (lazy OTel — prereq for tests)</td></tr>
+<tr><td>5</td><td><a href="#s11">#11</a>, <a href="#s14">#14</a> (MCP singleton + ticker dedup — paired since they touch the same files)</td></tr>
+<tr><td>6</td><td><a href="#s13">#13</a>, <a href="#s15">#15</a> (observability polish)</td></tr>
+<tr><td>7</td><td><a href="#s16">#16</a> (cancellation)</td></tr>
+<tr><td>8</td><td><a href="#s17">#17</a> Phase A–C (pure + memory tests)</td></tr>
+<tr><td>9</td><td><a href="#s17">#17</a> Phase D–E + <a href="#s18">#18</a> (numerical + security tests)</td></tr>
+</tbody>
+</table>
+
+<p>Total: ~8–9 working days end-to-end. Each item is independently shippable in its own commit.</p>
+
+</div>
+</body>
+</html>

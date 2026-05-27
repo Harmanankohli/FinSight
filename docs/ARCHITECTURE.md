@@ -49,7 +49,6 @@ A2A Request → FinSightAgentExecutor.execute()
     → LLM synthesizes BUY/HOLD/SELL
   → after_agent_callback: _persist_memory_callback
     → add_events_to_memory()
-    → update_response_text() — overwrite brief rationale with full analysis
     → if EVAL_ENABLED: score_response()
   → COMPLETED with synthesis
 ```
@@ -91,8 +90,8 @@ A2A Request → DefaultRequestHandler → GenericAgentExecutor(RAGAgent)
       ├── DocumentIngestionPipeline.ingest_sec_filings_batch() → ChromaDB
       └── mark_filing_ingested(edgar_url, ticker) for each new filing
     → FinancialIndexManager.query(ticker, query)
-      ├── Try: RouterQueryEngine
-      └── Fallback: SEC filings index directly
+      ├── Try: RouterQueryEngine (response_mode="compact", similarity_top_k=3)
+      └── Fallback: SEC filings index directly (same settings)
   → Yields data response with summary + sources
 ```
 
@@ -219,12 +218,15 @@ Agent cards loaded from `agent_cards/*.json`, embedded via `sentence-transformer
 
 ## Timeout Architecture
 
-Timeouts configured via `.env` with `A2A_TIMEOUT=180.0`:
+Timeouts configured via `.env` with `A2A_TIMEOUT=680.0`:
 
 | Layer | Timeout | Mechanism |
 |---|---|---|
 | A2A discovery | 10s per URL | httpx.AsyncClient within A2ACardResolver |
-| A2A messaging | 300s | ClientConfig + httpx.AsyncClient |
+| A2A messaging (global) | 680s | ClientConfig + httpx.AsyncClient |
+| A2A — RAG agent | 600s | `asyncio.wait_for` in `send_message` |
+| A2A — Quant agent | 600s | `asyncio.wait_for` in `send_message` |
+| A2A — Sentiment agent | 600s | `asyncio.wait_for` in `send_message` |
 | MCP tool calls | 30s | MCPClient default |
 
 ## Error Handling
@@ -350,11 +352,13 @@ All datetime operations use **IST (UTC+5:30)**, defined as `IST = timezone(timed
 
 The fastest same-day cache path is the `before_agent_callback` registered as `root_agent.before_agent_callback = _memory_cache_callback`. It fires before the LLM runs, extracts the user's ticker from session events, and if today's brief has a valid `response_text`, returns `types.Content(role="model", parts=[...])` — the ADK runner accepts this as the agent response and skips the LLM entirely. This completes in ~200ms vs 30-60s for a full agent run.
 
+**Ticker-resolution fallback**: When the regex-extracted token misses in DB (e.g. user typed "VISA" but the brief is stored under canonical "V"), the callback falls back to MCP `resolve_company_ticker` and retries the cache lookup. Closes the asymmetry where `save_brief` dedup hit but the cache lookup missed.
+
 The executor-level path (`agent_1_adk/agent_executor.py`) has a parallel check via `_get_today_cached_text()` for A2A requests.
 
-### Response Text Overwrite
+### Full Synthesis in save_brief
 
-After the agent turn completes, `_persist_memory_callback` calls `TickerMemory.update_response_text(record_id, full_response)`. This overwrites the short `save_brief` rationale (an LLM-written summary) with the full synthesized analysis text. The same-day cache callback reads this `response_text`, so subsequent same-day queries return the rich analysis rather than an abbreviated rationale.
+`save_brief` now reads the longest LLM-generated text from `session.events` on the first write (via `_synthesis_text_from_context`). This means both the ADK-web and A2A paths store the full BUY/HOLD/SELL analysis instead of the short rationale. Only falls back to rationale when no model output exists in the turn. The post-turn `update_response_text` overwrite was removed — it was unreliable and blind to the A2A path. The same-day cache callback reads this rich `response_text` directly, so subsequent same-day queries return the full analysis.
 
 ### Memory Context Injection
 

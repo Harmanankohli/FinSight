@@ -92,7 +92,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <tr><td><code>validate_ticker</code></td><td><code>ticker</code></td><td>Validates ticker against SEC database (cached CIK map)</td></tr>
 <tr><td><code>resolve_company_ticker</code></td><td><code>text</code></td><td>Natural language company name to ticker (SEC reverse index + Yahoo fallback)</td></tr>
 </table>
-<p><strong>Note</strong>: Requires valid <code>User-Agent</code> header. Uses <code>"FinSight Research (contact@finsight.com)"</code>. The RAG agent uses <code>get_filing_content</code> to fetch and index actual SEC filing content.</p>
+<p><strong>Note</strong>: Requires valid <code>User-Agent</code> header. Set via <code>SEC_USER_AGENT</code> env var in <code>.env</code> (format: <code>Your Name (your-email@example.com)</code>) &mdash; see <code>shared/config.py</code>. The RAG agent uses <code>get_filing_content</code> to fetch and index actual SEC filing content.</p>
 
 <h3>Financial News Tools</h3>
 <p>RSS feeds: Yahoo Finance, CNBC, MarketWatch, Seeking Alpha. VADER sentiment scoring.</p>

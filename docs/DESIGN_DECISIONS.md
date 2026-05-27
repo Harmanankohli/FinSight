@@ -36,11 +36,11 @@ The callback checks for a valid `response_text` in the cached brief (populated b
 
 **Why two cache paths (callback + executor-level)?** The `before_agent_callback` only fires when the orchestrator runs through ADK's built-in runner (`adk web` path). A2A requests hitting `agent_1_adk/main.py` directly bypass ADK callbacks, so the executor-level `_get_today_cached_text()` provides the same short-circuit for that path.
 
-### Why `update_response_text` overwrite the brief after the turn?
+### Why the full synthesis is stored directly in `save_brief` instead of a post-turn overwrite?
 
-The `save_brief` tool is called *during* the LLM turn, before synthesis completes. At that point the LLM has only produced a brief rationale for the recommendation. The full synthesis (combining RAG, Quant, and Sentiment results) happens after `save_brief` returns. Without the overwrite, the same-day cache would return only the abbreviated rationale — a few sentences of justification — instead of the complete multi-paragraph analysis that the user originally saw.
+The original approach used `_persist_memory_callback` to overwrite the brief's `response_text` after the turn completed. This had two problems: (1) the overwrite was unreliable — it depended on extracting the right response text from session events after the LLM finished, and (2) it was blind to the A2A executor path, which doesn't fire `after_agent_callback`.
 
-The overwrite happens in `_persist_memory_callback` (after the turn), extracting the response text from session events and storing it into the existing brief via `tm.update_response_text()`. Subsequent same-day queries via `_memory_cache_callback` then return the full analysis.
+The fix moves the synthesis capture into `save_brief` itself. A new helper `_synthesis_text_from_context` reads the longest LLM-generated text from `session.events` at the time `save_brief` is called. Since `save_brief` is invoked *during* the LLM turn (after the tool response but before the turn ends), the session events already contain the model's full synthesized output. If no model text exists (edge case), it falls back to the rationale. The post-turn `update_response_text` overwrite was removed entirely. Both ADK-web and A2A paths now persist the full analysis because both call `save_brief`.
 
 ### Why programmatic dedup at `save_brief` and `_store_memory`?
 
@@ -94,7 +94,9 @@ The 17 test files were written during the initial architecture iterations (v1.0-
 - Offline evaluation fixtures that diverged from the live runtime behavior
 - A2A communication patterns from the v1-v4 orchestrator architecture that were completely replaced
 
-Fixing them would require a full rewrite against the current codebase — essentially writing new tests from scratch while also removing all the old ones. Deleting the stale fixtures was the honest option rather than maintaining dead test code that would confuse future readers. A new test suite should be built from scratch against the current stable architecture.
+Fixing them would require a full rewrite against the current codebase — essentially writing new tests from scratch while also removing all the old ones. Deleting the stale fixtures was the honest option rather than maintaining dead test code that would confuse future readers.
+
+**Update (v1.26/v1.27)**: ~148 tests now covering models, quant graph nodes, ticker utilities, TTL cache, rate limiter, trace context, memory store, and the security sandbox (60 AST-gate tests). See [TESTS.md](TESTS.md) for details.
 
 ## Same-Day Memory Cache & analysis_date Column
 
@@ -878,6 +880,482 @@ Added `Today's date: {date.today().isoformat()}` as the first line of every LLM 
 - **RAG query prompts** — so the LlamaIndex LLM knows the reference date for financial data
 - **Quant summary prompt** — so the LangGraph summary LLM frames analysis in correct temporal context
 - **Sentiment crew tasks** — so CrewAI agents know the current date when analyzing news and filings
+
+## SQLite Singleton Connection with Write Lock
+
+### Why a singleton connection instead of open/close per call?
+
+The original `get_db()` opened a new `aiosqlite` connection on every function call — every ticker lookup, portfolio read, memory search, and write created + tore down a connection. Under load, this meant 10-20 open/close cycles per query across the memory layer.
+
+SQLite connections are not free: each open acquires a file handle, sets pragmas (WAL, foreign_keys, busy_timeout), and runs schema migration. For a file-backed database, opening a connection also involves a filesystem `open()` call, which under concurrent access (multiple agents) causes lock contention on the `.db` file itself — even for reads.
+
+The singleton pattern eliminates this entirely: one connection is opened once, WAL mode and pragmas are set once, schema migration runs once. All subsequent calls — both reads and writes — reuse the same connection.
+
+### Why a separate write lock instead of relying on SQLite's internal locking?
+
+SQLite in WAL mode supports concurrent reads but serializes writes at the OS level (one writer at a time). Without a lock, two concurrent `await conn.execute("INSERT ...")` calls hit `SQLITE_BUSY` and wait on `busy_timeout` (5000ms). With 3-4 agents writing simultaneously (store_brief, portfolio upsert, performance record, memory persist), this caused 5-second stalls.
+
+The `asyncio.Lock` (`write_lock()`) serializes writes at the Python level before they reach SQLite. The wait is near-instant (microseconds) instead of the full `busy_timeout` (milliseconds). Reads skip the lock entirely — they just call `get_db()` and query, no contention.
+
+### Why not connection pooling (multiple connections)?
+
+SQLite is a single-writer database regardless of connection count. Multiple connections don't help writes — they only complicate the code with pool management, checkout/return patterns, and the risk of connection leaks. A single connection with a write lock is the simplest correct solution.
+
+### Why not use `sqlite3` threading modes?
+
+`aiosqlite` is async-first and already handles thread safety by running all operations on a dedicated background thread. The Python-level `asyncio.Lock` is an additional guard that prevents concurrent callers from queueing multiple writes on the aiosqlite thread — it's defense in depth, not a workaround for a missing feature.
+
+### Key properties
+- ✅ One connection, one schema migration, one set of pragmas
+- ✅ Writes serialized via `asyncio.Lock` — no `SQLITE_BUSY` stalls
+- ✅ Reads contention-free (WAL mode allows concurrent reads on a single connection)
+- ✅ 284 lines removed vs 304 added across 5 files — net reduction in connection-management boilerplate
+- ✅ `close_db()` for clean process shutdown (no dangling connections)
+
+## Token-Bucket Rate Limiter
+
+### Why a token bucket instead of a fixed-delay sleep?
+
+A fixed `await asyncio.sleep(0.125)` between calls (8/s) would guarantee the rate but wastes 125ms even when no other requests are competing. The token bucket allows **bursts**: 10 consecutive tool calls fire instantly, then the rate smooths to 8/s. This matches real traffic patterns — a quant analysis query triggers 3-5 SEC calls in quick succession (ticker map, submissions, filing content), then nothing for 30+ seconds. The burst handles the batch, the rate limit prevents bans.
+
+### Why separate limiters instead of one global rate limiter?
+
+Three different APIs with three different rate limits and traffic patterns:
+
+| Limiter | Rate | Burst | Applied to | Why |
+|---|---|---|---|---|
+| `_sec_limiter` | 8/s | 10 | 5 EDGAR HTTP sites | SEC published limit is 10 req/s hard cap; 8/s with 10 burst is conservative while allowing filing batches |
+| `_yfinance_limiter` | 4/s | 8 | 4 yfinance tools | Yahoo has no published cap; 4/s is conservative enough to avoid 429s which appeared under the old unthrottled pattern |
+| `_rss_limiter` | 2/s | 4 | RSS feeds + Yahoo news fallback | News is the least latency-sensitive — cached by TTL, served stale-is-ok |
+
+A single global limiter would throttle SEC filing fetches because a news RSS fetch happened at the same instant, even though the two APIs have independent rate limits.
+
+### Why the loop form instead of recursion?
+
+The initial plan proposed `await asyncio.sleep(1.0 / self.rate); return await self.acquire()` — a recursive call. Under contention (all 5 SEC sites firing simultaneously), this recurses 5+ levels deep, risking `RecursionError`. The while-loop form is equivalent but iterative — no stack growth regardless of contention depth.
+
+### Why not `asyncio.Semaphore` for burst limiting?
+
+`asyncio.Semaphore` limits concurrency (how many tasks run simultaneously) but does **not** limit rate (how many requests per second). A semaphore of 4 allows 4 concurrent requests every microsecond — no rate enforcement. The token bucket enforces both: at most 10 in a burst, and at most 8/s averaged over time.
+
+### Key properties
+- ✅ Burst handling — batch filing requests don't trigger rate limiting
+- ✅ Independent limiters — SEC congestion doesn't stall news RSS
+- ✅ Iterative wait — no RecursionError under contention
+- ✅ Zero dependencies — pure stdlib, 30 lines
+- ✅ All sites protected — no unthrottled HTTP path to external APIs
+
+## Async TTL Cache with Single-Flight Dedup
+
+### Why replace the existing `_TTLCache`?
+
+The original `_TTLCache` used `threading.Lock` and had no deduplication. Under concurrent access (all three sub-agents calling `get_prices("NVDA")` at the same time during a single query), each call missed the cache simultaneously, called `yfinance` independently, and produced 3 identical network requests. The cache was also synchronous — `cache.get()` and `cache.set()` were blocking calls in an async context, requiring the old pattern of manual inline caching in each tool function.
+
+The new `TTLCache` is fully async (`asyncio.Lock`), supports `get_or_fetch()` with single-flight dedup, and separates cache management from tool logic.
+
+### How single-flight dedup works
+
+When 5 concurrent callers call `get_or_fetch("prices:NVDA:1y:1d", fetch)` simultaneously:
+
+1. **Callers 1-5**: All check `_data` → miss (empty or expired)
+2. **Caller 1**: Acquires `_lock`, re-checks `_data` → still miss, creates `asyncio.Future`, stores in `_inflight`, spawns `_do_fetch` task, releases lock
+3. **Callers 2-5**: Queue on `_lock`; each acquires, re-checks `_data` → still miss, but find `key in _inflight` → return the existing Future
+4. **All 5**: `await fut` — all unblock when `_do_fetch` calls `fut.set_result(value)`
+
+Result: 1 network call instead of 5. The double-checked pattern (check cache → acquire lock → re-check cache) is critical — if the fetch completes between caller 1's miss and caller 2's lock acquisition, caller 2 finds the cached value and returns immediately instead of waiting for the future.
+
+### Why `asyncio.Future` instead of `asyncio.Event` or a callback queue?
+
+`asyncio.Future` is awaitable by multiple coroutines simultaneously — all callers can `await fut` and all wake when `set_result()` is called. An `Event` requires polling or `wait()` which doesn't propagate the return value. A callback queue requires manual fan-out. `Future` gives exactly the right semantics: one-shot, multi-consumer, value-preserving.
+
+### Why not use `@functools.lru_cache`?
+
+`lru_cache` is synchronous, has no TTL, and doesn't collapse concurrent calls (each call evaluates the function independently). It's also per-process — doesn't help if the same ticker is requested across multiple agent processes. The `TTLCache` solves all three: async-native, TTL-aware, single-flight.
+
+### Why keep separate cache instances per tool type?
+
+Different data has different freshness requirements. A single cache with a global TTL would either serve stale prices or re-fetch immutable filings. Per-tool instances with independent TTLs match the data lifecycle:
+
+| Cache | TTL | Why |
+|---|---|---|
+| `_cache_prices` | 1 min | Intraday prices change every trade; 1 min balances freshness vs cache utility |
+| `_cache_financials` | 1 hr | Quarterly data, but a session refresh may re-query; 24h was unnecessarily long |
+| `_cache_news` | 5 min | Headlines publish every few minutes; 15 min was stale by the time user refreshed |
+| `_cache_filing` | Permanent (LRU-200) | SEC filings are immutable once filed — never expires |
+| `_cache_submissions` | 6 hr | Large JSON blobs that change a few times daily |
+
+### Why `get()`/`set()` still exist alongside `get_or_fetch()`?
+
+Some tools need conditional caching. `get_news_sentiment` only stores results when articles are actually found — empty results are not cached (next call may find news). `get_or_fetch()` doesn't support this "cache only on success" pattern. The `get()`/`set()` pair gives tools fine-grained control over what gets cached and when.
+
+### Key properties
+- ✅ N concurrent callers → 1 network request (single-flight)
+- ✅ Fully async — no blocking calls in async context
+- ✅ Per-tool TTLs match data lifecycle
+- ✅ Conditional caching via `get()`/`set()` for tools that gate on result content
+- ✅ LRU eviction on `max_entries` — memory bounded
+- ✅ Replaces old pattern of manual cache-check-then-fetch in every tool function
+
+## Structured JSON Logging
+
+### Why JSON in the file handler but plaintext in the terminal?
+
+Log aggregators (Loki, CloudWatch, Datadog) ingest JSON natively — no custom parsers needed. A JSON line `{"ts": "...", "level": "INFO", "service": "orchestrator", "message": "Agent response received", "latency_ms": 1200}` is immediately queryable by field. The same line as plaintext `2026-05-27 12:00:00 INFO orchestrator: Agent response received` requires a regex to extract `latency_ms`.
+
+But JSON is painful to read in a terminal during development. `{"ts":"...","level":"INFO",...}` takes ~3× the horizontal space of plaintext and wraps awkwardly. The dual-formatter approach gives both: terminals get plaintext, log files get JSON.
+
+### Why implement a custom `JsonFormatter` instead of using an existing library?
+
+The `python-json-logger` library exists but adds a dependency for ~40 lines of custom code. The `JsonFormatter` in 30 lines:
+- Produces the exact payload shape needed (ts, level, service, logger, message + optional extras)
+- Supports structured extras via `record.trace_id` etc. — set once on the LogRecord, automatically included
+- Picks up `exc_info` and serializes tracebacks as `exc` key
+- Uses `json.dumps(default=str)` for serialization safety (handles numpy types, datetimes, etc.)
+
+The cost of the library (version pinning, audit, CI caching) outweighs the benefit for 30 lines of stable code.
+
+### Why `utc` timestamps instead of local time?
+
+Log aggregators operate in UTC internally. Local timestamps (IST, EST, etc.) require timezone-aware parsing at query time, which is fragile across DST changes and deployment regions. UTC ISO-8601 is unambiguous, sortable, and natively supported by every log system. The `ts` field in each JSON line is the exact moment the log was emitted, independent of the server's timezone.
+
+The existing `IST` convention in `shared/config.py` is for *business logic* timestamps (analysis_date, created_at) where users think in local time. Log timestamps are for *operations* — UTC is the standard.
+
+### Why make the StreamHandler idempotency check more specific?
+
+The original check `if any(isinstance(h, logging.StreamHandler) ...)` was broad — it matched any `StreamHandler` including ones not targeting stderr. The refined check narrows to `not isinstance(h, RotatingFileHandler)` to avoid confusing file handlers with stream handlers. This is defense in depth; the actual idempotency is guaranteed by the earlier RotatingFileHandler check on `baseFilename`.
+
+### Key properties
+- ✅ JSON file logs ingestible without custom parsers
+- ✅ Plaintext terminals remain readable
+- ✅ Zero new dependencies (~30 lines of stdlib)
+- ✅ Structured extras (trace_id, latency_ms) auto-included when present on LogRecord
+- ✅ Backward compatible — `setup_file_logging(service_name)` signature unchanged
+
+## Per-Service Log Levels via Env
+
+### Why `LOG_LEVEL_<SERVICE>` instead of a single `LOG_LEVEL`?
+
+A single `LOG_LEVEL=DEBUG` makes every service chatty — the orchestrator, MCP servers, quant engine, and news fetcher all emit debug lines simultaneously, creating signal-to-noise problems. With per-service overrides, you can set `LOG_LEVEL_MCP=DEBUG` to debug an MCP tool call while keeping `LOG_LEVEL=WARNING` for everything else.
+
+### Why env vars instead of a config file?
+
+Log level is an operational concern, not a code concern. Operators set it in the deployment environment (Docker `-e`, Kubernetes `ConfigMap`, `.env` file) without touching code or config files. Env vars are also the standard for twelve-factor apps and are trivially overridable per-process in supervisor setups.
+
+### Why make `level` parameter `None` by default instead of `logging.INFO`?
+
+The old signature `level: int = logging.INFO` forced env lookup to happen at the caller level — every call site needed `os.environ.get(...)` boilerplate before passing level in. Changing the default to `None` moves the env resolution *inside* the function, where it belongs. Callers that pass `level=` explicitly still override env — best of both worlds.
+
+### Why `service_name.upper().replace('-', '_')` for the env key?
+
+Env var naming conventions use `UPPER_CASE` with underscores. Service names from the codebase may be lowercase or hyphenated (e.g. `finsight-agent`). The transform converts `finsight-agent` → `FINSIGHT_AGENT` → `LOG_LEVEL_FINSIGHT_AGENT`, which reads naturally in an env file.
+
+### Key properties
+- ✅ Zero code changes at call sites — old `setup_file_logging("orchestrator")` just works
+- ✅ Explicit `level=` still overrides env when specified
+- ✅ Environment-controlled — deploy-time config, no code edits needed
+- ✅ Flexible — single global level with selective per-service overrides
+
+## Log Sanitization Filter
+
+### Why a `logging.Filter` instead of scrubbing at the call site?
+
+Call-site scrubbing would require every `logger.info("api_key=%s", key)` call to remember to sanitize — easy to miss, especially in error paths. A `logging.Filter` is a single injection point guaranteed to run on every log line before it reaches the handler. Once attached in `setup_file_logging()`, every log from that service is automatically scrubbed with zero cooperation from callers.
+
+### Why not use `logging.Filter`'s `record.exc_info` / `record.exc_text` instead of scrubbing `record.msg`?
+
+`exc_info` is set by the logging framework automatically when `logger.exception(...)` is called — it doesn't contain arbitrary user strings. The dangerous paths are:
+1. `record.msg` — the format string, which may contain interpolated secrets (`logger.info("Token: %s", token)`)
+2. `record.args` — the tuple of arguments injected into `%s` placeholders
+
+Both are scrubbed by `SanitizeFilter.filter()` before the formatter renders the final line.
+
+### Why these specific patterns?
+
+| Pattern | Example | Risk |
+|---|---|---|
+| `api_key=` | `api_key=sk-abc...` in query params or debug logs | Full API key in plaintext |
+| `sk-...` / `pk-...` | `sk-proj-xxxxxxxx...` (OpenAI-style) | Credential theft |
+| `Bearer` header | `Authorization: Bearer eyJ...` | Session hijacking |
+| `LANGFUSE_*_KEY` | `LANGFUSE_SECRET_KEY=sk-lf-...` | Langfuse account compromise |
+
+These cover every known secret type in the codebase. The regex approach avoids false positives on short tokens — `sk-` patterns require 20+ alphanumeric characters, and `api_key=` requires a non-empty value.
+
+### Why is args scrubbing needed separately from msg scrubbing?
+
+Python logging's `%` formatting happens *after* the filter runs but *before* the formatter renders. If `record.args` contains a secret tuple `("sk-abc...",)`, the filter must scrub it in `record.args` because the formatter will interpolate it into the final message. Scrubbing only `record.msg` would miss secrets passed as `%s` arguments.
+
+### Key properties
+- ✅ Zero cooperation from callers — attach once, all logs scrubbed
+- ✅ Both `record.msg` and `record.args` are sanitized
+- ✅ Regex patterns are specific enough to avoid false positives
+- ✅ Attached to both terminal and file handlers — no leak path
+
+## SQLiteTaskStore
+
+### Why wrap `InMemoryTaskStore` instead of going straight to SQLite?
+
+The A2A `TaskStore` protocol has four hot-path operations: `get`, `list`, `save`, `delete`. `get` and `list` fire on every A2A request — querying SQLite for every read would add ~1–5ms per call and create connection contention. Wrapping `InMemoryTaskStore` means reads are O(1) dict lookups, and SQLite is only touched on writes (`save` / `delete`) and on the one-time cold-start load.
+
+### Why double-checked locking on load?
+
+The `_ensure_loaded()` path must handle the case where N concurrent A2A requests arrive simultaneously on a cold server (e.g., after a mass restart of all 4 agents). Without locking, all N requests would attempt to re-populate the in-memory store from SQLite. The `asyncio.Lock` + double-check pattern ensures exactly one coroutine does the load while others wait, then all proceed without re-querying.
+
+### Why migration v2→v3 inline in `init_db` instead of a separate migration system?
+
+A dedicated migration framework (Alembic, etc.) is overkill for a project with one SQLite database and 3 schema versions. The inline approach — bump `SCHEMA_VERSION`, add a `try/except` block with `CREATE TABLE IF NOT EXISTS` — is trivially idempotent and requires zero tooling. The migration is a best-effort operation; if it fails (e.g. on a read-replica or mounted volume), existing tables are unaffected.
+
+### Why MessageToJson / Parse instead of protobuf's native serialization?
+
+`MessageToJson` produces human-readable JSON that can be inspected in the SQLite database with any tool (`sqlite3`, DB Browser, etc.). Protobuf binary serialization would require the `.proto` definition to decode. The overhead of JSON text storage (~200–500 bytes per task) is negligible for a task store that will rarely have more than a few dozen rows.
+
+### Key properties
+- ✅ Fast reads — in-memory dict for hot path, SQLite only on writes
+- ✅ Cold-start resilience — tasks survive process restart
+- ✅ Thread-safe — double-checked async lock on lazy load
+- ✅ SQL-write contention serialized via existing `write_lock()` from `store.py`
+- ✅ Zero-dependency migration — inline `CREATE TABLE IF NOT EXISTS`
+- ✅ Human-readable payload storage (JSON, not protobuf binary)
+
+## Memory Pruning / Retention Policy
+
+### Why prune on startup instead of on a schedule?
+
+Startup is the only guaranteed execution point — if the process hasn't started, no scheduler runs. A startup-triggered prune ensures the DB is cleaned before any work begins. The operation is best-effort and wrapped in `try/except` so it never blocks the server from starting even if the SQLite file is locked or corrupted.
+
+A background schedule (e.g. `asyncio.create_task` with `asyncio.sleep(86400)`) would be more thorough but adds lifecycle complexity — what happens if the task crashes? Does it get re-created? Startup pruning is simpler and sufficient for this scale.
+
+### Why no VACUUM?
+
+`VACUUM` rewrites the entire SQLite file, which can take seconds on a multi-MB database and blocks all concurrent access. During startup, the orchestrator is initializing MCP connections, loading models, and accepting the first health-check requests — a multi-second lock would cause timeouts. Instead, the deleted rows leave free pages in the SQLite file that will be reused by future inserts. If disk space is a concern, `VACUUM` can be run manually during maintenance windows.
+
+### Why prune three tables instead of just `ticker_briefs`?
+
+| Table | Row growth rate | Why prune |
+|---|---|---|
+| `ticker_briefs` | ~50–100/day | Stale analysis results (past day's briefs) |
+| `recommendation_records` | ~50–100/day | Stale historical recommendations |
+| `memory_entries` | ~200–500/day | Full conversation history used by `load_memory` |
+
+If only `ticker_briefs` were pruned, `recommendation_records` and `memory_entries` would grow unbounded. Pruning all three keeps the entire DB bounded. The `load_memory` tool's usefulness degrades with very old entries anyway — conversations from 6 months ago are unlikely to be relevant to today's ticker query.
+
+### Why `created_at < cutoff` and not `updated_at`?
+
+`created_at` never changes after insert — it's an immutable timestamp set once. `updated_at` can change (though currently no table uses it for record modification). The invariant is: "if the record was created more than N days ago, delete it." Using `created_at` avoids edge cases where a recent `updated_at` might preserve an objectively old record.
+
+### Why env var instead of a config constant?
+
+`MEMORY_RETENTION_DAYS` is an operational policy decision — different deployments may want different retention windows (dev: 7 days, staging: 30 days, prod: 90 days). An env var lets operators change policy without touching code. The 90-day default matches common compliance standards (quarterly cleanup).
+
+### Key properties
+- ✅ Startup-triggered — runs before any work, guaranteed execution
+- ✅ Best-effort — exception-safe, never blocks server start
+- ✅ No VACUUM — avoids startup lock contention
+- ✅ Prunes all three memory tables — bounded DB growth
+- ✅ Configurable — env var with sensible 90-day default
+
+## MCP Client Singleton with Auto-Reconnect
+
+### Why a process-wide singleton instead of per-request MCPClient?
+
+Each `MCPClient.connect_all()` performs an SSE HTTP upgrade handshake, which takes ~100–500ms depending on network conditions. Over 4 agents × N requests per analysis, this adds 1–2 seconds of pure connection overhead per user query. A process-wide singleton means the handshake happens once at cold-start, and all subsequent calls use the already-established SSE stream.
+
+Additionally, each MCP connection holds an open HTTP connection and a background asyncio task (reading SSE events). Per-request connect/disconnect creates connection churn that can exhaust file descriptors under load.
+
+### Why double-checked locking instead of a simple module-level `await`?
+
+Python's `asyncio.Queue` and similar primitives aside, the simplest pattern for async lazy-init with concurrent safety is the double-checked lock:
+
+```python
+if _global_client is not None and _global_client._connected:
+    return _global_client
+async with _client_lock:
+    if _global_client is None or not _global_client._connected:
+        _global_client = MCPClient(...)
+        await _global_client.connect_all()
+return _global_client
+```
+
+The first check (unlocked) is a fast-path O(1) return for the common case (already connected). The locked check handles the race where N callers arrive simultaneously on cold start — only one creates the client, the rest get the single result. Without the second check, N callers would create N clients.
+
+### Why reconnect on `ConnectionError`+`EOFError` instead of all exceptions?
+
+MCP connections can drop for various reasons: server restart, network timeout, idle timeout on the SSE stream. These produce specific transport-level exceptions (`ConnectionError`, `asyncio.IncompleteReadError`, `EOFError`). Reconnecting on every exception type (including `ValueError`, `TypeError`, etc.) would mask programming errors. The narrow exception list ensures only genuinely transient connection issues trigger a reconnect.
+
+### Why a retry limit of 1 instead of unlimited retries?
+
+If the MCP server is down (e.g., the finsight-mcp process crashed), retrying indefinitely would hang every agent tool call for N seconds per attempt. One reconnect attempt handles the common case (transient blip — the server is still there, the TCP connection just dropped). If both attempts fail, the error propagates immediately, and the caller (the agent) can report the failure to the LLM, which can retry at the application level.
+
+### Why an `atexit` synchronous shutdown hook instead of async cleanup?
+
+Python's `atexit` runs synchronous callbacks. An async `disconnect_all()` inside an `atexit` handler requires a temporary event loop because the main loop may already be closed. This is best-effort — if the event loop is gone, `atexit` won't block process exit. The alternative (relying on garbage collection of the MCPClient) is unreliable because Python's GC doesn't guarantee timely finalization of objects with open connections.
+
+### Key properties
+- ✅ Eliminates per-request SSE handshake overhead (~100–500ms saved per A2A call)
+- ✅ Double-checked lock — safe for N concurrent first callers
+- ✅ Auto-reconnect on transient failures (narrow exception set)
+- ✅ Single retry — fails fast on persistent outages
+- ✅ `atexit` hook — best-effort clean shutdown
+- ✅ −131 lines of boilerplate across 4 executor files
+
+## Lazy OpenTelemetry Instrumentation
+
+### Why lazy instrumentation instead of module-level `*Instrumentor().instrument()`?
+
+Module-level `*Instrumentor().instrument()` fires at import time. If a pytest test does `from agent_2_llamaindex.server import app`, it triggers `LlamaIndexInstrumentor().instrument()` which starts OTel span processors, exporter threads, and may try to connect to the OTLP endpoint — even though no tracing is needed. This breaks test isolation and causes non-deterministic failures when import order changes.
+
+Moving instrumentation into `init_instrumentation()` with deferred imports means:
+- Test code can import any module without side effects
+- The OTLP exporter only connects after `init_instrumentation()` is called
+- Different processes (orchestrator vs rag vs quant) get only the instrumentors they need
+
+### Why a `_instrumented` set guard instead of a simple bool?
+
+A single `_instrumented` bool works for one agent type. But a set supports the case where `init_instrumentation()` is called multiple times with different agent types — unlikely in production (one agent type per process) but possible in tests that import multiple server modules. The set ensures each agent type is instrumented exactly once, and the guard `if agent_type in _instrumented: return` is trivially cheap.
+
+### Why not use OpenTelemetry's built-in `OTEL_PYTHON_DISABLED_INSTRUMENTATIONS`?
+
+OTel supports `OTEL_PYTHON_DISABLED_INSTRUMENTATIONS` env var to skip specific instrumentors. However, this is a blunt instrument (disables per-instrumentor, not per-import) and doesn't support the "deferred import" pattern — the instrumentor classes are still imported at module level even if `instrument()` is skipped. The `init_instrumentation()` approach keeps imports deferred, which is the actual fix for test isolation.
+
+### Key properties
+- ✅ Test imports have zero OTel side-effects
+- ✅ Deferred imports — instrumentor packages loaded only when needed
+- ✅ Set-based guard — idempotent across multiple calls
+- ✅ Per-agent-type instrumentation — each server gets only what it needs
+- ✅ Backward compatible — all traces still appear in Langfuse
+
+## Correlation-ID Propagation via ContextVar
+
+### Why ContextVar instead of passing `trace_id` explicitly through every function?
+
+The trace_id needs to be available in dozens of locations: every `executor.py` method, every MCP tool handler, every log formatter. Passing it as an explicit parameter would require threading it through every function signature — hundreds of changes across the codebase. A `contextvars.ContextVar` makes it implicitly available to any code running in the same async context without touching any signatures.
+
+This is the exact use case `contextvars` was designed for: request-scoped values that flow with the `asyncio.Task` without explicit passing.
+
+### Why both `trace_id` and `session_id`?
+
+| ID | Scope | Purpose |
+|---|---|---|
+| `trace_id` | Single user query → N sub-agent calls → M MCP calls | Correlate every log line across all services for one user query |
+| `session_id` | Entire conversation session | Group log lines by the ADK session (multiple user turns) |
+
+`trace_id` is the primary correlation key — `grep <trace_id> logs/*.log` is the intended debug workflow. `session_id` is secondary, useful for grouping multi-turn conversations.
+
+### Why fallback in JsonFormatter (`record.trace_id` → `ContextVar`)?
+
+The two-tier fallback (`getattr(record, "trace_id", None) or current_trace_id.get()`) supports both patterns:
+1. **Explicit**: `logger.info("msg", extra={"trace_id": "abc"})` — overrides ContextVar for that single line
+2. **Implicit**: Any log line after `extract_trace_ids()` or `generic_executor.execute()` — ContextVar is set automatically, formatter picks it up
+
+This means existing code with manual `extra=` continues to work, while new code gets automatic correlation without any changes.
+
+### Why MCP tool log lines even though MCP runs in a separate process?
+
+Each MCP server (finsight-mcp) runs as a separate process. The ContextVar doesn't cross process boundaries — but `logger.info("Tool called", extra={"tool": "...", "ticker": "..."})` still produces a JSON line. To correlate it with the orchestrator trace_id, you grep for the ticker across all log files. The trace_id is not available in the MCP process because there's no Langfuse context there — but the ticker and timestamp are usually sufficient to match up with the orchestrator's trace.
+
+### Why `generic_executor` sets both ContextVars instead of individual executors?
+
+`generic_executor` is the single entry point for all A2A requests to any sub-agent. Setting ContextVars there guarantees every sub-agent (RAG, Quant, Sentiment) gets automatic correlation IDs without each implementing its own extraction logic. It's a single line in one place instead of four lines in four files.
+
+### Key properties
+- ✅ Zero parameter changes — trace_id flows implicitly via ContextVar
+- ✅ Two-tier fallback — explicit `extra=` still overrides ContextVar
+- ✅ `generic_executor` sets both IDs — single coverage point for all sub-agents
+- ✅ `extract_trace_ids()` sets ContextVar — coverage for orchestrator path
+- ✅ MCP tool log lines include structured `tool` and `ticker` fields
+
+## Deduplicate Ticker Validation
+
+### Why shared functions instead of inheriting from a base class?
+
+Inheritance would require the executors to share a common base class — which they don't (ADK's `AgentExecutor`, LlamaIndex's `BaseAgent`, LangGraph's `BaseAgent`, CrewAI's `BaseAgent`). A mixin would need to be slotted into four different class hierarchies. Shared functions in `shared/ticker_utils.py` are language-level composition — no inheritance, no mixins, just `await validate_ticker(ticker)` anywhere it's needed.
+
+The functions are pure wrappers around `validate_ticker_via_mcp()` and `resolve_ticker_via_mcp()` (which already existed in `ticker_utils.py`), adding only the MCP lifecycle management via `get_shared_mcp()`.
+
+### Why `validate_ticker()` returns `(True, ticker, "")` on MCP failure instead of raising?
+
+This is the "optimistic degrade" pattern. If the MCP server is temporarily down, the system should still attempt to process the query using a regex-based ticker guess rather than failing entirely. The orchestrator's input guardrail is the only strict validation point — if MCP is down there, it falls back to allowing the query through (the LLM can still produce a useful response without validated ticker data).
+
+The return tuple `(valid, canonical_ticker, company_or_error)` gives callers flexibility:
+- If `valid is False`, the ticker was definitively rejected by SEC data
+- If MCP is down, `(True, ticker, "")` means "we couldn't check, proceed with the raw ticker"
+- If MCP succeeds, the canonical ticker and company name are returned
+
+### Why both `validate_ticker()` and `validate_ticker_via_mcp()`?
+
+`validate_ticker_via_mcp(mcp, ticker)` is the low-level function that takes an already-connected MCP client — useful for callers that manage MCP lifecycle themselves or want to batch multiple calls over one connection. `validate_ticker(ticker)` is the high-level convenience wrapper that handles MCP lifecycle internally. Both exist, callers choose.
+
+### Key properties
+- ✅ ~80 lines of copy-paste removed from 4 executors
+- ✅ Shared functions — fix once, run everywhere
+- ✅ Optimistic degrade on MCP failure — (True, ticker, "") instead of crashing
+- ✅ Low-level `_via_mcp` variants still available for custom callers
+
+## Unified `@logged` Timing Decorator
+
+### Why a decorator instead of explicit `time.monotonic()` calls?
+
+Every hot path that needs latency tracking follows the same pattern: save `t0 = time.monotonic()`, run the function, compute `(t1 - t0) * 1000`, log with `extra={"latency_ms": ...}`. A decorator eliminates this boilerplate and ensures consistency — all `Exit` lines have the same format, the same structured field, and the same `fn.__qualname__` identifier. Without the decorator, each function would format its `latency_ms` field differently, or forget it entirely.
+
+### Why not decorate the `stream()` async generators?
+
+Python's `async def stream(...)` with `yield` is an asynchronous generator — wrapping it with a decorator that calls `await fn(*args, **kwargs)` would consume the generator immediately, yielding a single result instead of streaming. The pattern used instead is to decorate `_build_response()` (the inner async function that produces the dict result), which is a plain `async def` — safe to wrap.
+
+### Why `fn.__qualname__` instead of `fn.__name__`?
+
+`__qualname__` includes the class name for methods — `RAGAgent._build_response` instead of just `_build_response`. When multiple classes have methods with the same name (all 3 executors have `_build_response`), `__qualname__` disambiguates them without manual labeling.
+
+### Why `Enter` / `Exit` / `Fail` log levels?
+
+Three states cover the full lifecycle:
+| State | When | What it contains |
+|---|---|---|
+| `Enter` | Before the function runs | Function name |
+| `Exit` | After successful return | Function name + `latency_ms` |
+| `Fail` | After an exception | Function name + `latency_ms` + exception message |
+
+The `Fail` line is particularly useful — it captures the exception and the latency before the exception propagates, so you can see how long a failing call took before it failed. This is information that's lost in a normal traceback.
+
+### Why not capture all exceptions including `asyncio.CancelledError`?
+
+`CancelledError` should propagate immediately without logging — logging a cancelled task is noise, and the cancellation itself is already recorded by the asyncio event loop. The `except Exception` clause intentionally excludes `BaseException` subclasses like `CancelledError` and `KeyboardInterrupt`.
+
+### Key properties
+- ✅ Consistent Enter/Exit/Fail format across all hot paths
+- ✅ Structured `latency_ms` field in JSON file logs
+- ✅ `grep "Exit" logs/*.log` → full-system latency report
+- ✅ `__qualname__` disambiguation for same-named methods
+- ✅ `CancelledError` and `KeyboardInterrupt` pass through unlogged
+
+## Cancellation Support + Per-Agent Timeouts
+
+### Why store `asyncio.current_task()` instead of using `asyncio.tasks.all_tasks()`?
+
+`all_tasks()` returns all tasks in the event loop. In a multi-agent system, there may be unrelated background tasks (MCP keepalive, Langfuse flush, etc.). Storing the specific task returned by `asyncio.current_task()` when `execute()` starts guarantees we cancel exactly the right task — no more, no less.
+
+### Why not use `asyncio.shield()` to protect the `TASK_STATE_CANCELED` event emission?
+
+`asyncio.shield()` protects a specific awaitable from cancellation. But the cancel flow is: `except CancelledError` → emit event → `raise`. The emit is a single `event_queue.enqueue_event()` call, which is fast and unlikely to be the point where the event loop decides to deliver the cancellation. If shielding is needed later (e.g., the emit becomes slow), it can be added as a one-line change. For now, the simple try/except/raise pattern is sufficient.
+
+### Why `wait_for()` with a timeout map instead of `asyncio.timeout()`?
+
+`asyncio.timeout()` (Python 3.11+) is an async context manager — clean but only available in 3.11+. The project may run on 3.10 in some deployment environments. `asyncio.wait_for()` is the cross-version compatible approach.
+
+The timeout map uses substring matching (`"rag" in agent_lower`) so that agent names containing "rag", "quant", or "sentiment" automatically get the right timeout without exact string matching. A fallback to `A2A_TIMEOUT` (180s) ensures unrecognized agent names don't get an unbounded wait.
+
+### Why move eval-trace writes to `finally`?
+
+The eval-trace write captures `(task_sent, response, latency_ms)` for offline RAGAS evaluation. Before this change, the write was in the `try` body — if a `TimeoutError` jumped to the `except` block, the trace was never written. Moving it to `finally` ensures the trace is always persisted, even on timeout or cancellation. The `finally` block runs after both `try` and `except`, so the `result_text` variable (set in `except`) is available.
+
+### Why TimeoutError returns JSON instead of raising?
+
+When a sub-agent times out, the orchestrator should still be able to synthesize a response that says "the quant agent timed out" rather than crashing the entire request. A JSON payload `{"error": "agent_timeout", "agent": "quant", "timeout": 90}` is parseable by the LLM, which can incorporate the timeout into its final response. Raising an exception would propagate through A2A and produce a generic error.
+
+### Key properties
+- ✅ `cancel()` works on both executors — replaces `NotImplementedError`
+- ✅ Per-agent timeouts — one slow agent doesn't stall the pipeline
+- ✅ Clean timeout payload — `{"error": "agent_timeout", ...}` instead of crash
+- ✅ Eval traces persisted even on timeout/cancellation
+- ✅ Backward compatible — existing `A2A_TIMEOUT` still applies as fallback
 
 ## Persistent Memory Layer
 

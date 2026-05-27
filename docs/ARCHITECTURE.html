@@ -78,9 +78,8 @@ A2A Request &rarr; FinSightAgentExecutor.execute()
     &rarr; SubAgentClient &rarr; A2A response (text or data parts)
     &rarr; LLM calls next agent
     &rarr; LLM synthesizes BUY/HOLD/SELL
-  &rarr; after_agent_callback: _persist_memory_callback
+    &rarr; after_agent_callback: _persist_memory_callback
     &rarr; add_events_to_memory()
-    &rarr; update_response_text() &mdash; overwrite brief rationale with full analysis
     &rarr; if EVAL_ENABLED: score_response()
   &rarr; COMPLETED with synthesis</pre>
 
@@ -116,8 +115,8 @@ A2A Request &rarr; FinSightAgentExecutor.execute()
       &#x251C;&#x2500;&#x2500; DocumentIngestionPipeline.ingest_sec_filings_batch() &rarr; ChromaDB
       &#x2514;&#x2500;&#x2500; mark_filing_ingested(edgar_url, ticker) for each new filing
     &rarr; FinancialIndexManager.query(ticker, query)
-      &#x251C;&#x2500;&#x2500; Try: RouterQueryEngine
-      &#x2514;&#x2500;&#x2500; Fallback: SEC filings index directly
+      &#x251C;&#x2500;&#x2500; Try: RouterQueryEngine (response_mode="compact", similarity_top_k=3)
+      &#x2514;&#x2500;&#x2500; Fallback: SEC filings index directly (same settings)
   &rarr; Yields data response with summary + sources</pre>
 
 <p><strong>Incremental Ingestion</strong>: <code>_ensure_ingested()</code> checks the <code>ingested_filings</code> SQLite table before fetching any filing content. URLs already indexed in a previous run are skipped entirely &mdash; restarts and same-day re-queries do not re-ingest immutable historical filings.</p>
@@ -227,11 +226,14 @@ A2A Request &rarr; FinSightAgentExecutor.execute()
 <p>Agent cards loaded from <code>agent_cards/*.json</code>, embedded via <code>sentence-transformers</code>, queried via <code>find_agent</code> tool using dot-product similarity.</p>
 
 <h2>Timeout Architecture</h2>
-<p>Timeouts configured via <code>.env</code> with <code>A2A_TIMEOUT=180.0</code>:</p>
+<p>Timeouts configured via <code>.env</code> with <code>A2A_TIMEOUT=680.0</code>:</p>
 <table>
 <tr><th>Layer</th><th>Timeout</th><th>Mechanism</th></tr>
 <tr><td>A2A discovery</td><td>10s per URL</td><td>httpx.AsyncClient within A2ACardResolver</td></tr>
-<tr><td>A2A messaging</td><td>300s</td><td>ClientConfig + httpx.AsyncClient</td></tr>
+<tr><td>A2A messaging (global)</td><td>680s</td><td>ClientConfig + httpx.AsyncClient</td></tr>
+<tr><td>A2A &mdash; RAG agent</td><td>600s</td><td><code>asyncio.wait_for</code> in <code>send_message</code></td></tr>
+<tr><td>A2A &mdash; Quant agent</td><td>600s</td><td><code>asyncio.wait_for</code> in <code>send_message</code></td></tr>
+<tr><td>A2A &mdash; Sentiment agent</td><td>600s</td><td><code>asyncio.wait_for</code> in <code>send_message</code></td></tr>
 <tr><td>MCP tool calls</td><td>30s</td><td>MCPClient default</td></tr>
 </table>
 
@@ -386,8 +388,10 @@ Sub-agents (agent_2, agent_3, agent_4)
 
 <p>The executor-level path (<code>agent_1_adk/agent_executor.py</code>) has a parallel check via <code>_get_today_cached_text()</code> for A2A requests.</p>
 
-<h3>Response Text Overwrite</h3>
-<p>After the agent turn completes, <code>_persist_memory_callback</code> calls <code>TickerMemory.update_response_text(record_id, full_response)</code>. This overwrites the short <code>save_brief</code> rationale (an LLM-written summary) with the full synthesized analysis text. The same-day cache callback reads this <code>response_text</code>, so subsequent same-day queries return the rich analysis rather than an abbreviated rationale.</p>
+<p><strong>Ticker-resolution fallback</strong>: When the regex-extracted token misses in DB (e.g. user typed &ldquo;VISA&rdquo; but the brief is stored under canonical &ldquo;V&rdquo;), the callback falls back to MCP <code>resolve_company_ticker</code> and retries the cache lookup. Closes the asymmetry where <code>save_brief</code> dedup hit but the cache lookup missed.</p>
+
+<h3>Full Synthesis in save_brief</h3>
+<p><code>save_brief</code> now reads the longest LLM-generated text from <code>session.events</code> on the first write (via <code>_synthesis_text_from_context</code>). This means both the ADK-web and A2A paths store the full BUY/HOLD/SELL analysis instead of the short rationale. Only falls back to rationale when no model output exists in the turn. The post-turn <code>update_response_text</code> overwrite was removed &mdash; it was unreliable and blind to the A2A path. The same-day cache callback reads this rich <code>response_text</code> directly, so subsequent same-day queries return the full analysis.</p>
 
 <h3>Memory Context Injection</h3>
 <p>When the cache callback misses (no today brief), the executor injects memory context into the user message:</p>

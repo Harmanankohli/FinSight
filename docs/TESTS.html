@@ -38,10 +38,49 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 
 <h1>Test Coverage</h1>
 
-<h2>Summary</h2>
-<p><strong>All test files removed in v1.24.</strong> The previous test suite was unmaintained fixtures from earlier architecture iterations that no longer matched the current codebase. Testing is performed manually via the ADK Web UI.</p>
+<p><strong>~150 test cases</strong> across 12 test files &mdash; models, quant graph nodes, ticker utilities, TTL cache, rate limiter, trace context, memory store, security sandbox, and save_brief synthesis.</p>
 
-<p><strong>Status: No automated test suite.</strong></p>
+<h2>Running Tests</h2>
+<pre><code>pytest                          # all unit tests
+pytest -v                       # verbose
+pytest tests/unit/              # unit tests only
+pytest -m integration           # integration smoke tests (requires running services)
+pytest -m "not integration"     # unit tests only (default)</code></pre>
+
+<h2>Test Layout</h2>
+<pre><code>tests/
+&crarr; conftest.py                          # env isolation, memory_db fixture
+&crarr; integration/
+&crarr;   &crarr; test_mcp_server_smoke.py         # 4 integration smoke tests
+&crarr; security/
+&crarr;   &crarr; test_sandbox.py                  # ~60 &mdash; AST gate + subprocess sandbox
+&crarr; unit/
+&crarr;   &crarr; test_models.py                   # 10 &mdash; Pydantic model construction, round-trip
+&crarr;   &crarr; test_quant_graph_nodes.py        # 18 &mdash; compute_metrics, stress_test, format_output
+&crarr;   &crarr; test_ticker_utils.py             # 11 &mdash; ticker format, extraction, holdings parsing
+&crarr;   &crarr; test_ttl_cache.py                # 9 &mdash; cache hit/miss/expiry, single-flight, LRU eviction
+&crarr;   &crarr; test_rate_limiter.py             # 4 &mdash; burst, rate enforcement, refill
+&crarr;   &crarr; test_trace_context.py            # 8 &mdash; inject/extract round-trip, edge cases
+&crarr;   &crarr; memory/
+&crarr;       &crarr; test_memory_store.py         # 5 &mdash; table creation, indexes, WAL mode, idempotency
+&crarr;       &crarr; test_ticker_memory.py        # 7 &mdash; store/get_latest, history, flip detection
+&crarr;       &crarr; test_save_brief_persists_synthesis.py  # 2 &mdash; synthesis-wins, rationale-fallback</code></pre>
+
+<p><strong>Total: ~150 test cases across 12 test files.</strong></p>
+
+<h2>Key Patterns</h2>
+<ul>
+<li><strong>Env isolation</strong>: <code>conftest.py</code> monkeypatches <code>LLM_API_KEY</code>, <code>LLM_BASE_URL</code>, <code>LANGFUSE_*</code> so no real services are contacted.</li>
+<li><strong>Isolated SQLite</strong>: <code>memory_db</code> fixture resets the <code>shared.memory.store</code> module-level connection singleton per test, using <code>tmp_path</code> for unique DB files.</li>
+<li><strong>No network calls</strong>: Quant graph tests call LangGraph nodes directly with synthetic <code>numpy</code> price data. <code>mcp_client=None</code> forces beta to <code>1.0</code>.</li>
+<li><strong>Asyncio</strong>: All tests use <code>pytest-asyncio</code> with <code>asyncio_mode = "auto"</code> and <code>asyncio_default_fixture_loop_scope = "function"</code>.</li>
+</ul>
+
+<h2>Integration Tests</h2>
+<p>4 smoke tests marked <code>@pytest.mark.integration</code> + <code>@pytest.mark.external</code> &mdash; skipped by default. Run with <code>pytest -m integration</code>. These verify the MCP server (port 8010) and agent card endpoints (ports 8002&ndash;8004) are reachable. Requires all services running (<code>run_adk_web.bat</code>).</p>
+
+<h2>Test Configuration</h2>
+<p>Defined in <code>pyproject.toml</code>: <code>asyncio_mode = "auto"</code>, <code>asyncio_default_fixture_loop_scope = "function"</code>, custom markers <code>integration</code> and <code>external</code>.</p>
 
 <hr>
 <p style="font-size:.85rem;color:#888"><a href="index.html">Back to docs hub</a></p>

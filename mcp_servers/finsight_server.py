@@ -9,7 +9,6 @@ Agents consume these tools through the FastMCP SSE endpoint; no REST layer neede
 from __future__ import annotations
 
 import asyncio
-import ast
 import atexit
 import json
 import logging
@@ -17,12 +16,8 @@ import os
 import sys
 import subprocess
 import time
-
-if sys.platform != "win32":
-    import resource
 import tempfile
 import threading
-from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -39,6 +34,10 @@ from mcp.server.fastmcp import FastMCP
 from sentence_transformers import SentenceTransformer
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
+from shared.config import SEC_USER_AGENT
+from shared.rate_limiter import TokenBucket
+from shared.ttl_cache import TTLCache
+from shared.logging_config import logged
 from shared.observability import init_langfuse, shutdown_langfuse
 init_langfuse(service_name="mcp_server")
 atexit.register(shutdown_langfuse)
@@ -59,51 +58,23 @@ AGENT_CARDS_DIR = Path(__file__).resolve().parent.parent / "agent_cards"
 # inference — good enough for agent card semantic search without GPU cost.
 EMBED_MODEL_NAME = os.environ.get("EMBED_MODEL", "all-MiniLM-L6-v2")
 
+# ──────────────────────────────────────────────
+# Rate limiters
+# ──────────────────────────────────────────────
+_sec_limiter = TokenBucket(rate=8, burst=10)      # SEC: 10 req/s hard cap; stay below
+_yfinance_limiter = TokenBucket(rate=4, burst=8)  # Yahoo Finance: no published cap, conservative
+_rss_limiter = TokenBucket(rate=2, burst=4)       # RSS + Yahoo news fallback
+
 
 # ──────────────────────────────────────────────
 # TTL Cache
 # ──────────────────────────────────────────────
 
-class _TTLCache:
-    """Thread-safe in-process TTL cache backed by an OrderedDict LRU eviction."""
-
-    def __init__(self, ttl: float | None, maxsize: int = 200):
-        self._ttl = ttl
-        self._store: OrderedDict = OrderedDict()
-        self._maxsize = maxsize
-        self._lock = threading.Lock()
-
-    def get(self, key):
-        """Return cached value if within TTL; evict stale entries on access."""
-        with self._lock:
-            if key in self._store:
-                val, ts = self._store[key]
-                if self._ttl is None or time.monotonic() - ts < self._ttl:
-                    self._store.move_to_end(key)
-                    return val
-                del self._store[key]
-        return None
-
-    def set(self, key, val):
-        """Insert/update entry, evicting LRU item if at maxsize."""
-        with self._lock:
-            if key in self._store:
-                self._store.move_to_end(key)
-            elif len(self._store) >= self._maxsize:
-                self._store.popitem(last=False)
-            self._store[key] = (val, time.monotonic())
-
-
-# Prices change every few minutes — 5 min TTL keeps data fresh without hammering Yahoo.
-_cache_prices      = _TTLCache(ttl=300)        # 5 min
-# Financials (balance sheet, income statement) only change quarterly — 24 h is plenty.
-_cache_financials  = _TTLCache(ttl=86400)      # 24 h
-# News headlines publish every few minutes — 15 min balances freshness vs cache utility.
-_cache_news        = _TTLCache(ttl=900)        # 15 min
-# Filing content is immutable once filed — cache permanently with LRU-200 eviction.
-_cache_filing      = _TTLCache(ttl=None, maxsize=200)  # permanent LRU-200
-# Submission lists are large JSON blobs that change a few times daily — 6 h TTL.
-_cache_submissions = _TTLCache(ttl=21600)      # 6 h
+_cache_prices      = TTLCache(ttl_seconds=60)              # 1 min — intraday prices
+_cache_financials  = TTLCache(ttl_seconds=3600)            # 1 hr — quarterly data
+_cache_news        = TTLCache(ttl_seconds=300)             # 5 min — news headlines
+_cache_filing      = TTLCache(ttl_seconds=None, max_entries=200)  # permanent LRU-200
+_cache_submissions = TTLCache(ttl_seconds=21600)           # 6 hr — submission lists
 
 
 # ──────────────────────────────────────────────
@@ -249,8 +220,21 @@ def _serialise_value(v: Any) -> Any:
     return v
 
 
+async def _get_prices_uncached(ticker: str, period: str, interval: str) -> dict:
+    try:
+        await _yfinance_limiter.acquire()
+        stock = yf.Ticker(ticker)
+        hist = stock.history(period=period, interval=interval)
+        records = _serialise_value(hist.reset_index().to_dict(orient="records"))
+        return {"ticker": ticker, "period": period, "data": records}
+    except Exception as exc:
+        logger.warning("get_prices failed for %s: %s", ticker, exc)
+        return {"ticker": ticker, "period": period, "error": str(exc), "data": []}
+
+
 @app.tool()
 @observe()
+@logged()
 async def get_prices(ticker: str, period: str = "1y", interval: str = "1d") -> dict:
     """Fetch OHLCV price history data for a stock ticker.
 
@@ -262,44 +246,18 @@ async def get_prices(ticker: str, period: str = "1y", interval: str = "1d") -> d
     Returns:
         dict with keys: ticker, period, data (list of OHLCV records with ISO dates)
     """
-    # Cache keyed on (ticker, period, interval) — 5 min TTL avoids stale prices.
-    cache_key = (ticker.upper(), period, interval)
-    cached = _cache_prices.get(cache_key)
-    if cached is not None:
-        logger.debug("Cache hit: get_prices(%s, %s, %s)", ticker, period, interval)
-        return cached
+    logger.info("Tool called", extra={"tool": "get_prices", "ticker": ticker})
+    return await _cache_prices.get_or_fetch(
+        f"prices:{ticker.upper()}:{period}:{interval}",
+        lambda: _get_prices_uncached(ticker, period, interval),
+    )
+
+
+async def _get_financials_uncached(ticker: str) -> dict:
     try:
+        await _yfinance_limiter.acquire()
         stock = yf.Ticker(ticker)
-        hist = stock.history(period=period, interval=interval)
-        records = _serialise_value(hist.reset_index().to_dict(orient="records"))
-        result = {"ticker": ticker, "period": period, "data": records}
-    except Exception as exc:
-        logger.warning("get_prices failed for %s: %s", ticker, exc)
-        result = {"ticker": ticker, "period": period, "error": str(exc), "data": []}
-    _cache_prices.set(cache_key, result)
-    return result
-
-
-@app.tool()
-@observe()
-async def get_financials(ticker: str) -> dict:
-    """Fetch financial statements and company info for a stock ticker.
-
-    Args:
-        ticker: Stock ticker symbol (e.g. NVDA, AAPL, MSFT)
-
-    Returns:
-        dict with keys: income_statement, balance_sheet, cash_flow, info
-    """
-    # Financials don't change intraday — 24 h cache avoids redundant API calls.
-    cache_key = (ticker.upper(),)
-    cached = _cache_financials.get(cache_key)
-    if cached is not None:
-        logger.debug("Cache hit: get_financials(%s)", ticker)
-        return cached
-    try:
-        stock = yf.Ticker(ticker)
-        result = _serialise_value({
+        return _serialise_value({
             "income_statement": stock.financials.to_dict()
             if stock.financials is not None
             else {},
@@ -313,12 +271,29 @@ async def get_financials(ticker: str) -> dict:
         })
     except Exception as exc:
         logger.warning("get_financials failed for %s: %s", ticker, exc)
-        result = {
+        return {
             "ticker": ticker, "error": str(exc),
             "income_statement": {}, "balance_sheet": {}, "cash_flow": {}, "info": {},
         }
-    _cache_financials.set(cache_key, result)
-    return result
+
+
+@app.tool()
+@observe()
+@logged()
+async def get_financials(ticker: str) -> dict:
+    """Fetch financial statements and company info for a stock ticker.
+
+    Args:
+        ticker: Stock ticker symbol (e.g. NVDA, AAPL, MSFT)
+
+    Returns:
+        dict with keys: income_statement, balance_sheet, cash_flow, info
+    """
+    logger.info("Tool called", extra={"tool": "get_financials", "ticker": ticker})
+    return await _cache_financials.get_or_fetch(
+        f"financials:{ticker.upper()}",
+        lambda: _get_financials_uncached(ticker),
+    )
 
 
 @app.tool()
@@ -334,6 +309,7 @@ async def get_options_chain(ticker: str, expiration: str | None = None) -> dict:
         dict: calls + puts if expiration given, else expirations list.
     """
     try:
+        await _yfinance_limiter.acquire()
         stock = yf.Ticker(ticker)
         if expiration:
             chain = stock.option_chain(expiration)
@@ -355,7 +331,7 @@ async def get_options_chain(ticker: str, expiration: str | None = None) -> dict:
 # requester — their robots.txt enforcement actively rate-limits non-compliant
 # clients. The contact email lets SEC reach us if we accidentally hammer them.
 _SEC_HEADERS = {
-    "User-Agent": "FinSight Research (contact@finsight.com)",
+    "User-Agent": SEC_USER_AGENT,
     "Accept-Encoding": "gzip, deflate",
 }
 
@@ -404,6 +380,7 @@ class _EdgarClient:
             if self._ticker_map is not None:
                 return self._ticker_map
             c = await self._get_client()
+            await _sec_limiter.acquire()
             resp = await c.get("https://www.sec.gov/files/company_tickers.json")
             resp.raise_for_status()
             raw = resp.json()
@@ -474,6 +451,7 @@ class _EdgarClient:
         url = f"https://data.sec.gov/submissions/CIK{cik}.json"
         for attempt in range(3):
             try:
+                await _sec_limiter.acquire()
                 resp = await c.get(url)
                 resp.raise_for_status()
                 result = resp.json()
@@ -611,6 +589,7 @@ class _EdgarClient:
                 continue
             try:
                 c = await self._get_client()
+                await _sec_limiter.acquire()
                 resp = await c.get(
                     f"https://data.sec.gov/submissions/{fname}"
                 )
@@ -650,6 +629,7 @@ class _EdgarClient:
             if ticker:
                 params["cik"] = await self._lookup_cik(ticker)
             c = await self._get_client()
+            await _sec_limiter.acquire()
             resp = await c.get(
                 "https://efts.sec.gov/LATEST/search-index?dateRange=all",
                 params=params,
@@ -685,6 +665,7 @@ class _EdgarClient:
         for url in tried_urls:
             try:
                 c = await self._get_client()
+                await _sec_limiter.acquire()
                 resp = await c.get(url)
                 resp.raise_for_status()
                 content_type = resp.headers.get("Content-Type", "")
@@ -736,6 +717,7 @@ _edgar = _EdgarClient()
 
 @app.tool()
 @observe()
+@logged()
 async def get_company_filings(
     ticker: str, form_types: str = "", limit: int = 10
 ) -> dict:
@@ -752,6 +734,7 @@ async def get_company_filings(
     Returns:
         dict with keys: ticker, cik, filings (list of {form, filing_date, description, edgar_url, ix_url})
     """
+    logger.info("Tool called", extra={"tool": "get_company_filings", "ticker": ticker})
     try:
         types_list = (
             [t.strip() for t in form_types.split(",") if t.strip()]
@@ -1158,6 +1141,7 @@ async def _fetch_rss(url: str, client: httpx.AsyncClient) -> dict:
       error   (str):  error message if status != "ok", else ""
     """
     try:
+        await _rss_limiter.acquire()
         resp = await client.get(url, timeout=10.0)
         if resp.status_code != 200:
             logger.warning("RSS %s returned HTTP %s", url, resp.status_code)
@@ -1195,6 +1179,7 @@ async def _fetch_yf_news(ticker: str, client: httpx.AsyncClient, limit: int = 15
             f"https://query1.finance.yahoo.com/v1/finance/search"
             f"?q={urlquote(ticker)}&lang=en-US&region=US&newsCount={limit}&quotesCount=0"
         )
+        await _rss_limiter.acquire()
         resp = await client.get(
             url,
             headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
@@ -1298,6 +1283,7 @@ def _keyword_matches(norm_text: str, keywords: list[str]) -> bool:
 
 @app.tool()
 @observe()
+@logged()
 async def get_news_sentiment(ticker: str, limit: int = 10) -> dict:
     """Fetch recent financial news mentioning a ticker and compute VADER sentiment.
 
@@ -1318,7 +1304,8 @@ async def get_news_sentiment(ticker: str, limit: int = 10) -> dict:
           positive_articles, negative_articles, neutral_articles,
           articles, feed_status (per-source diagnostics), source_used
     """
-    cache_key = (ticker.upper(), limit)
+    logger.info("Tool called", extra={"tool": "get_news_sentiment", "ticker": ticker})
+    cache_key = f"news:{ticker.upper()}:{limit}"
     cached = _cache_news.get(cache_key)
     if cached is not None:
         logger.debug("Cache hit: get_news_sentiment(%s)", ticker)
@@ -1437,6 +1424,7 @@ async def get_earnings_calendar(ticker: str) -> dict:
         dict with keys: ticker, next_earnings_date, source, or error
     """
     try:
+        await _yfinance_limiter.acquire()
         stock = yf.Ticker(ticker)
         cal = stock.calendar
         if cal and "Earnings Date" in cal:
@@ -1493,168 +1481,10 @@ async def get_earnings_calendar(ticker: str) -> dict:
 
 
 # ──────────────────────────────────────────────
-# Hardened Python Sandbox
+# Hardened Python Sandbox (logic in shared/sandbox.py)
 # ──────────────────────────────────────────────
 
-# Three layers of sandbox restriction, each targeting a different escape vector:
-#   _RESTRICTED_IMPORTS — modules that give filesystem, process, or network access
-#     (os, subprocess, socket) plus reflection/inspection tools (pickle, inspect).
-#   _RESTRICTED_CALLS  — builtin-level functions that bypass the AST sandbox
-#     (exec, eval, open, compile) or leak the execution environment (globals, vars).
-#   _RESTRICTED_ATTRS  — dangerous attribute chains on object instances
-#     (obj.__class__.__bases__.__subclasses__() is a well-known sandbox escape).
-_RESTRICTED_IMPORTS = frozenset([
-    "os", "subprocess", "shutil", "socket", "ctypes",
-    "importlib", "pickle", "inspect", "sys", "builtins",
-    "gc", "weakref", "atexit", "signal", "threading",
-    "multiprocessing", "pty", "tty", "termios", "fcntl",
-    "mmap", "resource", "pwd", "grp", "crypt",
-])
-
-_RESTRICTED_CALLS = frozenset([
-    "exec", "eval", "open", "__import__", "compile",
-    "globals", "locals", "vars", "dir", "delattr", "setattr",
-])
-
-_RESTRICTED_ATTRS = frozenset([
-    "system", "popen", "execv", "execve", "execl", "execvp",
-    "spawn", "spawnl", "fork", "forkpty", "exec", "eval",
-    "__class__", "__bases__", "__subclasses__", "__mro__",
-    "__globals__", "__builtins__", "__code__", "__closure__",
-    "__wrapped__",
-])
-
-
-def _check_code_safety(code: str) -> tuple[bool, str]:
-    try:
-        tree = ast.parse(code)
-    except SyntaxError as exc:
-        return False, f"Syntax error: {exc}"
-
-    # AST-level analysis: catches dangerous constructs BEFORE execution.
-    # This is a static gate — the subprocess provides the real isolation.
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                root = alias.name.split(".")[0]
-                if root in _RESTRICTED_IMPORTS:
-                    return False, f"Restricted import: {alias.name}"
-        if isinstance(node, ast.ImportFrom):
-            root = (node.module or "").split(".")[0]
-            if root in _RESTRICTED_IMPORTS:
-                return False, f"Restricted import from: {node.module}"
-
-        if isinstance(node, ast.Call):
-            fn = node.func
-            if isinstance(fn, ast.Name) and fn.id in _RESTRICTED_CALLS:
-                return False, f"Restricted function: {fn.id}"
-            if isinstance(fn, ast.Attribute) and fn.attr in _RESTRICTED_ATTRS:
-                return False, f"Restricted attribute: {fn.attr}"
-            # getattr(obj, '__class__') is a common sandbox escape — block
-            # dunder attribute names passed as string literals to getattr.
-            if isinstance(fn, ast.Name) and fn.id == "getattr":
-                if len(node.args) >= 2:
-                    attr_arg = node.args[1]
-                    if isinstance(attr_arg, ast.Constant) and isinstance(
-                        attr_arg.value, str
-                    ) and (
-                        attr_arg.value in _RESTRICTED_ATTRS
-                        or (
-                            attr_arg.value.startswith("__")
-                            and attr_arg.value.endswith("__")
-                        )
-                    ):
-                        return False, f"Restricted getattr: {attr_arg.value}"
-
-        if isinstance(node, ast.Attribute) and node.attr in _RESTRICTED_ATTRS:
-            return False, f"Restricted attribute access: {node.attr}"
-
-        if isinstance(node, ast.Subscript):
-            slice_node = node.slice
-            if isinstance(slice_node, ast.Constant) and isinstance(
-                slice_node.value, str
-            ):
-                val = slice_node.value
-                if val in _RESTRICTED_ATTRS or (
-                    val.startswith("__") and val.endswith("__")
-                ):
-                    return False, f"Restricted subscript key: {val}"
-
-    return True, ""
-
-
-def _sandbox_preexec() -> None:
-    """OS-level resource limits applied in the child process (Unix only).
-    
-    25 s CPU time prevents infinite loops from hanging the server.
-    512 MB address space prevents memory-exhaustion attacks.
-    0 open file descriptors blocks filesystem writes even if the AST check
-    misses something (defence-in-depth for the subprocess boundary).
-    """
-    try:
-        resource.setrlimit(resource.RLIMIT_CPU, (25, 25))
-        resource.setrlimit(resource.RLIMIT_AS, (512 * 1024 * 1024, 512 * 1024 * 1024))
-        resource.setrlimit(resource.RLIMIT_NOFILE, (0, 0))
-    except Exception:
-        pass
-
-
-# The sandbox runs as a separate subprocess so OS-level resource limits
-# (CPU time, RAM, file descriptors) actually apply. A thread-level sandbox
-# would be vulnerable to GIL-bound resource starvation and can't isolate
-# segfaults from pandas/numpy's C extensions.
-_SANDBOX_RUNNER = """\
-import sys, json, math, statistics, itertools, collections, functools, \
-       typing, datetime, random
-
-# Only these builtins are exposed — no open(), no exec(), no getattr().
-# This is the second defence layer after the AST check: even if a crafty
-# payload bypasses the static analysis, __builtins__ has been replaced
-# with a whitelist containing only safe, non-escaping functions.
-_SAFE_BUILTINS = {
-    "print": print, "len": len, "range": range,
-    "int": int, "float": float, "str": str, "bool": bool,
-    "list": list, "dict": dict, "tuple": tuple, "set": set,
-    "frozenset": frozenset, "bytes": bytes,
-    "enumerate": enumerate, "zip": zip, "map": map, "filter": filter,
-    "any": any, "all": all, "sum": sum, "min": min, "max": max,
-    "abs": abs, "round": round, "sorted": sorted, "reversed": reversed,
-    "repr": repr, "format": format, "hash": hash, "id": id,
-    "isinstance": isinstance,
-    "True": True, "False": False, "None": None,
-    "Exception": Exception, "ValueError": ValueError,
-    "TypeError": TypeError, "KeyError": KeyError,
-    "IndexError": IndexError, "StopIteration": StopIteration,
-    "NotImplementedError": NotImplementedError,
-}
-
-# User code is exec'd with __builtins__ replaced by the safe whitelist and a
-# limited set of data-science libraries. pandas and numpy are imported inside
-# the runner rather than passed in — that way they run under the subprocess
-# memory limits and don't pollute the main server's heap.
-_GLOBALS = {
-    "__builtins__": _SAFE_BUILTINS,
-    "pd": __import__("pandas"),
-    "np": __import__("numpy"),
-    "math": math, "json": json, "datetime": datetime,
-    "random": random, "statistics": statistics,
-    "itertools": itertools, "collections": collections,
-    "functools": functools, "typing": typing,
-}
-
-code = sys.stdin.read()
-_locals = {}
-try:
-    exec(code, _GLOBALS, _locals)
-    result = _locals.get("result")
-    print("__RESULT__:" + json.dumps({
-        "type": type(result).__name__ if result is not None else "NoneType",
-        "value": repr(result)[:2000],
-    }))
-except Exception:
-    import traceback
-    print("__ERROR__:" + traceback.format_exc(), file=sys.stderr)
-"""
+from shared.sandbox import run_sandbox as _run_sandbox
 
 
 @app.tool()
@@ -1676,71 +1506,7 @@ async def execute_python(code: str, timeout: int = 30) -> dict:
     Returns:
         dict with keys: success, stdout, stderr, result ({type, value})
     """
-    safe, reason = _check_code_safety(code)
-    if not safe:
-        return {"success": False, "stdout": "", "stderr": reason, "result": None}
-
-    # Write runner to tempfile, not stdin pipe — this lets us pass it via
-    # subprocess.run with a file argument, which is more reliable than piping
-    # code through stdin across different Python installations.
-    runner_fd, runner_path = tempfile.mkstemp(suffix=".py", text=True)
-    try:
-        with os.fdopen(runner_fd, "w", encoding="utf-8") as f:
-            f.write(_SANDBOX_RUNNER)
-
-        # preexec_fn runs in the child process BEFORE exec() — only on Unix.
-        # Windows doesn't support setrlimit, so we skip resource limits there.
-        preexec = _sandbox_preexec if sys.platform != "win32" else None
-
-        # -I  : isolated mode (no site-packages, no PYTHONPATH inheritance)
-        # -S  : don't run 'import site' at startup (faster, fewer escape vectors)
-        # Both flags together ensure the subprocess can't accidentally inherit
-        # dangerous modules from the parent's environment.
-        proc = subprocess.run(
-            [sys.executable, "-I", "-S", runner_path],
-            input=code,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            preexec_fn=preexec,
-        )
-    except subprocess.TimeoutExpired:
-        return {
-            "success": False,
-            "stdout": "",
-            "stderr": f"Timed out after {timeout}s",
-            "result": None,
-        }
-    except Exception as exc:
-        return {"success": False, "stdout": "", "stderr": str(exc), "result": None}
-    finally:
-        try:
-            os.unlink(runner_path)
-        except OSError:
-            pass
-
-    result: dict | None = None
-    clean_lines: list[str] = []
-    for line in proc.stdout.splitlines():
-        if line.startswith("__RESULT__:"):
-            try:
-                result = json.loads(line[len("__RESULT__:"):])
-            except json.JSONDecodeError:
-                result = {"raw": line[len("__RESULT__:"):]}
-        else:
-            clean_lines.append(line)
-
-    cleaned_stderr = "\n".join(
-        line[len("__ERROR__:"):] if line.startswith("__ERROR__:") else line
-        for line in proc.stderr.splitlines()
-    )
-
-    return {
-        "success": proc.returncode == 0,
-        "stdout": "\n".join(clean_lines),
-        "stderr": cleaned_stderr,
-        "result": result,
-    }
+    return await _run_sandbox(code, timeout)
 
 
 # ──────────────────────────────────────────────

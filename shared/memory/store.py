@@ -5,13 +5,16 @@ All custom memory tables live alongside ADK's DatabaseSessionService tables
 in the same SQLite database file.
 """
 
+import asyncio
+import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import aiosqlite
 
 DB_PATH = Path(__file__).resolve().parent.parent.parent / "db" / "finsight_memory.db"
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 CREATE_TABLES_SQL = """
 -- Stores structured InvestmentBrief objects. Written by TickerMemory, read by agent prompt builders.
@@ -78,22 +81,53 @@ CREATE TABLE IF NOT EXISTS ingested_filings (
 );
 
 CREATE INDEX IF NOT EXISTS idx_ingested_ticker ON ingested_filings(ticker);
+
+-- Persists A2A task payloads across process restarts. Replaces InMemoryTaskStore.
+CREATE TABLE IF NOT EXISTS a2a_tasks (
+    task_id TEXT PRIMARY KEY,
+    owner TEXT NOT NULL DEFAULT '',
+    payload TEXT NOT NULL,
+    updated_at TIMESTAMP NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_a2a_tasks_owner ON a2a_tasks(owner);
 """
 
 
-async def get_db(path: Path = DB_PATH) -> aiosqlite.Connection:
-    # WAL for concurrent reads, foreign_keys for referential integrity, busy_timeout to avoid SQLITE_BUSY under load.
-    """Open an async SQLite connection with WAL mode and foreign keys.
+_db_conn: aiosqlite.Connection | None = None
+_db_lock = asyncio.Lock()   # serialises writes
+_init_lock = asyncio.Lock() # guards singleton creation
 
-    Automatically runs schema migration on first use.
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    conn = await aiosqlite.connect(str(path))
-    await conn.execute("PRAGMA journal_mode=WAL")
-    await conn.execute("PRAGMA foreign_keys=ON")
-    await conn.execute("PRAGMA busy_timeout=5000")
-    await init_db(conn)
-    return conn
+
+async def get_db(path: Path = DB_PATH) -> aiosqlite.Connection:
+    """Return the long-lived singleton SQLite connection, creating it on first call."""
+    global _db_conn
+    if _db_conn is not None:
+        return _db_conn
+    async with _init_lock:
+        if _db_conn is not None:
+            return _db_conn
+        path.parent.mkdir(parents=True, exist_ok=True)
+        conn = await aiosqlite.connect(str(path))
+        await conn.execute("PRAGMA journal_mode=WAL")
+        await conn.execute("PRAGMA foreign_keys=ON")
+        await conn.execute("PRAGMA busy_timeout=5000")
+        await init_db(conn)
+        _db_conn = conn
+    return _db_conn
+
+
+def write_lock() -> asyncio.Lock:
+    """Return the module-level write lock. Wrap all INSERT/UPDATE/DELETE calls with this."""
+    return _db_lock
+
+
+async def close_db() -> None:
+    """Close the singleton connection. Call at process shutdown."""
+    global _db_conn
+    if _db_conn is not None:
+        await _db_conn.close()
+        _db_conn = None
 
 
 # Version-based migration — schema_version tracks current version, CREATE TABLEs are idempotent, ALTER TABLEs use try/except for additive changes.
@@ -138,29 +172,59 @@ async def init_db(conn: aiosqlite.Connection) -> None:
     except Exception:
         pass
 
+    # Migration v4→v5: creates a2a_tasks table for persistent A2A task storage.
+    try:
+        await conn.execute("""CREATE TABLE IF NOT EXISTS a2a_tasks (
+            task_id TEXT PRIMARY KEY,
+            owner TEXT NOT NULL DEFAULT '',
+            payload TEXT NOT NULL,
+            updated_at TIMESTAMP NOT NULL
+        )""")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_a2a_tasks_owner ON a2a_tasks(owner)")
+        await conn.commit()
+    except Exception:
+        pass
+
+
+async def prune_old_records(days: int | None = None) -> dict[str, int]:
+    """Delete records older than `days` from the three main memory tables.
+
+    Reads MEMORY_RETENTION_DAYS env var if days is not supplied; defaults to 90.
+    Returns a dict of {table: rows_deleted}. Does not VACUUM — run that manually
+    to avoid blocking startup on a large DB rewrite.
+    """
+    if days is None:
+        days = int(os.environ.get("MEMORY_RETENTION_DAYS", "90"))
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    conn = await get_db()
+    async with write_lock():
+        deleted: dict[str, int] = {}
+        for table in ("ticker_briefs", "recommendation_records", "memory_entries"):
+            cur = await conn.execute(
+                f"DELETE FROM {table} WHERE created_at < ?", (cutoff,)  # noqa: S608
+            )
+            deleted[table] = cur.rowcount
+        await conn.commit()
+    return deleted
+
 
 async def is_filing_ingested(edgar_url: str, db_path: Path = DB_PATH) -> bool:
     """Return True if this filing URL has already been ingested."""
     conn = await get_db(db_path)
-    try:
-        cursor = await conn.execute(
-            "SELECT 1 FROM ingested_filings WHERE edgar_url = ? LIMIT 1", (edgar_url,)
-        )
-        return await cursor.fetchone() is not None
-    finally:
-        await conn.close()
+    cursor = await conn.execute(
+        "SELECT 1 FROM ingested_filings WHERE edgar_url = ? LIMIT 1", (edgar_url,)
+    )
+    return await cursor.fetchone() is not None
 
 
 async def mark_filing_ingested(edgar_url: str, ticker: str, db_path: Path = DB_PATH) -> None:
     """Record that a filing has been ingested."""
     from datetime import datetime
     from shared.config import IST
-    conn = await get_db(db_path)
-    try:
+    async with write_lock():
+        conn = await get_db(db_path)
         await conn.execute(
             "INSERT OR IGNORE INTO ingested_filings (edgar_url, ticker, ingested_at) VALUES (?, ?, ?)",
             (edgar_url, ticker.upper(), datetime.now(IST).isoformat()),
         )
         await conn.commit()
-    finally:
-        await conn.close()

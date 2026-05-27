@@ -153,6 +153,8 @@ uv run python -m uvicorn agent_4_crewai.server:app --host 0.0.0.0 --port 8004
 <tr><td><code>AGENT_SEED_URLS</code></td><td><code>http://localhost:8002,http://localhost:8003,http://localhost:8004</code></td><td>A2A agent discovery URLs</td></tr>
 <tr><td><code>A2A_TIMEOUT</code></td><td><code>180.0</code></td><td>Timeout for A2A communication (seconds)</td></tr>
 <tr><td><code>LLM_BASE_URL</code></td><td><code>http://localhost:1234/v1</code></td><td>LM Studio endpoint</td></tr>
+<tr><td><code>LLM_API_KEY</code></td><td><code>lmstudio</code></td><td>API key for LLM (LM Studio dummy; replace for OpenAI/Anthropic)</td></tr>
+<tr><td><code>SEC_USER_AGENT</code></td><td><code>FinSight Research (dev-mode-set-SEC_USER_AGENT)</code></td><td>SEC EDGAR User-Agent header (format: <code>Your Name (your-email@example.com)</code>)</td></tr>
 </table>
 
 <h2>Documentation</h2>

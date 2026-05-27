@@ -58,6 +58,7 @@ class FinSightAgentExecutor(AgentExecutor):
 
     def __init__(self, runner: Runner) -> None:
         self._runner = runner
+        self._task: asyncio.Task | None = None
 
     async def _get_today_cached_text(self, ticker: str, user_id: str) -> str | None:
         """Return today's cached analysis text, or None if not available."""
@@ -99,6 +100,7 @@ class FinSightAgentExecutor(AgentExecutor):
     async def execute(
         self, context: RequestContext, event_queue: EventQueue
     ) -> None:
+        self._task = asyncio.current_task()
         context_id = context.context_id
         user_id = _resolve_user_id(context)
 
@@ -142,42 +144,26 @@ class FinSightAgentExecutor(AgentExecutor):
         # Fail fast on invalid tickers to avoid wasted agent calls downstream
         # ── Input Guardrail: invalid ticker pre-check ────────────────────────
         if ticker_hint != "unknown":
-            _mcp = None
             try:
-                from shared.mcp_client import MCPClient, MCPServerConfig
-                from shared.config import MCP_SERVER_URL
-                _mcp = MCPClient(configs=[MCPServerConfig(name="finsight-mcp", url=MCP_SERVER_URL)])
-                await _mcp.connect_all()
-                val_result = await _mcp.call_tool_by_name("validate_ticker", {"ticker": ticker_hint})
-                import json as _json
-                if hasattr(val_result, "content") and val_result.content:
-                    raw = val_result.content[0].text if hasattr(val_result.content[0], "text") else str(val_result.content[0])
-                    val_data = _json.loads(raw) if isinstance(raw, str) else raw
-                    if isinstance(val_data, dict) and not val_data.get("valid", True):
-                        task = context.current_task
-                        if not task:
-                            task = new_task_from_user_message(context.message)
-                            await event_queue.enqueue_event(task)
-                        updater = TaskUpdater(event_queue, task.id, task.context_id)
-                        await updater.update_status(
-                            TaskState.TASK_STATE_COMPLETED,
-                            new_text_message(
-                                f"Ticker '{ticker_hint}' was not found in SEC EDGAR. "
-                                "Please verify the ticker symbol and try again."
-                            ),
-                            final=True,
-                        )
-                        return
+                from shared.ticker_utils import validate_ticker as _validate_ticker
+                _valid, _, _err = await _validate_ticker(ticker_hint)
+                if not _valid:
+                    task = context.current_task
+                    if not task:
+                        task = new_task_from_user_message(context.message)
+                        await event_queue.enqueue_event(task)
+                    updater = TaskUpdater(event_queue, task.id, task.context_id)
+                    await updater.update_status(
+                        TaskState.TASK_STATE_COMPLETED,
+                        new_text_message(
+                            f"Ticker '{ticker_hint}' was not found in SEC EDGAR. "
+                            "Please verify the ticker symbol and try again."
+                        ),
+                        final=True,
+                    )
+                    return
             except Exception as _e:
                 logger.debug("Ticker pre-check failed (non-fatal): %s", _e)
-            finally:
-                # Clean up temporary MCP connection
-                if _mcp is not None:
-                    try:
-                        await _mcp.disconnect_all()
-                        logger.debug("Temporary MCP connection closed")
-                    except Exception as cleanup_err:
-                        logger.debug("MCP cleanup error (non-critical): %s", cleanup_err)
 
         # Short-circuit identical queries via semantic similarity cache
         # ── Semantic cache check ─────────────────────────────────────────────
@@ -358,7 +344,8 @@ class FinSightAgentExecutor(AgentExecutor):
             )
 
     async def cancel(self, context, event_queue) -> None:
-        raise NotImplementedError("Cancellation is not supported")
+        if self._task and not self._task.done():
+            self._task.cancel()
 
     async def _add_events_to_memory(
         self, user_id: str, context_id: str, events: list
