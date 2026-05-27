@@ -107,39 +107,42 @@ with open(_LOG_FILE, "a") as _f:
 
 
 # Pulls the user query + the synthesized analysis text from session events.
-# Prefers the text co-located with the save_brief function call (the analysis the
-# LLM synthesized just before persisting), since later events (like the LLM's
-# post-tool acknowledgment) only contain a short "Brief saved..." confirmation.
+# Uses the LONGEST LLM text from the current turn (events after the last user
+# message) rather than text co-located with save_brief, because ADK often
+# splits the big analysis and the function call into separate events — the
+# event that actually fires save_brief may only contain a short acknowledgment
+# like "Brief saved." while the full analysis is in the preceding event.
 def _extract_query_and_response(events) -> tuple[str, str]:
-    """Pull first user message and the analysis text from session events."""
+    """Pull the last user query and the longest LLM response from the current turn."""
+    # Find the last user message index so we scope to the current turn only.
+    last_user_idx = -1
+    for i in range(len(events) - 1, -1, -1):
+        if getattr(events[i], "author", None) == "user":
+            last_user_idx = i
+            break
+
     user_query = ""
-    save_brief_text = ""
-    fallback_text = ""
-    for event in events:
+    if last_user_idx >= 0:
+        content = getattr(events[last_user_idx], "content", None)
+        if content and getattr(content, "parts", None):
+            user_query = "".join(
+                p.text for p in content.parts if getattr(p, "text", None)
+            )
+
+    # Take the longest LLM text produced after the last user message.
+    best_text = ""
+    for event in events[last_user_idx + 1:]:
         author = getattr(event, "author", None)
+        if not author or author == "user":
+            continue
         content = getattr(event, "content", None)
         if not content or not getattr(content, "parts", None):
             continue
         text = "".join(p.text for p in content.parts if getattr(p, "text", None))
+        if len(text) > len(best_text):
+            best_text = text
 
-        if not user_query and author == "user" and text:
-            user_query = text
-            continue
-
-        if author and author != "user":
-            has_save_brief = False
-            try:
-                for fn_call in event.get_function_calls():
-                    if fn_call.name == "save_brief":
-                        has_save_brief = True
-                        break
-            except Exception:
-                pass
-            if has_save_brief and text:
-                save_brief_text = text
-            elif text and len(text) > len(fallback_text):
-                fallback_text = text
-    return user_query, save_brief_text or fallback_text
+    return user_query, best_text
 
 
 # Checks whether the turn called save_brief (vs a load_memory-only query that should not be persisted)
