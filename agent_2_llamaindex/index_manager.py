@@ -61,7 +61,9 @@ class FinancialIndexManager:
             filters=[ExactMatchFilter(key="ticker", value=ticker)]
         )
         index = self._get_or_create_index("sec_filings")
-        engine = index.as_query_engine(similarity_top_k=5, filters=filters)
+        engine = index.as_query_engine(
+            similarity_top_k=3, filters=filters, response_mode="compact"
+        )
         today = date.today().isoformat()
         try:
             response = await engine.aquery(
@@ -108,7 +110,9 @@ class FinancialIndexManager:
             filters=[ExactMatchFilter(key="ticker", value=ticker)]
         )
         index = self._get_or_create_index("sec_filings")
-        engine = index.as_query_engine(similarity_top_k=5, filters=filters)
+        engine = index.as_query_engine(
+            similarity_top_k=3, filters=filters, response_mode="compact"
+        )
         today = date.today().isoformat()
         response = await engine.aquery(
             f"Today's date: {today}.\nFor {ticker}: {query_text}\nCite specific filing sections."
@@ -135,7 +139,7 @@ class FinancialIndexManager:
     async def query_earnings(self, ticker: str, query_text: str) -> dict:
         # Earnings collection uses same metadata filter pattern but no cross-ticker validation
         index = self._get_or_create_index("earnings")
-        engine = index.as_query_engine(similarity_top_k=5)
+        engine = index.as_query_engine(similarity_top_k=3, response_mode="compact")
         response = await engine.aquery(
             f"For {ticker}: {query_text}\nReference specific earnings call sections."
         )

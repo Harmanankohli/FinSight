@@ -68,6 +68,33 @@ async def send_message(
     return result
 
 
+def _synthesis_text_from_context(tool_context) -> str:
+    """Return the longest LLM text from the current turn in session.events."""
+    try:
+        events = tool_context.session.events
+    except AttributeError:
+        return ""
+    last_user_idx = -1
+    for i in range(len(events) - 1, -1, -1):
+        if getattr(events[i], "author", None) == "user":
+            last_user_idx = i
+            break
+    best = ""
+    for event in events[last_user_idx + 1:]:
+        author = getattr(event, "author", None)
+        if not author or author == "user":
+            continue
+        content = getattr(event, "content", None)
+        if not content or not getattr(content, "parts", None):
+            continue
+        text = "".join(
+            p.text for p in content.parts if getattr(p, "text", None)
+        )
+        if len(text) > len(best):
+            best = text
+    return best
+
+
 # Dedup: skip if brief for this ticker was already saved today
 async def save_brief(
     ticker: str,
@@ -107,12 +134,15 @@ async def save_brief(
                 f"{existing['recommendation']} (confidence: {existing['confidence']:.2f})"
             )
 
+    synthesis = _synthesis_text_from_context(tool_context) if tool_context else ""
+    response_text = synthesis if len(synthesis) > len(rationale) else rationale
+
     await tm.store_minimal(
         ticker=ticker,
         user_id=user_id,
         session_id=session_id,
         query=f"Saved brief for {ticker}",
-        response_text=rationale,
+        response_text=response_text,
         recommendation=recommendation.upper(),
         confidence=confidence,
     )

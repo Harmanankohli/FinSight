@@ -36,10 +36,10 @@ for _stream in (sys.stdout, sys.stderr):
         pass
 
 # ── LLM (LM Studio / OpenAI-compatible local) ─────────────────────────────
-LLM_MODEL = os.environ.get("LLM_MODEL", "gpt-oss-20b")
+LLM_MODEL = os.environ.get("LLM_MODEL", "qwen/qwen3-30b-a3b-2507")
 LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "http://localhost:1234/v1")
 LLM_API_KEY = os.environ.get("LLM_API_KEY", "lmstudio")
-ADK_MODEL = os.environ.get("ADK_MODEL", "openai/gpt-oss-20b")
+ADK_MODEL = os.environ.get("ADK_MODEL", "openai/qwen/qwen3-30b-a3b-2507")
 
 # ── Embedding ─────────────────────────────────────────────────────────────
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "all-MiniLM-L6-v2")
@@ -54,10 +54,10 @@ AGENT_SEED_URLS = os.environ.get("AGENT_SEED_URLS", "http://localhost:8002,http:
 # ── MCP (Model Context Protocol) ─────────────────────────────────────────
 MCP_TIMEOUT = float(os.environ.get("MCP_TIMEOUT", "30.0"))
 MCP_MAX_RETRIES = int(os.environ.get("MCP_MAX_RETRIES", "3"))
-A2A_TIMEOUT = float(os.environ.get("A2A_TIMEOUT", "180.0"))
-A2A_TIMEOUT_RAG = float(os.environ.get("A2A_TIMEOUT_RAG", "60.0"))
-A2A_TIMEOUT_QUANT = float(os.environ.get("A2A_TIMEOUT_QUANT", "90.0"))
-A2A_TIMEOUT_SENTIMENT = float(os.environ.get("A2A_TIMEOUT_SENTIMENT", "45.0"))
+A2A_TIMEOUT = float(os.environ.get("A2A_TIMEOUT", "680.0"))
+A2A_TIMEOUT_RAG = float(os.environ.get("A2A_TIMEOUT_RAG", "600.0"))
+A2A_TIMEOUT_QUANT = float(os.environ.get("A2A_TIMEOUT_QUANT", "600.0"))
+A2A_TIMEOUT_SENTIMENT = float(os.environ.get("A2A_TIMEOUT_SENTIMENT", "600.0"))
 CHROMA_DIR = os.environ.get("CHROMA_DIR", "./db/chroma_db")
 MCP_SERVER_URL = os.environ.get("MCP_SERVER_URL", "http://localhost:8010/sse")
 MCP_SERVER_PORT = int(os.environ.get("MCP_SERVER_PORT", "8010"))

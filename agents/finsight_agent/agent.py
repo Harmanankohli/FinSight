@@ -65,6 +65,22 @@ async def _memory_cache_callback(callback_context) -> types.Content | None:
     tm = TickerMemory()
     latest = await tm.get_latest(ticker, user_id=None)
     _log(f"latest={latest is not None}")
+
+    # Regex extracted a company-name token (e.g. "VISA") that isn't the
+    # canonical ticker ("V"). Fall back to MCP company-name resolution
+    # so the cached brief is still returned instead of re-running agents.
+    if not latest:
+        try:
+            from shared.ticker_utils import resolve_ticker
+            resolved, _company = await resolve_ticker(user_text)
+            if resolved and resolved.upper() != ticker.upper():
+                _log(f"regex={ticker!r} resolved={resolved!r}")
+                ticker = resolved.upper()
+                latest = await tm.get_latest(ticker, user_id=None)
+                _log(f"latest_after_resolve={latest is not None}")
+        except Exception as e:
+            _log(f"resolve_ticker failed: {e}")
+
     if not latest:
         return None
 
@@ -219,29 +235,9 @@ async def _persist_memory_callback(callback_context) -> None:
         with open(_LOG_FILE, "a") as f:
             f.write(f"  add_events_to_memory failed: {e}\n")
 
-    # Overwrite the brief's short save_brief rationale with the full synthesized
-    # response so the same-day memory cache returns the rich text, not the summary.
-    user_query, response_text = _extract_query_and_response(session.events)
-    if response_text:
-        try:
-            from shared.memory import TickerMemory
-            from shared.ticker_utils import extract_ticker
-
-            ticker = extract_ticker(user_query)
-            if ticker:
-                tm = TickerMemory()
-                latest = await tm.get_latest(ticker, user_id=None)
-                if latest:
-                    updated = await tm.update_response_text(latest["id"], response_text)
-                    logger.info(
-                        "Updated brief response_text for %s (id=%s, len=%d, ok=%s)",
-                        ticker, latest["id"], len(response_text), updated,
-                    )
-        except Exception as e:
-            logger.warning("Failed to update brief response_text: %s", e)
-
     # ── Orchestrator RAGAS eval (ADK Web path) ──────────────────────────
     # ADK Web bypasses FinSightAgentExecutor, so the eval hook lives here.
+    user_query, response_text = _extract_query_and_response(session.events)
     if EVAL_ENABLED and user_query and response_text:
         trace_id = None
         try:
