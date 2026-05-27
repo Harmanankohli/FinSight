@@ -53,7 +53,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <h2>Data &amp; Connections</h2>
 
 <!-- ──────────────────────────────────────────────────────────── -->
-<h3>1. SQLite Connection Pooling</h3>
+<h3><s>1. SQLite Connection Pooling</s> ✅ IMPLEMENTED (v1.25)</h3>
 <p class="effort"><span class="tag tag-data">data</span> Effort: small (~20 lines, 1 file)</p>
 
 <p><strong>Problem</strong>: <code>shared/memory/store.py:84-96</code> — <code>get_db()</code> opens a brand-new <code>aiosqlite</code> connection on every call with no pooling. Every ticker lookup, portfolio read, filing-dedup check, and performance write creates + tears down a connection. SQLite serializes all writes even with WAL mode — under concurrent requests, <code>busy_timeout=5000</code> causes 5-second stalls when writes queue up.</p>
@@ -94,48 +94,11 @@ async with _db_lock:
 <p><strong>Files to touch</strong>: <code>shared/memory/store.py</code>, <code>shared/memory/ticker_memory.py</code>, <code>shared/memory/portfolio_store.py</code>, <code>shared/memory/performance_tracker.py</code>, <code>shared/memory/memory_service.py</code> — remove <code>await conn.close()</code> from all callers.</p>
 
 <!-- ──────────────────────────────────────────────────────────── -->
-<h3>2. MCP Client as Long-Lived Singleton</h3>
-<p class="effort"><span class="tag tag-data">data</span> Effort: medium (~50 lines across 4 files)</p>
-
-<p><strong>Problem</strong>: Every sub-agent creates its own <code>MCPClient</code> instance, calls <code>connect_all()</code>, does work, then calls <code>disconnect_all()</code> — per request. The orchestrator does the same in <code>agent_executor.py:146-179</code> just for ticker validation. MCP connections use SSE (Server-Sent Events), which is long-polling — each connect involves an HTTP upgrade handshake taking ~100-500ms. The connect/disconnect dance happens on every A2A request.</p>
-
-<pre># Each agent executor:
-async def _disconnect(self):
-    if self._mcp is not None:
-        await self._mcp.disconnect_all()
-        self._mcp = None
-
-# Called in finally block of every stream() — per user query.</pre>
-
-<p>Locations:</p>
-<ul>
-<li><code>agent_2_llamaindex/executor.py:109-118</code></li>
-<li><code>agent_3_langgraph/executor.py:32-37</code></li>
-<li><code>agent_4_crewai/executor.py:36-45</code></li>
-<li><code>agent_1_adk/agent_executor.py:146-179</code> (temporary MCP for ticker check)</li>
-</ul>
-
-<p><strong>Proposed change</strong>: Make <code>MCPClient</code> a module-level singleton in <code>shared/mcp_client.py</code>, initialized once at import with lazy connect on first tool call. Remove connect/disconnect from all per-request lifecycles.</p>
-
-<pre># shared/mcp_client.py — proposed singleton:
-_global_client = None
-_client_lock = asyncio.Lock()
-
-async def get_mcp_client() -> MCPClient:
-    global _global_client
-    if _global_client is None:
-        async with _client_lock:
-            if _global_client is None:
-                _global_client = MCPClient(configs=[
-                    MCPServerConfig(name="finsight-mcp", url=MCP_SERVER_URL)
-                ])
-                await _global_client.connect_all()
-    return _global_client
-
-# Remove _ensure_connected/_disconnect from all 4 agent executors.</pre>
+<h3><s>2. MCP Client as Long-Lived Singleton</s> ✅ IMPLEMENTED (v1.25)</h3>
+<p>MCP client is now a process-wide singleton via <code>get_shared_mcp()</code> with double-checked async lock, auto-reconnect, and <code>atexit</code> shutdown hook. All 4 executors use it.</p>
 
 <!-- ──────────────────────────────────────────────────────────── -->
-<h3>3. Rate Limiting</h3>
+<h3><s>3. Rate Limiting</s> ✅ IMPLEMENTED (v1.25)</h3>
 <p class="effort"><span class="tag tag-data">data</span> Effort: small (~40 lines, 1 file)</p>
 
 <p><strong>Problem</strong>: No rate limiting anywhere. 10 concurrent users → 10 simultaneous <code>yfinance</code> API calls + 10 SEC EDGAR requests. SEC EDGAR specifically rate-limits to ~10 requests/second with a hard ban for exceeding it. Yahoo Finance has undocumented rate limits that return HTTP 429 under load.</p>
@@ -188,7 +151,7 @@ async def _fetch_submissions(self, cik, ticker):
 <h2>Security &amp; Configuration</h2>
 
 <!-- ──────────────────────────────────────────────────────────── -->
-<h3>4. SEC EDGAR User-Agent Compliance</h3>
+<h3><s>4. SEC EDGAR User-Agent Compliance</s> ✅ IMPLEMENTED (v1.25)</h3>
 <p class="effort"><span class="tag tag-sec">security</span> Effort: trivial (~1 line)</p>
 
 <p><strong>Problem</strong>: <code>mcp_servers/finsight_server.py:358</code> — the SEC EDGAR client sends:</p>
@@ -217,7 +180,7 @@ _SEC_HEADERS = {"User-Agent": _user_agent}
 </pre>
 
 <!-- ──────────────────────────────────────────────────────────── -->
-<h3>5. Hardcoded <code>api_key="lmstudio"</code></h3>
+<h3><s>5. Hardcoded <code>api_key="lmstudio"</code></s> ✅ IMPLEMENTED (v1.25)</h3>
 <p class="effort"><span class="tag tag-sec">security</span> Effort: trivial (~4 files, 1 line each)</p>
 
 <p><strong>Problem</strong>: <code>api_key="lmstudio"</code> is hardcoded in 4 files. While LM Studio doesn't validate API keys, these strings are:</p>
@@ -292,47 +255,8 @@ def check_embedding_models():
 <h2>Code Quality</h2>
 
 <!-- ──────────────────────────────────────────────────────────── -->
-<h3>7. Duplicated Ticker Validation Logic</h3>
-<p class="effort"><span class="tag tag-code">code</span> Effort: medium (~80 lines removed, ~20 added to shared/)</p>
-
-<p><strong>Problem</strong>: The pattern of <code>_validate_ticker()</code>, <code>_resolve_ticker()</code>, and <code>_disconnect()</code> is copy-pasted across all 4 agent executors with near-identical implementation. Any bug fix or improvement must be applied 4 times.</p>
-
-<p>Locations:</p>
-<ul>
-<li><code>agent_2_llamaindex/executor.py:131-149</code> — <code>_validate_ticker</code>, <code>_resolve_ticker</code>, <code>_disconnect</code></li>
-<li><code>agent_3_langgraph/executor.py:67-83</code> — same 3 methods</li>
-<li><code>agent_4_crewai/executor.py:88-104</code> — same 3 methods</li>
-<li><code>agent_1_adk/agent_executor.py</code> — inline ticker check via temporary MCP (lines 144-179)</li>
-</ul>
-
-<pre># Each agent has this duplicated:
-async def _validate_ticker(self, ticker):
-    if not ticker: return False, "", "..."
-    try:
-        await self._ensure_connected()
-        return await validate_ticker_via_mcp(self._mcp, ticker)
-    except:
-        return True, ticker, ""
-
-async def _resolve_ticker(self, query, exclude_ticker=""):
-    try:
-        await self._ensure_connected()
-        return await resolve_ticker_via_mcp(self._mcp, query, exclude_ticker)
-    except:
-        return "", ""</pre>
-
-<p><strong>Proposed change</strong>: Move to <code>shared/ticker_utils.py</code> which already contains <code>validate_ticker_via_mcp()</code> and <code>resolve_ticker_via_mcp()</code>. Add convenience wrappers that handle MCP client lifecycle internally (connect-once, reuse). All agents call one function.</p>
-
-<pre># shared/ticker_utils.py — proposed additions:
-async def validate_ticker(ticker: str) -> tuple[bool, str, str]:
-    """Validate ticker against SEC. Manages MCP lifecycle internally."""
-    mcp = await _get_shared_mcp()
-    return await validate_ticker_via_mcp(mcp, ticker)
-
-async def resolve_ticker(query: str, exclude: str = "") -> tuple[str, str]:
-    """Resolve company name to ticker. Manages MCP lifecycle internally."""
-    mcp = await _get_shared_mcp()
-    return await resolve_ticker_via_mcp(mcp, query, exclude)</pre>
+<h3><s>7. Duplicated Ticker Validation Logic</s> ✅ IMPLEMENTED (v1.25)</h3>
+<p>Ticker validation and resolution are now shared functions in <code>shared/ticker_utils.py</code>, using the MCP singleton. All 4 executors call the same code.</p>
 
 <!-- ──────────────────────────────────────────────────────────── -->
 <h3>8. Inconsistent Error Propagation</h3>
@@ -374,36 +298,8 @@ class AgentError:
 <p>Scope is medium because it touches every error-return path. Best done as a dedicated refactor pass, not mixed with feature work.</p>
 
 <!-- ──────────────────────────────────────────────────────────── -->
-<h3>9. Import-Time Side Effects (OpenTelemetry)</h3>
-<p class="effort"><span class="tag tag-code">code</span> Effort: small (~5 lines per file)</p>
-
-<p><strong>Problem</strong>: OpenTelemetry instrumentors fire at module import time in multiple files:</p>
-
-<ul>
-<li><code>agent_1_adk/sub_agent_client.py:12</code> — <code>HTTPXClientInstrumentor().instrument()</code></li>
-<li><code>agent_2_llamaindex/server.py:26-29</code> — <code>LlamaIndexInstrumentor().instrument()</code> + <code>StarletteInstrumentor().instrument()</code></li>
-<li><code>agent_3_langgraph/server.py:24-32</code> — <code>StarletteInstrumentor</code> + <code>LangChainInstrumentor</code></li>
-<li><code>agent_4_crewai/server.py:24-26</code> — <code>CrewAIInstrumentor</code> + <code>StarletteInstrumentor</code></li>
-</ul>
-
-<p>This means importing <strong>any</strong> symbol from <code>agent_1_adk.sub_agent_client</code> globally instruments all httpx clients — even in unit tests or scripts that just need the data model. Breaks test isolation and creates non-deterministic failures when import order changes.</p>
-
-<p><strong>Proposed change</strong>: Move instrumentor calls from module level into a lazy <code>init_instrumentation()</code> function called from the server entry point, not at import.</p>
-
-<pre># shared/observability.py — proposed additions:
-def init_instrumentation(agent_type: str) -> None:
-    """One-time initialization of agent-specific OpenTelemetry instrumentors."""
-    if agent_type == "orchestrator":
-        HTTPXClientInstrumentor().instrument()
-    elif agent_type == "rag":
-        LlamaIndexInstrumentor().instrument()
-        StarletteInstrumentor().instrument()
-    ...
-
-# Called from server.py entry point, not at import:
-def main():
-    init_instrumentation("orchestrator")
-    uvicorn.run(...)</pre>
+<h3><s>9. Import-Time Side Effects (OpenTelemetry)</s> ✅ IMPLEMENTED (v1.25)</h3>
+<p>OTel instrumentation is now lazy via <code>init_instrumentation()</code> in <code>shared/observability.py</code>. Imports are deferred; instrumentors fire at startup, not at module import.</p>
 
 <!-- ──────────────────────────────────────────────────────────── -->
 <h3>10. Redundant Memory Persistence Paths</h3>
@@ -435,108 +331,29 @@ def main():
 <h2>Reliability</h2>
 
 <!-- ──────────────────────────────────────────────────────────── -->
-<h3>11. Cancellation</h3>
-<p class="effort"><span class="tag tag-rel">reliability</span> Effort: medium (~60 lines across 2 files)</p>
-
-<p><strong>Problem</strong>: Both agent executors raise <code>NotImplementedError</code> on cancel:</p>
-
-<ul>
-<li><code>shared/generic_executor.py:133-137</code> — <code>GenericAgentExecutor.cancel()</code> raises <code>Exception("cancel not supported")</code></li>
-<li><code>agent_1_adk/agent_executor.py:360-361</code> — <code>FinSightAgentExecutor.cancel()</code> raises <code>NotImplementedError</code></li>
-</ul>
-
-<p>Once a request is submitted, it cannot be aborted. If a sub-agent hangs, the entire pipeline blocks for the full <code>A2A_TIMEOUT</code> (180 seconds). The orchestrator has no per-agent timeout — one slow agent delays the entire response. This is the single biggest reliability gap for production use.</p>
-
-<p><strong>Proposed change</strong>:</p>
-
-<p><strong>11a. <code>GenericAgentExecutor.cancel()</code></strong> — Store the <code>asyncio.Task</code> running the agent's <code>stream()</code> iteration. On cancel, <code>task.cancel()</code> + emit <code>TASK_STATE_CANCELED</code> event.</p>
-
-<pre># shared/generic_executor.py — proposed:
-class GenericAgentExecutor(AgentExecutor):
-    def __init__(self, agent: BaseAgent):
-        self.agent = agent
-        self._task: asyncio.Task | None = None
-
-    async def execute(self, context, event_queue):
-        self._task = asyncio.current_task()
-        ...
-
-    async def cancel(self, context, event_queue):
-        if self._task and not self._task.done():
-            self._task.cancel()
-            await event_queue.enqueue_event(TaskStatusUpdateEvent(
-                task_id=...,
-                context_id=...,
-                status=TaskStatus(state=TaskState.TASK_STATE_CANCELED),
-            ))</pre>
-
-<p><strong>11b. <code>FinSightAgentExecutor.cancel()</code></strong> — ADK's <code>Runner.run_async()</code> doesn't expose a public cancel method. The executor stores the running <code>asyncio.Task</code> and calls <code>cancel()</code> on it, which propagates through the ADK event loop.</p>
-
-<pre># agent_1_adk/agent_executor.py — proposed:
-class FinSightAgentExecutor(AgentExecutor):
-    def __init__(self, runner: Runner):
-        self._runner = runner
-        self._task: asyncio.Task | None = None
-
-    async def execute(self, context, event_queue):
-        self._task = asyncio.current_task()
-        ...
-
-    async def cancel(self, context, event_queue):
-        if self._task and not self._task.done():
-            self._task.cancel()
-            await event_queue.enqueue_event(TaskStatusUpdateEvent(
-                task_id=...,
-                context_id=...,
-                status=TaskStatus(state=TaskState.TASK_STATE_CANCELED),
-            ))</pre>
-
-<p><strong>11c. Per-agent timeout in <code>SubAgentClient</code></strong> — <code>sub_agent_client.py:234</code> wraps the A2A <code>client.send_message()</code> in <code>asyncio.wait_for()</code> with the existing <code>A2A_TIMEOUT</code>, but currently applies the global timeout to all agents combined. Split into per-agent timeout so one slow agent doesn't kill the others.</p>
+<h3><s>11. Cancellation</s> ✅ IMPLEMENTED (v1.25)</h3>
+<p>Both executors now implement <code>cancel()</code> with <code>asyncio.Task.cancel()</code> + <code>TASK_STATE_CANCELED</code>. Per-agent timeouts in <code>SubAgentClient</code> prevent one slow agent from stalling the pipeline.</p>
 
 <!-- ──────────────────────────────────────────────────────────── -->
-<h3>12. InMemoryTaskStore</h3>
-<p class="effort"><span class="tag tag-rel">reliability</span> Effort: small (documentation only — known limitation)</p>
-
-<p><strong>Problem</strong>: Every agent server uses <code>InMemoryTaskStore()</code>:</p>
-
-<ul>
-<li><code>agent_1_adk/main.py:75</code></li>
-<li><code>agent_2_llamaindex/server.py:85</code></li>
-<li><code>agent_3_langgraph/server.py:78</code></li>
-<li><code>agent_4_crewai/server.py:74</code></li>
-</ul>
-
-<p>A2A tasks in-flight during a server restart are lost. The orchestrator receives no error — the sub-agent simply becomes unreachable, and the LLM gets back <code>{"error": "Agent failed: ..."}</code> or a timeout. For a research system this is acceptable; for production it means lost work.</p>
-
-<p><strong>Proposed change</strong>: Replace <code>InMemoryTaskStore</code> with the same <code>DatabaseSessionService</code> pattern used for the orchestrator (SQLite-backed). Each sub-agent gets its own <code>task_store.db</code>. Effort is small per agent but requires adding <code>aiosqlite</code> and a simple tasks table — same pattern as <code>shared/memory/store.py</code>.</p>
-
-<pre># shared/store.py — proposed addition:
-from a2a.server.tasks import TaskStore
-
-class SQLiteTaskStore(TaskStore):
-    """A2A TaskStore backed by SQLite for persistence across restarts."""
-    ...</pre>
-
-<p><strong>Priority</strong>: Low. Document as a known limitation with a note to address before production deployment.</p>
-
-<hr>
+<h3><s>12. InMemoryTaskStore</s> ✅ IMPLEMENTED (v1.25)</h3>
+<p>Tasks now persist across restarts via <code>SQLiteTaskStore</code> in <code>shared/a2a_store.py</code>. All four agent servers use it.</p>
 
 <h2>Effort Summary</h2>
 
 <table>
 <tr><th>#</th><th>Improvement</th><th>Effort</th><th>Files To Touch</th></tr>
 <tr><td>1</td><td>SQLite connection pooling</td><td>small</td><td><code>shared/memory/store.py</code> + 4 memory modules</td></tr>
-<tr><td>2</td><td>MCP client as singleton</td><td>medium</td><td><code>shared/mcp_client.py</code> + 4 agent executors</td></tr>
+<tr><td>2</td><td>MCP client as singleton → ✅ singleton+reconnect</td><td>medium</td><td><code>shared/mcp_client.py</code> + 4 agent executors</td></tr>
 <tr><td>3</td><td>Rate limiting</td><td>small</td><td><code>shared/rate_limiter.py</code> (new) + <code>finsight_server.py</code></td></tr>
 <tr><td>4</td><td>SEC EDGAR User-Agent</td><td>trivial</td><td><code>mcp_servers/finsight_server.py</code></td></tr>
 <tr><td>5</td><td>Hardcoded api_key</td><td>trivial</td><td><code>shared/config.py</code> + 4 agent files</td></tr>
 <tr><td>6</td><td>HF_HUB_OFFLINE check</td><td>small</td><td><code>shared/config.py</code></td></tr>
-<tr><td>7</td><td>Deduplicate ticker logic</td><td>medium</td><td><code>shared/ticker_utils.py</code> + 4 agent executors</td></tr>
+<tr><td>7</td><td>Deduplicate ticker logic → ✅ shared functions</td><td>medium</td><td><code>shared/ticker_utils.py</code> + 4 agent executors</td></tr>
 <tr><td>8</td><td>Error propagation</td><td>medium</td><td><code>shared/models.py</code> + 5+ files</td></tr>
-<tr><td>9</td><td>Import-time side effects</td><td>small</td><td><code>shared/observability.py</code> + 4 server entry points</td></tr>
+<tr><td>9</td><td>Import-time side effects → ✅ lazy OTel</td><td>small</td><td><code>shared/observability.py</code> + 4 server entry points</td></tr>
 <tr><td>10</td><td>Redundant memory paths</td><td>medium</td><td><code>agent_1_adk/agent_executor.py</code> + <code>agents/finsight_agent/agent.py</code></td></tr>
-<tr><td>11</td><td>Cancellation</td><td>medium</td><td><code>shared/generic_executor.py</code> + <code>agent_1_adk/agent_executor.py</code> + <code>sub_agent_client.py</code></td></tr>
-<tr><td>12</td><td>InMemoryTaskStore</td><td>small</td><td><code>shared/store.py</code> (new) + 4 server entry points</td></tr>
+<tr><td>11</td><td>Cancellation → ✅ cancel+timeouts</td><td>medium</td><td><code>shared/generic_executor.py</code> + <code>agent_1_adk/agent_executor.py</code> + <code>sub_agent_client.py</code></td></tr>
+<tr><td>12</td><td>InMemoryTaskStore → ✅ SQLiteTaskStore</td><td>small</td><td><code>shared/a2a_store.py</code> + 4 server entry points</td></tr>
 </table>
 
 <hr>

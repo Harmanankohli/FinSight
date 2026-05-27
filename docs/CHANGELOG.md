@@ -1,5 +1,148 @@
 # Changelog
 
+## v1.27 — Security Sandbox Hardening + 60 AST-Gate Tests
+
+### Sandbox Extraction & Hardening
+
+- **`shared/sandbox.py` (new, 263 lines)**: Extracted the three-layer Python sandbox from `mcp_servers/finsight_server.py` into a dedicated shared module. `run_sandbox(code, timeout)` provides the same signature that `execute_python` called inline before.
+- **Expanded import blocklist**: Added 20 new restricted modules: `shlex`, `concurrent`, `ssl`, `http`, `urllib`, `requests`, `ftplib`, `poplib`, `smtplib`, `telnetlib`, `xmlrpc`, `socketserver`, `pathlib`, `io`, `glob`, `fnmatch`, `tempfile`, `zipfile`, `tarfile`, `gzip`, `bz2`, `lzma`, `base64`, `codecs` — covering filesystem access, network protocols, and encoding-based escape vectors.
+- **Windows-safe `resource` import**: Moved `import resource` inside `_sandbox_preexec()` (guarded by try/except) instead of a module-level `sys.platform` guard — avoids import errors on Windows while preserving Unix resource limits.
+- **`mcp_servers/finsight_server.py`**: 230 lines removed — `_RESTRICTED_IMPORTS`, `_RESTRICTED_CALLS`, `_RESTRICTED_ATTRS`, `_check_code_safety()`, `_sandbox_preexec()`, `_SANDBOX_RUNNER`, and `execute_python` body replaced with `from shared.sandbox import run_sandbox as _run_sandbox` + a single delegation call.
+
+### Security Test Suite
+
+- **`tests/security/test_sandbox.py`** (~60 test cases): 45+ parametrized negative cases covering every restricted module, builtin, dunder attribute, getattr-with-dunder, and subscript-with-dunder pattern. 13 positive cases verifying safe code (math, json, list comprehensions, `isinstance`, `str`) is not blocked. Integration tests (marked `integration`) spawn the actual subprocess to verify runtime sandbox enforcement, timeout handling, and runtime import blocking.
+
+## v1.26 — Pragmatic Test Suite (88 Unit Tests)
+
+### New Test Suite
+
+- **88 unit tests added** across 10 test files, covering all core primitives — models, quant graph nodes, ticker utilities, TTL cache, rate limiter, trace context, memory store, and ticker memory.
+- **`tests/conftest.py` (new)**: Shared fixtures: `_clean_env` (autouse) monkeypatches `LLM_API_KEY`, `LLM_BASE_URL`, `LANGFUSE_*` for test isolation. `memory_db` fixture provides per-test isolated SQLite database by resetting the module-level connection singleton.
+- **`tests/unit/test_models.py`** (10 tests): `QueryContext`, `RAGInsights`, `QuantMetrics`, `SentimentIntelligence`, `InvestmentBrief` — construction, serialization round-trip (`model_dump` → `model_validate`), optional fields, multiple recommendations.
+- **`tests/unit/test_quant_graph_nodes.py`** (18 tests): All three LangGraph nodes tested directly with synthetic log-normal price data from `numpy.random.default_rng`. Covers Sharpe/VaR/max-drawdown correctness, high/low volatility branching, stress-test CVaR ≤ VaR invariant, empty-price edge cases, BUY/HOLD/SELL signal logic.
+- **`tests/unit/test_ticker_utils.py`** (11 tests): Parametrized `is_valid_ticker_format`, `extract_ticker` with stop-word blocklist, `extract_holdings` with comma/and/colon syntax, `clean_query_for_resolution`.
+- **`tests/unit/test_ttl_cache.py`** (9 tests): Cache miss/hit/expiry, single-flight dedup (N concurrent callers share one fetch), LRU eviction at `max_entries`, exception propagation.
+- **`tests/unit/test_rate_limiter.py`** (4 tests): Burst consumption speed, rate enforcement after burst, token refill over time, burst=1 bucket timing.
+- **`tests/unit/test_trace_context.py`** (8 tests): Inject/extract round-trip, missing prefix returns None, separator in task text, double injection, `current_trace_id` contextvar.
+- **`tests/unit/memory/test_memory_store.py`** (5 tests): Table creation, idempotent `init_db`, schema version, WAL journal mode, required indexes.
+- **`tests/unit/memory/test_ticker_memory.py`** (7 tests): Store/get_latest, case-insensitive ticker lookup, history retrieval, flip detection (`has_changed`), minimal store path.
+- **`tests/integration/test_mcp_server_smoke.py`** (4 tests, marked `integration` + `external`): HTTP reachability of MCP server (port 8010) and agent card endpoints (ports 8002–8004).
+
+### Configuration
+
+- **`pyproject.toml`**: Added `asyncio_default_fixture_loop_scope = "function"`, custom pytest markers `integration` and `external`.
+
+## v1.25 — Env Var Hardening & SQLite Connection Singleton
+
+### Configuration: Env Vars for Secrets
+
+- **`SEC_USER_AGENT` env var** (`shared/config.py`): Replaces hardcoded `"FinSight Research (contact@finsight.com)"` in `_SEC_HEADERS`. Defaults to a `"dev-mode-set-SEC_USER_AGENT"` placeholder with a startup warning when unset. Set `SEC_USER_AGENT=Your Name (your-email@example.com)` in `.env` for production.
+- **`LLM_API_KEY` env var** (`shared/config.py`): Replaces `api_key="lmstudio"` hardcoded in 3 agent files. Defaults to `"lmstudio"` for backward compatibility with LM Studio. Enables switching to OpenAI/Anthropic by changing `.env` only.
+- **Agent files updated**: `agent_2_llamaindex/index_manager.py`, `agent_3_langgraph/nodes.py`, `agent_4_crewai/crew.py` — import and use `LLM_API_KEY` from config.
+- **MCP server updated** (`mcp_servers/finsight_server.py`): Imports `SEC_USER_AGENT` from config for the SEC EDGAR `_SEC_HEADERS`.
+- **`.env.example` updated**: Documents both `LLM_API_KEY` and `SEC_USER_AGENT` with usage comments.
+
+### SQLite Long-Lived Connection Singleton
+
+- **Singleton connection** (`shared/memory/store.py`): `get_db()` now returns a module-level `_db_conn` singleton instead of opening a new connection per call. Double-checked locking via `_init_lock` prevents race conditions on first access.
+- **Write lock** (`shared/memory/store.py`): New `write_lock()` function returns a module-level `asyncio.Lock`. All writers (`store_brief`, `store_minimal`, `update_response_text`, `upsert_from_context`, `update_holdings`, `record_recommendation`, `evaluate_all` updates, `add_session_to_memory`, `add_events_to_memory`, `mark_filing_ingested`) wrapped with `async with write_lock()`.
+- **Reader cleanup**: All `try/finally + await conn.close()` removed from read paths — readers use the shared connection directly without close.
+- **WAL + busy_timeout**: Set once at singleton init (no longer on every `get_db()` call).
+- **`close_db()` added**: New function for process-shutdown cleanup.
+- **Files changed**: `shared/memory/store.py`, `shared/memory/ticker_memory.py`, `shared/memory/portfolio_store.py`, `shared/memory/performance_tracker.py`, `shared/memory/memory_service.py` — 284 insertions, 304 deletions across 5 files.
+
+### Token-Bucket Rate Limiter
+
+- **`shared/rate_limiter.py` (new)**: `TokenBucket` class using `asyncio.Lock` + `time.monotonic()` with configurable rate and burst. Loop-based acquire waits exactly the deficit time instead of recursing.
+- **SEC limiter** (`_sec_limiter`): 8 req/s, burst 10 — applied to 5 HTTP call sites in `_EdgarClient` (ticker map fetch, submissions, filing content, full-text search, EDGAR filing fetch). SEC's published limit is 10 req/s; 8/s leaves headroom.
+- **yfinance limiter** (`_yfinance_limiter`): 4 req/s, burst 8 — applied to `get_prices`, `get_financials`, `get_options_chain`, `get_earnings_calendar`. Yahoo has no published cap; conservative rate avoids 429s.
+- **RSS limiter** (`_rss_limiter`): 2 req/s, burst 4 — applied to `_fetch_rss` and `_fetch_yf_news` Yahoo fallback. News feeds are the least latency-sensitive.
+
+### TTL Cache with Single-Flight Dedup
+
+- **`shared/ttl_cache.py` (new)**: Async `TTLCache` class replacing the old threaded `_TTLCache`. Supports `get_or_fetch()` with single-flight dedup — N concurrent callers for the same key share one in-flight fetch, each receiving the result when done. Also exposes `get()`/`set()` for tools needing conditional caching.
+- **Single-flight dedup**: Double-checked locking pattern — after acquiring the asyncio lock, re-checks cache to avoid redundant fetches on race wins. Pending fetches tracked in `_inflight` dict of `asyncio.Future` objects, created via `loop.create_future()`.
+- **TTL updates**: Prices 5 min → 1 min (intraday prices change every trade), financials 24 h → 1 hr (quarterly data doesn't change intraday, but 24h was unnecessarily long; 1h matches typical session refreshes), news 15 min → 5 min (fresher headlines without hammering RSS).
+- **Extracted uncached helpers**: `_get_prices_uncached` and `_get_financials_uncached` — the actual yfinance logic separated from the tool wrapper, making the cache layering explicit.
+- **Filing/submission caches**: Keep their existing behavior (`_cache_filing` permanent LRU-200, `_cache_submissions` 6h) — now backed by `TTLCache` instead of `_TTLCache`.
+- **Files changed**: `shared/ttl_cache.py` (new, 74 lines), `mcp_servers/finsight_server.py` (119 insertions, 78 deletions).
+
+### Structured JSON Logging
+
+- **`JsonFormatter` added** (`shared/logging_config.py`): New formatter for the file handler that writes one JSON object per line with keys: `ts`, `level`, `service`, `logger`, `message`, plus optional `trace_id`, `session_id`, `ticker`, `latency_ms` when set on the LogRecord. Exception tracebacks serialized as `exc` key.
+- **StreamHandler kept plaintext**: Terminal output remains readable — only the file handler uses JSON. Prevents the "wall of JSON" problem in interactive terminals.
+- **No code changes needed in callers**: `setup_file_logging(service_name)` signature unchanged. Existing callers (`setup_file_logging("orchestrator")`, etc.) automatically get JSON file logs after this change.
+
+### Per-Service Log Levels via Env
+
+- **Env-based log level resolution** (`shared/logging_config.py`): `setup_file_logging(service_name, level=None)` now reads `LOG_LEVEL_<SERVICE>` (e.g. `LOG_LEVEL_MCP`), falls back to `LOG_LEVEL`, then defaults to `INFO`. Callers can still pass `level=` explicitly to override env.
+- **`.env.example` updated**: Documents `LOG_LEVEL` for global default and per-service override examples (`LOG_LEVEL_ORCHESTRATOR=DEBUG`, `LOG_LEVEL_QUANT=WARNING`).
+
+### Log Sanitization Filter
+
+- **`SanitizeFilter` added** (`shared/logging_config.py`): `logging.Filter` subclass with compiled regex patterns that scrub `api_key=` values, `sk-`/`pk-` tokens, `Bearer` authorization headers, and `LANGFUSE_PUBLIC/SECRET_KEY` values before the log line reaches any handler.
+- **Attached to both handlers**: The filter is added to both the StreamHandler (terminal) and RotatingFileHandler (file), so secrets are never written to disk or displayed in console output.
+- **Args scrubbing**: The `filter()` method also iterates `record.args` to catch formatted strings where secret values appear in `%s` placeholders (`"GET /api?key=%s" % secret`).
+
+### SQLiteTaskStore Replacing InMemoryTaskStore
+
+- **`shared/a2a_store.py` (new, 102 lines)**: `SQLiteTaskStore` implementing the A2A `TaskStore` protocol. Wraps `InMemoryTaskStore` for fast in-process get/list/delete and adds SQLite write-through via the `a2a_tasks` table. On cold start, all rows from SQLite are loaded into the in-memory store once — tasks survive process restarts.
+- **Double-checked lazy load**: `_ensure_loaded()` uses an `asyncio.Lock` with double-checked locking to populate the in-memory store from SQLite exactly once on first access.
+- **4 entry points updated**: `agent_1_adk/main.py`, `agent_2_llamaindex/server.py`, `agent_3_langgraph/server.py`, `agent_4_crewai/server.py` — `InMemoryTaskStore()` → `SQLiteTaskStore()`.
+- **Schema migration**: `shared/memory/store.py` adds `a2a_tasks` table to `CREATE_TABLES_SQL`, bumps `SCHEMA_VERSION` to 3, and includes a migration block for existing databases.
+
+### Memory Pruning / Retention Policy
+
+- **`prune_old_records()` added** (`shared/memory/store.py`): Deletes rows older than `MEMORY_RETENTION_DAYS` (default 90) from `ticker_briefs`, `recommendation_records`, and `memory_entries`. Returns a dict of `{table: rows_deleted}`. Uses the existing `write_lock()` for concurrency safety.
+- **Startup pruning** (`agent_1_adk/main.py`): Called on orchestrator startup — best-effort, wrapped in `try/except`. Logs deleted counts if any. Deliberately does not `VACUUM` to avoid blocking startup on large DB rewrites.
+- **`.env.example` updated**: Documents `MEMORY_RETENTION_DAYS=90`.
+
+### MCP Client Singleton with Auto-Reconnect
+
+- **`get_shared_mcp()` added** (`shared/mcp_client.py`): Process-wide `MCPClient` singleton with double-checked async lock. Connects on first call; returns cached client on subsequent calls. Replaces per-request connect/disconnect in all executors, eliminating ~100–500ms SSE handshake overhead per request.
+- **Auto-reconnect in `call_tool_by_name`**: On `ConnectionError`/`EOFError`/`asyncio.IncompleteReadError`, marks `_connected = False`, reconnects once, and retries the call. After 2 failures, raises. Prevents permanent MCP death on transient network blips.
+- **`_connected` flag added**: Tracks connection state on `MCPClient`. Set `True` after `connect_all()`, `False` on reconnect attempts and in `disconnect_all()`.
+- **`atexit` shutdown hook** (`_shutdown_mcp_sync`): Best-effort synchronous disconnect at process exit via a temporary event loop.
+- **4 executors simplified**: `agent_1_adk/agent_executor.py`, `agent_2_llamaindex/executor.py`, `agent_3_langgraph/executor.py`, `agent_4_crewai/executor.py` — removed `_ensure_connected()`, `_disconnect()`, `finally` blocks in `stream()`, and temporary MCP creation. Now call `get_shared_mcp()` directly. Net: −131 lines across 4 files.
+
+### Lazy OpenTelemetry Instrumentation
+
+- **`init_instrumentation()` added** (`shared/observability.py`): New function that wraps all `*Instrumentor().instrument()` calls — each server calls it once at startup. A `_instrumented` set prevents double-instrumentation even if `init_instrumentation()` is called multiple times in the same process.
+- **Deferred imports**: All OTel/OpenInference imports moved inside `init_instrumentation()` — importing a server module in pytest no longer triggers OTel side-effects (OTLP exporter threads, span processor startup).
+- **5 entry points simplified**: `agent_1_adk/main.py`, `agent_1_adk/sub_agent_client.py`, `agent_2_llamaindex/server.py`, `agent_3_langgraph/server.py`, `agent_4_crewai/server.py`, `agents/finsight_agent/__init__.py` — replaced module-level `*Instrumentor().instrument()` with `init_instrumentation("<agent_type>")`.
+
+### Correlation-ID Propagation via ContextVar
+
+- **`current_trace_id` / `current_session_id` ContextVars** (`shared/trace_context.py`): New `contextvars.ContextVar` instances carrying the active trace and session IDs across async boundaries without explicit parameter passing.
+- **`extract_trace_ids()` now sets ContextVar**: After parsing the trace prefix from an inbound task, automatically sets `current_trace_id` — any subsequent log line carries the ID without manual `extra=` passing.
+- **`JsonFormatter` fallback to ContextVar**: The formatter checks `record.trace_id` first, then falls back to `current_trace_id.get()`. Same for `session_id`. This means log lines emitted by MCP tool handlers automatically include the caller's trace_id if one has been set.
+- **`generic_executor` sets both ContextVars**: Before executing an inbound A2A task, extracts trace_id from the query and sets `current_trace_id` + `current_session_id` from the task's `context_id`.
+- **`sub_agent_client` sets ContextVar**: Before injecting trace context into an outbound task, sets `current_trace_id` from the Langfuse current trace.
+- **MCP tool log lines**: Hot-path tools (`get_prices`, `get_financials`, `get_company_filings`, `get_news_sentiment`) now emit `logger.info("Tool called", extra={"tool": "...", "ticker": "..."})` — the formatter automatically adds the active `trace_id` from ContextVar, so `grep <trace_id> logs/*.log` returns the full cross-service flow.
+
+### Deduplicate Ticker Validation across Executors
+
+- **`validate_ticker()` and `resolve_ticker()` added** (`shared/ticker_utils.py`): Module-level wrappers that use `get_shared_mcp()` singleton internally. Replace the copy-pasted `_validate_ticker`/`_resolve_ticker` private methods across all 4 executors.
+- **~80 lines removed from executors**: `agent_1_adk/agent_executor.py`, `agent_2_llamaindex/executor.py`, `agent_3_langgraph/executor.py`, `agent_4_crewai/executor.py` — all private `_validate_ticker` and `_resolve_ticker` methods deleted. Each executor now calls the shared functions.
+- **ADK executor inline MCP block replaced**: The input guardrail ticker pre-check in `agent_1_adk/agent_executor.py` (which previously created a temporary MCP client) now uses `validate_ticker()` from the shared singleton, eliminating the last ad-hoc MCP lifecycle in the codebase.
+
+### Unified `@logged` Timing Decorator
+
+- **`logged()` decorator added** (`shared/logging_config.py`): Emits `Enter` / `Exit` / `Fail` log lines with `latency_ms` as a structured JSON field. Uses `time.monotonic()` for precision and `fn.__qualname__` for consistent function identification.
+- **Applied to sub-agent `_build_response()`**: `agent_2_llamaindex/executor.py`, `agent_3_langgraph/executor.py`, `agent_4_crewai/executor.py` — all three async generators wrapped. (Only `_build_response` is decorated, not `stream()`, because decorators on async generators would break the `yield` protocol.)
+- **Applied to `SubAgentClient.send_message()`**: Captures latency for each outbound A2A call from the orchestrator to a sub-agent.
+- **Applied to 4 MCP tool handlers** (`finsight_server.py`): `get_prices`, `get_financials`, `get_company_filings`, `get_news_sentiment` — every hot-path MCP call emits structured latency lines.
+- **Value**: `grep "Exit" logs/*.log` shows per-call latencies across every service layer — orchestrator, sub-agents, MCP — in a single command.
+
+### Cancellation Support + Per-Agent Timeouts
+
+- **`GenericAgentExecutor.cancel()` implemented** (`shared/generic_executor.py`): Stores `asyncio.current_task()` on `execute()`, catches `asyncio.CancelledError` to emit `TASK_STATE_CANCELED` before re-raising. `cancel()` now calls `self._task.cancel()` instead of raising `NotImplementedError`.
+- **`FinSightAgentExecutor.cancel()` implemented** (`agent_1_adk/agent_executor.py`): Same pattern — stores task, cancels on request. Replaces `NotImplementedError`.
+- **Per-agent timeouts** (`agent_1_adk/sub_agent_client.py`): `send_message()` wraps the streaming loop in `asyncio.wait_for()` with per-agent timeouts (RAG=60s, Quant=90s, Sentiment=45s) derived from agent name; falls back to global `A2A_TIMEOUT` (180s). `TimeoutError` returns a clean `{"error": "agent_timeout", "agent": ..., "timeout": ...}` JSON payload instead of crashing.
+- **`shared/config.py`**: Added `A2A_TIMEOUT_RAG`, `A2A_TIMEOUT_QUANT`, `A2A_TIMEOUT_SENTIMENT` env vars with sensible defaults.
+- **Eval-trace write moved to `finally`**: In `send_message()`, the eval-trace write block moved from `try` body to `finally` — ensures traces are captured even on timeout.
+
 ## v1.24 — Before-Agent Cache Callback, IST Timezone & Stale Test Cleanup
 
 ### Before-Agent Cache Callback (`_memory_cache_callback`)

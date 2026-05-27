@@ -8,9 +8,7 @@ prior assessment are listed at the bottom with a "skip" note and rationale —
 they are not detailed here. Re-include them later only if usage patterns
 justify the cost.
 
-**Test status**: all prior tests were deleted by the user. The test plan below
-starts from a clean slate and is sized for this project (not the 280-test
-production-grade plan in `TEST_PLAN.md`).
+**Test status**: ~148 tests now covering core primitives + security sandbox. See `docs/TESTS.md`.
 
 ---
 
@@ -22,31 +20,31 @@ production-grade plan in `TEST_PLAN.md`).
 
 **Tier 1 — Small (~1–2 hrs each)**
 3. [SQLite long-lived connection + write lock](#3-sqlite-long-lived-connection--write-lock)
-4. [Token-bucket rate limiter (SEC + yfinance + RSS)](#4-token-bucket-rate-limiter)
-5. [yfinance / news TTL cache](#5-yfinance--news-ttl-cache)
-6. [Structured JSON logging](#6-structured-json-logging)
-7. [Per-service log levels via env](#7-per-service-log-levels-via-env)
-8. [Log sanitization filter](#8-log-sanitization-filter)
-9. [`SQLiteTaskStore` replacing `InMemoryTaskStore`](#9-sqlitetaskstore)
-10. [Memory pruning / retention policy](#10-memory-pruning--retention-policy)
+~~4. [Token-bucket rate limiter (SEC + yfinance + RSS)](#4-token-bucket-rate-limiter)~~ ✅ DONE (v1.25)
+~~5. [yfinance / news TTL cache](#5-yfinance--news-ttl-cache)~~ ✅ DONE (v1.25)
+~~6. [Structured JSON logging](#6-structured-json-logging)~~ ✅ DONE (v1.25)
+~~7. [Per-service log levels via env](#7-per-service-log-levels-via-env)~~ ✅ DONE (v1.25)
+~~8. [Log sanitization filter](#8-log-sanitization-filter)~~ ✅ DONE (v1.25)
+~~9. [`SQLiteTaskStore` replacing `InMemoryTaskStore`](#9-sqlitetaskstore)~~ ✅ DONE (v1.25)
+~~10. [Memory pruning / retention policy](#10-memory-pruning--retention-policy)~~ ✅ DONE (v1.25)
 
 **Tier 2 — Medium (~½ day each)**
-11. [MCP client singleton with auto-reconnect](#11-mcp-client-singleton-with-auto-reconnect)
-12. [Lazy OpenTelemetry instrumentation](#12-lazy-opentelemetry-instrumentation)
-13. [Correlation-ID propagation via ContextVar](#13-correlation-id-propagation)
-14. [Deduplicate ticker validation across executors](#14-deduplicate-ticker-validation)
-15. [Unified `@logged` timing decorator](#15-unified-logged-timing-decorator)
-16. [Cancellation support + per-agent timeout](#16-cancellation-support)
+~~11. [MCP client singleton with auto-reconnect](#11-mcp-client-singleton-with-auto-reconnect)~~ ✅ DONE (v1.25)
+~~12. [Lazy OpenTelemetry instrumentation](#12-lazy-opentelemetry-instrumentation)~~ ✅ DONE (v1.25)
+~~13. [Correlation-ID propagation via ContextVar](#13-correlation-id-propagation)~~ ✅ DONE (v1.25)
+~~14. [Deduplicate ticker validation across executors](#14-deduplicate-ticker-validation)~~ ✅ DONE (v1.25)
+~~15. [Unified `@logged` timing decorator](#15-unified-logged-timing-decorator)~~ ✅ DONE (v1.25)
+~~16. [Cancellation support + per-agent timeout](#16-cancellation-support)~~ ✅ DONE (v1.25)
 
 **Tier 3 — Larger**
-17. [Test suite — pragmatic starter set](#17-test-suite--pragmatic-starter-set)
-18. [Security sandbox hardening + tests](#18-security-sandbox-hardening--tests)
+~~17. [Test suite — pragmatic starter set](#17-test-suite--pragmatic-starter-set)~~ ✅ DONE (v1.26)
+~~18. [Security sandbox hardening + tests](#18-security-sandbox-hardening--tests)~~ ✅ DONE (v1.27)
 
 **Skipped (with rationale)** — see [bottom of file](#skipped-with-rationale).
 
 ---
 
-## 1. SEC EDGAR User-Agent env var
+## ~~1. SEC EDGAR User-Agent env var~~ ✅ DONE (v1.25)
 
 **Goal**: Stop SEC blocking the system due to non-compliant `contact@finsight.com`
 placeholder. SEC enforces real contact emails in User-Agent headers.
@@ -91,7 +89,7 @@ placeholder. SEC enforces real contact emails in User-Agent headers.
 
 ---
 
-## 2. Hardcoded `api_key="lmstudio"` → env var
+## ~~2. Hardcoded `api_key="lmstudio"` → env var~~ ✅ DONE (v1.25)
 
 **Goal**: Single source of truth for LLM API key. Also unblocks pointing the
 system at OpenAI/Anthropic without code edits (it's not really a "secret leak"
@@ -127,7 +125,7 @@ real).
 
 ---
 
-## 3. SQLite long-lived connection + write lock
+## ~~3. SQLite long-lived connection + write lock~~ ✅ DONE (v1.25)
 
 **Goal**: Eliminate the open-close-per-call pattern in `shared/memory/`.
 Reduces lock contention; small but clean win.
@@ -211,7 +209,7 @@ Reduces lock contention; small but clean win.
 
 ---
 
-## 4. Token-bucket rate limiter
+## ~~4. Token-bucket rate limiter~~ ✅ DONE (v1.25)
 
 **Goal**: Stop SEC IP bans and Yahoo 429s by enforcing a soft request ceiling.
 
@@ -286,7 +284,7 @@ Reduces lock contention; small but clean win.
 
 ---
 
-## 5. yfinance / news TTL cache
+## ~~5. yfinance / news TTL cache~~ ✅ DONE (v1.25)
 
 **Goal**: Same ticker requested 3× in one orchestrator turn → 1 actual network
 call. Biggest perf/effort ratio in the whole plan.
@@ -379,7 +377,7 @@ call. Biggest perf/effort ratio in the whole plan.
 
 ---
 
-## 6. Structured JSON logging
+## ~~6. Structured JSON logging~~ ✅ DONE (v1.25)
 
 **Goal**: Make logs ingestible by Loki/CloudWatch/Datadog without custom
 parsers. Foundation for #13 (correlation IDs).
@@ -432,7 +430,7 @@ Should print formatted JSON, not error.
 
 ---
 
-## 7. Per-service log levels via env
+## ~~7. Per-service log levels via env~~ ✅ DONE (v1.25)
 
 **Goal**: Crank up MCP server debugging without flooding orchestrator logs.
 
@@ -469,7 +467,7 @@ Should print formatted JSON, not error.
 
 ---
 
-## 8. Log sanitization filter
+## ~~8. Log sanitization filter~~ ✅ DONE (v1.25)
 
 **Goal**: Defense in depth — scrub known secret patterns before write.
 
@@ -520,7 +518,7 @@ Should print formatted JSON, not error.
 
 ---
 
-## 9. `SQLiteTaskStore`
+## ~~9. `SQLiteTaskStore`~~ ✅ DONE (v1.25)
 
 **Goal**: Sub-agent A2A tasks survive restart instead of vanishing.
 
@@ -560,7 +558,7 @@ table sticks around harmlessly.
 
 ---
 
-## 10. Memory pruning / retention policy
+## ~~10. Memory pruning / retention policy~~ ✅ DONE (v1.25)
 
 **Goal**: `ticker_briefs` and `recommendation_records` grow unbounded.
 Cap retention so the DB doesn't bloat over months.
@@ -605,7 +603,7 @@ Cap retention so the DB doesn't bloat over months.
 
 ---
 
-## 11. MCP client singleton with auto-reconnect
+## ~~11. MCP client singleton with auto-reconnect~~ ✅ DONE (v1.25)
 
 **Goal**: Eliminate per-request SSE connect/disconnect (~100–500ms) AND avoid
 the "fragile singleton" failure mode (connection drops kill the whole agent
@@ -671,7 +669,7 @@ singleton helpers.
 
 ---
 
-## 12. Lazy OpenTelemetry instrumentation
+## ~~12. Lazy OpenTelemetry instrumentation~~ ✅ DONE (v1.25)
 
 **Goal**: Stop fire-on-import behaviour so `pytest` can load modules without
 hitting OTel side effects. Prerequisite for #17.
@@ -739,7 +737,7 @@ hitting OTel side effects. Prerequisite for #17.
 
 ---
 
-## 13. Correlation-ID propagation
+## ~~13. Correlation-ID propagation~~ ✅ DONE (v1.25)
 
 **Goal**: One `grep <trace_id> logs/*.log` returns the entire cross-service flow.
 
@@ -793,7 +791,7 @@ formatter; logs revert to non-correlated.
 
 ---
 
-## 14. Deduplicate ticker validation
+## ~~14. Deduplicate ticker validation~~ ✅ DONE (v1.25)
 
 **Goal**: Remove ~80 lines of copy-paste from 4 executors. Fix-once-runs-everywhere.
 
@@ -833,7 +831,7 @@ formatter; logs revert to non-correlated.
 
 ---
 
-## 15. Unified `@logged` timing decorator
+## ~~15. Unified `@logged` timing decorator~~ ✅ DONE (v1.25)
 
 **Goal**: Consistent enter/exit/latency lines on hot paths without manual
 `time.monotonic()` plumbing.
@@ -893,7 +891,7 @@ formatter; logs revert to non-correlated.
 
 ---
 
-## 16. Cancellation support
+## ~~16. Cancellation support~~ ✅ DONE (v1.25)
 
 **Goal**: Aborted requests actually cancel. Currently `cancel()` raises
 `NotImplementedError` and hung sub-agents stall the whole orchestrator for
@@ -964,14 +962,16 @@ formatter; logs revert to non-correlated.
 
 ---
 
-## 17. Test suite — pragmatic starter set
+## ~~17. Test suite — pragmatic starter set~~ ✅ DONE (v1.26)
 
-**Goal**: Starting from zero tests (per your note), build a *useful* test
+**Goal**: Starting from zero tests, build a *useful* test
 foundation — not the 280-test giga-plan. Focus: pure functions, numerical
 correctness, security boundary, and one integration smoke test.
 
-**Prerequisite**: #12 (lazy OTel) must land first — otherwise pytest imports
+**Prerequisite**: #12 (lazy OTel) — otherwise pytest imports
 trigger global instrumentation.
+
+**Result**: 88 tests across 10 files. All files listed below created with the exact scope specified. See `docs/TESTS.md`.
 
 **Files to touch / create**
 - `tests/conftest.py`
@@ -1060,12 +1060,14 @@ for the non-network markers.
 
 ---
 
-## 18. Security sandbox hardening + tests
+## ~~18. Security sandbox hardening + tests~~ ✅ DONE (v1.27)
 
 **Goal**: `execute_python` is the most attackable surface in the system. It
 already has AST-level blocking, but it needs explicit tests covering known
 escape patterns. This is split out from #17 because it deserves its own
 attention.
+
+**Result**: 60+ security tests. Sandbox logic extracted from inline in `finsight_server.py` to `shared/sandbox.py`. Expanded import blocklist from ~20 to ~44 modules. Tests cover every restricted import, builtin, dunder escape, getattr/subscript bypass, plus 4 integration tests spawning the actual subprocess.
 
 **Files to touch**
 - Inspect `mcp_servers/finsight_server.py` `execute_python` implementation

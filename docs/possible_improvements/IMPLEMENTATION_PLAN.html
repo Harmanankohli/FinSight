@@ -55,9 +55,7 @@ prior assessment are listed at the bottom with a "skip" note and rationale —
 they are not detailed here. Re-include them later only if usage patterns
 justify the cost.</p>
 
-<p><strong>Test status</strong>: all prior tests were deleted by the user. The test plan below
-starts from a clean slate and is sized for this project (not the 280-test
-production-grade plan in <code>TEST_PLAN.md</code>).</p>
+<p><strong>Test status</strong>: ~148 tests now covering core primitives + security sandbox. See <code>docs/TESTS.html</code>.</p>
 
 <hr>
 
@@ -72,29 +70,29 @@ production-grade plan in <code>TEST_PLAN.md</code>).</p>
 <p><strong>Tier 1 — Small (~1–2 hrs each)</strong></p>
 <ol class="index-list" start="3">
 <li><a href="#s3">SQLite long-lived connection + write lock</a></li>
-<li><a href="#s4">Token-bucket rate limiter (SEC + yfinance + RSS)</a></li>
-<li><a href="#s5">yfinance / news TTL cache</a></li>
-<li><a href="#s6">Structured JSON logging</a></li>
-<li><a href="#s7">Per-service log levels via env</a></li>
-<li><a href="#s8">Log sanitization filter</a></li>
-<li><a href="#s9"><code>SQLiteTaskStore</code> replacing <code>InMemoryTaskStore</code></a></li>
-<li><a href="#s10">Memory pruning / retention policy</a></li>
+<li><s><a href="#s4">Token-bucket rate limiter (SEC + yfinance + RSS)</a></s> ✅ DONE (v1.25)</li>
+<li><s><a href="#s5">yfinance / news TTL cache</a></s> ✅ DONE (v1.25)</li>
+<li><s><a href="#s6">Structured JSON logging</a></s> ✅ DONE (v1.25)</li>
+<li><s><a href="#s7">Per-service log levels via env</a></s> ✅ DONE (v1.25)</li>
+<li><s><a href="#s8">Log sanitization filter</a></s> ✅ DONE (v1.25)</li>
+<li><s><a href="#s9"><code>SQLiteTaskStore</code> replacing <code>InMemoryTaskStore</code></a></s> ✅ DONE (v1.25)</li>
+<li><s><a href="#s10">Memory pruning / retention policy</a></s> ✅ DONE (v1.25)</li>
 </ol>
 
 <p><strong>Tier 2 — Medium (~½ day each)</strong></p>
 <ol class="index-list" start="11">
-<li><a href="#s11">MCP client singleton with auto-reconnect</a></li>
-<li><a href="#s12">Lazy OpenTelemetry instrumentation</a></li>
-<li><a href="#s13">Correlation-ID propagation via ContextVar</a></li>
-<li><a href="#s14">Deduplicate ticker validation across executors</a></li>
-<li><a href="#s15">Unified <code>@logged</code> timing decorator</a></li>
-<li><a href="#s16">Cancellation support + per-agent timeout</a></li>
+<li><s><a href="#s11">MCP client singleton with auto-reconnect</a></s> ✅ DONE (v1.25)</li>
+<li><s><a href="#s12">Lazy OpenTelemetry instrumentation</a></s> ✅ DONE (v1.25)</li>
+<li><s><a href="#s13">Correlation-ID propagation via ContextVar</a></s> ✅ DONE (v1.25)</li>
+<li><s><a href="#s14">Deduplicate ticker validation across executors</a></s> ✅ DONE (v1.25)</li>
+<li><s><a href="#s15">Unified <code>@logged</code> timing decorator</a></s> ✅ DONE (v1.25)</li>
+<li><s><a href="#s16">Cancellation support + per-agent timeout</a></s> ✅ DONE (v1.25)</li>
 </ol>
 
 <p><strong>Tier 3 — Larger</strong></p>
 <ol class="index-list" start="17">
-<li><a href="#s17">Test suite — pragmatic starter set</a></li>
-<li><a href="#s18">Security sandbox hardening + tests</a></li>
+<li><del><a href="#s17">Test suite — pragmatic starter set</a></del> ✅ DONE (v1.26)</li>
+<li><del><a href="#s18">Security sandbox hardening + tests</a></del> ✅ DONE (v1.27)</li>
 </ol>
 
 <p><a href="#skipped">Skipped (with rationale)</a></p>
@@ -104,7 +102,7 @@ production-grade plan in <code>TEST_PLAN.md</code>).</p>
 <!-- ──────────────────────────────────────────────────────────── -->
 <!-- TIER 0                                                       -->
 <!-- ──────────────────────────────────────────────────────────── -->
-<h2 id="s1">1. SEC EDGAR User-Agent env var</h2>
+<h2 id="s1"><s>1. SEC EDGAR User-Agent env var</s> ✅ DONE (v1.25)</h2>
 <p class="effort"><span class="tag tag-tier0">tier 0</span> Effort: ~10–30 min</p>
 
 <p><strong>Goal</strong>: Stop SEC blocking the system due to non-compliant <code>contact@finsight.com</code>
@@ -156,7 +154,7 @@ _SEC_HEADERS = {"User-Agent": SEC_USER_AGENT}</pre>
 
 <hr>
 
-<h2 id="s2">2. Hardcoded <code>api_key="lmstudio"</code> → env var</h2>
+<h2 id="s2"><s>2. Hardcoded <code>api_key="lmstudio"</code> → env var</s> ✅ DONE (v1.25)</h2>
 <p class="effort"><span class="tag tag-tier0">tier 0</span> Effort: ~10–30 min</p>
 
 <p><strong>Goal</strong>: Single source of truth for LLM API key. Also unblocks pointing the
@@ -202,7 +200,7 @@ real).</p>
 <!-- ──────────────────────────────────────────────────────────── -->
 <!-- TIER 1                                                       -->
 <!-- ──────────────────────────────────────────────────────────── -->
-<h2 id="s3">3. SQLite long-lived connection + write lock</h2>
+<h2 id="s3"><s>3. SQLite long-lived connection + write lock</s> ✅ DONE (v1.25)</h2>
 <p class="effort"><span class="tag tag-tier1">tier 1</span> Effort: ~1–2 hrs</p>
 
 <p><strong>Goal</strong>: Eliminate the open-close-per-call pattern in <code>shared/memory/</code>.
@@ -291,7 +289,7 @@ async def store_brief(self, ...):
 
 <hr>
 
-<h2 id="s4">4. Token-bucket rate limiter</h2>
+<h2 id="s4"><s>4. Token-bucket rate limiter</s> ✅ DONE (v1.25)</h2>
 <p class="effort"><span class="tag tag-tier1">tier 1</span> Effort: ~1–2 hrs</p>
 
 <p><strong>Goal</strong>: Stop SEC IP bans and Yahoo 429s by enforcing a soft request ceiling.</p>
@@ -373,7 +371,7 @@ resp = await client.get(...)</pre>
 
 <hr>
 
-<h2 id="s5">5. yfinance / news TTL cache</h2>
+<h2 id="s5"><s>5. yfinance / news TTL cache</s> ✅ DONE (v1.25)</h2>
 <p class="effort"><span class="tag tag-tier1">tier 1</span> Effort: ~1–2 hrs</p>
 
 <p><strong>Goal</strong>: Same ticker requested 3× in one orchestrator turn → 1 actual network
@@ -474,7 +472,7 @@ async def get_prices(ticker: str, period: str = "1y", ...) -> dict:
 
 <hr>
 
-<h2 id="s6">6. Structured JSON logging</h2>
+<h2 id="s6"><s>6. Structured JSON logging</s> ✅ DONE (v1.25)</h2>
 <p class="effort"><span class="tag tag-tier1">tier 1</span> Effort: ~1–2 hrs</p>
 
 <p><strong>Goal</strong>: Make logs ingestible by Loki/CloudWatch/Datadog without custom
@@ -528,7 +526,7 @@ class JsonFormatter(logging.Formatter):
 
 <hr>
 
-<h2 id="s7">7. Per-service log levels via env</h2>
+<h2 id="s7"><s>7. Per-service log levels via env</s> ✅ DONE (v1.25)</h2>
 <p class="effort"><span class="tag tag-tier1">tier 1</span> Effort: ~1–2 hrs</p>
 
 <p><strong>Goal</strong>: Crank up MCP server debugging without flooding orchestrator logs.</p>
@@ -570,7 +568,7 @@ LOG_LEVEL=INFO
 
 <hr>
 
-<h2 id="s8">8. Log sanitization filter</h2>
+<h2 id="s8"><s>8. Log sanitization filter</s> ✅ DONE (v1.25)</h2>
 <p class="effort"><span class="tag tag-tier1">tier 1</span> Effort: ~1–2 hrs</p>
 
 <p><strong>Goal</strong>: Defense in depth — scrub known secret patterns before write.</p>
@@ -626,7 +624,7 @@ fh.addFilter(sanitize)</pre>
 
 <hr>
 
-<h2 id="s9">9. <code>SQLiteTaskStore</code></h2>
+<h2 id="s9"><s>9. <code>SQLiteTaskStore</code></s> ✅ DONE (v1.25)</h2>
 <p class="effort"><span class="tag tag-tier1">tier 1</span> Effort: ~1–2 hrs</p>
 
 <p><strong>Goal</strong>: Sub-agent A2A tasks survive restart instead of vanishing.</p>
@@ -666,7 +664,7 @@ fh.addFilter(sanitize)</pre>
 
 <hr>
 
-<h2 id="s10">10. Memory pruning / retention policy</h2>
+<h2 id="s10"><s>10. Memory pruning / retention policy</s> ✅ DONE (v1.25)</h2>
 <p class="effort"><span class="tag tag-tier1">tier 1</span> Effort: ~1–2 hrs</p>
 
 <p><strong>Goal</strong>: <code>ticker_briefs</code> and <code>recommendation_records</code> grow unbounded.
@@ -721,7 +719,7 @@ async def prune_old_records(days: int = 90) -> dict[str, int]:
 <!-- ──────────────────────────────────────────────────────────── -->
 <!-- TIER 2                                                       -->
 <!-- ──────────────────────────────────────────────────────────── -->
-<h2 id="s11">11. MCP client singleton with auto-reconnect</h2>
+<h2 id="s11"><s>11. MCP client singleton with auto-reconnect</s> ✅ DONE (v1.25)</h2>
 <p class="effort"><span class="tag tag-tier2">tier 2</span> Effort: ~½ day</p>
 
 <p><strong>Goal</strong>: Eliminate per-request SSE connect/disconnect (~100–500ms) AND avoid
@@ -790,7 +788,7 @@ async def get_shared_mcp() -> MCPClient:
 
 <hr>
 
-<h2 id="s12">12. Lazy OpenTelemetry instrumentation</h2>
+<h2 id="s12"><s>12. Lazy OpenTelemetry instrumentation</s> ✅ DONE (v1.25)</h2>
 <p class="effort"><span class="tag tag-tier2">tier 2</span> Effort: ~½ day</p>
 
 <p><strong>Goal</strong>: Stop fire-on-import behaviour so <code>pytest</code> can load modules without
@@ -860,7 +858,7 @@ def init_instrumentation(agent_type: str) -> None:
 
 <hr>
 
-<h2 id="s13">13. Correlation-ID propagation</h2>
+<h2 id="s13"><s>13. Correlation-ID propagation</s> ✅ DONE (v1.25)</h2>
 <p class="effort"><span class="tag tag-tier2">tier 2</span> Effort: ~½ day</p>
 
 <p><strong>Goal</strong>: One <code>grep &lt;trace_id&gt; logs/*.log</code> returns the entire cross-service flow.</p>
@@ -914,7 +912,7 @@ payload["session_id"] = getattr(record, "session_id", None) or current_session_i
 
 <hr>
 
-<h2 id="s14">14. Deduplicate ticker validation</h2>
+<h2 id="s14"><s>14. Deduplicate ticker validation</s> ✅ DONE (v1.25)</h2>
 <p class="effort"><span class="tag tag-tier2">tier 2</span> Effort: ~½ day</p>
 
 <p><strong>Goal</strong>: Remove ~80 lines of copy-paste from 4 executors. Fix-once-runs-everywhere.</p>
@@ -965,7 +963,7 @@ async def resolve_ticker(query: str, exclude: str = "") -> tuple[str, str]:
 
 <hr>
 
-<h2 id="s15">15. Unified <code>@logged</code> timing decorator</h2>
+<h2 id="s15"><s>15. Unified <code>@logged</code> timing decorator</s> ✅ DONE (v1.25)</h2>
 <p class="effort"><span class="tag tag-tier2">tier 2</span> Effort: ~½ day</p>
 
 <p><strong>Goal</strong>: Consistent enter/exit/latency lines on hot paths without manual
@@ -1035,7 +1033,7 @@ def logged(level: int = logging.INFO):
 
 <hr>
 
-<h2 id="s16">16. Cancellation support</h2>
+<h2 id="s16"><s>16. Cancellation support</s> ✅ DONE (v1.25)</h2>
 <p class="effort"><span class="tag tag-tier2">tier 2</span> Effort: ~½ day</p>
 
 <p><strong>Goal</strong>: Aborted requests actually cancel. Currently <code>cancel()</code> raises
@@ -1113,15 +1111,17 @@ except asyncio.TimeoutError:
 <!-- ──────────────────────────────────────────────────────────── -->
 <!-- TIER 3                                                       -->
 <!-- ──────────────────────────────────────────────────────────── -->
-<h2 id="s17">17. Test suite — pragmatic starter set</h2>
+<h2 id="s17"><del>17. Test suite — pragmatic starter set</del> ✅ DONE (v1.26)</h2>
 <p class="effort"><span class="tag tag-tier3">tier 3</span> Effort: ~½–1 day</p>
 
-<p><strong>Goal</strong>: Starting from zero tests (per your note), build a <em>useful</em> test
+<p><strong>Goal</strong>: Starting from zero tests, build a <em>useful</em> test
 foundation — not the 280-test giga-plan. Focus: pure functions, numerical
 correctness, security boundary, and one integration smoke test.</p>
 
-<p><strong>Prerequisite</strong>: <a href="#s12">#12</a> (lazy OTel) must land first — otherwise pytest imports
+<p><strong>Prerequisite</strong>: <a href="#s12">#12</a> (lazy OTel) — otherwise pytest imports
 trigger global instrumentation.</p>
+
+<p><strong>Result</strong>: 88 tests across 10 files. All files listed below created with the exact scope specified. See <a href="../TESTS.html">TESTS.html</a>.</p>
 
 <p><strong>Files to touch / create</strong></p>
 <ul>
@@ -1223,13 +1223,15 @@ async def memory_db(tmp_path):
 
 <hr>
 
-<h2 id="s18">18. Security sandbox hardening + tests</h2>
+<h2 id="s18"><del>18. Security sandbox hardening + tests</del> ✅ DONE (v1.27)</h2>
 <p class="effort"><span class="tag tag-tier3">tier 3</span> Effort: ~½–1 day</p>
 
 <p><strong>Goal</strong>: <code>execute_python</code> is the most attackable surface in the system. It
 already has AST-level blocking, but it needs explicit tests covering known
 escape patterns. This is split out from <a href="#s17">#17</a> because it deserves its own
 attention.</p>
+
+<p><strong>Result</strong>: 60+ security tests. Sandbox logic extracted from inline in <code>finsight_server.py</code> to <code>shared/sandbox.py</code>. Expanded import blocklist from ~20 to ~44 modules. Tests cover every restricted import, builtin, dunder escape, getattr/subscript bypass, plus 4 integration tests spawning the actual subprocess.</p>
 
 <p><strong>Files to touch</strong></p>
 <ul>

@@ -8,7 +8,7 @@ each includes problem location, proposed change, and effort estimate.
 
 ## Data & Connections
 
-### 1. SQLite Connection Pooling
+### ~~1. SQLite Connection Pooling~~ ✅ IMPLEMENTED (v1.25)
 
 **Effort**: small (~20 lines, 1 file)
 
@@ -59,44 +59,11 @@ remove `await conn.close()` from all callers.
 
 ---
 
-### 2. MCP Client as Long-Lived Singleton
+### ~~2. MCP Client as Long-Lived Singleton~~ ✅ IMPLEMENTED (v1.25)
 
-**Effort**: medium (~50 lines across 4 files)
+MCP client is now a process-wide singleton in `shared/mcp_client.py` via `get_shared_mcp()` with double-checked async lock, auto-reconnect on connection errors, and an `atexit` shutdown hook. All 4 executors use it.
 
-**Problem**: Every sub-agent creates its own `MCPClient`, connects, does
-work, then disconnects — per request. The orchestrator does the same
-for ticker validation. SSE connections involve an HTTP upgrade handshake
-(~100-500ms). Connect/disconnect happens on every A2A request.
-
-Locations:
-- `agent_2_llamaindex/executor.py:109-118`
-- `agent_3_langgraph/executor.py:32-37`
-- `agent_4_crewai/executor.py:36-45`
-- `agent_1_adk/agent_executor.py:146-179` (temporary MCP)
-
-**Proposed change**: Module-level singleton in `shared/mcp_client.py`,
-initialized once at import with lazy connect on first tool call.
-
-```python
-# shared/mcp_client.py — proposed singleton:
-_global_client = None
-_client_lock = asyncio.Lock()
-
-async def get_mcp_client() -> MCPClient:
-    global _global_client
-    if _global_client is None:
-        async with _client_lock:
-            if _global_client is None:
-                _global_client = MCPClient(...)
-                await _global_client.connect_all()
-    return _global_client
-```
-
-Remove `_ensure_connected` / `_disconnect` from all 4 agent executors.
-
----
-
-### 3. Rate Limiting
+### ~~3. Rate Limiting~~ ✅ IMPLEMENTED (v1.25)
 
 **Effort**: small (~40 lines, 1 new file)
 
@@ -142,7 +109,7 @@ _sec_limiter = TokenBucket(rate=8, burst=10)
 
 ## Security & Configuration
 
-### 4. SEC EDGAR User-Agent Compliance
+### ~~4. SEC EDGAR User-Agent Compliance~~ ✅ IMPLEMENTED (v1.25)
 
 **Effort**: trivial (~1 line)
 
@@ -171,7 +138,7 @@ _SEC_HEADERS = {"User-Agent": _user_agent}
 
 ---
 
-### 5. Hardcoded `api_key="lmstudio"`
+### ~~5. Hardcoded `api_key="lmstudio"`~~ ✅ IMPLEMENTED (v1.25)
 
 **Effort**: trivial (~4 files, 1 line each)
 
@@ -236,34 +203,9 @@ def check_embedding_models():
 
 ## Code Quality
 
-### 7. Duplicated Ticker Validation Logic
+### ~~7. Duplicated Ticker Validation Logic~~ ✅ IMPLEMENTED (v1.25)
 
-**Effort**: medium (~80 lines removed, ~20 added to shared/)
-
-**Problem**: `_validate_ticker()`, `_resolve_ticker()`, `_disconnect()`
-copy-pasted across all 4 agent executors. Bug fixes must be applied 4 times.
-
-Locations:
-- `agent_2_llamaindex/executor.py:131-149`
-- `agent_3_langgraph/executor.py:67-83`
-- `agent_4_crewai/executor.py:88-104`
-- `agent_1_adk/agent_executor.py:144-179`
-
-**Proposed change**: Move to `shared/ticker_utils.py` with convenience
-wrappers that handle MCP lifecycle internally.
-
-```python
-# shared/ticker_utils.py — proposed additions:
-async def validate_ticker(ticker: str) -> tuple[bool, str, str]:
-    mcp = await _get_shared_mcp()
-    return await validate_ticker_via_mcp(mcp, ticker)
-
-async def resolve_ticker(query: str, exclude: str = "") -> tuple[str, str]:
-    mcp = await _get_shared_mcp()
-    return await resolve_ticker_via_mcp(mcp, query, exclude)
-```
-
----
+Ticker validation and resolution are now shared functions in `shared/ticker_utils.py`, using the MCP singleton. All 4 executors call the same code.
 
 ### 8. Inconsistent Error Propagation
 
@@ -299,36 +241,9 @@ dedicated refactor pass.
 
 ---
 
-### 9. Import-Time Side Effects (OpenTelemetry)
+### ~~9. Import-Time Side Effects (OpenTelemetry)~~ ✅ IMPLEMENTED (v1.25)
 
-**Effort**: small (~5 lines per file)
-
-**Problem**: OpenTelemetry instrumentors fire at module import time:
-
-- `agent_1_adk/sub_agent_client.py:12` — `HTTPXClientInstrumentor`
-- `agent_2_llamaindex/server.py:26-29` — `LlamaIndexInstrumentor`
-- `agent_3_langgraph/server.py:24-32` — `StarletteInstrumentor` + `LangChainInstrumentor`
-- `agent_4_crewai/server.py:24-26` — `CrewAIInstrumentor` + `StarletteInstrumentor`
-
-Importing any symbol triggers global instrumentation. Breaks test isolation.
-
-**Proposed change**: Move to lazy `init_instrumentation()` called from
-server entry point, not at module level.
-
-```python
-# shared/observability.py — proposed:
-def init_instrumentation(agent_type: str) -> None:
-    if agent_type == "orchestrator":
-        HTTPXClientInstrumentor().instrument()
-    elif agent_type == "rag":
-        LlamaIndexInstrumentor().instrument()
-        StarletteInstrumentor().instrument()
-    ...
-
-# Called from server main(), not at import.
-```
-
----
+OTel instrumentation is now lazy via `init_instrumentation()` in `shared/observability.py`. Imports are deferred; instrumentors fire at startup, not at module import.
 
 ### 10. Redundant Memory Persistence Paths
 
@@ -351,92 +266,27 @@ for ADK Web UI. Executor paths gated by flag for standalone A2A mode.
 
 ## Reliability
 
-### 11. Cancellation
+### ~~11. Cancellation~~ ✅ IMPLEMENTED (v1.25)
 
-**Effort**: medium (~60 lines across 2 files)
+Both executors now implement `cancel()` with `asyncio.Task.cancel()` + `TASK_STATE_CANCELED` event. Per-agent timeouts in `SubAgentClient` prevent one slow agent from stalling the entire pipeline.
 
-**Problem**: Both executors raise `NotImplementedError`:
+### ~~12. InMemoryTaskStore~~ ✅ IMPLEMENTED (v1.25)
 
-- `shared/generic_executor.py:133-137`
-- `agent_1_adk/agent_executor.py:360-361`
-
-Requests cannot be aborted. A hung sub-agent blocks for 180s timeout.
-No per-agent timeout.
-
-**Proposed change**:
-
-**11a. `GenericAgentExecutor.cancel()`** — Store the running `asyncio.Task`,
-cancel it, emit `TASK_STATE_CANCELED`.
-
-```python
-class GenericAgentExecutor(AgentExecutor):
-    def __init__(self, agent: BaseAgent):
-        self.agent = agent
-        self._task: asyncio.Task | None = None
-
-    async def execute(self, context, event_queue):
-        self._task = asyncio.current_task()
-        ...
-
-    async def cancel(self, context, event_queue):
-        if self._task and not self._task.done():
-            self._task.cancel()
-            await event_queue.enqueue_event(TaskStatusUpdateEvent(
-                task_id=...,
-                status=TaskStatus(state=TaskState.TASK_STATE_CANCELED),
-            ))
-```
-
-**11b. `FinSightAgentExecutor.cancel()`** — Same pattern: store task,
-cancel, emit event.
-
-**11c. Per-agent timeout in `SubAgentClient`** — Replace global
-`A2A_TIMEOUT` with per-agent timeout via `asyncio.wait_for()`.
-
----
-
-### 12. InMemoryTaskStore
-
-**Effort**: small (documentation — known limitation)
-
-**Problem**: Every agent uses `InMemoryTaskStore`:
-
-- `agent_1_adk/main.py:75`
-- `agent_2_llamaindex/server.py:85`
-- `agent_3_langgraph/server.py:78`
-- `agent_4_crewai/server.py:74`
-
-A2A tasks in-flight during restart are lost. The orchestrator gets no
-error — just timeout or "Agent failed".
-
-**Proposed change**: Add `SQLiteTaskStore` (same pattern as
-`shared/memory/store.py`) and use it in each sub-agent. Document as
-low-priority — acceptable for development, needs fixing for production.
-
-```python
-# shared/store.py — proposed addition:
-from a2a.server.tasks import TaskStore
-
-class SQLiteTaskStore(TaskStore):
-    """A2A TaskStore backed by SQLite for persistence across restarts."""
-    ...
-```
-
----
+Tasks now persist across restarts via `SQLiteTaskStore` in `shared/a2a_store.py`. All four agent servers and the orchestrator use it.
 
 ## Effort Summary
 
 | # | Improvement | Effort | Files To Touch |
 |---|-------------|--------|----------------|
 | 1 | SQLite connection pooling | small | `shared/memory/store.py` + 4 modules |
-| 2 | MCP client as singleton | medium | `shared/mcp_client.py` + 4 executors |
+| 2 | MCP client as singleton → ✅ singleton+reconnect | medium | `shared/mcp_client.py` + 4 executors |
 | 3 | Rate limiting | small | `shared/rate_limiter.py` (new) + `finsight_server.py` |
 | 4 | SEC EDGAR User-Agent | trivial | `mcp_servers/finsight_server.py` |
 | 5 | Hardcoded api_key | trivial | `shared/config.py` + 4 agent files |
 | 6 | HF_HUB_OFFLINE check | small | `shared/config.py` |
-| 7 | Deduplicate ticker logic | medium | `shared/ticker_utils.py` + 4 executors |
+| 7 | Deduplicate ticker logic → ✅ shared functions | medium | `shared/ticker_utils.py` + 4 executors |
 | 8 | Error propagation | medium | `shared/models.py` + 5+ files |
-| 9 | Import-time side effects | small | `shared/observability.py` + 4 entry points |
+| 9 | Import-time side effects → ✅ lazy OTel | small | `shared/observability.py` + 4 entry points |
 | 10 | Redundant memory paths | medium | `agent_1_adk/agent_executor.py` + `agent.py` |
-| 11 | Cancellation | medium | `generic_executor.py` + `agent_executor.py` + `sub_agent_client.py` |
-| 12 | InMemoryTaskStore | small | `shared/store.py` (new) + 4 entry points |
+| 11 | Cancellation → ✅ cancel+timeouts | medium | `generic_executor.py` + `agent_executor.py` + `sub_agent_client.py` |
+| 12 | InMemoryTaskStore → ✅ SQLiteTaskStore | small | `shared/a2a_store.py` + 4 entry points |

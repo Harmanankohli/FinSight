@@ -65,7 +65,7 @@ Public API — no key required.
 | `validate_ticker` | `ticker` | Validates ticker against SEC database (cached CIK map) |
 | `resolve_company_ticker` | `text` | Natural language company name to ticker (SEC reverse index + Yahoo fallback) |
 
-**Note**: Requires valid `User-Agent` header. Uses `"FinSight Research (contact@finsight.com)"`. The RAG agent uses `get_filing_content` to fetch and index actual SEC filing content.
+**Note**: Requires valid `User-Agent` header. Set via `SEC_USER_AGENT` env var in `.env` (format: `Your Name (your-email@example.com)`) — see `shared/config.py`. The RAG agent uses `get_filing_content` to fetch and index actual SEC filing content.
 
 ### Financial News Tools
 
