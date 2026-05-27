@@ -1,8 +1,10 @@
+import functools
 import json
 import logging
 import os
 import re
 import sys
+import time
 from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -69,6 +71,37 @@ class SanitizeFilter(logging.Filter):
                 new_args.append(a)
             record.args = tuple(new_args)
         return True
+
+
+def logged(level: int = logging.INFO):
+    """Decorator: logs enter/exit/latency for async functions on hot paths.
+
+    Apply only to hot-path callables (MCP tools, agent stream(), send_message).
+    Emits 'latency_ms' as a structured field in the JSON file log.
+    """
+    def decorator(fn):
+        @functools.wraps(fn)
+        async def wrapper(*args, **kwargs):
+            _logger = logging.getLogger(fn.__module__)
+            _logger.log(level, "Enter %s", fn.__qualname__)
+            t0 = time.monotonic()
+            try:
+                result = await fn(*args, **kwargs)
+                elapsed = (time.monotonic() - t0) * 1000
+                _logger.log(
+                    level, "Exit %s (%.0fms)", fn.__qualname__, elapsed,
+                    extra={"latency_ms": int(elapsed)},
+                )
+                return result
+            except Exception as exc:
+                elapsed = (time.monotonic() - t0) * 1000
+                _logger.log(
+                    level, "Fail %s (%.0fms): %s", fn.__qualname__, elapsed, exc,
+                    extra={"latency_ms": int(elapsed)},
+                )
+                raise
+        return wrapper
+    return decorator
 
 
 def setup_file_logging(service_name: str, level: int | None = None) -> None:

@@ -6,6 +6,7 @@ from collections.abc import AsyncIterable
 from langfuse.langchain import CallbackHandler
 
 from shared.base_agent import BaseAgent
+from shared.logging_config import logged
 from shared.config import EVAL_ENABLED
 from shared.observability import get_langfuse_client
 from shared.runtime_eval import score_quant_response as _eval_quant_response
@@ -46,6 +47,7 @@ class QuantAgent(BaseAgent):
     ) -> AsyncIterable[dict]:
         yield await self._build_response(query)
 
+    @logged()
     async def _build_response(self, query: str) -> dict:
         trace_id, parent_span_id, query = extract_trace_ids(query)
 

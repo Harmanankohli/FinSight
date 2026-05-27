@@ -41,6 +41,7 @@ from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 from shared.config import SEC_USER_AGENT
 from shared.rate_limiter import TokenBucket
 from shared.ttl_cache import TTLCache
+from shared.logging_config import logged
 from shared.observability import init_langfuse, shutdown_langfuse
 init_langfuse(service_name="mcp_server")
 atexit.register(shutdown_langfuse)
@@ -237,6 +238,7 @@ async def _get_prices_uncached(ticker: str, period: str, interval: str) -> dict:
 
 @app.tool()
 @observe()
+@logged()
 async def get_prices(ticker: str, period: str = "1y", interval: str = "1d") -> dict:
     """Fetch OHLCV price history data for a stock ticker.
 
@@ -281,6 +283,7 @@ async def _get_financials_uncached(ticker: str) -> dict:
 
 @app.tool()
 @observe()
+@logged()
 async def get_financials(ticker: str) -> dict:
     """Fetch financial statements and company info for a stock ticker.
 
@@ -718,6 +721,7 @@ _edgar = _EdgarClient()
 
 @app.tool()
 @observe()
+@logged()
 async def get_company_filings(
     ticker: str, form_types: str = "", limit: int = 10
 ) -> dict:
@@ -1283,6 +1287,7 @@ def _keyword_matches(norm_text: str, keywords: list[str]) -> bool:
 
 @app.tool()
 @observe()
+@logged()
 async def get_news_sentiment(ticker: str, limit: int = 10) -> dict:
     """Fetch recent financial news mentioning a ticker and compute VADER sentiment.
 

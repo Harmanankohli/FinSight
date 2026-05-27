@@ -33,6 +33,7 @@ _TERMINAL_STATES = {
 }
 
 from shared.config import AGENT_SEED_URLS, A2A_TIMEOUT
+from shared.logging_config import logged
 from shared.observability import get_langfuse_client
 from shared.trace_context import inject_trace_context, current_trace_id
 
@@ -190,6 +191,7 @@ class SubAgentClient:
         return entry["_client"]
 
     # Streams A2A events (message / artifact / status / task) and returns the first terminal result
+    @logged()
     async def send_message(self, agent_name: str, task_str: str) -> str:
         """Send a task to a remote agent and return its text response.
 

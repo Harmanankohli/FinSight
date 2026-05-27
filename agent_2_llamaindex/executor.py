@@ -5,6 +5,7 @@ from collections.abc import AsyncIterable
 from datetime import date, datetime, timezone
 
 from shared.base_agent import BaseAgent
+from shared.logging_config import logged
 from shared.mcp_client import get_shared_mcp
 from shared.config import EVAL_ENABLED
 from shared.memory.store import is_filing_ingested, mark_filing_ingested
@@ -113,6 +114,7 @@ class RAGAgent(BaseAgent):
     ) -> AsyncIterable[dict]:
         yield await self._build_response(query)
 
+    @logged()
     async def _build_response(self, query: str) -> dict:
         trace_id, parent_span_id, query = extract_trace_ids(query)
 
