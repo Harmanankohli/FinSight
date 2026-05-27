@@ -6,6 +6,8 @@ in the same SQLite database file.
 """
 
 import asyncio
+import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import aiosqlite
@@ -182,6 +184,28 @@ async def init_db(conn: aiosqlite.Connection) -> None:
         await conn.commit()
     except Exception:
         pass
+
+
+async def prune_old_records(days: int | None = None) -> dict[str, int]:
+    """Delete records older than `days` from the three main memory tables.
+
+    Reads MEMORY_RETENTION_DAYS env var if days is not supplied; defaults to 90.
+    Returns a dict of {table: rows_deleted}. Does not VACUUM — run that manually
+    to avoid blocking startup on a large DB rewrite.
+    """
+    if days is None:
+        days = int(os.environ.get("MEMORY_RETENTION_DAYS", "90"))
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    conn = await get_db()
+    async with write_lock():
+        deleted: dict[str, int] = {}
+        for table in ("ticker_briefs", "recommendation_records", "memory_entries"):
+            cur = await conn.execute(
+                f"DELETE FROM {table} WHERE created_at < ?", (cutoff,)  # noqa: S608
+            )
+            deleted[table] = cur.rowcount
+        await conn.commit()
+    return deleted
 
 
 async def is_filing_ingested(edgar_url: str, db_path: Path = DB_PATH) -> bool:

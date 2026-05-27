@@ -109,11 +109,17 @@ app = Starlette(routes=routes, debug=True)
 
 async def start_server(host: str, port: int) -> None:
     # Initialize SQLite tables before accepting connections
-    from shared.memory.store import get_db
-    conn = await get_db()
-    await init_db(conn)
-    await conn.close()
+    from shared.memory.store import get_db, prune_old_records
+    await get_db()
     logger.info("Memory layer initialized with persistent SQLite storage")
+
+    # Best-effort pruning on startup — keeps DB from growing unbounded over months.
+    try:
+        deleted = await prune_old_records()
+        if any(deleted.values()):
+            logger.info("Pruned old memory records: %s", deleted)
+    except Exception:
+        logger.warning("Memory pruning failed (non-fatal)", exc_info=True)
 
     config = uvicorn.Config(app, host=host, port=port, log_level="info")
     server = uvicorn.Server(config)
