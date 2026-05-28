@@ -40,6 +40,10 @@ LLM_MODEL = os.environ.get("LLM_MODEL", "qwen/qwen3-30b-a3b-2507")
 LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "http://localhost:1234/v1")
 LLM_API_KEY = os.environ.get("LLM_API_KEY", "lmstudio")
 ADK_MODEL = os.environ.get("ADK_MODEL", "openai/qwen/qwen3-30b-a3b-2507")
+# Optional smaller/faster model for the 3-4 sentence quant summary; falls back to LLM_MODEL
+LLM_SUMMARY_MODEL = os.environ.get("LLM_SUMMARY_MODEL", LLM_MODEL)
+# Separate eval model for RAGAS so it doesn't contend with production inference
+LLM_EVAL_MODEL = os.environ.get("LLM_EVAL_MODEL", LLM_MODEL)
 
 # ── Embedding ─────────────────────────────────────────────────────────────
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "all-MiniLM-L6-v2")
@@ -57,7 +61,11 @@ MCP_MAX_RETRIES = int(os.environ.get("MCP_MAX_RETRIES", "3"))
 A2A_TIMEOUT = float(os.environ.get("A2A_TIMEOUT", "680.0"))
 A2A_TIMEOUT_RAG = float(os.environ.get("A2A_TIMEOUT_RAG", "600.0"))
 A2A_TIMEOUT_QUANT = float(os.environ.get("A2A_TIMEOUT_QUANT", "600.0"))
-A2A_TIMEOUT_SENTIMENT = float(os.environ.get("A2A_TIMEOUT_SENTIMENT", "600.0"))
+# Market Context Agent (formerly "Sentiment") — old var name accepted for back-compat
+A2A_TIMEOUT_MARKET_CONTEXT = float(
+    os.environ.get("A2A_TIMEOUT_MARKET_CONTEXT")
+    or os.environ.get("A2A_TIMEOUT_SENTIMENT", "600.0")
+)
 CHROMA_DIR = os.environ.get("CHROMA_DIR", "./db/chroma_db")
 MCP_SERVER_URL = os.environ.get("MCP_SERVER_URL", "http://localhost:8010/sse")
 MCP_SERVER_PORT = int(os.environ.get("MCP_SERVER_PORT", "8010"))
@@ -75,8 +83,19 @@ SEC_USER_AGENT = os.environ.get(
     "FinSight Research (dev-mode-set-SEC_USER_AGENT)",
 )
 
+# ── Redis (optional — enables cross-worker MCP cache sharing) ─────────────
+# Set REDIS_URL=redis://localhost:6379/0 in .env to activate.
+# Leave unset to use the default in-process TTLCache (single-worker dev).
+REDIS_URL = os.environ.get("REDIS_URL", "")
+
 # ── Feature flags ─────────────────────────────────────────────────────────
 EVAL_ENABLED = os.environ.get("EVAL_TRACE_ENABLED", "true").lower() == "true"
+# Kill switch — set to true to bypass all runtime RAGAS scoring without restart
+EVAL_RUNTIME_DISABLED = os.environ.get("EVAL_RUNTIME_DISABLED", "false").lower() == "true"
+# Per-minute eval burst limit (per process); 0 = unlimited
+EVAL_BURST_LIMIT = int(os.environ.get("EVAL_BURST_LIMIT", "30"))
+# Per-metric deadline so a stuck ragas call can't pin the eval pool
+EVAL_METRIC_TIMEOUT = float(os.environ.get("EVAL_METRIC_TIMEOUT", "90.0"))
 
 
 def validate() -> None:

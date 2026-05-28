@@ -24,6 +24,11 @@ class QuantAnalysisState(TypedDict):
     fundamentals: dict | None  # PE, ROE, margins, growth, D/E — from get_financials info
     technicals: dict | None  # RSI, MACD, trend, support/resistance — computed from price_data
     _financials_raw: dict | None  # Raw get_financials response, reused by DCF to avoid double call
+    monte_carlo: dict | None  # GBM MC sim: p10/p25/p50/p75/p90, prob_profit, mc_var_95
+    peer_comparison: dict | None  # Sector peer ranks on PE, EV/EBITDA, RevGrowth, OpMargin, ROE
+    options_signals: dict | None  # Put/call volume ratio, OI ratio, flow signal
+    insider_signals: dict | None  # Form 4 net buy/sell count, activity level, insider % held
+    positioning: dict | None  # Analyst consensus score, price target upside, short interest
     recommendation: str  # Signal vote: BUY / HOLD / SELL
     reasoning: str  # Compact string of all signals for downstream use (or LLM summary)
     mcp_client: Any | None  # Shared MCP connection, injected at graph entry, closed by caller

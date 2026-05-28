@@ -1,6 +1,7 @@
+import asyncio
 import json
 import logging
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import numpy as np
 import pandas as pd
@@ -18,6 +19,10 @@ from .state import QuantAnalysisState
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
 def _parse_price_data(mcp_result, ticker: str) -> dict:
     # Extract {date: close_price} dict from MCP tool response content (handles TextContent wrapping)
     if not hasattr(mcp_result, "content"):
@@ -33,6 +38,331 @@ def _parse_price_data(mcp_result, ticker: str) -> dict:
             continue
     return {}
 
+
+def _run_monte_carlo(prices: pd.Series, n_simulations: int = 5000, horizon_days: int = 252) -> dict | None:
+    """GBM Monte Carlo with Ito-corrected drift. Returns percentile outcomes over horizon_days."""
+    returns = prices.pct_change().dropna()
+    if len(returns) < 30:
+        return None
+    mu = float(returns.mean())
+    sigma = float(returns.std())
+    current = float(prices.iloc[-1])
+    if sigma <= 0 or current <= 0:
+        return None
+
+    rng = np.random.default_rng(42)
+    log_rets = rng.normal(mu - 0.5 * sigma ** 2, sigma, (horizon_days, n_simulations))
+    terminal = current * np.exp(log_rets.sum(axis=0))
+    pct_chg = (terminal - current) / current
+
+    return {
+        "p10": round(float(np.percentile(terminal, 10)), 2),
+        "p25": round(float(np.percentile(terminal, 25)), 2),
+        "p50": round(float(np.percentile(terminal, 50)), 2),
+        "p75": round(float(np.percentile(terminal, 75)), 2),
+        "p90": round(float(np.percentile(terminal, 90)), 2),
+        "prob_profit": round(float((terminal > current).mean()), 3),
+        "expected_return_pct": round(float(pct_chg.mean() * 100), 1),
+        "mc_var_95": round(float(np.percentile(pct_chg, 5)), 4),
+        "current_price": round(current, 2),
+        "n_simulations": n_simulations,
+        "horizon_days": horizon_days,
+    }
+
+
+def _get_latest_field(financials: dict, field: str) -> float | None:
+    """Walk period-keyed dict (sorted descending), return most recent non-null value for field."""
+    for period_key in sorted(financials.keys(), reverse=True):
+        val = financials[period_key].get(field)
+        if val is not None:
+            try:
+                return float(val)
+            except (TypeError, ValueError):
+                continue
+    return None
+
+
+def _get_fcf_from_financials(financials_dict: dict) -> float | None:
+    for period_key, metrics in financials_dict.items():
+        if "Free Cash Flow" in metrics:
+            fcf = float(metrics["Free Cash Flow"])
+            logger.debug("FCF check %s: Free Cash Flow=%s", period_key, fcf)
+            if fcf > 0:
+                return fcf
+    for period_key, metrics in financials_dict.items():
+        op = metrics.get("Operating Cash Flow")
+        capex = metrics.get("Capital Expenditure")
+        if op is not None and capex is not None:
+            fcf = float(op) + float(capex)
+            logger.debug("FCF check %s: OCF=%s, CAPEX=%s, OCF-CAPEX=%s", period_key, op, capex, fcf)
+            if fcf > 0:
+                return fcf
+    logger.debug("No positive FCF found across %d periods", len(financials_dict))
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Weighted signal scoring helpers (§8.6.2)
+# ---------------------------------------------------------------------------
+
+_SIGNAL_WEIGHTS = {
+    "risk_quality": 0.15,
+    "dcf_value": 0.20,
+    "fundamental_value": 0.13,
+    "fundamental_quality": 0.12,
+    "technicals_trend": 0.15,
+    "technicals_momentum": 0.10,
+    "peer_positioning": 0.10,
+    "behavioral": 0.05,
+}
+
+
+def _score_risk_quality(metrics: dict) -> float:
+    sharpe = metrics.get("sharpe_ratio") or 0
+    vol = metrics.get("annual_volatility") or 0
+    score = 0.0
+    if sharpe >= 1.5:
+        score += 0.5
+    elif sharpe >= 1.0:
+        score += 0.3
+    elif sharpe >= 0.5:
+        score += 0.1
+    elif sharpe < 0:
+        score -= 0.5
+    if vol < 0.15:
+        score += 0.3
+    elif vol < 0.25:
+        score += 0.1
+    elif vol > 0.45:
+        score -= 0.3
+    elif vol > 0.35:
+        score -= 0.1
+    return max(-1.0, min(1.0, score))
+
+
+def _score_dcf(dcf: dict | None) -> float:
+    if not dcf:
+        return 0.0
+    upside = dcf.get("upside_pct") or 0
+    if upside > 50:
+        return 1.0
+    elif upside > 30:
+        return 0.7
+    elif upside > 15:
+        return 0.4
+    elif upside > 0:
+        return 0.1
+    elif upside > -15:
+        return -0.2
+    elif upside > -30:
+        return -0.5
+    return -1.0
+
+
+def _score_fundamental_value(fund: dict | None) -> float:
+    if not fund:
+        return 0.0
+    scores, n = [], 0
+    pe = fund.get("trailing_pe")
+    if pe and pe > 0:
+        if pe < 12:
+            scores.append(1.0)
+        elif pe < 18:
+            scores.append(0.5)
+        elif pe < 25:
+            scores.append(0.0)
+        elif pe < 40:
+            scores.append(-0.3)
+        else:
+            scores.append(-0.7)
+        n += 1
+    ev_eb = fund.get("ev_to_ebitda")
+    if ev_eb and ev_eb > 0:
+        if ev_eb < 8:
+            scores.append(0.7)
+        elif ev_eb < 14:
+            scores.append(0.2)
+        elif ev_eb < 25:
+            scores.append(-0.2)
+        else:
+            scores.append(-0.6)
+        n += 1
+    return max(-1.0, min(1.0, sum(scores) / n)) if n > 0 else 0.0
+
+
+def _score_fundamental_quality(fund: dict | None) -> float:
+    if not fund:
+        return 0.0
+    scores, n = [], 0
+    roe = fund.get("roe")
+    if roe is not None:
+        if roe > 0.25:
+            scores.append(1.0)
+        elif roe > 0.15:
+            scores.append(0.5)
+        elif roe > 0.05:
+            scores.append(0.1)
+        elif roe < 0:
+            scores.append(-0.7)
+        else:
+            scores.append(-0.1)
+        n += 1
+    op_margin = fund.get("operating_margin")
+    if op_margin is not None:
+        if op_margin > 0.25:
+            scores.append(0.8)
+        elif op_margin > 0.15:
+            scores.append(0.4)
+        elif op_margin > 0.05:
+            scores.append(0.0)
+        elif op_margin < 0:
+            scores.append(-0.8)
+        n += 1
+    d_e = fund.get("debt_to_equity")
+    if d_e is not None and d_e > 0:
+        if d_e < 30:
+            scores.append(0.3)
+        elif d_e < 80:
+            scores.append(0.0)
+        elif d_e < 150:
+            scores.append(-0.2)
+        else:
+            scores.append(-0.5)
+        n += 1
+    return max(-1.0, min(1.0, sum(scores) / n)) if n > 0 else 0.0
+
+
+def _score_technicals_trend(tech: dict | None) -> float:
+    if not tech:
+        return 0.0
+    trend_scores = {
+        "strong_uptrend": 1.0, "uptrend": 0.6,
+        "recovery": 0.2, "sideways": 0.0, "downtrend": -0.8,
+    }
+    score = trend_scores.get(tech.get("trend", ""), 0.0)
+    golden = tech.get("golden_cross")
+    if golden is True:
+        score = min(1.0, score + 0.2)
+    elif golden is False:
+        score = max(-1.0, score - 0.1)
+    return score
+
+
+def _score_technicals_momentum(tech: dict | None) -> float:
+    if not tech:
+        return 0.0
+    scores, n = [], 0
+    rsi = tech.get("rsi_14")
+    if rsi is not None:
+        if rsi < 30:
+            scores.append(0.8)
+        elif rsi < 45:
+            scores.append(0.3)
+        elif rsi < 60:
+            scores.append(0.0)
+        elif rsi < 75:
+            scores.append(-0.2)
+        else:
+            scores.append(-0.6)
+        n += 1
+    macd_bull = tech.get("macd_bullish")
+    if macd_bull is not None:
+        scores.append(0.5 if macd_bull else -0.4)
+        n += 1
+    return max(-1.0, min(1.0, sum(scores) / n)) if n > 0 else 0.0
+
+
+def _score_peer_positioning(peer_comp: dict | None) -> float:
+    if not peer_comp or not peer_comp.get("rankings"):
+        return 0.0
+    rankings = peer_comp["rankings"]
+    n_peers = peer_comp.get("n_peers", 1)
+    if not rankings or n_peers == 0:
+        return 0.0
+    total = n_peers + 1  # includes self
+    avg_rank = sum(rankings.values()) / len(rankings)
+    # rank 1 → +1.0, rank total → -1.0
+    normalized = 1.0 - 2.0 * (avg_rank - 1) / max(1, total - 1)
+    return max(-1.0, min(1.0, normalized))
+
+
+def _score_behavioral(options: dict | None, positioning: dict | None, insider: dict | None) -> float:
+    scores, n = [], 0
+    if options:
+        pc = options.get("put_call_volume_ratio")
+        if pc is not None:
+            if pc < 0.5:
+                scores.append(0.7)
+            elif pc < 0.8:
+                scores.append(0.3)
+            elif pc < 1.2:
+                scores.append(0.0)
+            elif pc < 1.8:
+                scores.append(-0.4)
+            else:
+                scores.append(-0.8)
+            n += 1
+    if positioning:
+        cs = positioning.get("consensus_score")
+        if cs is not None:
+            scores.append(cs / 2.0)  # scale -2..+2 → -1..+1
+            n += 1
+        au = positioning.get("analyst_upside_pct")
+        if au is not None:
+            if au > 20:
+                scores.append(0.5)
+            elif au > 10:
+                scores.append(0.2)
+            elif au < -10:
+                scores.append(-0.5)
+            elif au < 0:
+                scores.append(-0.2)
+            else:
+                scores.append(0.0)
+            n += 1
+    if insider:
+        direction = insider.get("direction", "neutral")
+        if direction == "net_buy":
+            scores.append(0.6)
+            n += 1
+        elif direction == "net_sell":
+            scores.append(-0.4)
+            n += 1
+    return max(-1.0, min(1.0, sum(scores) / n)) if n > 0 else 0.0
+
+
+def _weighted_vote(group_scores: dict[str, float]) -> tuple[str, float]:
+    """Returns (BUY/HOLD/SELL, confidence 0-1) from group scores weighted by _SIGNAL_WEIGHTS.
+
+    Missing/zero signals contribute zero — they neither push nor normalize.
+    A single mild positive in one of 8 groups should not become a high-confidence BUY.
+
+    Confidence (per plan §8.6.2): |composite| × (1 − std(present_signals))
+    — rewards consensus across signals, penalises conflict.
+    """
+    present = {k: v for k, v in group_scores.items() if v != 0.0}
+    if not present:
+        return "HOLD", 0.5
+    composite = sum(group_scores[k] * _SIGNAL_WEIGHTS.get(k, 0) for k in present)
+    if composite > 0.15:
+        rec = "BUY"
+    elif composite < -0.15:
+        rec = "SELL"
+    else:
+        rec = "HOLD"
+    if len(present) > 1:
+        vals = list(present.values())
+        mean = sum(vals) / len(vals)
+        std = (sum((v - mean) ** 2 for v in vals) / len(vals)) ** 0.5
+        confidence = abs(composite) * max(0.0, 1.0 - std)
+    else:
+        confidence = abs(composite)
+    return rec, round(min(1.0, confidence), 3)
+
+
+# ---------------------------------------------------------------------------
+# Graph nodes
+# ---------------------------------------------------------------------------
 
 async def fetch_price_data_node(state: QuantAnalysisState) -> dict:
     # First graph node: fetches historical daily closes via MCP get_prices tool into state["price_data"]
@@ -300,77 +630,53 @@ async def technical_analysis_node(state: QuantAnalysisState) -> dict:
 
 
 async def stress_test_node(state: QuantAnalysisState) -> dict:
-    # Projects price under 4 historical crash scenarios (2008/2020/dot-com/recession) + CVaR of tail losses
+    """Beta-adjusted historical crash scenarios + GBM Monte Carlo simulation."""
     prices_dict = state.get("price_data", {})
     ticker = state.get("ticker", "?")
     if not prices_dict:
         logger.warning("Stress test skipped for %s: no price data", ticker)
-        return {"stress_test_result": None}
+        return {"stress_test_result": None, "monte_carlo": None}
 
     prices = pd.Series(
         {pd.Timestamp(k): v for k, v in prices_dict.items()}
     ).sort_index()
     returns = prices.pct_change().dropna()
+    current_price = float(prices.iloc[-1])
+    beta = (state.get("metrics") or {}).get("beta") or 1.0
 
-    scenarios = {
+    # Beta-adjusted market crash scenarios
+    market_scenarios = {
         "market_crash_2008": -0.37,
         "covid_crash_2020": -0.34,
         "dot_com_bubble": -0.49,
         "mild_recession": -0.15,
     }
-
     results = {}
-    current_price = float(prices.iloc[-1])
-    for scenario, decline_pct in scenarios.items():
-        projected = current_price * (1 + decline_pct)
-        loss = projected - current_price
+    for scenario, mkt_decline in market_scenarios.items():
+        adj_decline = mkt_decline * beta
+        projected = current_price * (1 + adj_decline)
         results[scenario] = {
-            "decline_pct": decline_pct,
+            "market_decline_pct": round(mkt_decline, 4),
+            "beta_adj_decline_pct": round(adj_decline, 4),
             "projected_price": round(projected, 2),
-            "loss_per_share": round(loss, 2),
+            "loss_per_share": round(projected - current_price, 2),
         }
 
     var_95 = float(np.percentile(returns, 5))
     cvar_95 = float(returns[returns <= var_95].mean()) if len(returns[returns <= var_95]) > 0 else var_95
+
+    mc = _run_monte_carlo(prices)
 
     return {
         "stress_test_result": {
             "scenarios": results,
             "var_95": round(var_95, 4),
             "cvar_95": round(cvar_95, 4),
-        }
+            "beta_used": round(beta, 3),
+            "beta_adjusted": True,
+        },
+        "monte_carlo": mc,
     }
-
-
-def _get_latest_field(financials: dict, field: str) -> float | None:
-    """Walk period-keyed dict (sorted descending), return most recent non-null value for field."""
-    for period_key in sorted(financials.keys(), reverse=True):
-        val = financials[period_key].get(field)
-        if val is not None:
-            try:
-                return float(val)
-            except (TypeError, ValueError):
-                continue
-    return None
-
-
-def _get_fcf_from_financials(financials_dict: dict) -> float | None:
-    for period_key, metrics in financials_dict.items():
-        if "Free Cash Flow" in metrics:
-            fcf = float(metrics["Free Cash Flow"])
-            logger.debug("FCF check %s: Free Cash Flow=%s", period_key, fcf)
-            if fcf > 0:
-                return fcf
-    for period_key, metrics in financials_dict.items():
-        op = metrics.get("Operating Cash Flow")
-        capex = metrics.get("Capital Expenditure")
-        if op is not None and capex is not None:
-            fcf = float(op) + float(capex)
-            logger.debug("FCF check %s: OCF=%s, CAPEX=%s, OCF-CAPEX=%s", period_key, op, capex, fcf)
-            if fcf > 0:
-                return fcf
-    logger.debug("No positive FCF found across %d periods", len(financials_dict))
-    return None
 
 
 async def dcf_valuation_node(state: QuantAnalysisState) -> dict:
@@ -492,6 +798,230 @@ async def dcf_valuation_node(state: QuantAnalysisState) -> dict:
         return {"dcf_valuation": None, "dcf_error": str(e)}
 
 
+async def peer_comparison_node(state: QuantAnalysisState) -> dict:
+    """Fetches peer financials in parallel and ranks the primary ticker on 5 metrics."""
+    ticker = state["ticker"]
+    mcp = state.get("mcp_client")
+    raw = state.get("_financials_raw") or {}
+    if not mcp:
+        return {"peer_comparison": None}
+
+    info = raw.get("info", {}) if raw else {}
+    industry = info.get("industry", "")
+    sector = info.get("sector", "")
+
+    from shared.peer_sets import get_peer_tickers
+    peer_tickers = get_peer_tickers(ticker, industry, sector)
+    if not peer_tickers:
+        return {"peer_comparison": {
+            "note": f"No peer set for industry='{industry}' sector='{sector}'",
+            "industry": industry,
+            "sector": sector,
+        }}
+
+    async def _fetch(sym: str) -> tuple[str, dict]:
+        try:
+            r = await mcp.call_tool_by_name("get_financials", {"ticker": sym})
+            if hasattr(r, "content") and r.content:
+                txt = r.content[0].text if hasattr(r.content[0], "text") else str(r.content[0])
+                d = json.loads(txt)
+                return sym, d.get("info", {})
+        except Exception as e:
+            logger.debug("Peer %s financials failed: %s", sym, e)
+        return sym, {}
+
+    peer_infos = dict(await asyncio.gather(*[_fetch(p) for p in peer_tickers]))
+
+    def _extract(inf: dict) -> dict:
+        return {
+            "pe": inf.get("trailingPE"),
+            "ev_ebitda": inf.get("enterpriseToEbitda"),
+            "rev_growth": inf.get("revenueGrowth"),
+            "op_margin": inf.get("operatingMargins"),
+            "roe": inf.get("returnOnEquity"),
+            "market_cap": inf.get("marketCap"),
+        }
+
+    comparison: dict[str, dict] = {ticker: _extract(info)}
+    for sym, sinf in peer_infos.items():
+        comparison[sym] = _extract(sinf)
+
+    # Rank primary ticker (1 = best) on each metric
+    rankings: dict[str, int] = {}
+    metric_higher_better = {
+        "pe": False, "ev_ebitda": False,
+        "rev_growth": True, "op_margin": True, "roe": True,
+    }
+    for metric, hib in metric_higher_better.items():
+        vals = {t: v[metric] for t, v in comparison.items() if v.get(metric) is not None and v[metric] > 0}
+        if ticker not in vals or len(vals) < 2:
+            continue
+        ordered = sorted(vals.keys(), key=lambda t: vals[t], reverse=hib)
+        rankings[metric] = ordered.index(ticker) + 1
+
+    return {
+        "peer_comparison": {
+            "industry": industry,
+            "sector": sector,
+            "peers": peer_tickers,
+            "comparison": comparison,
+            "rankings": rankings,
+            "n_peers": len(peer_tickers),
+        }
+    }
+
+
+async def options_flow_node(state: QuantAnalysisState) -> dict:
+    """Computes put/call volume and OI ratios from nearest-expiry options chain."""
+    ticker = state["ticker"]
+    mcp = state.get("mcp_client")
+    if not mcp:
+        return {"options_signals": None}
+    try:
+        result = await mcp.call_tool_by_name("get_options_chain", {"ticker": ticker})
+        if not hasattr(result, "content") or not result.content:
+            return {"options_signals": None}
+        raw = result.content[0].text if hasattr(result.content[0], "text") else str(result.content[0])
+        data = json.loads(raw)
+
+        def _sum(rows: list, field: str) -> int:
+            return sum(int(r.get(field) or 0) for r in rows if isinstance(r, dict))
+
+        calls = data.get("calls", [])
+        puts = data.get("puts", [])
+        call_vol = _sum(calls, "volume")
+        put_vol = _sum(puts, "volume")
+        call_oi = _sum(calls, "openInterest")
+        put_oi = _sum(puts, "openInterest")
+
+        pc_vol = round(put_vol / call_vol, 3) if call_vol > 0 else 1.0
+        pc_oi = round(put_oi / call_oi, 3) if call_oi > 0 else 1.0
+
+        if pc_vol < 0.5:
+            flow_signal = "bullish"
+        elif pc_vol > 1.5:
+            flow_signal = "bearish"
+        else:
+            flow_signal = "neutral"
+
+        return {
+            "options_signals": {
+                "put_call_volume_ratio": pc_vol,
+                "put_call_oi_ratio": pc_oi,
+                "call_volume": call_vol,
+                "put_volume": put_vol,
+                "total_volume": call_vol + put_vol,
+                "flow_signal": flow_signal,
+            }
+        }
+    except Exception as e:
+        logger.warning("Options flow failed for %s: %s", ticker, e)
+        return {"options_signals": None}
+
+
+async def insider_signals_node(state: QuantAnalysisState) -> dict:
+    """Counts recent Form 4 filings and infers net buy/sell direction from filing text."""
+    ticker = state["ticker"]
+    mcp = state.get("mcp_client")
+    if not mcp:
+        return {"insider_signals": None}
+    try:
+        result = await mcp.call_tool_by_name(
+            "get_company_filings",
+            {"ticker": ticker, "form_types": "4", "limit": 15},
+        )
+        if not hasattr(result, "content") or not result.content:
+            return {"insider_signals": None}
+        raw = result.content[0].text if hasattr(result.content[0], "text") else str(result.content[0])
+        data = json.loads(raw)
+        filings = data.get("filings", [])
+
+        cutoff = (date.today() - timedelta(days=90)).isoformat()
+        recent = [f for f in filings if (f.get("filing_date") or "") >= cutoff]
+
+        buys, sells = 0, 0
+        for f in recent:
+            text = " ".join(
+                str(f.get(k, "")) for k in ("description", "title", "form")
+            ).lower()
+            if any(w in text for w in ("purchase", "acquisition", " buy", "acquired")):
+                buys += 1
+            elif any(w in text for w in ("sale", "sell", "sold", "disposition", "disposed")):
+                sells += 1
+
+        if buys > sells and buys > 0:
+            direction = "net_buy"
+        elif sells > buys and sells > 0:
+            direction = "net_sell"
+        else:
+            direction = "neutral"
+
+        raw_fin = state.get("_financials_raw") or {}
+        insider_pct = (raw_fin.get("info") or {}).get("heldPercentInsiders")
+
+        return {
+            "insider_signals": {
+                "recent_form4_count": len(recent),
+                "buy_signals": buys,
+                "sell_signals": sells,
+                "direction": direction,
+                "insider_pct_held": insider_pct,
+                "activity_level": "high" if len(recent) >= 5 else "moderate" if len(recent) >= 2 else "low",
+            }
+        }
+    except Exception as e:
+        logger.warning("Insider signals failed for %s: %s", ticker, e)
+        return {"insider_signals": None}
+
+
+async def analyst_positioning_node(state: QuantAnalysisState) -> dict:
+    """Extracts analyst consensus, price target upside, and short interest from pre-fetched financials."""
+    raw_fin = state.get("_financials_raw") or {}
+    if not raw_fin:
+        return {"positioning": None}
+
+    info = raw_fin.get("info", {})
+    rec_key = info.get("recommendationKey") or ""
+    n_analysts = info.get("numberOfAnalystOpinions")
+    target_mean = info.get("targetMeanPrice")
+    current_price = info.get("currentPrice") or info.get("regularMarketPrice") or 0
+    short_ratio = info.get("shortRatio")
+    short_pct_float = info.get("shortPercentOfFloat")
+    trailing_eps = info.get("trailingEps")
+    forward_eps = info.get("forwardEps")
+
+    consensus_map = {
+        "strongbuy": 2, "strong_buy": 2,
+        "buy": 1,
+        "hold": 0, "neutral": 0,
+        "underperform": -1,
+        "sell": -2, "strongsell": -2, "strong_sell": -2,
+    }
+    consensus_score = consensus_map.get(rec_key.lower().replace(" ", ""), 0)
+
+    analyst_upside = None
+    if target_mean and current_price > 0:
+        analyst_upside = round((target_mean - current_price) / current_price * 100, 1)
+
+    earnings_surprise = None
+    if trailing_eps and forward_eps and trailing_eps != 0:
+        earnings_surprise = round((forward_eps - trailing_eps) / abs(trailing_eps), 3)
+
+    return {
+        "positioning": {
+            "recommendation_key": rec_key,
+            "consensus_score": consensus_score,
+            "n_analysts": n_analysts,
+            "analyst_target_price": target_mean,
+            "analyst_upside_pct": analyst_upside,
+            "short_ratio": short_ratio,
+            "short_pct_float": short_pct_float,
+            "earnings_surprise_est": earnings_surprise,
+            "short_squeeze_risk": bool(short_ratio and short_ratio > 5),
+        }
+    }
+
+
 async def correlation_node(state: QuantAnalysisState) -> dict:
     # Pairwise Pearson correlation matrix between primary ticker and portfolio holdings
     prices_dict = state.get("price_data", {})
@@ -536,43 +1066,63 @@ async def correlation_node(state: QuantAnalysisState) -> dict:
 
 
 async def format_output_node(state: QuantAnalysisState) -> dict:
-    """Signal voting across risk, DCF, fundamentals, and technicals → BUY/HOLD/SELL."""
+    """Weighted 8-group signal voting → BUY/HOLD/SELL with composite score."""
     metrics = state.get("metrics", {})
     stress = state.get("stress_test_result")
     dcf = state.get("dcf_valuation")
     corr = state.get("correlation_matrix", {})
     fundamentals = state.get("fundamentals")
     technicals = state.get("technicals")
+    peer_comp = state.get("peer_comparison")
+    options = state.get("options_signals")
+    insider = state.get("insider_signals")
+    positioning = state.get("positioning")
     ticker = state.get("ticker", "?")
     dcf_error = state.get("dcf_error")
 
-    logger.info("Formatting output for %s: dcf=%s, stress=%s, fundamentals=%s, technicals=%s",
-                 ticker, "ok" if dcf else "null", "ok" if stress else "null",
-                 "ok" if fundamentals else "null", "ok" if technicals else "null")
+    logger.info(
+        "Formatting output for %s: dcf=%s, stress=%s, fundamentals=%s, technicals=%s, peers=%s",
+        ticker,
+        "ok" if dcf else "null",
+        "ok" if stress else "null",
+        "ok" if fundamentals else "null",
+        "ok" if technicals else "null",
+        "ok" if peer_comp and peer_comp.get("rankings") else "null",
+    )
 
+    # Compute per-group scores
+    group_scores = {
+        "risk_quality": _score_risk_quality(metrics),
+        "dcf_value": _score_dcf(dcf),
+        "fundamental_value": _score_fundamental_value(fundamentals),
+        "fundamental_quality": _score_fundamental_quality(fundamentals),
+        "technicals_trend": _score_technicals_trend(technicals),
+        "technicals_momentum": _score_technicals_momentum(technicals),
+        "peer_positioning": _score_peer_positioning(peer_comp),
+        "behavioral": _score_behavioral(options, positioning, insider),
+    }
+
+    recommendation, confidence = _weighted_vote(group_scores)
+
+    # Named signal list (for display/backward compat)
+    signals: list[str] = []
     sharpe = metrics.get("sharpe_ratio", 0)
     vol = metrics.get("annual_volatility", 0)
-
-    signals = []
     if sharpe >= 1.0:
         signals.append("positive_risk_adjusted_return")
     elif sharpe < 0:
         signals.append("negative_risk_adjusted_return")
-
     if vol > 0.35:
         signals.append("high_volatility")
     elif vol < 0.15:
         signals.append("low_volatility")
-
-    if dcf and dcf.get("upside_pct", 0) > 20:
-        signals.append("undervalued_dcf")
-    elif dcf and dcf.get("upside_pct", 0) < -20:
-        signals.append("overvalued_dcf")
-
+    if dcf:
+        if dcf.get("upside_pct", 0) > 20:
+            signals.append("undervalued_dcf")
+        elif dcf.get("upside_pct", 0) < -20:
+            signals.append("overvalued_dcf")
     if stress and stress.get("cvar_95", 0) < -0.05:
         signals.append("tail_risk")
-
-    # Fundamental signals
     if fundamentals:
         pe = fundamentals.get("trailing_pe")
         if pe and pe > 0:
@@ -586,8 +1136,6 @@ async def format_output_node(state: QuantAnalysisState) -> dict:
                 signals.append("strong_roe")
             elif roe < 0:
                 signals.append("negative_roe")
-
-    # Technical signals
     if technicals:
         trend = technicals.get("trend")
         if trend in ("strong_uptrend", "uptrend"):
@@ -600,48 +1148,55 @@ async def format_output_node(state: QuantAnalysisState) -> dict:
                 signals.append("oversold_rsi")
             elif rsi > 70:
                 signals.append("overbought_rsi")
+    if peer_comp and peer_comp.get("rankings"):
+        avg_rank = sum(peer_comp["rankings"].values()) / len(peer_comp["rankings"])
+        n_peers = peer_comp.get("n_peers", 1)
+        if avg_rank <= 2:
+            signals.append("top_peer_rank")
+        elif avg_rank > n_peers:
+            signals.append("bottom_peer_rank")
+    if options:
+        if options.get("flow_signal") == "bullish":
+            signals.append("bullish_options_flow")
+        elif options.get("flow_signal") == "bearish":
+            signals.append("bearish_options_flow")
+    if positioning:
+        if (positioning.get("consensus_score") or 0) >= 1:
+            signals.append("analyst_buy_consensus")
+        elif (positioning.get("consensus_score") or 0) <= -1:
+            signals.append("analyst_sell_consensus")
 
-    _POS = {"positive_risk_adjusted_return", "low_volatility", "undervalued_dcf",
-             "low_pe_ratio", "strong_roe", "bullish_trend", "oversold_rsi"}
-    pos_signals = sum(1 for s in signals if s in _POS)
-    neg_signals = len(signals) - pos_signals
-
-    if pos_signals > neg_signals:
-        recommendation = "BUY"
-    elif neg_signals > pos_signals:
-        recommendation = "SELL"
-    else:
-        recommendation = "HOLD"
-
-    confidence = max(0.0, min(1.0, (pos_signals + 1) / (len(signals) + 1) if signals else 0.5))
-
-    reasoning_parts = []
+    # Build reasoning string
+    parts = []
     if metrics:
-        reasoning_parts.append(
+        parts.append(
             f"Sharpe: {metrics.get('sharpe_ratio', 'N/A')}, "
             f"Vol: {metrics.get('annual_volatility', 'N/A')}, "
             f"Beta: {metrics.get('beta', 'N/A')}"
         )
     if dcf:
-        reasoning_parts.append(f"DCF intrinsic: ${dcf.get('intrinsic_value', 'N/A')} (upside: {dcf.get('upside_pct', 'N/A')}%, WACC: {dcf.get('wacc', 'N/A'):.1%}, growth: {dcf.get('growth_rate', 'N/A'):.1%})")
+        parts.append(
+            f"DCF intrinsic: ${dcf.get('intrinsic_value', 'N/A')} "
+            f"(upside: {dcf.get('upside_pct', 'N/A')}%, "
+            f"WACC: {dcf.get('wacc', 'N/A'):.1%}, "
+            f"growth: {dcf.get('growth_rate', 'N/A'):.1%})"
+        )
     elif dcf_error:
-        reasoning_parts.append(f"DCF: {dcf_error}")
-
+        parts.append(f"DCF: {dcf_error}")
     if fundamentals:
         fund_parts = []
-        if fundamentals.get("trailing_pe") is not None:
-            fund_parts.append(f"PE={fundamentals['trailing_pe']:.1f}")
-        if fundamentals.get("roe") is not None:
-            fund_parts.append(f"ROE={fundamentals['roe']:.1%}")
-        if fundamentals.get("revenue_growth") is not None:
-            fund_parts.append(f"RevGrowth={fundamentals['revenue_growth']:.1%}")
-        if fundamentals.get("operating_margin") is not None:
-            fund_parts.append(f"OpMargin={fundamentals['operating_margin']:.1%}")
-        if fundamentals.get("debt_to_equity") is not None:
-            fund_parts.append(f"D/E={fundamentals['debt_to_equity']:.1f}")
+        for label, key, fmt in [
+            ("PE", "trailing_pe", ".1f"),
+            ("ROE", "roe", ".1%"),
+            ("RevGrowth", "revenue_growth", ".1%"),
+            ("OpMargin", "operating_margin", ".1%"),
+            ("D/E", "debt_to_equity", ".1f"),
+        ]:
+            v = fundamentals.get(key)
+            if v is not None:
+                fund_parts.append(f"{label}={v:{fmt}}")
         if fund_parts:
-            reasoning_parts.append(f"Fundamentals: {', '.join(fund_parts)}")
-
+            parts.append(f"Fundamentals: {', '.join(fund_parts)}")
     if technicals:
         tech_parts = []
         if technicals.get("trend"):
@@ -653,57 +1208,65 @@ async def format_output_node(state: QuantAnalysisState) -> dict:
         if technicals.get("golden_cross") is not None:
             tech_parts.append(f"GoldenCross={technicals['golden_cross']}")
         if tech_parts:
-            reasoning_parts.append(f"Technicals: {', '.join(tech_parts)}")
-
-    stress_test_info = None
+            parts.append(f"Technicals: {', '.join(tech_parts)}")
+    if peer_comp and peer_comp.get("rankings"):
+        ranks = peer_comp["rankings"]
+        parts.append(f"Peers: rank {ranks} among {peer_comp.get('n_peers', '?')+1}")
     if stress:
-        reasoning_parts.append(f"Stress CVaR: {stress.get('cvar_95', 'N/A')}")
-        stress_test_info = stress
-    elif vol <= 0.35:
-        stress_test_info = {
-            "note": f"Stress test skipped - volatility ({vol:.1%}) below 35% threshold",
-            "volatility": vol,
-            "threshold": 0.35,
-        }
+        parts.append(f"Stress CVaR: {stress.get('cvar_95', 'N/A')}")
+    parts.append(
+        f"Composite: {sum(group_scores[k]*_SIGNAL_WEIGHTS.get(k,0) for k in group_scores):.3f} "
+        f"({recommendation}, conf={confidence:.2f})"
+    )
 
-    reasoning = " | ".join(reasoning_parts)
+    stress_test_info = stress or (
+        {"note": f"Stress test skipped - volatility ({vol:.1%}) below 35% threshold", "volatility": vol, "threshold": 0.35}
+        if vol <= 0.35 else None
+    )
 
     return {
         "recommendation": recommendation,
-        "reasoning": reasoning,
+        "reasoning": " | ".join(parts),
         "metrics": {
             **metrics,
-            "quant_confidence": round(confidence, 3),
+            "quant_confidence": confidence,
             "quant_signal": recommendation,
             "signals": signals,
+            "signal_scores": group_scores,
         },
         "stress_test_result": stress_test_info,
         "dcf_valuation": dcf,
         "correlation_matrix": corr,
         "fundamentals": fundamentals,
         "technicals": technicals,
+        "peer_comparison": peer_comp,
+        "options_signals": options,
+        "insider_signals": insider,
+        "positioning": positioning,
     }
 
 
 async def llm_summary_node(state: QuantAnalysisState) -> dict:
-    """Produces a 3-4 sentence investor summary including fundamentals and technicals."""
+    """Produces a 3-4 sentence investor summary covering all signal groups."""
     from langchain_openai import ChatOpenAI
-    from shared.config import LLM_MODEL, LLM_BASE_URL, LLM_API_KEY
+    from shared.config import LLM_SUMMARY_MODEL as LLM_MODEL, LLM_BASE_URL, LLM_API_KEY
 
     metrics = state.get("metrics", {})
     stress = state.get("stress_test_result")
     dcf = state.get("dcf_valuation")
+    mc = state.get("monte_carlo")
     fund = state.get("fundamentals") or {}
     tech = state.get("technicals") or {}
+    peer_comp = state.get("peer_comparison") or {}
+    positioning = state.get("positioning") or {}
+    options = state.get("options_signals") or {}
     ticker = state.get("ticker", "")
     rec = state.get("recommendation", "HOLD")
     reasoning = state.get("reasoning", "")
 
     today = date.today().isoformat()
     prompt = (
-        f"Today's date: {today}. "
-        f"You are a financial analyst. Summarize the quantitative analysis for {ticker} "
-        f"in 3-4 sentences for an investor.\n\n"
+        f"Today: {today}. Financial analyst summary for {ticker}.\n"
         f"Recommendation: {rec}\n"
         f"Risk: Sharpe={metrics.get('sharpe_ratio')}, "
         f"Vol={metrics.get('annual_volatility')}, "
@@ -728,12 +1291,27 @@ async def llm_summary_node(state: QuantAnalysisState) -> dict:
             f"upside={dcf.get('upside_pct')}%, "
             f"WACC={dcf.get('wacc')}, growth={dcf.get('growth_rate')}\n"
         )
+    if mc:
+        prompt += (
+            f"Monte Carlo (1yr): p10=${mc.get('p10')}, p50=${mc.get('p50')}, "
+            f"p90=${mc.get('p90')}, prob_profit={mc.get('prob_profit'):.0%}\n"
+        )
     if stress:
         prompt += f"Stress CVaR: {stress.get('cvar_95')}\n"
-    prompt += "\nNote any signal conflicts. Be specific about numbers."
+    if peer_comp.get("rankings"):
+        prompt += f"Peer ranks: {peer_comp['rankings']} out of {peer_comp.get('n_peers', '?')+1}\n"
+    if positioning.get("recommendation_key"):
+        prompt += (
+            f"Analyst consensus: {positioning['recommendation_key']} "
+            f"({positioning.get('n_analysts', '?')} analysts, "
+            f"target upside {positioning.get('analyst_upside_pct')}%)\n"
+        )
+    if options.get("flow_signal"):
+        prompt += f"Options flow: {options['flow_signal']} (P/C vol={options.get('put_call_volume_ratio')})\n"
+    prompt += "\nWrite 3-4 sentences for an investor. Note signal conflicts. Be specific about numbers."
 
     try:
-        llm = ChatOpenAI(model=LLM_MODEL, base_url=LLM_BASE_URL, api_key=LLM_API_KEY, temperature=0.3, max_tokens=384)
+        llm = ChatOpenAI(model=LLM_MODEL, base_url=LLM_BASE_URL, api_key=LLM_API_KEY, temperature=0.3, max_tokens=512)
         response = await llm.ainvoke(prompt)
         summary = response.content if hasattr(response, "content") else str(response)
     except Exception as e:

@@ -44,10 +44,11 @@ async def test_quant_agent_card_reachable():
 
 @pytest.mark.integration
 @pytest.mark.external
-async def test_sentiment_agent_card_reachable():
-    """Sentiment agent (port 8004) exposes its A2A agent card."""
+async def test_market_context_agent_card_reachable():
+    """Market Context agent (port 8004) exposes its A2A agent card."""
     async with httpx.AsyncClient(timeout=5.0) as client:
         resp = await client.get("http://localhost:8004/.well-known/agent-card")
     assert resp.status_code == 200
     card = resp.json()
     assert "name" in card
+    assert card["name"] == "Market Context Agent"

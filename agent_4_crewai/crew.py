@@ -1,7 +1,6 @@
 import json
 import logging
 from datetime import date
-from typing import Any
 
 from crewai import Agent, Crew, Process, Task
 
@@ -14,41 +13,59 @@ from shared.config import ADK_MODEL, LLM_BASE_URL, LLM_API_KEY
 
 _LLM = CrewLLM(model=ADK_MODEL, base_url=LLM_BASE_URL, api_key=LLM_API_KEY, temperature=0.3)
 
-_SYNTHESIS_BACKSTORY = "Senior portfolio manager with 20 years of experience writing investment theses"
 
-
-class SentimentIntelligenceCrew:
+class MarketContextCrew:
     def __init__(self, mcp_wrapper: MCPClientWrapper):
         self._mcp = mcp_wrapper
 
     def build_crew(self, ticker: str, data: dict | None = None) -> Crew:
-        # Assembles a single-agent CrewAI Crew with pre-fetched data injected as task context
-        news_summary = ""
-        filings_summary = ""
-        if data:
-            news = data.get("news", {})
-            if "error" not in news:
-                articles = news.get("articles", [])
-                news_summary = f"News articles found: {len(articles)}. Sentiment score: {news.get('sentiment_score', 'N/A')}. Top articles: "
-                for a in articles[:3]:
-                    news_summary += f"\n- {a.get('title', '')} (sentiment: {a.get('sentiment', 'N/A')})"
-            else:
-                news_summary = f"News unavailable: {news.get('error')}"
-            filings = data.get("filings", {})
-            if "error" not in filings:
-                flist = filings.get("filings", [])
-                filings_summary = f"SEC filings found: {len(flist)}. "
-                for f in flist[:3]:
-                    filings_summary += f"\n- {f.get('form', '')} filed {f.get('filing_date', '')}: {f.get('description', '')}"
-            else:
-                filings_summary = f"Filings unavailable: {filings.get('error')}"
+        data = data or {}
+        macro = data.get("macro", {})
+        peers = data.get("peers", {})
+        sector = data.get("sector", "")
+        industry = data.get("industry", "")
 
-        context_data = f"Data for {ticker}:\n\nNews:\n{news_summary}\n\nSEC Filings:\n{filings_summary}"
+        m = macro.get("macro", {})
+        s = macro.get("sectors", {})
+        macro_summary = (
+            f"Regime: {m.get('regime', 'unknown')} yield curve "
+            f"(10Y={m.get('us10y', {}).get('value')}%, "
+            f"spread={m.get('yield_curve_spread')}). "
+            f"VIX={m.get('vix', {}).get('value')} "
+            f"(5d change {m.get('vix', {}).get('change_5d_pct')}%). "
+            f"DXY 5d change {m.get('dxy', {}).get('change_5d_pct')}%. "
+            "Sector 1mo: " +
+            ", ".join(f"{k}={v}%" for k, v in s.items() if isinstance(v, (int, float)))
+        ) if m else "(macro data unavailable)"
+
+        peer_lines = []
+        for sym, pdata in peers.items():
+            pinfo = (pdata.get("financials") or {}).get("info", {})
+            peer_lines.append(
+                f"  - {sym}: PE={pinfo.get('trailingPE')}, "
+                f"RevGrowth={pinfo.get('revenueGrowth')}, "
+                f"OpMargin={pinfo.get('operatingMargins')}, "
+                f"MarketCap={pinfo.get('marketCap')}"
+            )
+        peer_summary = "\n".join(peer_lines) if peer_lines else "(no peer data)"
+
+        context_data = (
+            f"Target: {ticker} ({industry or sector})\n\n"
+            f"MACRO REGIME:\n{macro_summary}\n\n"
+            f"PEER LANDSCAPE ({len(peers)} peers):\n{peer_summary}"
+        )
 
         agent = Agent(
-            role="Investment Sentiment Analyst",
-            goal=f"Analyze sentiment for {ticker} and produce an investment narrative",
-            backstory=_SYNTHESIS_BACKSTORY,
+            role="Market Context Analyst",
+            goal=(
+                f"Position {ticker} inside its current macro regime and competitive "
+                f"landscape — does the environment favour or penalise this name right now?"
+            ),
+            backstory=(
+                "Senior strategist who frames every investment in its macro and competitive "
+                "context. Specialises in identifying regime shifts (rate cycles, vol spikes, "
+                "sector rotation) and explaining how named peers create tailwinds or headwinds."
+            ),
             llm=_LLM,
             verbose=False,
             allow_delegation=False,
@@ -58,29 +75,27 @@ class SentimentIntelligenceCrew:
         today = date.today().isoformat()
         task = Task(
             description=(
-                f"Today's date: {today}. "
-                f"Analyze the following data for {ticker} and produce:\n"
-                f"1. Sentiment signal (bullish/bearish/neutral)\n"
-                f"2. Key risks and catalysts\n"
-                f"3. A 2-3 paragraph investment narrative\n"
-                f"4. Overall confidence score (0-1)\n\n"
+                f"Today's date: {today}. Given the macro regime and peer data below, "
+                f"write a context narrative for {ticker}:\n\n"
+                f"1. Macro alignment — does the current regime (yield curve, VIX, DXY, "
+                f"sector rotation) favour this name?\n"
+                f"2. Peer positioning — how does {ticker} stack up against the named peers "
+                f"on growth, margins, valuation?\n"
+                f"3. Net assessment — overall_signal (bullish/bearish/neutral) and "
+                f"confidence_score (0-1).\n\n"
                 f"{context_data}"
             ),
             agent=agent,
             expected_output=(
-                "JSON with narrative, overall_signal, confidence_score (0-1), key_risks, key_catalysts"
+                "JSON with: narrative (2-3 paragraphs), macro_regime (string), "
+                "relative_peer_positioning (string), overall_signal, confidence_score (0-1), "
+                "key_tailwinds, key_headwinds."
             ),
         )
 
-        return Crew(
-            agents=[agent],
-            tasks=[task],
-            process=Process.sequential,
-            verbose=False,
-        )
+        return Crew(agents=[agent], tasks=[task], process=Process.sequential, verbose=False)
 
     async def analyze(self, ticker: str, precollected_data: dict | None = None) -> dict:
-        # Runs the Crew sequentially and parses the LLM JSON output; falls back to raw text on parse failure
         crew = self.build_crew(ticker, data=precollected_data)
         try:
             result = crew.kickoff()
@@ -90,11 +105,11 @@ class SentimentIntelligenceCrew:
             except (json.JSONDecodeError, TypeError):
                 return {"narrative": raw, "overall_signal": "neutral", "confidence_score": 0.5}
         except Exception as e:
-            logger.exception("Crew analysis failed for %s", ticker)
+            logger.exception("Market context crew failed for %s", ticker)
             return {
                 "narrative": f"Analysis failed: {e}",
                 "overall_signal": "neutral",
                 "confidence_score": 0.0,
-                "key_risks": [],
-                "key_catalysts": [],
+                "key_tailwinds": [],
+                "key_headwinds": [],
             }

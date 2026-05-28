@@ -36,7 +36,7 @@ from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
 from shared.config import SEC_USER_AGENT
 from shared.rate_limiter import TokenBucket
-from shared.ttl_cache import TTLCache
+from shared.redis_cache import make_cache
 from shared.logging_config import logged
 from shared.observability import init_langfuse, shutdown_langfuse
 init_langfuse(service_name="mcp_server")
@@ -70,11 +70,14 @@ _rss_limiter = TokenBucket(rate=2, burst=4)       # RSS + Yahoo news fallback
 # TTL Cache
 # ──────────────────────────────────────────────
 
-_cache_prices      = TTLCache(ttl_seconds=60)              # 1 min — intraday prices
-_cache_financials  = TTLCache(ttl_seconds=3600)            # 1 hr — quarterly data
-_cache_news        = TTLCache(ttl_seconds=300)             # 5 min — news headlines
-_cache_filing      = TTLCache(ttl_seconds=None, max_entries=200)  # permanent LRU-200
-_cache_submissions = TTLCache(ttl_seconds=21600)           # 6 hr — submission lists
+_cache_prices      = make_cache(60,    "prices")                       # 1 min — intraday prices
+_cache_benchmark   = make_cache(3600,  "benchmark")                    # 1 hr — index benchmarks (^GSPC etc.)
+_cache_financials  = make_cache(3600,  "financials")                   # 1 hr — quarterly data
+_cache_news        = make_cache(300,   "news")                         # 5 min — news headlines
+_cache_filing      = make_cache(None,  "filing",   max_entries=200)    # permanent LRU-200
+_cache_submissions = make_cache(21600, "submissions")                  # 6 hr — submission lists
+
+_BENCHMARK_TICKERS = frozenset({"^GSPC", "^IXIC", "^DJI", "^RUT", "^VIX", "DXY"})
 
 
 # ──────────────────────────────────────────────
@@ -247,7 +250,8 @@ async def get_prices(ticker: str, period: str = "1y", interval: str = "1d") -> d
         dict with keys: ticker, period, data (list of OHLCV records with ISO dates)
     """
     logger.info("Tool called", extra={"tool": "get_prices", "ticker": ticker})
-    return await _cache_prices.get_or_fetch(
+    cache = _cache_benchmark if ticker.upper() in _BENCHMARK_TICKERS else _cache_prices
+    return await cache.get_or_fetch(
         f"prices:{ticker.upper()}:{period}:{interval}",
         lambda: _get_prices_uncached(ticker, period, interval),
     )
@@ -294,6 +298,81 @@ async def get_financials(ticker: str) -> dict:
         f"financials:{ticker.upper()}",
         lambda: _get_financials_uncached(ticker),
     )
+
+
+_MACRO_TICKERS = {
+    "us10y": "^TNX",      # 10-year Treasury yield
+    "us2y":  "^FVX",      # 5-year proxy (closest clean 2Y in yfinance)
+    "vix":   "^VIX",      # CBOE volatility index
+    "dxy":   "DX-Y.NYB",  # US Dollar index
+}
+
+_SECTOR_ETFS = {
+    "tech":          "XLK",
+    "financials":    "XLF",
+    "energy":        "XLE",
+    "healthcare":    "XLV",
+    "industrials":   "XLI",
+    "consumer_disc": "XLY",
+    "consumer_stap": "XLP",
+    "utilities":     "XLU",
+    "materials":     "XLB",
+    "real_estate":   "XLRE",
+    "communication": "XLC",
+}
+
+_cache_macro = make_cache(900, "macro")  # 15 min — macro moves slowly
+
+
+async def _get_macro_impl() -> dict:
+    await _yfinance_limiter.acquire()
+    result: dict = {"macro": {}, "sectors": {}}
+    for key, sym in _MACRO_TICKERS.items():
+        try:
+            hist = yf.Ticker(sym).history(period="1mo")
+            if hist.empty:
+                continue
+            latest = float(hist["Close"].iloc[-1])
+            prev   = float(hist["Close"].iloc[-5]) if len(hist) >= 5 else latest
+            result["macro"][key] = {
+                "value":         round(latest, 3),
+                "change_5d_pct": round((latest - prev) / prev * 100, 2) if prev else 0,
+            }
+        except Exception as exc:
+            result["macro"][key] = {"error": str(exc)}
+    for name, sym in _SECTOR_ETFS.items():
+        try:
+            hist = yf.Ticker(sym).history(period="1mo")
+            if hist.empty:
+                continue
+            latest = float(hist["Close"].iloc[-1])
+            prev   = float(hist["Close"].iloc[-21]) if len(hist) >= 21 else latest
+            result["sectors"][name] = round((latest - prev) / prev * 100, 2) if prev else 0
+        except Exception:
+            continue
+    macro = result["macro"]
+    if "us10y" in macro and "us2y" in macro:
+        v10 = macro["us10y"].get("value", 0)
+        v2  = macro["us2y"].get("value", 0)
+        spread = v10 - v2
+        result["macro"]["yield_curve_spread"] = round(spread, 3)
+        result["macro"]["regime"] = (
+            "inverted" if spread < 0 else "flat" if spread < 0.5 else "normal"
+        )
+    return result
+
+
+@app.tool()
+@observe()
+async def get_macro_indicators() -> dict:
+    """Fetch macro regime (Treasury yields, VIX, DXY) and sector ETF 1-month performance.
+
+    Returns:
+        dict with keys:
+          macro: {us10y, us2y, vix, dxy, yield_curve_spread, regime}
+          sectors: {tech, financials, energy, ...} (1-month % return)
+    """
+    return await _cache_macro.get_or_fetch("macro", _get_macro_impl)
 
 
 @app.tool()
@@ -1166,6 +1245,47 @@ async def _fetch_rss(url: str, client: httpx.AsyncClient) -> dict:
         return {"entries": [], "status": "error", "error": str(exc)}
 
 
+async def _fetch_ddg_news(ticker: str, company_name: str, limit: int = 10) -> list[dict]:
+    """4th-tier news fallback via DuckDuckGo. Silently skips if `duckduckgo_search` is not installed.
+
+    Returns a list of article dicts: {source, title, link, publisher, published, sentiment}.
+    """
+    try:
+        from duckduckgo_search import DDGS  # optional dep
+    except ImportError:
+        return []
+    try:
+        from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer as _SA
+        _sa = _SA()
+        query = f"{company_name} {ticker} stock news" if company_name else f"{ticker} stock news"
+        # DDGS().news() is sync; run in executor to avoid blocking the event loop
+        loop = asyncio.get_running_loop()
+        def _search():
+            with DDGS() as ddgs:
+                return list(ddgs.news(query, max_results=limit, region="us-en"))
+        await _rss_limiter.acquire()
+        results = await loop.run_in_executor(None, _search)
+        articles = []
+        for item in results:
+            title = item.get("title", "")
+            body = item.get("body", "") or ""
+            title_score = _sa.polarity_scores(title)["compound"]
+            body_score = _sa.polarity_scores(body)["compound"] if body else title_score
+            compound = round((title_score + body_score) / 2, 4)
+            articles.append({
+                "source": "duckduckgo",
+                "title": title,
+                "link": item.get("url", ""),
+                "publisher": item.get("source", ""),
+                "published": item.get("date", ""),
+                "sentiment": compound,
+            })
+        return articles
+    except Exception as exc:
+        logger.warning("DuckDuckGo news fetch failed for %s: %s", ticker, exc)
+        return []
+
+
 async def _fetch_yf_news(ticker: str, client: httpx.AsyncClient, limit: int = 15) -> list[dict]:
     """Fetch news articles from Yahoo Finance search API for a ticker.
 
@@ -1290,13 +1410,21 @@ async def _get_news_sentiment_impl(ticker: str, limit: int) -> dict:
     scores: list[float] = []
     feed_status: dict[str, str] = {}
 
+    # Merge generic feeds with a ticker-specific Yahoo Finance RSS (pre-filtered, no keyword match needed)
+    ticker_feed_key = f"yahoo_ticker_{ticker.upper()}"
+    ticker_feed_url = (
+        f"https://feeds.finance.yahoo.com/rss/2.0/headline"
+        f"?s={ticker.upper()}&region=US&lang=en-US"
+    )
+    all_feeds: dict[str, str] = {**_RSS_FEEDS, ticker_feed_key: ticker_feed_url}
+
     async with httpx.AsyncClient(headers=_SEC_HEADERS, follow_redirects=True) as client:
         rss_results = await asyncio.gather(
-            *[_fetch_rss(url, client) for url in _RSS_FEEDS.values()],
+            *[_fetch_rss(url, client) for url in all_feeds.values()],
             return_exceptions=True,
         )
 
-        for source, result in zip(_RSS_FEEDS.keys(), rss_results):
+        for source, result in zip(all_feeds.keys(), rss_results):
             if isinstance(result, Exception):
                 feed_status[source] = f"error: {result}"
                 continue
@@ -1305,12 +1433,15 @@ async def _get_news_sentiment_impl(ticker: str, limit: int) -> dict:
             if result["error"]:
                 feed_status[source] += f" ({result['error']})"
 
+            is_ticker_specific = source == ticker_feed_key
             for entry in result["entries"][:15]:
                 title: str = entry.get("title", "")
                 summary: str = entry.get("summary", "")
-                combined = _normalise_for_match(f"{title} {summary}")
-                if not _keyword_matches(combined, keywords):
-                    continue
+                # Ticker-specific feed is already filtered; generic feeds need keyword matching
+                if not is_ticker_specific:
+                    combined = _normalise_for_match(f"{title} {summary}")
+                    if not _keyword_matches(combined, keywords):
+                        continue
 
                 title_score   = _sentiment_analyzer.polarity_scores(title)["compound"]
                 summary_score = (
@@ -1341,7 +1472,21 @@ async def _get_news_sentiment_impl(ticker: str, limit: int) -> dict:
                 source_used = f"yahoo_finance_api ({reason})"
             else:
                 feed_status["yahoo_finance_api"] = "no articles returned"
-                source_used = "none"
+                # 4th-tier fallback: DuckDuckGo news (skipped if duckduckgo_search not installed)
+                company_name = ""
+                try:
+                    company_name = await _edgar.get_company_title(ticker.upper())
+                except Exception:
+                    pass
+                ddg_articles = await _fetch_ddg_news(ticker, company_name, limit=limit)
+                if ddg_articles:
+                    articles = ddg_articles[:limit]
+                    scores = [a["sentiment"] for a in articles]
+                    feed_status["duckduckgo"] = f"ok ({len(ddg_articles)} articles)"
+                    source_used = f"duckduckgo ({reason})"
+                else:
+                    feed_status["duckduckgo"] = "unavailable or 0 articles"
+                    source_used = "none"
 
     avg = round(sum(scores) / len(scores), 4) if scores else 0.0
     pos = sum(1 for s in scores if s > 0.05)
@@ -1475,6 +1620,116 @@ async def get_earnings_calendar(ticker: str) -> dict:
         "ticker": ticker.upper(),
         "error": "Could not retrieve earnings date from any source",
     }
+
+
+@app.tool()
+@observe()
+async def get_sentiment_indicators(ticker: str) -> dict:
+    """Fetch positioning indicators: short interest, analyst consensus, institutional ownership.
+
+    These are the structured signals the Quant agent's analyst_positioning_node consumes.
+    Provided as a standalone MCP tool so external callers can query positioning without
+    pulling the entire fundamentals payload.
+
+    Args:
+        ticker: Stock ticker symbol (e.g. NVDA, AAPL, MSFT)
+
+    Returns:
+        dict with keys:
+          ticker,
+          short_interest: {short_ratio, short_percent_of_float, shares_short},
+          analyst: {recommendation_key, n_opinions, target_mean, target_high, target_low, current_price, upside_pct},
+          institutional: {held_percent_institutions, held_percent_insiders}
+    """
+    try:
+        await _yfinance_limiter.acquire()
+        stock = yf.Ticker(ticker)
+        info = stock.info or {}
+        current = info.get("currentPrice") or info.get("regularMarketPrice")
+        target_mean = info.get("targetMeanPrice")
+        upside_pct = None
+        if current and target_mean:
+            try:
+                upside_pct = round((float(target_mean) - float(current)) / float(current) * 100, 2)
+            except Exception:
+                upside_pct = None
+        return {
+            "ticker": ticker.upper(),
+            "short_interest": {
+                "short_ratio": _serialise_value(info.get("shortRatio")),
+                "short_percent_of_float": _serialise_value(info.get("shortPercentOfFloat")),
+                "shares_short": _serialise_value(info.get("sharesShort")),
+                "shares_short_prior_month": _serialise_value(info.get("sharesShortPriorMonth")),
+            },
+            "analyst": {
+                "recommendation_key": info.get("recommendationKey"),
+                "n_opinions": _serialise_value(info.get("numberOfAnalystOpinions")),
+                "target_mean": _serialise_value(target_mean),
+                "target_high": _serialise_value(info.get("targetHighPrice")),
+                "target_low": _serialise_value(info.get("targetLowPrice")),
+                "current_price": _serialise_value(current),
+                "upside_pct": upside_pct,
+            },
+            "institutional": {
+                "held_percent_institutions": _serialise_value(info.get("heldPercentInstitutions")),
+                "held_percent_insiders": _serialise_value(info.get("heldPercentInsiders")),
+            },
+        }
+    except Exception as exc:
+        logger.warning("get_sentiment_indicators failed for %s: %s", ticker, exc)
+        return {"ticker": ticker.upper(), "error": str(exc)}
+
+
+@app.tool()
+@observe()
+async def get_earnings_history(ticker: str, limit: int = 8) -> dict:
+    """Fetch quarterly earnings history: EPS estimates vs actuals and surprise %.
+
+    Args:
+        ticker: Stock ticker symbol (e.g. NVDA, AAPL, MSFT)
+        limit:  Number of past quarters to return (default 8 ≈ 2 years)
+
+    Returns:
+        dict with keys:
+          ticker, n_quarters,
+          quarters (list of {date, eps_estimate, eps_actual, surprise_pct}),
+          beat_rate (fraction of quarters where actual > estimate),
+          avg_surprise_pct
+    """
+    try:
+        await _yfinance_limiter.acquire()
+        stock = yf.Ticker(ticker)
+        ed = stock.earnings_dates
+        if ed is None or ed.empty:
+            return {
+                "ticker": ticker.upper(),
+                "quarters": [],
+                "beat_rate": None,
+                "avg_surprise_pct": None,
+                "n_quarters": 0,
+            }
+        # Filter to past quarters that have a reported EPS
+        past = ed[ed["Reported EPS"].notna()].head(limit)
+        quarters = []
+        for dt, row in past.iterrows():
+            quarters.append({
+                "date": dt.isoformat(),
+                "eps_estimate": _serialise_value(row.get("EPS Estimate")),
+                "eps_actual": _serialise_value(row.get("Reported EPS")),
+                "surprise_pct": _serialise_value(row.get("Surprise(%)")),
+            })
+        surprise_vals = [q["surprise_pct"] for q in quarters if q["surprise_pct"] is not None]
+        beat_count = sum(1 for s in surprise_vals if s > 0)
+        return {
+            "ticker": ticker.upper(),
+            "quarters": quarters,
+            "beat_rate": round(beat_count / len(surprise_vals), 3) if surprise_vals else None,
+            "avg_surprise_pct": round(sum(surprise_vals) / len(surprise_vals), 2) if surprise_vals else None,
+            "n_quarters": len(quarters),
+        }
+    except Exception as exc:
+        logger.warning("get_earnings_history failed for %s: %s", ticker, exc)
+        return {"ticker": ticker.upper(), "error": str(exc), "quarters": []}
 
 
 # ──────────────────────────────────────────────

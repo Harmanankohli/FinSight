@@ -43,7 +43,7 @@ FinSightAgentExecutor:
     → LLM decides which agents to call (parallel with qwen)
     → send_message("Financial RAG Agent", "Analyze NVDA...")
     → send_message("Quant Analysis Agent", "Compute metrics for NVDA...")
-    → send_message("Sentiment Intelligence Agent", "Sentiment for NVDA...")
+    → send_message("Market Context Agent", "Sentiment for NVDA...")
     → LLM synthesizes BUY/HOLD/SELL
     → load_memory(query="...") — search past conversations
   → _add_events_to_memory() → get_session() → add_session_to_memory()
@@ -246,13 +246,13 @@ After each analysis, fires `asyncio.create_task(score_quant_response(...))` with
 | Property | Value |
 |---|---|
 | Framework | CrewAI |
-| Executor | `GenericAgentExecutor(SentimentAgent)` |
+| Executor | `GenericAgentExecutor(MarketContextAgent)` |
 | LLM | LM Studio via CrewLLM |
 | Data Collection | Parallel via `asyncio.gather` |
 | Port | 8004 |
 | Agent Card | Built programmatically in `agent_4_crewai/server.py` |
 | A2A Endpoint | `POST /a2a` |
-| Health | `GET /health` → `{"status":"ok","agent":"sentiment"}` |
+| Health | `GET /health` → `{"status":"ok","agent":"market_context"}` |
 
 ### Skills
 
@@ -263,21 +263,21 @@ After each analysis, fires `asyncio.create_task(score_quant_response(...))` with
 ### Architecture
 
 ```
-Request → DefaultRequestHandler → GenericAgentExecutor(SentimentAgent)
-  → SentimentAgent.stream(query, context_id, task_id)
+Request → DefaultRequestHandler → GenericAgentExecutor(MarketContextAgent)
+  → MarketContextAgent.stream(query, context_id, task_id)
     → try: yield await self._build_response(query)
     → finally: await self._disconnect()
 
-SentimentAgent._build_response(query):
+MarketContextAgent._build_response(query):
     → extract_trace_ids(query)
-    → with langfuse.start_as_current_observation(name="sentiment-agent-stream")
-      → SentimentAgent.analyze(ticker)
+    → with langfuse.start_as_current_observation(name="market-context-agent-stream")
+      → MarketContextAgent.analyze(ticker)
         ├── _connect() → MCPClient.connect_all()
         ├── _collect_data_parallel(ticker)
         │   ├── call("get_news_sentiment", {ticker})
         │   ├── call("get_company_filings", {ticker})
         │   └── asyncio.gather
-        └── SentimentIntelligenceCrew.analyze(ticker, precollected_data)
+        └── MarketContextCrew.analyze(ticker, precollected_data)
             └── Single Agent (Analysis → narrative directly)
       → if EVAL_ENABLED: asyncio.create_task(score_sentiment_response(...))
       → return {response_type: "data", content: result, ...}

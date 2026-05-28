@@ -10,7 +10,7 @@ User Query → ADK Web (8001) → ADK LlmAgent
   → LLM calls agents via single send_message tool (parallel with qwen):
     → send_message("Financial RAG Agent", ...) → RAG Agent (8002) → MCP (SEC EDGAR) → ChromaDB
     → send_message("Quant Analysis Agent", ...) → Quant Agent (8003) → MCP (prices + financials) → LangGraph
-    → send_message("Sentiment Intelligence Agent", ...) → Sentiment Agent (8004) → MCP (News + SEC) → CrewAI
+    → send_message("Market Context Agent", ...) → Market Context Agent (8004) → MCP (News + SEC) → CrewAI
   → LLM synthesizes all results → BUY/HOLD/SELL recommendation
   → Auto-save: brief, portfolio, performance record persisted to SQLite
 ```
@@ -64,7 +64,7 @@ python -m uvicorn agent_2_llamaindex.server:app --host 0.0.0.0 --port 8002
 # Terminal 3 — Quant Agent (port 8003)
 python -m uvicorn agent_3_langgraph.server:app --host 0.0.0.0 --port 8003
 
-# Terminal 4 — Sentiment Agent (port 8004)
+# Terminal 4 — Market Context Agent (port 8004)
 python -m uvicorn agent_4_crewai.server:app --host 0.0.0.0 --port 8004
 
 # Terminal 5 — ADK Web UI (port 8001)
@@ -79,7 +79,7 @@ Verify all services are up before running the demo:
 curl http://localhost:8001/health  # {"status":"ok","agent":"orchestrator"}
 curl http://localhost:8002/health  # {"status":"ok","agent":"rag"}
 curl http://localhost:8003/health  # {"status":"ok","agent":"quant"}
-curl http://localhost:8004/health  # {"status":"ok","agent":"sentiment"}
+curl http://localhost:8004/health  # {"status":"ok","agent":"market_context"}
 curl http://localhost:8010/health  # {"status":"ok","agent":"mcp"}
 ```
 

@@ -149,9 +149,9 @@ A2A Request &rarr; FinSightAgentExecutor.execute()
 
 <p><strong>DCF Skip Messaging</strong>: When annual volatility exceeds the 35% threshold, <code>compute_metrics_node</code> sets a descriptive <code>dcf_error</code> field (e.g. "DCF skipped: annual volatility (41.0%) exceeds 35% threshold &ndash; routed to stress test instead"). This error is propagated through the graph into the final output and LLM reasoning, providing visibility into why DCF was not computed.</p>
 
-<h3>Sentiment Agent (CrewAI)</h3>
-<pre>A2A Request &rarr; DefaultRequestHandler &rarr; GenericAgentExecutor(SentimentAgent)
-  &rarr; SentimentAgent.stream()
+<h3>Market Context Agent (CrewAI)</h3>
+<pre>A2A Request &rarr; DefaultRequestHandler &rarr; GenericAgentExecutor(MarketContextAgent)
+  &rarr; MarketContextAgent.stream()
     &rarr; Parallel MCP data collection (asyncio.gather):
       &#x251C;&#x2500;&#x2500; get_news_sentiment
       &#x2514;&#x2500;&#x2500; get_company_filings
@@ -292,7 +292,7 @@ Sub-agents (agent_2, agent_3, agent_4)
 <tr><td>Orchestrator</td><td><code>orchestrator</code></td><td>GoogleADKInstrumentor, HTTPXClientInstrumentor</td><td><code>orchestrator-execute</code> span, per-sub-agent latency spans</td></tr>
 <tr><td>RAG Agent</td><td><code>rag_agent</code></td><td>LlamaIndexInstrumentor</td><td><code>rag-agent-stream</code> span</td></tr>
 <tr><td>Quant Agent</td><td><code>quant_agent</code></td><td>StarletteInstrumentor, <strong>LangChainInstrumentor</strong></td><td><code>quant-agent-stream</code> span + CallbackHandler for LangGraph nodes</td></tr>
-<tr><td>Sentiment Agent</td><td><code>sentiment_agent</code></td><td>CrewAIInstrumentor, StarletteInstrumentor</td><td><code>sentiment-agent-stream</code> span</td></tr>
+<tr><td>Market Context Agent</td><td><code>sentiment_agent</code></td><td>CrewAIInstrumentor, StarletteInstrumentor</td><td><code>market-context-agent-stream</code> span</td></tr>
 <tr><td>MCP Server</td><td><code>mcp_server</code></td><td>&mdash;</td><td><code>@observe()</code> on individual tools</td></tr>
 </table>
 
@@ -483,7 +483,7 @@ ingested_filings (edgar_url PRIMARY KEY, ticker, ingested_at)  -- v1.18</pre>
 <tr><td>Orchestrator</td><td><code>http://localhost:8001/health</code></td><td><code>{"status":"ok","agent":"orchestrator"}</code></td></tr>
 <tr><td>RAG Agent</td><td><code>http://localhost:8002/health</code></td><td><code>{"status":"ok","agent":"rag"}</code></td></tr>
 <tr><td>Quant Agent</td><td><code>http://localhost:8003/health</code></td><td><code>{"status":"ok","agent":"quant"}</code></td></tr>
-<tr><td>Sentiment Agent</td><td><code>http://localhost:8004/health</code></td><td><code>{"status":"ok","agent":"sentiment"}</code></td></tr>
+<tr><td>Market Context Agent</td><td><code>http://localhost:8004/health</code></td><td><code>{"status":"ok","agent":"market_context"}</code></td></tr>
 <tr><td>MCP Server</td><td><code>http://localhost:8010/health</code></td><td><code>{"status":"ok","agent":"mcp"}</code></td></tr>
 </table>
 <p>The MCP server mounts its health route alongside the FastMCP SSE app via a Starlette wrapper in <code>get_app()</code>. Docker-compose <code>healthcheck</code> blocks use these endpoints with <code>curl -f</code>, and <code>depends_on</code> is set to <code>condition: service_healthy</code>.</p>
@@ -498,7 +498,7 @@ setup_file_logging("orchestrator")  # &rarr; logs/orchestrator.log</pre>
 <tr><td>Orchestrator</td><td><code>logs/orchestrator.log</code></td></tr>
 <tr><td>RAG Agent</td><td><code>logs/rag_agent.log</code></td></tr>
 <tr><td>Quant Agent</td><td><code>logs/quant.log</code></td></tr>
-<tr><td>Sentiment Agent</td><td><code>logs/sentiment.log</code></td></tr>
+<tr><td>Market Context Agent</td><td><code>logs/market_context.log</code></td></tr>
 <tr><td>MCP Server</td><td><code>logs/mcp.log</code></td></tr>
 <tr><td>Memory callback</td><td><code>logs/memory_callback.log</code></td></tr>
 </table>

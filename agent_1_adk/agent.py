@@ -253,9 +253,10 @@ def _build_instruction() -> str:
         skill_lines += (
             "\n\nAgent responsibility boundaries:\n"
             "  - Financial RAG Agent owns ALL document and news retrieval\n"
-            "  - Sentiment/Market Context Agent provides macro regime (rates, VIX, sector ETFs)\n"
+            "  - Market Context Agent provides macro regime (rates, VIX, sector ETFs)\n"
             "    and peer landscape narrative — treat its output as 'context' for synthesis\n"
-            "  - Quant Analysis Agent owns numeric risk, fundamentals, technicals, and DCF valuation"
+            "  - Quant Analysis Agent owns numeric risk, fundamentals, technicals, DCF,\n"
+            "    Monte Carlo, peer comparison, and behavioral signals (options/insider/positioning)"
         )
     else:
         preamble = _STATIC_PREAMBLE_FALLBACK

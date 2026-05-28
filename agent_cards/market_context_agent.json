@@ -1,0 +1,55 @@
+{
+    "name": "Market Context Agent",
+    "description": "Provides macro regime analysis (yield curve, VIX, DXY, sector rotation) and competitive peer landscape positioning using CrewAI",
+    "url": "http://localhost:8004/",
+    "version": "2.0.0",
+    "capabilities": {
+        "streaming": true,
+        "pushNotifications": false,
+        "stateTransitionHistory": false
+    },
+    "defaultInputModes": [
+        "text",
+        "text/plain"
+    ],
+    "defaultOutputModes": [
+        "text",
+        "application/json"
+    ],
+    "skills": [
+        {
+            "id": "macro_regime_analysis",
+            "name": "Macro Regime Analysis",
+            "description": "Assess current macro environment (yield curve regime, VIX volatility, DXY dollar strength, sector ETF rotation) and determine if it favours or penalises the target stock",
+            "tags": [
+                "macro",
+                "yield curve",
+                "VIX",
+                "DXY",
+                "sector rotation",
+                "regime"
+            ],
+            "examples": [
+                "What is the macro environment for NVDA?",
+                "Does the current rate regime favour AAPL?"
+            ]
+        },
+        {
+            "id": "peer_landscape_analysis",
+            "name": "Competitive Peer Landscape",
+            "description": "Compare target stock against sector peers on growth, margins, and valuation to identify relative positioning headwinds and tailwinds",
+            "tags": [
+                "peers",
+                "competitive",
+                "valuation",
+                "margins",
+                "growth",
+                "sector"
+            ],
+            "examples": [
+                "How does MSFT compare to its software peers?",
+                "Is TSLA expensive relative to auto sector peers?"
+            ]
+        }
+    ]
+}

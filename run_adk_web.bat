@@ -19,8 +19,8 @@ timeout /t 3 /nobreak >nul
 start "FinSight Quant" cmd /k "uv run python -m uvicorn agent_3_langgraph.server:app --host 0.0.0.0 --port 8003 --log-level info"
 timeout /t 3 /nobreak >nul
 
-:: Terminal 4 - Sentiment Agent (:8004)
-start "FinSight Sentiment" cmd /k "uv run python -m uvicorn agent_4_crewai.server:app --host 0.0.0.0 --port 8004 --log-level info"
+:: Terminal 4 - Market Context Agent (:8004)
+start "FinSight Market Context" cmd /k "uv run python -m uvicorn agent_4_crewai.server:app --host 0.0.0.0 --port 8004 --log-level info"
 timeout /t 3 /nobreak >nul
 
 :: Terminal 5 - ADK Web UI (:8080)
@@ -33,5 +33,5 @@ echo   LM Studio:    http://127.0.0.1:1234
 echo   MCP Server:   http://127.0.0.1:8010
 echo   RAG Agent:    http://127.0.0.1:8002
 echo   Quant Agent:  http://127.0.0.1:8003
-echo   Sentiment:    http://127.0.0.1:8004
+echo   Market Ctx:   http://127.0.0.1:8004
 echo   ADK Web UI:   http://127.0.0.1:8080

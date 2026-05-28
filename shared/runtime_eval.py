@@ -5,42 +5,140 @@ is produced. No separate runner is created — the response is already in hand.
 
   Orchestrator (score_response):
     AnswerRelevancy        — synthesis relevant to the investment query?
-    citation_quality        — DomainSpecificRubrics: cites specific figures/filings?
-    risk_disclosure         — DomainSpecificRubrics: acknowledges investment risks?
-    recommendation_clarity  — RubricsScore 1-5: clear BUY/HOLD/SELL with evidence?
-    response_completeness   — DomainSpecificRubrics: integrates RAG + quant + sentiment?
+    citation_quality       — cites specific figures/filings?
+    risk_disclosure        — acknowledges investment risks?
+    recommendation_clarity — clear BUY/HOLD/SELL with weighted signal evidence?
+    response_completeness  — integrates RAG + quant + market context?
 
   RAG Agent (score_rag_response):
-    Faithfulness                        — claims grounded in retrieved SEC chunks?
-    AnswerRelevancy                     — answer addresses the filing/earnings query?
-    ContextPrecisionWithoutReference    — retrieved chunks relevant to the query?
+    Faithfulness                     — claims grounded in retrieved SEC/news chunks?
+    ContextPrecisionWithoutReference — retrieved chunks relevant to the query?
+    news_coverage                    — response references recent news alongside filings?
 
   Quant Agent (score_quant_response):
-    FactualCorrectness   — LLM summary numbers match computed metrics (computed = reference)
-    AnswerRelevancy      — quant analysis addresses the risk/valuation query?
+    FactualCorrectness — LLM summary numbers match computed metrics (reference)
 
-  Sentiment Agent (score_sentiment_response):
-    Faithfulness              — narrative claims grounded in fetched news/filings?
-    AnswerRelevancy           — sentiment analysis matches the ticker/context?
-    catalyst_identification   — DomainSpecificRubrics: identifies key business catalysts?
-    insider_signal_discussion — DomainSpecificRubrics: incorporates insider/institutional signals?
+  Market Context Agent (score_sentiment_response):
+    Faithfulness             — narrative grounded in macro indicators and peer data?
+    macro_regime_analysis    — discusses yield curve, VIX, DXY, sector rotation?
+    peer_landscape_analysis  — compares target vs named peers on growth/valuation?
+
+Notes:
+  - AnswerRelevancy is restricted to orchestrator only — it generates 0.0 on finance
+    text due to reverse-question-generation failure on domain-specific language.
+  - Circuit breaker: after _CIRCUIT_MAX_FAILURES consecutive RAGAS failures the
+    circuit opens and eval is skipped for the process lifetime.
+  - LLM_EVAL_MODEL is used for all RAGAS LLM calls (separate from production LLM)
+    so eval doesn't contend with inference latency.
 
 Offline-only metrics (require ground-truth reference) live in tests/evaluation/:
   ContextRecall, ContextEntityRecall, ToolCallAccuracy, AgentGoalAccuracy.
 
 All public functions are safe to fire-and-forget via asyncio.create_task().
-LLM calls go to LM Studio at LLM_BASE_URL.
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
+import time
+
+from shared.config import (
+    EVAL_RUNTIME_DISABLED,
+    EVAL_BURST_LIMIT,
+    EVAL_METRIC_TIMEOUT,
+)
 
 logger = logging.getLogger(__name__)
 
 _MIN_RESPONSE_LEN = 80
 _ragas_clients: tuple | None = None
+
+# ---------------------------------------------------------------------------
+# Circuit breaker
+# ---------------------------------------------------------------------------
+
+_CIRCUIT_MAX_FAILURES = 5
+_eval_failure_count = 0
+_eval_circuit_open = False
+
+# ---------------------------------------------------------------------------
+# Dedup (SHA-256 of (input, response) over 1h) + burst limiter (per minute)
+# ---------------------------------------------------------------------------
+
+_DEDUP_TTL = 3600.0       # 1 hour
+_dedup_cache: dict[str, float] = {}
+
+_BURST_WINDOW = 60.0      # 1 minute
+_burst_window_start = 0.0
+_burst_count = 0
+
+
+def _dedup_seen(user_input: str, response: str) -> bool:
+    """True if this exact (input, response) was scored within the last hour."""
+    digest = hashlib.sha256(f"{user_input}\x1f{response}".encode("utf-8")).hexdigest()
+    now = time.monotonic()
+    # Opportunistic GC: drop expired entries on read
+    if len(_dedup_cache) > 256:
+        for k in [k for k, ts in _dedup_cache.items() if now - ts > _DEDUP_TTL]:
+            _dedup_cache.pop(k, None)
+    if digest in _dedup_cache and now - _dedup_cache[digest] < _DEDUP_TTL:
+        return True
+    _dedup_cache[digest] = now
+    return False
+
+
+def _burst_ok() -> bool:
+    """Return False if this process has already issued EVAL_BURST_LIMIT evals this minute."""
+    global _burst_window_start, _burst_count
+    if EVAL_BURST_LIMIT <= 0:
+        return True
+    now = time.monotonic()
+    if now - _burst_window_start > _BURST_WINDOW:
+        _burst_window_start = now
+        _burst_count = 0
+    if _burst_count >= EVAL_BURST_LIMIT:
+        return False
+    _burst_count += 1
+    return True
+
+
+def _gate_ok(user_input: str, response: str, agent: str) -> bool:
+    """Combined pre-eval gate: runtime kill-switch, circuit breaker, burst limit, dedup."""
+    if EVAL_RUNTIME_DISABLED:
+        logger.info("[%s] Eval skipped — EVAL_RUNTIME_DISABLED=true", agent)
+        return False
+    if not _circuit_ok():
+        logger.info("[%s] Eval skipped — circuit breaker open", agent)
+        return False
+    if not _burst_ok():
+        logger.info("[%s] Eval skipped — burst limit %d/min reached", agent, EVAL_BURST_LIMIT)
+        return False
+    if _dedup_seen(user_input, response):
+        logger.info("[%s] Eval skipped — dedup (identical input+response within 1h)", agent)
+        return False
+    return True
+
+
+def _record_eval_failure() -> None:
+    global _eval_failure_count, _eval_circuit_open
+    _eval_failure_count += 1
+    if _eval_failure_count >= _CIRCUIT_MAX_FAILURES:
+        _eval_circuit_open = True
+        logger.warning(
+            "RAGAS eval circuit breaker opened after %d failures — eval disabled for this process",
+            _CIRCUIT_MAX_FAILURES,
+        )
+
+
+def _circuit_ok() -> bool:
+    return not _eval_circuit_open
+
+
+def _record_eval_success() -> None:
+    global _eval_failure_count
+    _eval_failure_count = 0  # reset on success
 
 
 # ---------------------------------------------------------------------------
@@ -61,13 +159,8 @@ async def _setup_ragas_clients():
         logger.debug("ragas / instructor / openai not installed — runtime eval skipped")
         return None
 
-    from shared.config import LLM_BASE_URL, LLM_MODEL, EMBED_MODEL
+    from shared.config import LLM_BASE_URL, LLM_EVAL_MODEL, EMBED_MODEL
 
-    # ragas default uses instructor.Mode.JSON → response_format.type="json_object"
-    # LM Studio only accepts "json_schema" or "text", so patch with JSON_SCHEMA mode.
-    # Without this patch the ragas LLM call hard-fails on LM Studio.
-    # ragas 0.4.x uses BaseRagasEmbedding (embed_text + aembed_text).
-    # HuggingfaceEmbeddings is a broken pydantic dataclass; implement directly.
     class _STEmbeddings(BaseRagasEmbedding):
         def __init__(self, model_name: str) -> None:
             import sentence_transformers
@@ -84,12 +177,13 @@ async def _setup_ragas_clients():
 
     try:
         client = AsyncOpenAI(base_url=LLM_BASE_URL, api_key="lm-studio", timeout=180)
-        patched = instructor.from_openai(client, mode=instructor.Mode.JSON_SCHEMA)
+        # max_retries=1 suppresses per-call retry storms when LM Studio idle-unloads the model
+        patched = instructor.from_openai(client, mode=instructor.Mode.JSON_SCHEMA, max_retries=1)
         ragas_llm = InstructorLLM(
             client=patched,
-            model=LLM_MODEL,
+            model=LLM_EVAL_MODEL,
             provider="openai",
-            model_args=InstructorModelArgs(max_tokens=4096),
+            model_args=InstructorModelArgs(max_tokens=8192),
         )
         ragas_embedder = _STEmbeddings(model_name=EMBED_MODEL)
         _ragas_clients = (ragas_llm, ragas_embedder)
@@ -101,10 +195,6 @@ async def _setup_ragas_clients():
 
 
 async def _score_metric(metric, **kwargs) -> float:
-    """Thin wrapper around ragas.ascore that extracts the raw float from the result.
-
-    Raises on failure so _run_metrics can collect the error per-task.
-    """
     try:
         result = await metric.ascore(**kwargs)
         return result.value
@@ -113,18 +203,18 @@ async def _score_metric(metric, **kwargs) -> float:
         raise
 
 
-async def _run_metrics(pairs: list, agent: str = "", trace_id: str | None = None) -> dict[str, float]:
-    """Run metrics concurrently, log/push each as it completes.
+async def _score_metric_with_timeout(metric, **kwargs) -> float:
+    """Wrap a metric ascore with a wall-clock deadline so a stuck call can't pin the pool."""
+    return await asyncio.wait_for(_score_metric(metric, **kwargs), timeout=EVAL_METRIC_TIMEOUT)
 
-    Fire-and-forget pattern: each metric is an asyncio.Task so all metrics
-    run in parallel.  asyncio.wait(FIRST_COMPLETED) lets us push scores to
-    Langfuse as each one finishes rather than waiting for all.
-    """
+
+async def _run_metrics(pairs: list, agent: str = "", trace_id: str | None = None) -> dict[str, float]:
+    """Run metrics concurrently; push each score to Langfuse as it completes."""
     scores: dict[str, float] = {}
     task_map: dict[asyncio.Task, str] = {}
 
     for metric, kw in pairs:
-        task = asyncio.create_task(_score_metric(metric, **kw))
+        task = asyncio.create_task(_score_metric_with_timeout(metric, **kw))
         task_map[task] = metric.name
 
     pending = set(task_map.keys())
@@ -137,17 +227,14 @@ async def _run_metrics(pairs: list, agent: str = "", trace_id: str | None = None
                 scores[metric_name] = round(float(result), 4)
                 logger.info("[%s] RAGAS metric '%s' = %s (trace=%s)", agent, metric_name, scores[metric_name], trace_id)
                 _push_scores({metric_name: scores[metric_name]}, trace_id, agent)
+                _record_eval_success()
             except BaseException as exc:
                 logger.warning("[%s] RAGAS metric '%s' error: %s", agent, metric_name, exc)
+                _record_eval_failure()
     return scores
 
 
 def _push_scores(scores: dict[str, float], trace_id: str | None, agent: str) -> None:
-    """Push one or more RAGAS scores to an existing Langfuse trace.
-
-    Called after each individual metric completes so the trace is updated
-    incrementally rather than in one batch at the end.
-    """
     if not scores or trace_id is None:
         return
     try:
@@ -170,7 +257,7 @@ def _push_scores(scores: dict[str, float], trace_id: str | None, agent: str) -> 
 
 
 # ---------------------------------------------------------------------------
-# Orchestrator — ADK
+# Orchestrator — ADK (sole owner of AnswerRelevancy)
 # ---------------------------------------------------------------------------
 
 async def score_response(
@@ -180,16 +267,14 @@ async def score_response(
 ) -> None:
     """Score orchestrator final synthesis.
 
-    Fires after the orchestrator produces its aggregated InvestmentBrief.
-    Evaluates how well the final output integrates all sub-agent signals,
-    cites evidence, discloses risks, and states a clear recommendation.
-
     Metrics: AnswerRelevancy, citation_quality, risk_disclosure,
              recommendation_clarity, response_completeness.
     """
     logger.info("[orchestrator] Eval entered (response_len=%d, trace=%s)", len(response) if response else 0, trace_id)
     if not user_input or not response or len(response) < _MIN_RESPONSE_LEN:
-        logger.warning("[orchestrator] Skipping eval: response too short (len=%d, min=%d)", len(response) if response else 0, _MIN_RESPONSE_LEN)
+        logger.warning("[orchestrator] Skipping eval: response too short (len=%d)", len(response) if response else 0)
+        return
+    if not _gate_ok(user_input, response, "orchestrator"):
         return
 
     try:
@@ -237,8 +322,8 @@ async def score_response(
                     "score1_description": "No clear BUY/HOLD/SELL signal present.",
                     "score2_description": "Signal present but rationale is absent or vague.",
                     "score3_description": "Signal with rationale but supported by only one data point.",
-                    "score4_description": "Signal with rationale supported by two or more data points from different sources.",
-                    "score5_description": "Clear signal with specific supporting evidence from at least two agent analyses (quant, filing, or sentiment) with cited figures.",
+                    "score4_description": "Signal supported by two or more signal groups (risk metrics, DCF, fundamentals, technicals, peer positioning, or behavioral signals) with cited figures.",
+                    "score5_description": "Clear signal with supporting evidence from at least three signal groups, citing specific numbers (Sharpe, upside %, peer rank, or macro indicator) from different agent analyses.",
                 },
             ), _ui_resp),
             (DomainSpecificRubrics(
@@ -247,9 +332,20 @@ async def score_response(
                 rubrics={
                     "score1_description": "Response draws from only one analysis type or provides only a generic summary.",
                     "score2_description": "Response references two analysis types but one is superficial.",
-                    "score3_description": "Response integrates findings from two of: filing analysis, quantitative metrics, or news sentiment.",
-                    "score4_description": "Response integrates all three analysis types with reasonable depth.",
-                    "score5_description": "Response thoroughly synthesises filing analysis, quantitative metrics (Sharpe, DCF, VaR), and news/sentiment into a cohesive brief.",
+                    "score3_description": "Response integrates findings from two of: filing analysis, quantitative metrics, or macro/competitive context.",
+                    "score4_description": "Response integrates all three analysis types (filing/RAG, quantitative metrics, macro+peer context) with reasonable depth.",
+                    "score5_description": "Response thoroughly synthesises SEC filing analysis (RAG), quantitative metrics (risk/DCF/peer), and macro+competitive context (Market Context Agent) into a cohesive brief with cited figures.",
+                },
+            ), _ui_resp),
+            (DomainSpecificRubrics(
+                name="no_forward_guarantees",
+                llm=ragas_llm,
+                rubrics={
+                    "score1_description": "Response makes unconditional forward-looking guarantees (e.g. 'will return X%', 'guaranteed to outperform', 'certain to rally').",
+                    "score2_description": "Response uses strongly predictive language without hedging (e.g. 'expect 20% upside', 'should hit $X by year-end') with no caveats.",
+                    "score3_description": "Response mixes some forward statements with mild hedging language.",
+                    "score4_description": "Response consistently hedges forward-looking statements with words like 'may', 'could', 'estimate', 'based on current data' and notes uncertainty.",
+                    "score5_description": "Response provides only conditional, well-hedged forward statements explicitly tied to assumptions and uncertainty bounds, with no implied guarantees of future performance.",
                 },
             ), _ui_resp),
         ]
@@ -261,6 +357,7 @@ async def score_response(
             logger.info("[orchestrator] No RAGAS scores computed")
     except Exception:
         logger.exception("[orchestrator] Eval crashed unexpectedly")
+        _record_eval_failure()
 
 
 # ---------------------------------------------------------------------------
@@ -275,15 +372,12 @@ async def score_rag_response(
 ) -> None:
     """Score RAG agent response.
 
-    Fires after the RAG agent generates a filing/earnings summary.
-    Checks whether claims are grounded in the retrieved SEC chunks
-    (Faithfulness) and whether the retrieved chunks were actually
-    relevant (ContextPrecisionWithoutReference).
-
-    Metrics: Faithfulness, AnswerRelevancy, ContextPrecisionWithoutReference.
-    Requires retrieved_contexts (text of ChromaDB source nodes).
+    Metrics: Faithfulness, ContextPrecisionWithoutReference, news_coverage.
+    AnswerRelevancy removed — fragile reverse-question-generation on finance text.
     """
     if not user_input or not response or not retrieved_contexts:
+        return
+    if not _gate_ok(user_input, response, "rag"):
         return
 
     clients = await _setup_ragas_clients()
@@ -294,17 +388,39 @@ async def score_rag_response(
     try:
         from ragas.metrics.collections import (
             Faithfulness,
-            AnswerRelevancy,
             ContextPrecisionWithoutReference,
+            DomainSpecificRubrics,
         )
     except ImportError:
         return
 
     _ctx_kwargs = {"user_input": user_input, "response": response, "retrieved_contexts": retrieved_contexts}
+    _ui_resp = {"user_input": user_input, "response": response}
     pairs = [
         (Faithfulness(llm=ragas_llm), _ctx_kwargs),
-        (AnswerRelevancy(llm=ragas_llm, embeddings=ragas_embedder), {"user_input": user_input, "response": response}),
         (ContextPrecisionWithoutReference(llm=ragas_llm), _ctx_kwargs),
+        (DomainSpecificRubrics(
+            name="news_coverage",
+            llm=ragas_llm,
+            rubrics={
+                "score1_description": "Response draws only from SEC filings with no reference to recent news or market events.",
+                "score2_description": "Response briefly mentions a market development without citing a specific news source or article.",
+                "score3_description": "Response references one specific news event or headline and connects it to the filing analysis.",
+                "score4_description": "Response integrates two or more recent news items alongside SEC filing evidence.",
+                "score5_description": "Response thoroughly weaves recent news sentiment (specific articles, dates, or events) with SEC filing evidence for a complete picture.",
+            },
+        ), _ui_resp),
+        (DomainSpecificRubrics(
+            name="cross_collection_synthesis",
+            llm=ragas_llm,
+            rubrics={
+                "score1_description": "Response draws from only one type of source (only filings, or only news, or only earnings).",
+                "score2_description": "Response mentions evidence from a second source type in passing but does not connect it to the first.",
+                "score3_description": "Response uses two different source types (filings + news, or filings + earnings) and explicitly references both.",
+                "score4_description": "Response integrates two source types with explicit cross-referencing — e.g. confirms a filing claim with a news event or earnings transcript.",
+                "score5_description": "Response synthesises filings, news, and earnings together, citing specific evidence from each and explicitly resolving any tension or confirmation between sources.",
+            },
+        ), _ui_resp),
     ]
 
     scores = await _run_metrics(pairs, "rag", trace_id)
@@ -326,14 +442,12 @@ async def score_quant_response(
 ) -> None:
     """Score quant agent LLM summary.
 
-    Fires after the quant agent produces a narrative around computed
-    risk/valuation metrics.  FactualCorrectness compares numerical claims
-    in the LLM output (Sharpe, VaR, DCF values) against the deterministically
-    computed values — catching hallucinated numbers without external ground truth.
-
-    Metrics: FactualCorrectness (computed metrics = reference), AnswerRelevancy.
+    Metric: FactualCorrectness (computed metrics = reference).
+    AnswerRelevancy removed — fragile on finance text.
     """
     if not user_input or not response or len(response) < _MIN_RESPONSE_LEN:
+        return
+    if not _gate_ok(user_input, response, "quant"):
         return
 
     reference = _build_quant_reference(quant_result)
@@ -343,16 +457,27 @@ async def score_quant_response(
     clients = await _setup_ragas_clients()
     if clients is None:
         return
-    ragas_llm, ragas_embedder = clients
+    ragas_llm, _ = clients
 
     try:
-        from ragas.metrics.collections import FactualCorrectness, AnswerRelevancy
+        from ragas.metrics.collections import FactualCorrectness, DomainSpecificRubrics
     except ImportError:
         return
 
+    _ui_resp = {"user_input": user_input, "response": response}
     pairs = [
         (FactualCorrectness(llm=ragas_llm), {"response": response, "reference": reference}),
-        (AnswerRelevancy(llm=ragas_llm, embeddings=ragas_embedder), {"user_input": user_input, "response": response}),
+        (DomainSpecificRubrics(
+            name="signal_explanation_quality",
+            llm=ragas_llm,
+            rubrics={
+                "score1_description": "Response states the BUY/HOLD/SELL signal but does not explain which signal groups drove it.",
+                "score2_description": "Response references one signal group (e.g. 'high Sharpe') without explaining how it influenced the recommendation.",
+                "score3_description": "Response names two signal groups (e.g. risk metrics + DCF) and connects them to the recommendation.",
+                "score4_description": "Response explains three or more signal groups (risk_quality, dcf, fundamentals, technicals, peer_positioning, behavioral) with specific numeric values driving the composite.",
+                "score5_description": "Response provides a thorough breakdown of the weighted 8-group signal vote, naming each contributing group, citing specific values (Sharpe, upside %, peer rank, options flow, insider direction), and explicitly showing how they combine into the final recommendation and confidence.",
+            },
+        ), _ui_resp),
     ]
 
     scores = await _run_metrics(pairs, "quant", trace_id)
@@ -388,6 +513,14 @@ def _build_quant_reference(result: dict) -> str:
         parts.append(
             f"CVaR 95%: {stress.get('cvar_95')}, VaR 95%: {stress.get('var_95')}"
         )
+    mc = result.get("monte_carlo")
+    if mc:
+        parts.append(
+            f"Monte Carlo p50: ${mc.get('p50')}, prob_profit: {mc.get('prob_profit')}"
+        )
+    peer = result.get("peer_comparison")
+    if peer and peer.get("rankings"):
+        parts.append(f"Peer rankings: {peer['rankings']} among {peer.get('n_peers', '?')+1} stocks")
     rec = result.get("recommendation")
     if rec:
         parts.append(f"Quantitative signal: {rec}")
@@ -395,7 +528,7 @@ def _build_quant_reference(result: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Sentiment Agent — CrewAI
+# Market Context Agent — CrewAI (formerly Sentiment Agent)
 # ---------------------------------------------------------------------------
 
 async def score_sentiment_response(
@@ -404,70 +537,127 @@ async def score_sentiment_response(
     retrieved_contexts: list[str],
     trace_id: str | None = None,
 ) -> None:
-    """Score sentiment agent narrative.
+    """Score Market Context Agent narrative.
 
-    Fires after the sentiment agent synthesises news/social/insider data.
-    Faithfulness checks grounding in the fetched articles; the two
-    DomainSpecificRubrics measure whether the agent identified concrete
-    business catalysts and discussed insider/institutional signals.
+    Fires after the agent synthesises macro regime + peer landscape data.
+    Faithfulness checks grounding in macro indicators and peer financials.
+    Domain rubrics test whether the agent discussed the macro regime (rates,
+    VIX, sector rotation) and compared the target against named peers.
 
-    Metrics: Faithfulness, AnswerRelevancy,
-             catalyst_identification, insider_signal_discussion.
-    Requires retrieved_contexts (news article titles/summaries from MCP).
+    Metrics: Faithfulness, macro_regime_analysis, peer_landscape_analysis.
+    AnswerRelevancy removed — fragile on finance text.
     """
-    logger.info("[sentiment] Eval entered (response_len=%d, contexts=%d, trace=%s)", len(response) if response else 0, len(retrieved_contexts) if retrieved_contexts else 0, trace_id)
+    logger.info("[market_context] Eval entered (response_len=%d, contexts=%d, trace=%s)",
+                len(response) if response else 0, len(retrieved_contexts) if retrieved_contexts else 0, trace_id)
     if not user_input or not response or len(response) < _MIN_RESPONSE_LEN:
-        logger.warning("[sentiment] Skipping eval: response too short (len=%d, min=%d)", len(response) if response else 0, _MIN_RESPONSE_LEN)
+        logger.warning("[market_context] Skipping eval: response too short (len=%d)", len(response) if response else 0)
+        return
+    if not _gate_ok(user_input, response, "market_context"):
         return
 
     try:
         clients = await _setup_ragas_clients()
         if clients is None:
-            logger.warning("[sentiment] Skipping eval: no RAGAS clients")
+            logger.warning("[market_context] Skipping eval: no RAGAS clients")
             return
-        ragas_llm, ragas_embedder = clients
+        ragas_llm, _ = clients
 
         try:
-            from ragas.metrics.collections import Faithfulness, AnswerRelevancy, DomainSpecificRubrics
+            from ragas.metrics.collections import Faithfulness, DomainSpecificRubrics
         except ImportError:
-            logger.warning("[sentiment] Skipping eval: ragas import failed")
+            logger.warning("[market_context] Skipping eval: ragas import failed")
             return
 
         _ui_resp = {"user_input": user_input, "response": response}
         _ctx_kwargs = {"user_input": user_input, "response": response, "retrieved_contexts": retrieved_contexts}
         pairs: list = [
-            (AnswerRelevancy(llm=ragas_llm, embeddings=ragas_embedder), _ui_resp),
             (DomainSpecificRubrics(
-                name="catalyst_identification",
+                name="macro_regime_analysis",
                 llm=ragas_llm,
                 rubrics={
-                    "score1_description": "Response identifies no specific business catalysts or growth drivers.",
-                    "score2_description": "Response vaguely mentions positive developments without naming specific catalysts.",
-                    "score3_description": "Response identifies one specific catalyst (e.g. a product launch, earnings beat, or partnership).",
-                    "score4_description": "Response identifies two or more specific catalysts from news.",
-                    "score5_description": "Response comprehensively identifies and contextualises multiple specific catalysts (product launches, earnings beats, partnerships, regulatory approvals, or management changes) from the news.",
+                    "score1_description": "Response makes no mention of any macro indicator (interest rates, VIX, dollar strength, or sector rotation).",
+                    "score2_description": "Response vaguely references 'macro conditions' without citing a specific indicator or value.",
+                    "score3_description": "Response names one specific macro indicator (e.g. yield curve regime, VIX level, or DXY trend) and explains its relevance to the stock.",
+                    "score4_description": "Response discusses two or more macro indicators with specific values and connects them to the investment thesis.",
+                    "score5_description": "Response comprehensively analyses the macro regime (yield curve shape, VIX volatility, DXY trend, and sector ETF rotation) with actual values, explaining how each dimension favours or penalises the target stock.",
                 },
             ), _ui_resp),
             (DomainSpecificRubrics(
-                name="insider_signal_discussion",
+                name="peer_landscape_analysis",
                 llm=ragas_llm,
                 rubrics={
-                    "score1_description": "Response makes no mention of insider trading or institutional ownership signals.",
-                    "score2_description": "Response briefly mentions institutional activity without detail.",
-                    "score3_description": "Response discusses one specific insider or institutional signal relevant to the thesis.",
-                    "score4_description": "Response incorporates insider trading activity and institutional ownership changes with supporting detail.",
-                    "score5_description": "Response thoroughly analyses insider trading patterns and significant institutional buying/selling with direct relevance to the investment thesis.",
+                    "score1_description": "Response does not mention any competitor or peer company.",
+                    "score2_description": "Response names one competitor but provides no comparative metrics.",
+                    "score3_description": "Response compares the target against at least one named peer on a specific metric (PE, growth, or margin).",
+                    "score4_description": "Response compares the target against two or more named peers across at least two financial metrics.",
+                    "score5_description": "Response provides a detailed peer landscape comparison across multiple named competitors using specific metrics (PE, revenue growth, operating margin, ROE) and identifies clear relative positioning headwinds or tailwinds.",
                 },
             ), _ui_resp),
         ]
         if retrieved_contexts:
             pairs.append((Faithfulness(llm=ragas_llm), _ctx_kwargs))
 
-        scores = await _run_metrics(pairs, "sentiment", trace_id)
+        scores = await _run_metrics(pairs, "market_context", trace_id)
         if scores:
-            logger.info("[sentiment] RAGAS scores summary (trace=%s): %s", trace_id, scores)
+            logger.info("[market_context] RAGAS scores summary (trace=%s): %s", trace_id, scores)
         else:
-            logger.info("[sentiment] No RAGAS scores computed")
+            logger.info("[market_context] No RAGAS scores computed")
     except Exception:
-        logger.exception("[sentiment] Eval crashed unexpectedly")
+        logger.exception("[market_context] Eval crashed unexpectedly")
+        _record_eval_failure()
 
+
+# ---------------------------------------------------------------------------
+# Deterministic Quant validator (schema + weight normalization)
+# ---------------------------------------------------------------------------
+
+def score_quant_deterministic(quant_result: dict) -> dict:
+    """Deterministic schema + invariant checks on Quant result — no LLM, no cost.
+
+    Validates:
+      - signal_scores keys cover the 8 expected groups
+      - their associated weights sum to ~1.0
+      - behavioral fields are present (options_signals, insider_signals, positioning)
+      - monte_carlo and peer_comparison are dict-shaped when present
+
+    Returns a dict of bool checks plus a `passed` aggregate. Cheap enough to
+    run on every Quant response without rate limiting.
+    """
+    expected_groups = {
+        "risk_quality", "dcf", "fund_value", "fund_quality",
+        "tech_trend", "tech_momentum", "peer_positioning", "behavioral",
+    }
+    expected_weights = {
+        "risk_quality": 0.15, "dcf": 0.20, "fund_value": 0.13, "fund_quality": 0.12,
+        "tech_trend": 0.15, "tech_momentum": 0.10, "peer_positioning": 0.10, "behavioral": 0.05,
+    }
+
+    checks: dict = {}
+    sig = quant_result.get("signal_scores") or {}
+    checks["signal_scores_present"] = bool(sig)
+    checks["signal_groups_complete"] = expected_groups.issubset(set(sig.keys()))
+    checks["weights_sum_to_1"] = abs(sum(expected_weights.values()) - 1.0) < 1e-6
+
+    for field in ("options_signals", "insider_signals", "positioning"):
+        v = quant_result.get(field)
+        checks[f"{field}_present"] = v is not None
+        checks[f"{field}_is_dict"] = isinstance(v, dict) or v is None
+
+    mc = quant_result.get("monte_carlo")
+    checks["monte_carlo_well_formed"] = mc is None or (
+        isinstance(mc, dict) and "p50" in mc and "prob_profit" in mc
+    )
+
+    pc = quant_result.get("peer_comparison")
+    checks["peer_comparison_well_formed"] = pc is None or (
+        isinstance(pc, dict) and ("rankings" in pc or "peers" in pc)
+    )
+
+    rec = quant_result.get("recommendation")
+    checks["recommendation_valid"] = rec in {"BUY", "HOLD", "SELL", None}
+
+    conf = quant_result.get("confidence_score")
+    checks["confidence_in_range"] = conf is None or (isinstance(conf, (int, float)) and 0.0 <= conf <= 1.0)
+
+    checks["passed"] = all(v for k, v in checks.items() if k != "passed")
+    return checks

@@ -45,7 +45,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
   &rarr; LLM calls agents via single send_message tool (parallel with qwen):
     &rarr; send_message("Financial RAG Agent", ...) &rarr; RAG Agent (8002) &rarr; MCP (SEC EDGAR) &rarr; ChromaDB
     &rarr; send_message("Quant Analysis Agent", ...) &rarr; Quant Agent (8003) &rarr; MCP (prices + financials) &rarr; LangGraph
-    &rarr; send_message("Sentiment Intelligence Agent", ...) &rarr; Sentiment Agent (8004) &rarr; MCP (News + SEC) &rarr; CrewAI
+    &rarr; send_message("Market Context Agent", ...) &rarr; Market Context Agent (8004) &rarr; MCP (News + SEC) &rarr; CrewAI
   &rarr; LLM synthesizes all results &rarr; BUY/HOLD/SELL recommendation
   &rarr; Auto-save: brief, portfolio, performance record persisted to SQLite</pre>
 
@@ -90,7 +90,7 @@ python -m uvicorn agent_2_llamaindex.server:app --host 0.0.0.0 --port 8002
 # Terminal 3 &mdash; Quant Agent (port 8003)
 python -m uvicorn agent_3_langgraph.server:app --host 0.0.0.0 --port 8003
 
-# Terminal 4 &mdash; Sentiment Agent (port 8004)
+# Terminal 4 &mdash; Market Context Agent (port 8004)
 python -m uvicorn agent_4_crewai.server:app --host 0.0.0.0 --port 8004
 
 # Terminal 5 &mdash; ADK Web UI (port 8001)
@@ -101,7 +101,7 @@ adk web --port 8001 agents</pre>
 <pre>curl http://localhost:8001/health  # {"status":"ok","agent":"orchestrator"}
 curl http://localhost:8002/health  # {"status":"ok","agent":"rag"}
 curl http://localhost:8003/health  # {"status":"ok","agent":"quant"}
-curl http://localhost:8004/health  # {"status":"ok","agent":"sentiment"}
+curl http://localhost:8004/health  # {"status":"ok","agent":"market_context"}
 curl http://localhost:8010/health  # {"status":"ok","agent":"mcp"}</pre>
 
 <h2>Guardrails in Action</h2>
@@ -129,7 +129,7 @@ curl http://localhost:8001/a2a -H "Content-Type: application/json" -d '...' \
   -H "A2A-Version: 1.0" \
   -d '{"jsonrpc":"2.0","method":"SendMessage","id":"1","params":{"message":{"messageId":"1","role":"ROLE_USER","parts":[{"text":"Analyze NVDA"}]},"metadata":{"ticker":"NVDA","period":"5y"}}}'</pre>
 
-<h3>Test Sentiment Agent</h3>
+<h3>Test Market Context Agent</h3>
 <pre>curl -X POST http://localhost:8004/a2a \
   -H "Content-Type: application/json" \
   -H "A2A-Version: 1.0" \

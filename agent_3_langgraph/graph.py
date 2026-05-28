@@ -4,13 +4,17 @@ from typing import Any
 from langgraph.graph import END, START, StateGraph
 
 from .nodes import (
+    analyst_positioning_node,
     compute_metrics_node,
     correlation_node,
     dcf_valuation_node,
     fetch_price_data_node,
     format_output_node,
     fundamental_analysis_node,
+    insider_signals_node,
     llm_summary_node,
+    options_flow_node,
+    peer_comparison_node,
     stress_test_node,
     technical_analysis_node,
 )
@@ -33,9 +37,21 @@ class QuantAnalysisGraph:
         self._graph = self._build_graph()
 
     def _build_graph(self) -> StateGraph:
-        """Fan-out from START: prices + fundamentals in parallel; technicals runs after prices."""
+        """
+        Fan-out topology:
+
+        START ──→ fetch_prices ──→ compute_base_metrics ──[conditional]──→ run_stress_test ──→ portfolio_correlation ──→ format_output
+                               └──→ technical_analysis ──────────────────────────────────────→ portfolio_correlation    ↑
+               └──→ fetch_fundamentals ──→ format_output                                                               │
+                                      └──→ peer_comparison ──────────────────────────────────────────────────────────→ │
+                                      └──→ analyst_positioning ──────────────────────────────────────────────────────→ │
+               └──→ options_flow ──────────────────────────────────────────────────────────────────────────────────── → │
+               └──→ insider_signals ───────────────────────────────────────────────────────────────────────────────── → │
+                                                                         └──→ run_dcf ──→ portfolio_correlation ──────→ │
+        """
         builder = StateGraph(QuantAnalysisState)
 
+        # Register all nodes
         builder.add_node("fetch_prices", fetch_price_data_node)
         builder.add_node("fetch_fundamentals", fundamental_analysis_node)
         builder.add_node("compute_base_metrics", compute_metrics_node)
@@ -43,32 +59,46 @@ class QuantAnalysisGraph:
         builder.add_node("run_stress_test", stress_test_node)
         builder.add_node("run_dcf", dcf_valuation_node)
         builder.add_node("portfolio_correlation", correlation_node)
+        builder.add_node("peer_comparison", peer_comparison_node)
+        builder.add_node("analyst_positioning", analyst_positioning_node)
+        builder.add_node("options_flow", options_flow_node)
+        builder.add_node("insider_signals", insider_signals_node)
         builder.add_node("format_output", format_output_node)
         builder.add_node("llm_summary", llm_summary_node)
 
-        # Parallel fan-out from START: price pipeline and fundamentals pipeline
+        # Parallel fan-out from START
         builder.add_edge(START, "fetch_prices")
         builder.add_edge(START, "fetch_fundamentals")
+        builder.add_edge(START, "options_flow")
+        builder.add_edge(START, "insider_signals")
 
         # Price path: fetch_prices → compute + technicals in parallel
         builder.add_edge("fetch_prices", "compute_base_metrics")
         builder.add_edge("fetch_prices", "technical_analysis")
 
-        # Volatility-gated branch: high vol → stress test, low → DCF
+        # Volatility-gated branch
         builder.add_conditional_edges(
             "compute_base_metrics",
             _route_on_volatility,
             {"stress_test": "run_stress_test", "dcf": "run_dcf"},
         )
 
-        # All three branches fan-in at portfolio_correlation
+        # All price-path branches fan-in at portfolio_correlation
         builder.add_edge("run_stress_test", "portfolio_correlation")
         builder.add_edge("run_dcf", "portfolio_correlation")
         builder.add_edge("technical_analysis", "portfolio_correlation")
 
-        # Fan-in at format_output: waits for correlation + fundamentals
-        builder.add_edge("portfolio_correlation", "format_output")
+        # Fundamentals fan-out: direct to format_output + downstream enrichment nodes
         builder.add_edge("fetch_fundamentals", "format_output")
+        builder.add_edge("fetch_fundamentals", "peer_comparison")
+        builder.add_edge("fetch_fundamentals", "analyst_positioning")
+
+        # All paths fan-in at format_output
+        builder.add_edge("portfolio_correlation", "format_output")
+        builder.add_edge("peer_comparison", "format_output")
+        builder.add_edge("analyst_positioning", "format_output")
+        builder.add_edge("options_flow", "format_output")
+        builder.add_edge("insider_signals", "format_output")
 
         builder.add_edge("format_output", "llm_summary")
         builder.add_edge("llm_summary", END)
@@ -95,6 +125,11 @@ class QuantAnalysisGraph:
             "fundamentals": None,
             "technicals": None,
             "_financials_raw": {},
+            "monte_carlo": None,
+            "peer_comparison": None,
+            "options_signals": None,
+            "insider_signals": None,
+            "positioning": None,
             "recommendation": "",
             "reasoning": "",
             "mcp_client": mcp_client,
@@ -109,10 +144,11 @@ class QuantAnalysisGraph:
         dcf_error = result.get("dcf_error")
         if dcf_error:
             logger.warning("DCF failed for %s: %s", ticker.upper(), dcf_error)
-        logger.info("Graph execution complete for %s: rec=%s, dcf=%s, stress=%s",
+        logger.info("Graph execution complete for %s: rec=%s, dcf=%s, stress=%s, peers=%s",
                      ticker.upper(), result.get("recommendation"),
                      "ok" if result.get("dcf_valuation") else "null",
-                     "ok" if result.get("stress_test_result") else "null")
+                     "ok" if result.get("stress_test_result") else "null",
+                     "ok" if result.get("peer_comparison") else "null")
 
         return {
             "ticker": ticker.upper(),
@@ -122,7 +158,12 @@ class QuantAnalysisGraph:
             "dcf_valuation": result.get("dcf_valuation"),
             "dcf_error": dcf_error,
             "stress_test": result.get("stress_test_result"),
+            "monte_carlo": result.get("monte_carlo"),
             "correlation_matrix": result.get("correlation_matrix", {}),
             "fundamentals": result.get("fundamentals"),
             "technicals": result.get("technicals"),
+            "peer_comparison": result.get("peer_comparison"),
+            "options_signals": result.get("options_signals"),
+            "insider_signals": result.get("insider_signals"),
+            "positioning": result.get("positioning"),
         }

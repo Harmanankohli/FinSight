@@ -128,11 +128,11 @@ A2A Request → DefaultRequestHandler → GenericAgentExecutor(QuantAgent)
 
 **DCF Skip Messaging**: When annual volatility exceeds the 35% threshold, `compute_metrics_node` sets a descriptive `dcf_error` field (e.g. "DCF skipped: annual volatility (41.0%) exceeds 35% threshold – routed to stress test instead"). This error is propagated through the graph into the final output and LLM reasoning, providing visibility into why DCF was not computed.
 
-### Sentiment Agent (CrewAI)
+### Market Context Agent (CrewAI)
 
 ```
-A2A Request → DefaultRequestHandler → GenericAgentExecutor(SentimentAgent)
-  → SentimentAgent.stream()
+A2A Request → DefaultRequestHandler → GenericAgentExecutor(MarketContextAgent)
+  → MarketContextAgent.stream()
     → Parallel MCP data collection (asyncio.gather):
       ├── get_news_sentiment
       └── get_company_filings
@@ -291,7 +291,7 @@ The Langfuse client uses `is_default_export_span` to filter out noisy A2A intern
 | Orchestrator | `orchestrator` | GoogleADKInstrumentor, HTTPXClientInstrumentor | `orchestrator-execute` span, per-sub-agent latency spans |
 | RAG Agent | `rag_agent` | LlamaIndexInstrumentor | `rag-agent-stream` span |
 | Quant Agent | `quant_agent` | StarletteInstrumentor, **LangChainInstrumentor** | `quant-agent-stream` span + CallbackHandler for LangGraph nodes |
-| Sentiment Agent | `sentiment_agent` | CrewAIInstrumentor, StarletteInstrumentor | `sentiment-agent-stream` span |
+| Market Context Agent | `market_context_agent` | CrewAIInstrumentor, StarletteInstrumentor | `market-context-agent-stream` span |
 | MCP Server | `mcp_server` | — | `@observe()` on individual tools |
 
 ### Sub-Agent Latency Spans
@@ -400,7 +400,7 @@ All five services expose `GET /health`:
 | Orchestrator | `http://localhost:8001/health` | `{"status":"ok","agent":"orchestrator"}` |
 | RAG Agent | `http://localhost:8002/health` | `{"status":"ok","agent":"rag"}` |
 | Quant Agent | `http://localhost:8003/health` | `{"status":"ok","agent":"quant"}` |
-| Sentiment Agent | `http://localhost:8004/health` | `{"status":"ok","agent":"sentiment"}` |
+| Market Context Agent | `http://localhost:8004/health` | `{"status":"ok","agent":"market_context"}` |
 | MCP Server | `http://localhost:8010/health` | `{"status":"ok","agent":"mcp"}` |
 
 The MCP server mounts its health route alongside the FastMCP SSE app via a Starlette wrapper in `get_app()`. Docker-compose `healthcheck` blocks use these endpoints with `curl -f`, and `depends_on` is set to `condition: service_healthy`.
@@ -421,7 +421,7 @@ setup_file_logging("orchestrator")  # → logs/orchestrator.log
 | Orchestrator | `logs/orchestrator.log` |
 | RAG Agent | `logs/rag_agent.log` |
 | Quant Agent | `logs/quant.log` |
-| Sentiment Agent | `logs/sentiment.log` |
+| Market Context Agent | `logs/market_context.log` |
 | MCP Server | `logs/mcp.log` |
 | Memory callback | `logs/memory_callback.log` |
 

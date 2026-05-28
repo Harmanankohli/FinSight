@@ -80,7 +80,7 @@ FinSightAgentExecutor:
     &rarr; LLM decides which agents to call (parallel with qwen)
     &rarr; send_message("Financial RAG Agent", "Analyze NVDA...")
     &rarr; send_message("Quant Analysis Agent", "Compute metrics for NVDA...")
-    &rarr; send_message("Sentiment Intelligence Agent", "Sentiment for NVDA...")
+    &rarr; send_message("Market Context Agent", "Sentiment for NVDA...")
     &rarr; LLM synthesizes BUY/HOLD/SELL
     &rarr; load_memory(query="...") &mdash; search past conversations
   &rarr; _add_events_to_memory() &rarr; get_session() &rarr; add_session_to_memory()
@@ -252,13 +252,13 @@ Body:
 <table>
 <tr><th>Property</th><th>Value</th></tr>
 <tr><td>Framework</td><td>CrewAI</td></tr>
-<tr><td>Executor</td><td><code>GenericAgentExecutor(SentimentAgent)</code></td></tr>
+<tr><td>Executor</td><td><code>GenericAgentExecutor(MarketContextAgent)</code></td></tr>
 <tr><td>LLM</td><td>LM Studio via CrewLLM</td></tr>
 <tr><td>Data Collection</td><td>Parallel via <code>asyncio.gather</code></td></tr>
 <tr><td>Port</td><td>8004</td></tr>
 <tr><td>Agent Card</td><td>Built programmatically in <code>agent_4_crewai/server.py</code></td></tr>
 <tr><td>A2A Endpoint</td><td><code>POST /a2a</code></td></tr>
-<tr><td>Health</td><td><code>GET /health</code> &rarr; <code>{"status":"ok","agent":"sentiment"}</code></td></tr>
+<tr><td>Health</td><td><code>GET /health</code> &rarr; <code>{"status":"ok","agent":"market_context"}</code></td></tr>
 </table>
 
 <h3>Skills</h3>
@@ -268,15 +268,15 @@ Body:
 </table>
 
 <h3>Architecture</h3>
-<pre>Request &rarr; DefaultRequestHandler &rarr; GenericAgentExecutor(SentimentAgent)
-  &rarr; SentimentAgent.stream(query, context_id, task_id)
-    &rarr; SentimentAgent.analyze(ticker)
+<pre>Request &rarr; DefaultRequestHandler &rarr; GenericAgentExecutor(MarketContextAgent)
+  &rarr; MarketContextAgent.stream(query, context_id, task_id)
+    &rarr; MarketContextAgent.analyze(ticker)
       &rarr; _connect() &rarr; MCPClient.connect_all()
       &rarr; _collect_data_parallel(ticker)
         &rarr; call("get_news_sentiment", {ticker})
         &rarr; call("get_company_filings", {ticker})
         &rarr; asyncio.gather
-      &rarr; SentimentIntelligenceCrew.analyze(ticker, precollected_data)
+      &rarr; MarketContextCrew.analyze(ticker, precollected_data)
         &rarr; Single Agent (Analysis &rarr; narrative directly)
   &rarr; Yields: {response_type: "data", content: result, is_task_complete: true}
   &rarr; finally: await self._disconnect() &mdash; closes MCP sockets gracefully</pre>

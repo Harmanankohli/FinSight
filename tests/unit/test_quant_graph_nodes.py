@@ -135,8 +135,9 @@ async def test_stress_test_projected_prices_below_current():
     result = await stress_test_node(state)
     scenarios = result["stress_test_result"]["scenarios"]
     for name, data in scenarios.items():
-        assert data["projected_price"] < data["projected_price"] - data["loss_per_share"] or True
-        assert data["decline_pct"] < 0, f"{name}: decline_pct should be negative"
+        # After Phase 4 §8.5.4 the scenario emits beta-adjusted decline fields
+        assert data["beta_adj_decline_pct"] < 0, f"{name}: beta_adj_decline_pct should be negative"
+        assert data["market_decline_pct"] < 0, f"{name}: market_decline_pct should be negative"
         assert data["loss_per_share"] < 0, f"{name}: loss_per_share should be negative"
 
 
