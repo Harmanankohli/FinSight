@@ -17,35 +17,56 @@ def _last_nonnull(a: Any, b: Any) -> Any:
     return b if b is not None else a
 
 
+def _last_str(a: str, b: str) -> str:
+    """Return b if non-empty, else a — for string fields written by multiple nodes."""
+    return b if b else a
+
+
 class QuantAnalysisState(TypedDict):
     # Input fields
-    ticker: str  # Target equity symbol for analysis
-    period: str  # Lookback window (e.g. "5y", "1y") for price data fetching
-    portfolio_holdings: list[str]  # Peer tickers for pairwise correlation analysis
+    ticker: str
+    period: str
+    portfolio_holdings: list[str]
 
     # Data pipeline
-    price_data: dict  # Raw price series from MCP → parsed {date: close} dict
-    messages: Annotated[list, add_messages]  # LangGraph message accumulator (for LLM integration)
-    volatility: float  # Annualized volatility computed from price returns
-    is_high_volatility: bool  # Threshold gate (>35%) → routes to stress test vs DCF
+    price_data: dict
+    messages: Annotated[list, add_messages]
+    volatility: float
+    is_high_volatility: bool
 
-    # Analysis outputs
-    # metrics and stress_test_result are written by multiple nodes (compute + format_output),
-    # so they use reducers to avoid INVALID_CONCURRENT_GRAPH_UPDATE in LangGraph's fan-in.
-    metrics: Annotated[dict, _merge_dict]  # Sharpe, Vol, Beta, VaR, Max Drawdown
-    stress_test_result: Annotated[dict | None, _last_nonnull]  # Scenario projections + CVaR
-    dcf_valuation: dict | None  # 5Y DCF intrinsic value, upside %, terminal value assumptions
-    # dcf_error written by both compute_metrics_node (high-vol skip) and dcf_valuation_node
+    # Analysis outputs.
+    #
+    # Several keys below carry Annotated reducers.  The graph has a fan-in
+    # at format_output (5 predecessors) where two of them — peer_comparison
+    # and analyst_positioning — both stem from fetch_fundamentals and often
+    # complete in the same LangGraph checkpoint step.  When that happens
+    # LangGraph schedules format_output_node twice in the same step, causing
+    # every key it writes to receive two values.  Annotated reducers
+    # eliminate the INVALID_CONCURRENT_GRAPH_UPDATE error by declaring how
+    # to merge concurrent writes rather than rejecting them.
+    #
+    # Keys written only once (by a single node in a single step) have no
+    # reducer and use the default last-value channel.
+
+    # Written by compute_metrics_node AND format_output_node
+    metrics: Annotated[dict, _merge_dict]
+    # Written by stress_test_node AND format_output_node
+    stress_test_result: Annotated[dict | None, _last_nonnull]
+    # Written by compute_metrics_node AND dcf_valuation_node
     dcf_error: Annotated[str | None, _last_nonnull]
-    correlation_matrix: dict  # Pairwise Pearson correlations across portfolio holdings
-    fundamentals: dict | None  # PE, ROE, margins, growth, D/E — from get_financials info
-    technicals: dict | None  # RSI, MACD, trend, support/resistance — computed from price_data
-    _financials_raw: dict | None  # Raw get_financials response, reused by DCF to avoid double call
-    monte_carlo: dict | None  # GBM MC sim: p10/p25/p50/p75/p90, prob_profit, mc_var_95
-    peer_comparison: dict | None  # Sector peer ranks on PE, EV/EBITDA, RevGrowth, OpMargin, ROE
-    options_signals: dict | None  # Put/call volume ratio, OI ratio, flow signal
-    insider_signals: dict | None  # Form 4 net buy/sell count, activity level, insider % held
-    positioning: dict | None  # Analyst consensus score, price target upside, short interest
-    recommendation: str  # Signal vote: BUY / HOLD / SELL
-    reasoning: str  # Compact string of all signals for downstream use (or LLM summary)
-    mcp_client: Any | None  # Shared MCP connection, injected at graph entry, closed by caller
+    # Written by format_output_node AND llm_summary_node
+    reasoning: Annotated[str, _last_str]
+    # Written by format_output_node (potentially twice from duplicate fan-in trigger)
+    recommendation: Annotated[str, _last_str]
+
+    dcf_valuation: dict | None
+    correlation_matrix: dict
+    fundamentals: dict | None
+    technicals: dict | None
+    _financials_raw: dict | None
+    monte_carlo: dict | None
+    peer_comparison: dict | None
+    options_signals: dict | None
+    insider_signals: dict | None
+    positioning: dict | None
+    mcp_client: Any | None
