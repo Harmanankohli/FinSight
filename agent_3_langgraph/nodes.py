@@ -899,7 +899,13 @@ async def peer_comparison_node(state: QuantAnalysisState) -> dict:
             logger.debug("Peer %s financials failed: %s", sym, e)
         return sym, {}
 
-    peer_infos = dict(await asyncio.gather(*[_fetch(p) for p in peer_tickers]))
+    # Limit to 3 concurrent get_financials calls so the MCP/yfinance rate limiter
+    # doesn't queue more requests than the per-attempt timeout can absorb.
+    _sem = asyncio.Semaphore(3)
+    async def _fetch_capped(sym: str) -> tuple[str, dict]:
+        async with _sem:
+            return await _fetch(sym)
+    peer_infos = dict(await asyncio.gather(*[_fetch_capped(p) for p in peer_tickers]))
 
     def _extract(inf: dict) -> dict:
         return {

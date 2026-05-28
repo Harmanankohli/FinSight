@@ -1789,8 +1789,8 @@ async def get_insider_transactions(ticker: str, days: int = 90) -> dict:
     logger.info("Tool called", extra={"tool": "get_insider_transactions", "ticker": ticker})
     try:
         await _yfinance_limiter.acquire()
-        stock = yf.Ticker(ticker.upper())
-        df = stock.insider_transactions
+        loop = asyncio.get_event_loop()
+        df = await loop.run_in_executor(None, lambda: yf.Ticker(ticker.upper()).insider_transactions)
         if df is None or df.empty:
             return {"ticker": ticker.upper(), "transactions": [], "summary": {"total": 0, "buys": 0, "sells": 0, "direction": "neutral"}}
 
@@ -1871,10 +1871,15 @@ async def _get_scenario_shocks_uncached(sector: str) -> dict:
 
     prices_series: pd.Series | None = None
     index_used = "^GSPC"
+    loop = asyncio.get_event_loop()
     for sym in candidates:
         try:
             await _yfinance_limiter.acquire()
-            hist = yf.Ticker(sym).history(period="max", interval="1d")
+            # history(period="max") fetches 25+ years of data — run in executor
+            # to avoid blocking the event loop and starving concurrent MCP calls.
+            hist = await loop.run_in_executor(
+                None, lambda s=sym: yf.Ticker(s).history(period="max", interval="1d")
+            )
             if not hist.empty and len(hist) > 252:
                 prices_series = hist["Close"].sort_index()
                 index_used = sym

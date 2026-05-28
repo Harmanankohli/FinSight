@@ -231,8 +231,7 @@ class MCPClient:
             raise MCPClientError(f"Not connected to MCP server: {server_name}")
 
         for attempt in range(self.max_retries):
-            # First attempt uses 1/3 of timeout to fail fast; subsequent attempts use full timeout.
-            t = self.timeout / 3 if attempt == 0 else self.timeout
+            t = self.timeout
             try:
                 result = await asyncio.wait_for(
                     session.call_tool(tool_name, arguments or {}),

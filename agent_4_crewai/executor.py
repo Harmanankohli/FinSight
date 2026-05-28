@@ -59,9 +59,13 @@ class MarketContextAgent(BaseAgent):
         if not peer_tickers:
             logger.warning("get_peers returned no results for %s — peer analysis will be skipped", ticker)
 
-        # Step 3: peer financials in parallel
+        # Step 3: peer financials — capped at 3 concurrent to avoid MCP/yfinance queue backup
+        _sem = asyncio.Semaphore(3)
+        async def _call_capped(t):
+            async with _sem:
+                return await call("get_financials", {"ticker": t})
         peer_fin_results = await asyncio.gather(
-            *[call("get_financials", {"ticker": p}) for p in peer_tickers],
+            *[_call_capped(p) for p in peer_tickers],
             return_exceptions=True,
         )
 
