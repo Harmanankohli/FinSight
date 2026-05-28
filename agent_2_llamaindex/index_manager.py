@@ -130,7 +130,13 @@ class FinancialIndexManager:
         )
         collections = _classify_query_intent(query_text)
         today = date.today().isoformat()
-        augmented_query = f"Today's date: {today}. Research {ticker}: {query_text}\nProvide specific data with citations."
+        augmented_query = (
+            f"Today's date: {today}. Research {ticker}: {query_text}\n"
+            f"IMPORTANT: Answer using ONLY the information present in the retrieved documents. "
+            f"Do NOT mention data that is absent, historical comparisons not in the documents, "
+            f"or requests for additional information. If the documents contain recent data, "
+            f"give your verdict based on that. Cite specific figures and filing dates."
+        )
 
         all_nodes = []
         for coll in collections:
