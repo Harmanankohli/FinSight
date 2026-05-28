@@ -17,6 +17,30 @@ def _last_nonnull(a: Any, b: Any) -> Any:
     return b if b is not None else a
 
 
+def _merge_stress_test(a: Any, b: Any) -> Any:
+    """Prefer the stress_test_result with real scenario data over the 'skipped' placeholder.
+
+    format_output_node may run twice (duplicate fan-in): the first run can read empty
+    metrics and produce a 'skipped with vol=0.0%' note. This reducer ensures the version
+    with actual scenarios (or higher volatility) wins regardless of write order.
+    """
+    if a is None:
+        return b
+    if b is None:
+        return a
+    # If one has scenario data and the other doesn't, prefer the one with data
+    a_has_scenarios = isinstance(a, dict) and bool(a.get("scenarios"))
+    b_has_scenarios = isinstance(b, dict) and bool(b.get("scenarios"))
+    if a_has_scenarios and not b_has_scenarios:
+        return a
+    if b_has_scenarios and not a_has_scenarios:
+        return b
+    # Both are 'skipped' notes — prefer the one with higher (more accurate) volatility
+    vol_a = a.get("volatility", 0) if isinstance(a, dict) else 0
+    vol_b = b.get("volatility", 0) if isinstance(b, dict) else 0
+    return a if vol_a >= vol_b else b
+
+
 def _last_str(a: str, b: str) -> str:
     """Return b if non-empty, else a — for string fields written by multiple nodes."""
     return b if b else a
@@ -51,7 +75,7 @@ class QuantAnalysisState(TypedDict):
     # Written by compute_metrics_node AND format_output_node
     metrics: Annotated[dict, _merge_dict]
     # Written by stress_test_node AND format_output_node
-    stress_test_result: Annotated[dict | None, _last_nonnull]
+    stress_test_result: Annotated[dict | None, _merge_stress_test]
     # Written by compute_metrics_node AND dcf_valuation_node
     dcf_error: Annotated[str | None, _last_nonnull]
     # Written by format_output_node AND llm_summary_node
@@ -64,7 +88,8 @@ class QuantAnalysisState(TypedDict):
     fundamentals: dict | None
     technicals: dict | None
     _financials_raw: dict | None
-    monte_carlo: dict | None
+    # Written by both stress_test_node (high-vol path) and dcf_valuation_node (low-vol path)
+    monte_carlo: Annotated[dict | None, _last_nonnull]
     peer_comparison: dict | None
     options_signals: dict | None
     insider_signals: dict | None

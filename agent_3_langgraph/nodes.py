@@ -832,6 +832,14 @@ async def dcf_valuation_node(state: QuantAnalysisState) -> dict:
             ticker, latest_fcf, wacc, growth_rate, terminal_growth, intrinsic_value, upside * 100,
         )
 
+        # Run Monte Carlo here so low-volatility tickers (routed to DCF, not stress test)
+        # still get a GBM simulation. stress_test_node also runs it for high-vol tickers.
+        prices_dict = state.get("price_data", {})
+        mc = None
+        if prices_dict:
+            prices_s = pd.Series({pd.Timestamp(k): v for k, v in prices_dict.items()}).sort_index()
+            mc = _run_monte_carlo(prices_s)
+
         return {
             "dcf_valuation": {
                 "intrinsic_value": round(intrinsic_value, 2),
@@ -842,7 +850,8 @@ async def dcf_valuation_node(state: QuantAnalysisState) -> dict:
                 "terminal_growth": round(terminal_growth, 4),
                 "enterprise_value": round(enterprise_value, 2),
                 "fcf_used": latest_fcf,
-            }
+            },
+            "monte_carlo": mc,
         }
     except Exception as e:
         logger.warning("DCF failed for %s: %s", ticker, e)
@@ -861,7 +870,8 @@ async def peer_comparison_node(state: QuantAnalysisState) -> dict:
     industry = info.get("industry", "")
     sector = info.get("sector", "")
 
-    # Discover peers dynamically via Yahoo Finance recommendations API
+    # Discover peers dynamically via Yahoo Finance recommendations API;
+    # fall back to curated sets when the API returns empty (cold MCP server, rate limit, etc.)
     peer_tickers = []
     try:
         pr = await mcp.call_tool_by_name("get_peers", {"ticker": ticker})
@@ -870,6 +880,12 @@ async def peer_comparison_node(state: QuantAnalysisState) -> dict:
             peer_tickers = json.loads(raw_text).get("peers", [])
     except Exception as _pe:
         logger.warning("get_peers failed for %s: %s", ticker, _pe)
+
+    if not peer_tickers:
+        from shared.peer_sets import get_peer_tickers as _static_peers
+        peer_tickers = _static_peers(ticker, industry, sector)
+        if peer_tickers:
+            logger.info("Dynamic peers empty for %s — using curated fallback: %s", ticker, peer_tickers)
 
     if not peer_tickers:
         return {"peer_comparison": {
