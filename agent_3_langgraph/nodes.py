@@ -810,11 +810,19 @@ async def peer_comparison_node(state: QuantAnalysisState) -> dict:
     industry = info.get("industry", "")
     sector = info.get("sector", "")
 
-    from shared.peer_sets import get_peer_tickers
-    peer_tickers = get_peer_tickers(ticker, industry, sector)
+    # Discover peers dynamically via Yahoo Finance recommendations API
+    peer_tickers = []
+    try:
+        pr = await mcp.call_tool_by_name("get_peers", {"ticker": ticker})
+        if hasattr(pr, "content") and pr.content:
+            raw_text = pr.content[0].text if hasattr(pr.content[0], "text") else str(pr.content[0])
+            peer_tickers = json.loads(raw_text).get("peers", [])
+    except Exception as _pe:
+        logger.warning("get_peers failed for %s: %s", ticker, _pe)
+
     if not peer_tickers:
         return {"peer_comparison": {
-            "note": f"No peer set for industry='{industry}' sector='{sector}'",
+            "note": f"No peers found for {ticker} (industry='{industry}', sector='{sector}')",
             "industry": industry,
             "sector": sector,
         }}

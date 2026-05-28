@@ -1732,6 +1732,57 @@ async def get_earnings_history(ticker: str, limit: int = 8) -> dict:
         return {"ticker": ticker.upper(), "error": str(exc), "quarters": []}
 
 
+_cache_peers = make_cache(86400, "peers")   # 24 hr — peers are stable intraday
+
+
+async def _get_peers_uncached(ticker: str) -> dict:
+    """Fetch similar tickers from Yahoo Finance's recommendationsBySymbol API."""
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                f"https://query2.finance.yahoo.com/v6/finance/recommendationsBySymbol/{ticker.upper()}",
+                headers={
+                    "User-Agent": "Mozilla/5.0 (compatible; FinSight/1.0)",
+                    "Accept": "application/json",
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            result = (data.get("finance", {}).get("result") or [{}])[0]
+            recommended = result.get("recommendedSymbols", [])
+            peers = [
+                r["symbol"] for r in recommended
+                if r.get("symbol") and r["symbol"].upper() != ticker.upper()
+            ][:8]
+            return {"ticker": ticker.upper(), "peers": peers}
+    except Exception as exc:
+        logger.warning("Yahoo peers API failed for %s: %s", ticker, exc)
+        return {"ticker": ticker.upper(), "peers": [], "error": str(exc)}
+
+
+@app.tool()
+@observe()
+async def get_peers(ticker: str) -> dict:
+    """Return dynamically discovered peer/comparable tickers for any stock.
+
+    Uses Yahoo Finance's recommendations-by-symbol API ("People also watch"),
+    so peers are always current and work for any exchange-listed ticker.
+
+    Args:
+        ticker: Stock ticker symbol (e.g. WMT, NVDA, AAPL)
+
+    Returns:
+        dict with keys:
+          ticker — the input symbol
+          peers  — list of up to 8 similar ticker symbols
+    """
+    logger.info("Tool called", extra={"tool": "get_peers", "ticker": ticker})
+    return await _cache_peers.get_or_fetch(
+        f"peers:{ticker.upper()}",
+        lambda: _get_peers_uncached(ticker),
+    )
+
+
 # ──────────────────────────────────────────────
 # Hardened Python Sandbox (logic in shared/sandbox.py)
 # ──────────────────────────────────────────────

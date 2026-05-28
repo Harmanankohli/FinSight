@@ -9,7 +9,6 @@ from shared.config import EVAL_ENABLED
 from shared.observability import get_langfuse_client
 from shared.runtime_eval import score_sentiment_response as _eval_sentiment_response
 from shared.mcp_client import get_shared_mcp
-from shared.peer_sets import get_peer_tickers
 from shared.ticker_utils import extract_ticker, validate_ticker, resolve_ticker
 from shared.trace_context import extract_trace_ids
 
@@ -49,13 +48,10 @@ class MarketContextAgent(BaseAgent):
             call("get_financials", {"ticker": ticker}),
         )
 
-        # Step 2: resolve peers from primary ticker's industry/sector
-        info = {}
-        if isinstance(primary_fin, dict) and not primary_fin.get("error"):
-            info = primary_fin.get("info", {})
-        industry = info.get("industry", "")
-        sector = info.get("sector", "")
-        peer_tickers = get_peer_tickers(ticker, industry, sector)
+        # Step 2: discover peers dynamically via Yahoo Finance recommendations API
+        peers_result = await call("get_peers", {"ticker": ticker})
+        peer_tickers = peers_result.get("peers", []) if isinstance(peers_result, dict) else []
+        logger.debug("Dynamic peers for %s: %s", ticker, peer_tickers)
 
         # Step 3: peer financials in parallel
         peer_fin_results = await asyncio.gather(
