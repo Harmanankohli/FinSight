@@ -176,9 +176,8 @@ async def _setup_ragas_clients():
             return await loop.run_in_executor(None, self.embed_text, text)
 
     try:
-        client = AsyncOpenAI(base_url=LLM_BASE_URL, api_key="lm-studio", timeout=180)
-        # max_retries=1 suppresses per-call retry storms when LM Studio idle-unloads the model
-        patched = instructor.from_openai(client, mode=instructor.Mode.JSON_SCHEMA, max_retries=1)
+        client = AsyncOpenAI(base_url=LLM_BASE_URL, api_key="lm-studio", timeout=180, max_retries=5)
+        patched = instructor.from_openai(client, mode=instructor.Mode.JSON_SCHEMA)
         ragas_llm = InstructorLLM(
             client=patched,
             model=LLM_EVAL_MODEL,
@@ -228,8 +227,12 @@ async def _run_metrics(pairs: list, agent: str = "", trace_id: str | None = None
                 logger.info("[%s] RAGAS metric '%s' = %s (trace=%s)", agent, metric_name, scores[metric_name], trace_id)
                 _push_scores({metric_name: scores[metric_name]}, trace_id, agent)
                 _record_eval_success()
+            except asyncio.TimeoutError:
+                logger.warning("[%s] RAGAS metric '%s' timed out after %ss", agent, metric_name, EVAL_METRIC_TIMEOUT)
+                _record_eval_failure()
             except BaseException as exc:
-                logger.warning("[%s] RAGAS metric '%s' error: %s", agent, metric_name, exc)
+                msg = str(exc) if str(exc) else type(exc).__name__
+                logger.warning("[%s] RAGAS metric '%s' error: %s", agent, metric_name, msg)
                 _record_eval_failure()
     return scores
 
