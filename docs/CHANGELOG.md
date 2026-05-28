@@ -1,5 +1,26 @@
 # Changelog
 
+## v1.35 — Async Event-Loop Fixes: yfinance Executor, Peer Concurrency Cap, Redis Auto-Start
+
+### MCP Server — yfinance Blocking Calls Moved to Thread Executor
+
+- **`get_insider_transactions` converted to async** (`mcp_servers/finsight_server.py`): `yf.Ticker(ticker).insider_transactions` (a synchronous DataFrame fetch) now runs via `loop.run_in_executor()` instead of blocking the asyncio event loop. Prevents the MCP server from stalling concurrent tool calls while insider data is being fetched.
+- **`_get_scenario_shocks_uncached` converted to async** (`mcp_servers/finsight_server.py`): `yf.Ticker(sym).history(period="max")` (fetches 25+ years of price data) now runs via `loop.run_in_executor()`. Prevents long-running yfinance history fetches from starving concurrent MCP requests (e.g. `get_financials` for peers).
+
+### Quant & Market Context — Peer Concurrency Cap
+
+- **`asyncio.Semaphore(3)` in peer financials fetch** (`agent_3_langgraph/nodes.py` and `agent_4_crewai/executor.py`): Both agents now limit concurrent `get_financials` MCP calls for peer tickers to 3 at a time. Previously all peer requests fired simultaneously — the MCP server's yfinance rate limiter queued them internally, but the per-attempt timeout could expire before the queue cleared. Semaphore ensures no more than 3 in-flight requests, keeping response time within the timeout window.
+
+### MCP Client — Timeout Simplification
+
+- **Removed fail-fast first-attempt timeout** (`shared/mcp_client.py`): The previous logic used `self.timeout / 3` on the first retry attempt (5s for a 15s timeout) to fail fast, then fell back to full timeout on subsequent attempts. This was unnecessary for yfinance calls where latency varies naturally — the reduced timeout caused false-positive timeouts during normal yfinance slowness. Now all attempts use the full configured timeout.
+
+### Infrastructure — Redis Auto-Start in run_adk_web.bat
+
+- **Redis auto-detection and startup** (`run_adk_web.bat`): Reads `REDIS_URL` from `.env` — when set and `redis-server` is in PATH, the batch file auto-starts Redis before launching agent services. Logs a clear message when `REDIS_URL` is set but `redis-server` is not found (suggests `winget install Redis.Redis`). Falls back gracefully to in-process TTLCache when Redis is unavailable.
+- **Redis cleanup in stop_servers.bat** (`stop_servers.bat`): `stop_servers.bat` now kills `redis-server.exe` when `REDIS_URL` is configured. Uses both `taskkill` and WMI-based process termination for robustness.
+- **Terminal cleanup updated**: The WMI process filter in `stop_servers.bat` now also matches `redis-server` command lines, ensuring all terminal windows are properly cleaned up.
+
 ## v1.34 — Phase 5: Dynamic Peers, Sector-Relative Scoring, Live Scenario Shocks, Insider MCP Tool
 
 ### Quant Agent — Sector-Relative Fundamental Scoring + Live Scenario Shocks

@@ -380,7 +380,7 @@ All four agents share a common infrastructure layer:
 
 ## Phase Map
 
-The project evolved through four phases, each adding distinct agent capabilities:
+The project evolved through five phases, each adding distinct agent capabilities:
 
 | Phase | Version | What Changed |
 |---|---|---|
@@ -388,4 +388,4 @@ The project evolved through four phases, each adding distinct agent capabilities
 | **Phase 2** | v1.30 | Parallel dispatch to sub-agents, parallel filing downloads, single-flight ingestion dedup |
 | **Phase 3** | v1.31 | Sentiment Agent → Market Context Agent rebrand. Quant behavioral signals (options, insider, positioning). RAGAS runtime eval for all 4 agents. Eval circuit breaker, dedup, burst limiter. Date-scoped memory persistence gate (`_is_analysis_turn`). |
 | **Phase 4** | v1.31-1.32 | Date-scoped semantic cache. RAG startup warm-up. `no_forward_guarantees` AspectCritic. Stress test beta-adjusted formula. 8-group weighted voting normalization fix. |
-| **Phase 5** | v1.33-1.34 | Quant graph fan-in reducer fixes (concurrent update, diamond dependency, duplicate fan-in). Dynamic peer discovery via yfinance Industry/Sector classes. Live sector-aware scenario shocks with sector ETF benchmarks. Sector-relative fundamental scoring. Structured `get_insider_transactions` MCP tool replacing Form 4 text parsing. `get_peers` MCP tool using yfinance. Expanded `peer_sets.py` with normalised key matching. Monte Carlo runs on both high-vol and low-vol paths. Options flow zero-volume edge case handling. Null-safe schema validator for quant deterministic eval. |
+| **Phase 5** | v1.33-1.35 | Quant graph fan-in reducer fixes (concurrent update, diamond dependency, duplicate fan-in). Dynamic peer discovery via yfinance Industry/Sector classes. Live sector-aware scenario shocks with sector ETF benchmarks. Sector-relative fundamental scoring. Structured `get_insider_transactions` MCP tool replacing Form 4 text parsing. `get_peers` MCP tool using yfinance. Expanded `peer_sets.py` with normalised key matching. Monte Carlo runs on both high-vol and low-vol paths. Options flow zero-volume edge case handling. Null-safe schema validator for quant deterministic eval. yfinance blocking calls moved to thread executor (`run_in_executor`). Peer concurrency capped at 3 (`asyncio.Semaphore`). Redis auto-start in `run_adk_web.bat`. MCP client timeout simplification (removed fail-fast first-attempt timeout). |

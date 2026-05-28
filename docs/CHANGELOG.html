@@ -36,6 +36,30 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 
 <h1>Changelog</h1>
 
+<h2>v1.35 &mdash; Async Event-Loop Fixes: yfinance Executor, Peer Concurrency Cap, Redis Auto-Start</h2>
+
+<h3 class="version">MCP Server &mdash; yfinance Blocking Calls Moved to Thread Executor</h3>
+<ul>
+<li><strong><code>get_insider_transactions</code> converted to async</strong> (<code>mcp_servers/finsight_server.py</code>): <code>yf.Ticker(ticker).insider_transactions</code> (synchronous DataFrame fetch) now runs via <code>loop.run_in_executor()</code> instead of blocking the asyncio event loop. Prevents concurrent tool calls from stalling while insider data is fetched.</li>
+<li><strong><code>_get_scenario_shocks_uncached</code> converted to async</strong> (<code>mcp_servers/finsight_server.py</code>): <code>yf.Ticker(sym).history(period="max")</code> (25+ years of price data) now runs via <code>loop.run_in_executor()</code>. Prevents long-running history fetches from starving concurrent MCP requests.</li>
+</ul>
+
+<h3 class="version">Quant &amp; Market Context &mdash; Peer Concurrency Cap</h3>
+<ul>
+<li><strong><code>asyncio.Semaphore(3)</code> in peer financials fetch</strong> (<code>agent_3_langgraph/nodes.py</code>, <code>agent_4_crewai/executor.py</code>): Both agents limit concurrent <code>get_financials</code> calls for peer tickers to 3 at a time. Prevents yfinance rate-limiter queue buildup from exceeding per-attempt timeouts.</li>
+</ul>
+
+<h3 class="version">MCP Client &mdash; Timeout Simplification</h3>
+<ul>
+<li><strong>Removed fail-fast first-attempt timeout</strong> (<code>shared/mcp_client.py</code>): Previous logic used <code>self.timeout / 3</code> on first retry attempt (5s for a 15s timeout). Caused false-positive timeouts during normal yfinance slowness. All attempts now use the full configured timeout.</li>
+</ul>
+
+<h3 class="version">Infrastructure &mdash; Redis Auto-Start</h3>
+<ul>
+<li><strong>Redis auto-detection</strong> (<code>run_adk_web.bat</code>): Reads <code>REDIS_URL</code> from <code>.env</code> &mdash; when set and <code>redis-server</code> is in PATH, auto-starts Redis before launching agent services. Logs clear message when <code>redis-server</code> is missing (suggests <code>winget install Redis.Redis</code>). Falls back to in-process TTLCache.</li>
+<li><strong>Redis cleanup</strong> (<code>stop_servers.bat</code>): Kills <code>redis-server.exe</code> when <code>REDIS_URL</code> is configured. Uses <code>taskkill</code> + WMI-based process termination. Terminal cleanup filter updated to match <code>redis-server</code> command lines.</li>
+</ul>
+
 <h2>v1.32 &mdash; Phase 4 Final Items: Date-Aware Semantic Cache + RAG Startup Warm-Up</h2>
 
 <h3 class="version">Semantic Cache &mdash; Date-Scoped Keys</h3>

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>FinSight — Agents Reference</title>
+<title>FinSight ï¿½ Agents Reference</title>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:1.7;color:#2c2c2c;background:#faf8f5;padding:2rem 1rem}
@@ -388,13 +388,14 @@ MarketContextAgent._build_response(query):
 </table>
 
 <h2>Phase Map</h2>
-<p>The project evolved through four phases, each adding distinct agent capabilities:</p>
+<p>The project evolved through five phases, each adding distinct agent capabilities:</p>
 <table>
 <tr><th>Phase</th><th>Version</th><th>What Changed</th></tr>
 <tr><td><strong>Phase 1</strong></td><td>v1.29</td><td>RAG news/earnings ingestion, Quant fundamentals/technicals/DCF</td></tr>
 <tr><td><strong>Phase 2</strong></td><td>v1.30</td><td>Parallel dispatch to sub-agents, parallel filing downloads, single-flight ingestion dedup</td></tr>
 <tr><td><strong>Phase 3</strong></td><td>v1.31</td><td>Sentiment Agent &rarr; Market Context Agent rebrand. Quant behavioral signals (options, insider, positioning). RAGAS runtime eval for all 4 agents. Eval circuit breaker, dedup, burst limiter. Date-scoped memory persistence gate (<code>_is_analysis_turn</code>).</td></tr>
 <tr><td><strong>Phase 4</strong></td><td>v1.31&ndash;1.32</td><td>Date-scoped semantic cache. RAG startup warm-up. <code>no_forward_guarantees</code> AspectCritic. Stress test beta-adjusted formula. 8-group weighted voting normalization fix.</td></tr>
+<tr><td><strong>Phase 5</strong></td><td>v1.33&ndash;1.35</td><td>Quant graph fan-in reducer fixes (concurrent update, diamond dependency, duplicate fan-in). Dynamic peer discovery via yfinance Industry/Sector classes. Live sector-aware scenario shocks with sector ETF benchmarks. Sector-relative fundamental scoring. Structured <code>get_insider_transactions</code> MCP tool replacing Form 4 text parsing. <code>get_peers</code> MCP tool using yfinance. Expanded <code>peer_sets.py</code> with normalised key matching. Monte Carlo runs on both high-vol and low-vol paths. Options flow zero-volume edge case handling. Null-safe schema validator for quant deterministic eval. yfinance blocking calls moved to thread executor (<code>run_in_executor</code>). Peer concurrency capped at 3 (<code>asyncio.Semaphore</code>). Redis auto-start in <code>run_adk_web.bat</code>. MCP client timeout simplification (removed fail-fast first-attempt timeout).</td></tr>
 </table>
 
 <hr>

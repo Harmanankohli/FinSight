@@ -1197,6 +1197,23 @@ Python's `atexit` runs synchronous callbacks. An async `disconnect_all()` inside
 - ✅ `atexit` hook — best-effort clean shutdown
 - ✅ −131 lines of boilerplate across 4 executor files
 
+### Why remove the fail-fast first-attempt timeout?
+
+**Original design**: The MCP client's `call_tool_by_name` used `self.timeout / 3` on the first retry attempt to fail fast (5s for a 15s timeout), then fell back to the full timeout on subsequent attempts. The rationale was: if the first attempt fails quickly, the total latency across all retries is bounded.
+
+**Problem**: yfinance HTTP requests have natural latency variance — a call that takes 4 seconds one time might take 6 seconds the next (rate limiter queue, Yahoo backend load, network jitter). Under the /3 logic, a first attempt that took 5.5s would timeout (5s threshold), triggering a retry. The retry using the full 15s would then succeed — but the total latency was 5.5s + 6s = 11.5s instead of just 6s. The fail-fast pattern *added* latency by creating false-positive timeouts on naturally variable endpoints.
+
+Additionally, the retry backoff logic (`2^attempt` exponential) was already fast — the first retry waits <1s. If the first attempt genuinely fails (not a timeout), the retry happens almost immediately. The reduced timeout only affected the "first attempt took longer than expected but would have succeeded" case, which is the common case for yfinance variability, not the failure case.
+
+**Fix**: All retry attempts now use the full configured timeout. The exponential backoff still provides fast retries for genuine failures (connection errors, 503s). The timeout only fires when a request truly hangs beyond the configured limit, not when it's merely slower than average.
+
+### Key properties
+
+- ✅ No false-positive timeouts from normal latency variance
+- ✅ Total latency per retry chain is `timeout × max_retries` worst-case (was `timeout/3 + timeout × (max_retries-1)`)
+- ✅ Exponential backoff still provides fast retries on genuine failures
+- ✅ Simplifies mental model — one timeout value, not context-dependent thresholds
+
 ## Lazy OpenTelemetry Instrumentation
 
 ### Why lazy instrumentation instead of module-level `*Instrumentor().instrument()`?
@@ -1805,6 +1822,41 @@ No integration tests for the Market Context agent's data pipeline existed. The a
 - ✅ Dynamic `get_peers` MCP tool works for any ticker
 - ✅ `peer_sets.py` remains as fallback for MCP failures
 
+## Peer Concurrency Cap — Why `asyncio.Semaphore(3)` for Peer Financials
+
+### Problem
+
+Both the Quant LangGraph and Market Context agents fetch `get_financials` for each peer ticker concurrently. When a ticker has 8 peers, this fires 8 simultaneous MCP calls. The MCP server processes them via `asyncio.gather` with a shared `_yfinance_limiter` (4 req/s token bucket). While the token bucket limits the *rate*, it doesn't limit the *number of in-flight requests* the server queues.
+
+Under the old pattern, all 8 peer requests arrived at the MCP server simultaneously. The first 8 tokens were issued instantly (burst=8), but each yfinance `get_financials` call takes 1-3 seconds. The MCP client's `asyncio.wait_for(timeout=15)` wrapped each call — with 8 concurrent calls, the queue depth meant the last calls could exceed 15 seconds of wall-clock time, even though each individual yfinance call completed in <3s. The timeout fired before the queue cleared.
+
+### Why not increase the MCP timeout instead?
+
+The MCP timeout is already 15s (reduced from 30s in v1.31 for faster failure detection). Increasing it again would just mask the queue buildup issue — deeper queues would still timeout at any arbitrary threshold. The root cause is concurrency, not timeout duration.
+
+### Why a Semaphore specifically?
+
+`asyncio.Semaphore(3)` limits in-flight requests to 3, which is the smallest number that keeps the pipeline fed given yfinance's typical per-call latency (~1-3s). With 3 concurrent slots and 8 peers, the total wall-clock time is `ceil(8/3) × max_per_call_latency ≈ 3 × 3 = 9s` — well within the 15s timeout. Without the semaphore, 8 concurrent calls hit the rate limiter's burst of 8, all start their yfinance fetch, and the last ones timeout at ~15s.
+
+The token bucket (`_yfinance_limiter`) handles *rate* (requests per second) — it prevents Yahoo from seeing 8 requests at the same microsecond. The semaphore handles *concurrency* (in-flight requests at the same moment) — it prevents the MCP server's request queue from exceeding the timeout window. They solve complementary problems.
+
+### Why cap at 3 specifically?
+
+3 is the "knee" in the latency/throughput curve:
+- 1 concurrent → serial: 8 × 3s = 24s total, exceeds timeout
+- 2 concurrent → ceil(8/2) × 3s = 12s total, within timeout
+- 3 concurrent → ceil(8/3) × 3s = 9s total, comfortable margin
+- 4+ concurrent → no significant throughput gain (yfinance rate limiter is the bottleneck, not CPU), increased timeout risk
+
+3 gives comfortable headroom for the slowest peer (3s) while keeping total wall-clock time under 15s with margin.
+
+### Key properties
+
+- ✅ Limits in-flight peer requests — no queue buildup at MCP server
+- ✅ Complements the token bucket (rate vs concurrency)
+- ✅ Cap at 3 — optimal latency/throughput knee
+- ✅ Applied in both Quant (`nodes.py`) and Market Context (`executor.py`) agents
+
 ## Quant Behavioral Signals — 8-Group Weighted Voting
 
 ### Problem
@@ -2208,6 +2260,21 @@ The Quant agent doesn't import `yfinance` — all data access goes through the M
 - ✅ 90-day lookback — configurable via `days` parameter
 - ✅ MCP rate-limited — protects Yahoo Finance API
 - ✅ Cache-friendly — calls are idempotent for same ticker+window
+
+### Why move `yf.Ticker()` calls to `loop.run_in_executor()`?
+
+**Problem**: `yf.Ticker.insider_transactions` and `yf.Ticker.history(period="max")` are synchronous DataFrame operations that block the asyncio event loop. When the MCP server handles multiple concurrent tool calls (e.g. `get_financials` for 8 peer tickers), a blocking yfinance call stalls all in-flight coroutines — the event loop cannot switch to another task until the blocking call returns.
+
+`get_insider_transactions` was a single DataFrame property access (~200ms), tolerable in isolation. But `_get_scenario_shocks_uncached` calls `history(period="max")` which fetches 25+ years of daily OHLCV data — this can take 2-5 seconds for a single ETF. When called during peer analysis (which already has 8 concurrent `get_financials` calls in-flight), the blocking history fetch starves the financials requests, causing them to exceed their `asyncio.wait_for` timeout.
+
+**Solution**: Both blocked calls are wrapped with `await loop.run_in_executor(None, lambda: yf.Ticker(...))`, which offloads the synchronous yfinance work to a thread pool. The event loop remains free to service other coroutines while the thread waits for yfinance's HTTP response. The change is purely mechanical — no API surface or return type changes.
+
+### Key properties
+
+- ✅ Event loop unblocked — no coroutine starvation during yfinance data fetches
+- ✅ Thread-safe — `asyncio.get_event_loop()` runs the executor on the same loop
+- ✅ Zero API change — tool signatures and return types identical
+- ✅ Affects only the two longest-blocking yfinance calls: `insider_transactions` and `history(period="max")`
 
 ## Peer Sets — Expanded with Normalised Key Matching
 
