@@ -160,14 +160,32 @@ class RAGAgent(BaseAgent):
             logger.warning("News ingestion failed for %s: %s", ticker, e)
 
     async def query(self, ticker: str, query_text: str) -> dict:
-        """Fire-and-forget ingestion, then multi-collection ChromaDB query on whatever is indexed."""
-        asyncio.create_task(self._ensure_ingested(ticker))
-        asyncio.create_task(self._ensure_news_ingested(ticker))
+        """Await ingestion (if needed) then query. Used by direct callers."""
+        await self._ensure_ingested(ticker)
+        await self._ensure_news_ingested(ticker)
         return await self.index.query(ticker, query_text)
 
     async def stream(
         self, query: str, context_id: str, task_id: str
     ) -> AsyncIterable[dict]:
+        # Emit WORKING status events while awaiting ingestion so the A2A
+        # client keeps the connection open rather than receiving a hollow
+        # "index warming" placeholder. The orchestrator's SubAgentClient
+        # already skips WORKING events and waits for the terminal state.
+        ticker = extract_ticker(query)
+        if ticker:
+            today_ingested = self._last_ingestion.get(ticker)
+            from datetime import datetime, timezone
+            today = datetime.now(timezone.utc).date()
+            if today_ingested != today:
+                yield {
+                    "is_task_complete": False,
+                    "require_user_input": False,
+                    "content": f"Fetching {ticker} documents and news...",
+                }
+                await self._ensure_ingested(ticker)
+                await self._ensure_news_ingested(ticker)
+
         yield await self._build_response(query)
 
     @logged()
