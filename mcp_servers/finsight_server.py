@@ -226,8 +226,10 @@ def _serialise_value(v: Any) -> Any:
 async def _get_prices_uncached(ticker: str, period: str, interval: str) -> dict:
     try:
         await _yfinance_limiter.acquire()
-        stock = yf.Ticker(ticker)
-        hist = stock.history(period=period, interval=interval)
+        loop = asyncio.get_event_loop()
+        hist = await loop.run_in_executor(
+            None, lambda: yf.Ticker(ticker).history(period=period, interval=interval)
+        )
         records = _serialise_value(hist.reset_index().to_dict(orient="records"))
         return {"ticker": ticker, "period": period, "data": records}
     except Exception as exc:
@@ -260,19 +262,24 @@ async def get_prices(ticker: str, period: str = "1y", interval: str = "1d") -> d
 async def _get_financials_uncached(ticker: str) -> dict:
     try:
         await _yfinance_limiter.acquire()
-        stock = yf.Ticker(ticker)
-        return _serialise_value({
-            "income_statement": stock.financials.to_dict()
-            if stock.financials is not None
-            else {},
-            "balance_sheet": stock.balance_sheet.to_dict()
-            if stock.balance_sheet is not None
-            else {},
-            "cash_flow": stock.cashflow.to_dict()
-            if stock.cashflow is not None
-            else {},
-            "info": stock.info or {},
-        })
+        loop = asyncio.get_event_loop()
+
+        def _fetch() -> dict:
+            stock = yf.Ticker(ticker)
+            return {
+                "income_statement": stock.financials.to_dict()
+                if stock.financials is not None
+                else {},
+                "balance_sheet": stock.balance_sheet.to_dict()
+                if stock.balance_sheet is not None
+                else {},
+                "cash_flow": stock.cashflow.to_dict()
+                if stock.cashflow is not None
+                else {},
+                "info": stock.info or {},
+            }
+
+        return _serialise_value(await loop.run_in_executor(None, _fetch))
     except Exception as exc:
         logger.warning("get_financials failed for %s: %s", ticker, exc)
         return {
@@ -326,10 +333,13 @@ _cache_macro = make_cache(900, "macro")  # 15 min — macro moves slowly
 
 async def _get_macro_impl() -> dict:
     await _yfinance_limiter.acquire()
+    loop = asyncio.get_event_loop()
     result: dict = {"macro": {}, "sectors": {}}
     for key, sym in _MACRO_TICKERS.items():
         try:
-            hist = yf.Ticker(sym).history(period="1mo")
+            hist = await loop.run_in_executor(
+                None, lambda s=sym: yf.Ticker(s).history(period="1mo")
+            )
             if hist.empty:
                 continue
             latest = float(hist["Close"].iloc[-1])
@@ -342,7 +352,9 @@ async def _get_macro_impl() -> dict:
             result["macro"][key] = {"error": str(exc)}
     for name, sym in _SECTOR_ETFS.items():
         try:
-            hist = yf.Ticker(sym).history(period="1mo")
+            hist = await loop.run_in_executor(
+                None, lambda s=sym: yf.Ticker(s).history(period="1mo")
+            )
             if hist.empty:
                 continue
             latest = float(hist["Close"].iloc[-1])
@@ -389,14 +401,19 @@ async def get_options_chain(ticker: str, expiration: str | None = None) -> dict:
     """
     try:
         await _yfinance_limiter.acquire()
-        stock = yf.Ticker(ticker)
-        if expiration:
-            chain = stock.option_chain(expiration)
-            return _serialise_value({
-                "calls": chain.calls.to_dict(orient="records"),
-                "puts": chain.puts.to_dict(orient="records"),
-            })
-        return {"expirations": list(stock.options)}  # No expiration given — just list available dates.
+        loop = asyncio.get_event_loop()
+
+        def _fetch() -> dict:
+            stock = yf.Ticker(ticker)
+            if expiration:
+                chain = stock.option_chain(expiration)
+                return {
+                    "calls": chain.calls.to_dict(orient="records"),
+                    "puts": chain.puts.to_dict(orient="records"),
+                }
+            return {"expirations": list(stock.options)}
+
+        return _serialise_value(await loop.run_in_executor(None, _fetch))
     except Exception as exc:
         logger.warning("get_options_chain failed for %s: %s", ticker, exc)
         return {"ticker": ticker, "error": str(exc)}
@@ -1567,8 +1584,8 @@ async def get_earnings_calendar(ticker: str) -> dict:
     """
     try:
         await _yfinance_limiter.acquire()
-        stock = yf.Ticker(ticker)
-        cal = stock.calendar
+        loop = asyncio.get_event_loop()
+        cal = await loop.run_in_executor(None, lambda: yf.Ticker(ticker).calendar)
         if cal and "Earnings Date" in cal:
             raw = cal["Earnings Date"]
             dates = raw if isinstance(raw, (list, tuple)) else [raw]
@@ -1643,8 +1660,8 @@ async def get_sentiment_indicators(ticker: str) -> dict:
     """
     try:
         await _yfinance_limiter.acquire()
-        stock = yf.Ticker(ticker)
-        info = stock.info or {}
+        loop = asyncio.get_event_loop()
+        info = await loop.run_in_executor(None, lambda: yf.Ticker(ticker).info) or {}
         current = info.get("currentPrice") or info.get("regularMarketPrice")
         target_mean = info.get("targetMeanPrice")
         upside_pct = None
@@ -1698,8 +1715,8 @@ async def get_earnings_history(ticker: str, limit: int = 8) -> dict:
     """
     try:
         await _yfinance_limiter.acquire()
-        stock = yf.Ticker(ticker)
-        ed = stock.earnings_dates
+        loop = asyncio.get_event_loop()
+        ed = await loop.run_in_executor(None, lambda: yf.Ticker(ticker).earnings_dates)
         if ed is None or ed.empty:
             return {
                 "ticker": ticker.upper(),

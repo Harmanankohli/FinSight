@@ -210,13 +210,29 @@ class MCPClient:
             logger.warning("Failed to discover tools on '%s': %s", server_name, e)
 
     # Transient errors worth retrying; all others fail immediately.
-    _TRANSIENT_EXC = (
-        asyncio.TimeoutError,
-        ConnectionError,
-        asyncio.IncompleteReadError,
-        EOFError,
-        OSError,
-    )
+    # httpx.ReadError / httpx.ConnectError cover MCP SSE connection resets
+    # that happen when the MCP server is briefly overloaded — they should
+    # be retried like any other transient network error.
+    try:
+        import httpx as _httpx
+        _TRANSIENT_EXC = (
+            asyncio.TimeoutError,
+            ConnectionError,
+            asyncio.IncompleteReadError,
+            EOFError,
+            OSError,
+            _httpx.ReadError,
+            _httpx.ConnectError,
+            _httpx.NetworkError,
+        )
+    except ImportError:
+        _TRANSIENT_EXC = (
+            asyncio.TimeoutError,
+            ConnectionError,
+            asyncio.IncompleteReadError,
+            EOFError,
+            OSError,
+        )
 
     # Routes to a specific named server. Used when the caller knows which
     # server hosts the tool (e.g. multi-server orchestration layers).
