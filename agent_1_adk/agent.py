@@ -182,7 +182,11 @@ PROCEDURE:
     a company name (e.g. "Mastercard", "Apple", "Microsoft"), determine its
     ticker symbol (MA, AAPL, MSFT).
 2.  Call `send_message` for EVERY agent listed under "Available agents" below.
-    You MUST call all of them. Use their EXACT names — never invent agent names.
+    You MUST call all of them, and you MUST emit ALL `send_message` calls in a
+    SINGLE assistant response so they execute in PARALLEL. Do NOT wait for one
+    agent's result before issuing the next call. Emit every `send_message` call
+    together in one turn, then synthesize after all responses arrive.
+    Use their EXACT names — never invent agent names.
 3.  Each task MUST include the SAME ticker symbol in ALL CAPS (e.g. "MA").
     Do NOT use different tickers for different agents.
 4.  Only include portfolio holdings in the Quant Analysis Agent task if the
@@ -191,8 +195,9 @@ PROCEDURE:
     Do NOT include holdings from memory context background lines — those are
     for your reference only. If the user just asks about a single stock, send
     only that ticker to the Quant agent.
-5.  After all agents respond, synthesize their findings into a
-    BUY/HOLD/SELL recommendation with supporting evidence.
+5.  After ALL agents have responded (you will receive their results together in
+    the next turn), synthesize their findings into a BUY/HOLD/SELL
+    recommendation with supporting evidence.
 6.  Call `save_brief` with your final recommendation to persist it
     for future reference.
 7.  If the user asks about past analysis or "what did you recommend before",
@@ -244,6 +249,13 @@ def _build_instruction() -> str:
         skill_lines = "\n".join(
             f"  - {a['name']}: {a['description']}"
             for a in agent_list
+        )
+        skill_lines += (
+            "\n\nAgent responsibility boundaries:\n"
+            "  - Financial RAG Agent owns ALL document and news retrieval\n"
+            "  - Sentiment/Market Context Agent provides macro regime (rates, VIX, sector ETFs)\n"
+            "    and peer landscape narrative — treat its output as 'context' for synthesis\n"
+            "  - Quant Analysis Agent owns numeric risk, fundamentals, technicals, and DCF valuation"
         )
     else:
         preamble = _STATIC_PREAMBLE_FALLBACK

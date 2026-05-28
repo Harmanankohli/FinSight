@@ -839,6 +839,8 @@ async def get_filing_content(edgar_url: str, ix_url: str | None = None) -> dict:
     except Exception as exc:
         logger.warning("get_filing_content tool failed: %s", exc)
         result = {"url": edgar_url, "error": str(exc), "content": ""}
+    # Truncate server-side to cap bandwidth between MCP and RAG agent processes
+    result["content"] = result.get("content", "")[:25000]
     if result.get("content"):
         _cache_filing.set(edgar_url, result)
     return result
@@ -1281,41 +1283,13 @@ def _keyword_matches(norm_text: str, keywords: list[str]) -> bool:
     return False
 
 
-@app.tool()
-@observe()
-@logged()
-async def get_news_sentiment(ticker: str, limit: int = 10) -> dict:
-    """Fetch recent financial news mentioning a ticker and compute VADER sentiment.
-
-    Sources (tried in order):
-      1. RSS feeds: Yahoo Finance, CNBC, MarketWatch (concurrent)
-      2. Yahoo Finance news search API (fallback if RSS yields 0 articles)
-
-    The response always includes a feed_status field so the agent can tell the
-    difference between "no news exists" and "feeds were unreachable".
-
-    Args:
-        ticker: Stock ticker symbol (e.g. NVDA, AAPL, MSFT, JPM)
-        limit:  Maximum articles to return (default 10)
-
-    Returns:
-        dict with keys:
-          ticker, total_articles, sentiment_score (-1 to 1),
-          positive_articles, negative_articles, neutral_articles,
-          articles, feed_status (per-source diagnostics), source_used
-    """
-    logger.info("Tool called", extra={"tool": "get_news_sentiment", "ticker": ticker})
-    cache_key = f"news:{ticker.upper()}:{limit}"
-    cached = _cache_news.get(cache_key)
-    if cached is not None:
-        logger.debug("Cache hit: get_news_sentiment(%s)", ticker)
-        return cached
+async def _get_news_sentiment_impl(ticker: str, limit: int) -> dict:
+    """Core fetch logic for get_news_sentiment; called via single-flight cache."""
     keywords = await _resolve_company_keywords(ticker)
     articles: list[dict] = []
     scores: list[float] = []
     feed_status: dict[str, str] = {}
 
-    # ── Primary: RSS feeds (concurrent) ─────────────────────────────────────
     async with httpx.AsyncClient(headers=_SEC_HEADERS, follow_redirects=True) as client:
         rss_results = await asyncio.gather(
             *[_fetch_rss(url, client) for url in _RSS_FEEDS.values()],
@@ -1355,14 +1329,10 @@ async def get_news_sentiment(ticker: str, limit: int = 10) -> dict:
 
         source_used = "rss"
 
-        # ── Fallback: Yahoo Finance news API ────────────────────────────────
-        # Triggered when ALL RSS feeds failed OR total matched articles is 0.
         rss_ok = any(v == "ok" for v in feed_status.values())
         if not articles:
             reason = "rss_unreachable" if not rss_ok else "rss_no_match"
-            logger.info(
-                "RSS returned 0 articles for %s (%s), trying YF news API", ticker, reason
-            )
+            logger.info("RSS returned 0 articles for %s (%s), trying YF news API", ticker, reason)
             yf_articles = await _fetch_yf_news(ticker, client, limit=limit * 2)
             if yf_articles:
                 articles = yf_articles[:limit]
@@ -1389,8 +1359,6 @@ async def get_news_sentiment(ticker: str, limit: int = 10) -> dict:
         "source_used": source_used,
     }
 
-    # Surface a clear warning when no articles were found at all, so the
-    # agent does not invent narrative to fill the gap.
     if not articles:
         feeds_ok   = [k for k, v in feed_status.items() if "ok" in v]
         feeds_fail = [k for k, v in feed_status.items() if "ok" not in v]
@@ -1405,9 +1373,38 @@ async def get_news_sentiment(ticker: str, limit: int = 10) -> dict:
                 "This may indicate low media coverage, not negative sentiment. "
                 "Do not infer sentiment from absence of data."
             )
-    if articles:
-        _cache_news.set(cache_key, result)
     return result
+
+
+@app.tool()
+@observe()
+@logged()
+async def get_news_sentiment(ticker: str, limit: int = 10) -> dict:
+    """Fetch recent financial news mentioning a ticker and compute VADER sentiment.
+
+    Sources (tried in order):
+      1. RSS feeds: Yahoo Finance, CNBC, MarketWatch (concurrent)
+      2. Yahoo Finance news search API (fallback if RSS yields 0 articles)
+
+    The response always includes a feed_status field so the agent can tell the
+    difference between "no news exists" and "feeds were unreachable".
+
+    Args:
+        ticker: Stock ticker symbol (e.g. NVDA, AAPL, MSFT, JPM)
+        limit:  Maximum articles to return (default 10)
+
+    Returns:
+        dict with keys:
+          ticker, total_articles, sentiment_score (-1 to 1),
+          positive_articles, negative_articles, neutral_articles,
+          articles, feed_status (per-source diagnostics), source_used
+    """
+    logger.info("Tool called", extra={"tool": "get_news_sentiment", "ticker": ticker})
+    cache_key = f"news:{ticker.upper()}:{limit}"
+    return await _cache_news.get_or_fetch(
+        cache_key,
+        lambda: _get_news_sentiment_impl(ticker, limit),
+    )
 
 
 @app.tool()

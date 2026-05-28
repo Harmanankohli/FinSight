@@ -59,45 +59,50 @@ class RAGAgent(BaseAgent):
                         continue
                     if isinstance(data, dict):
                         filings = data.get("filings", [])
-                        new_filings = []
+
+                        # Filter to un-ingested filings first
+                        candidates = []
                         for filing in filings:
                             edgar_url = filing.get("edgar_url")
-                            ix_url = filing.get("ix_url")
-                            # Skip filings already ingested (persistent dedup across restarts)
-                            if edgar_url and await is_filing_ingested(edgar_url):
+                            if not edgar_url:
+                                continue
+                            if await is_filing_ingested(edgar_url):
                                 logger.debug("Skipping already-ingested filing: %s", edgar_url[:80])
                                 continue
-                            if edgar_url:
-                                try:
-                                    content_result = await mcp.call_tool_by_name(
-                                        "get_filing_content",
-                                        {"edgar_url": edgar_url, "ix_url": ix_url},
-                                    )
-                                    if hasattr(content_result, "content"):
-                                        content_text = ""
-                                        for citem in content_result.content:
-                                            cres = citem.text if hasattr(citem, "text") else str(citem)
-                                            try:
-                                                cdata = json.loads(cres)
-                                                content_text = cdata.get("content", "")
-                                                break
-                                            except (json.JSONDecodeError, TypeError):
-                                                continue
-                                    else:
-                                        content_text = ""
-                                except Exception as ce:
-                                    logger.warning("Failed to fetch filing content for %s: %s", edgar_url, ce)
-                                    content_text = ""
-                            else:
-                                content_text = ""
-                            filing["content"] = content_text
-                            new_filings.append(filing)
-                        if new_filings:
-                            self._ingestion.ingest_sec_filings_batch(ticker, new_filings)
-                            for filing in new_filings:
-                                if filing.get("edgar_url"):
-                                    await mark_filing_ingested(filing["edgar_url"], ticker)
-                            logger.info("Ingested %d new filing(s) for %s", len(new_filings), ticker)
+                            candidates.append(filing)
+
+                        # Fetch filing content in parallel
+                        async def _fetch_one(f: dict) -> tuple[dict, str]:
+                            edgar_url = f.get("edgar_url", "")
+                            ix_url = f.get("ix_url")
+                            try:
+                                cr = await mcp.call_tool_by_name(
+                                    "get_filing_content",
+                                    {"edgar_url": edgar_url, "ix_url": ix_url},
+                                )
+                                if hasattr(cr, "content"):
+                                    for ci in cr.content:
+                                        txt = ci.text if hasattr(ci, "text") else str(ci)
+                                        try:
+                                            return f, json.loads(txt).get("content", "")
+                                        except (json.JSONDecodeError, TypeError):
+                                            continue
+                            except Exception as ce:
+                                logger.warning("Filing fetch failed for %s: %s", edgar_url[:80], ce)
+                            return f, ""
+
+                        if candidates:
+                            pairs = await asyncio.gather(*[_fetch_one(f) for f in candidates])
+                            new_filings = []
+                            for f, content in pairs:
+                                f["content"] = content
+                                new_filings.append(f)
+                            if new_filings:
+                                self._ingestion.ingest_sec_filings_batch(ticker, new_filings)
+                                for filing in new_filings:
+                                    if filing.get("edgar_url"):
+                                        await mark_filing_ingested(filing["edgar_url"], ticker)
+                                logger.info("Ingested %d new filing(s) for %s", len(new_filings), ticker)
                         else:
                             logger.info("0 new filings to ingest for %s", ticker)
             self._last_ingestion[ticker] = today
@@ -155,11 +160,9 @@ class RAGAgent(BaseAgent):
             logger.warning("News ingestion failed for %s: %s", ticker, e)
 
     async def query(self, ticker: str, query_text: str) -> dict:
-        """Parallel ingestion of filings and news, then multi-collection ChromaDB query."""
-        await asyncio.gather(
-            self._ensure_ingested(ticker),
-            self._ensure_news_ingested(ticker),
-        )
+        """Fire-and-forget ingestion, then multi-collection ChromaDB query on whatever is indexed."""
+        asyncio.create_task(self._ensure_ingested(ticker))
+        asyncio.create_task(self._ensure_news_ingested(ticker))
         return await self.index.query(ticker, query_text)
 
     async def stream(
