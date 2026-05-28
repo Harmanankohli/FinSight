@@ -1732,7 +1732,109 @@ async def get_earnings_history(ticker: str, limit: int = 8) -> dict:
         return {"ticker": ticker.upper(), "error": str(exc), "quarters": []}
 
 
-_cache_peers = make_cache(86400, "peers")   # 24 hr — peers are stable intraday
+_cache_peers = make_cache(86400,   "peers")    # 24 hr — peers are stable intraday
+_cache_shocks = make_cache(604800, "shocks")   # 7 days — historical shocks don't change
+
+# Historical crash windows — (start, end) inclusive, used to compute actual returns.
+# "mild_recession" uses the 2022 bear market as the most-recent well-defined drawdown.
+_SCENARIO_WINDOWS: dict[str, tuple[str, str]] = {
+    "market_crash_2008": ("2007-10-09", "2009-03-09"),
+    "covid_crash_2020":  ("2020-02-19", "2020-03-23"),
+    "dot_com_bubble":    ("2000-03-24", "2002-10-09"),
+    "mild_recession":    ("2022-01-03", "2022-10-12"),
+}
+# Values used when live fetch fails or price history is too short.
+_SHOCK_FALLBACKS: dict[str, float] = {
+    "market_crash_2008": -0.565,   # S&P 500 actual peak-to-trough
+    "covid_crash_2020":  -0.340,
+    "dot_com_bubble":    -0.491,
+    "mild_recession":    -0.254,   # 2022 S&P bear
+}
+# Sector-specific reference ETFs so defensive/growth names get appropriate benchmarks.
+_SECTOR_ETF: dict[str, str] = {
+    "Technology":             "QQQ",
+    "Consumer Defensive":     "XLP",
+    "Consumer Cyclical":      "XLY",
+    "Healthcare":             "XLV",
+    "Health Care":            "XLV",
+    "Financial Services":     "XLF",
+    "Financials":             "XLF",
+    "Energy":                 "XLE",
+    "Industrials":            "XLI",
+    "Utilities":              "XLU",
+    "Real Estate":            "XLRE",
+    "Basic Materials":        "XLB",
+    "Communication Services": "XLC",
+}
+
+
+async def _get_scenario_shocks_uncached(sector: str) -> dict:
+    """Compute historical crash returns from live price data.
+
+    Tries the sector-specific ETF first, falls back to ^GSPC.
+    For scenario windows that predate the ETF's inception (e.g. XLRE vs 2008),
+    per-window fallback is applied automatically.
+    """
+    candidates = []
+    etf = _SECTOR_ETF.get(sector, "")
+    if etf:
+        candidates.append(etf)
+    candidates.append("^GSPC")
+
+    prices_series: pd.Series | None = None
+    index_used = "^GSPC"
+    for sym in candidates:
+        try:
+            await _yfinance_limiter.acquire()
+            hist = yf.Ticker(sym).history(period="max", interval="1d")
+            if not hist.empty and len(hist) > 252:
+                prices_series = hist["Close"].sort_index()
+                index_used = sym
+                break
+        except Exception as exc:
+            logger.debug("Shock fetch failed for %s: %s", sym, exc)
+
+    shocks: dict[str, float] = {}
+    for name, (start, end) in _SCENARIO_WINDOWS.items():
+        if prices_series is not None:
+            try:
+                window = prices_series.loc[start:end]
+                if len(window) >= 5:
+                    shocks[name] = round(float(window.iloc[-1] / window.iloc[0] - 1), 4)
+                    continue
+            except Exception:
+                pass
+        # Per-window fallback to known S&P values
+        shocks[name] = _SHOCK_FALLBACKS[name]
+
+    source = "live" if any(v not in _SHOCK_FALLBACKS.values() for v in shocks.values()) else "fallback"
+    return {"sector": sector or "market", "index_used": index_used, "shocks": shocks, "source": source}
+
+
+@app.tool()
+@observe()
+async def get_scenario_shocks(sector: str = "") -> dict:
+    """Return historical market-crash shock percentages for 4 scenarios.
+
+    Uses the sector-specific ETF (QQQ for Tech, XLP for Consumer Defensive, etc.)
+    so defensive and growth tickers get appropriate reference returns rather than
+    the blended S&P 500 drawdown.  Falls back to ^GSPC when the ETF lacks history
+    for a given window (e.g. XLRE doesn't cover the 2008 crash).
+
+    Args:
+        sector: Sector string from yfinance info (e.g. "Technology",
+                "Consumer Defensive"). Pass empty string for S&P 500 baseline.
+
+    Returns:
+        dict with keys:
+          sector     — the input sector
+          index_used — the reference ETF/index that was fetched
+          source     — "live" if fetched from price history, "fallback" if API failed
+          shocks     — {scenario_name: decimal_return}  e.g. {"market_crash_2008": -0.47}
+    """
+    logger.info("Tool called", extra={"tool": "get_scenario_shocks", "sector": sector})
+    cache_key = f"shocks:{sector or 'market'}"
+    return await _cache_shocks.get_or_fetch(cache_key, lambda: _get_scenario_shocks_uncached(sector))
 
 
 async def _get_peers_uncached(ticker: str) -> dict:

@@ -159,76 +159,109 @@ def _score_dcf(dcf: dict | None) -> float:
     return -1.0
 
 
-def _score_fundamental_value(fund: dict | None) -> float:
+def _relative_score(value: float, median: float, higher_is_better: bool) -> float:
+    """Score a metric relative to its sector median.
+
+    Returns in [-1, 1]:  >1.5× median (bad direction) → -0.7 .. deeply discounted → +1.0
+    """
+    if median == 0:
+        return 0.0
+    ratio = value / median
+    if higher_is_better:
+        # e.g. ROE, margin: higher ratio = better
+        if ratio > 2.0:   return  1.0
+        if ratio > 1.5:   return  0.6
+        if ratio > 1.1:   return  0.2
+        if ratio > 0.7:   return -0.1
+        if ratio > 0.4:   return -0.4
+        return                   -0.7
+    else:
+        # e.g. PE, EV/EBITDA: lower ratio = cheaper = better
+        if ratio < 0.5:   return  1.0
+        if ratio < 0.75:  return  0.6
+        if ratio < 0.95:  return  0.2
+        if ratio < 1.2:   return -0.1
+        if ratio < 1.6:   return -0.4
+        return                   -0.7
+
+
+def _score_fundamental_value(fund: dict | None, medians: dict | None = None) -> float:
+    """Score valuation (PE, EV/EBITDA) relative to sector peers when available."""
     if not fund:
         return 0.0
+    m = medians or {}
     scores, n = [], 0
+
     pe = fund.get("trailing_pe")
     if pe and pe > 0:
-        if pe < 12:
-            scores.append(1.0)
-        elif pe < 18:
-            scores.append(0.5)
-        elif pe < 25:
-            scores.append(0.0)
-        elif pe < 40:
-            scores.append(-0.3)
+        if m.get("pe") and m["pe"] > 0:
+            scores.append(_relative_score(pe, m["pe"], higher_is_better=False))
         else:
-            scores.append(-0.7)
+            # Absolute fallback — universal thresholds
+            if pe < 12:      scores.append( 1.0)
+            elif pe < 18:    scores.append( 0.5)
+            elif pe < 25:    scores.append( 0.0)
+            elif pe < 40:    scores.append(-0.3)
+            else:            scores.append(-0.7)
         n += 1
+
     ev_eb = fund.get("ev_to_ebitda")
     if ev_eb and ev_eb > 0:
-        if ev_eb < 8:
-            scores.append(0.7)
-        elif ev_eb < 14:
-            scores.append(0.2)
-        elif ev_eb < 25:
-            scores.append(-0.2)
+        if m.get("ev_ebitda") and m["ev_ebitda"] > 0:
+            scores.append(_relative_score(ev_eb, m["ev_ebitda"], higher_is_better=False))
         else:
-            scores.append(-0.6)
+            if ev_eb < 8:    scores.append( 0.7)
+            elif ev_eb < 14: scores.append( 0.2)
+            elif ev_eb < 25: scores.append(-0.2)
+            else:            scores.append(-0.6)
         n += 1
+
     return max(-1.0, min(1.0, sum(scores) / n)) if n > 0 else 0.0
 
 
-def _score_fundamental_quality(fund: dict | None) -> float:
+def _score_fundamental_quality(fund: dict | None, medians: dict | None = None) -> float:
+    """Score quality (ROE, margin, D/E) relative to sector peers when available."""
     if not fund:
         return 0.0
+    m = medians or {}
     scores, n = [], 0
+
     roe = fund.get("roe")
     if roe is not None:
-        if roe > 0.25:
-            scores.append(1.0)
-        elif roe > 0.15:
-            scores.append(0.5)
-        elif roe > 0.05:
-            scores.append(0.1)
-        elif roe < 0:
-            scores.append(-0.7)
+        if m.get("roe") is not None:
+            scores.append(_relative_score(roe, m["roe"], higher_is_better=True))
         else:
-            scores.append(-0.1)
+            if roe > 0.25:   scores.append( 1.0)
+            elif roe > 0.15: scores.append( 0.5)
+            elif roe > 0.05: scores.append( 0.1)
+            elif roe < 0:    scores.append(-0.7)
+            else:            scores.append(-0.1)
         n += 1
+
     op_margin = fund.get("operating_margin")
     if op_margin is not None:
-        if op_margin > 0.25:
-            scores.append(0.8)
-        elif op_margin > 0.15:
-            scores.append(0.4)
-        elif op_margin > 0.05:
-            scores.append(0.0)
-        elif op_margin < 0:
-            scores.append(-0.8)
+        if m.get("op_margin") is not None:
+            scores.append(_relative_score(op_margin, m["op_margin"], higher_is_better=True))
+        else:
+            if op_margin > 0.25:   scores.append( 0.8)
+            elif op_margin > 0.15: scores.append( 0.4)
+            elif op_margin > 0.05: scores.append( 0.0)
+            elif op_margin < 0:    scores.append(-0.8)
         n += 1
+
     d_e = fund.get("debt_to_equity")
     if d_e is not None and d_e > 0:
-        if d_e < 30:
-            scores.append(0.3)
-        elif d_e < 80:
-            scores.append(0.0)
-        elif d_e < 150:
-            scores.append(-0.2)
+        if m.get("debt_to_equity") is not None and m["debt_to_equity"] > 0:
+            # Lower D/E than sector median = better (less leveraged)
+            scores.append(_relative_score(d_e, m["debt_to_equity"], higher_is_better=False))
         else:
-            scores.append(-0.5)
+            # Absolute fallback — note: utilities/banks carry high D/E normally
+            if d_e < 30:     scores.append( 0.3)
+            elif d_e < 80:   scores.append( 0.0)
+            elif d_e < 150:  scores.append(-0.2)
+            else:            scores.append(-0.5)
         n += 1
+
     return max(-1.0, min(1.0, sum(scores) / n)) if n > 0 else 0.0
 
 
@@ -644,13 +677,31 @@ async def stress_test_node(state: QuantAnalysisState) -> dict:
     current_price = float(prices.iloc[-1])
     beta = (state.get("metrics") or {}).get("beta") or 1.0
 
-    # Beta-adjusted market crash scenarios
-    market_scenarios = {
-        "market_crash_2008": -0.37,
-        "covid_crash_2020": -0.34,
-        "dot_com_bubble": -0.49,
-        "mild_recession": -0.15,
+    # Fetch live historical shock percentages for the ticker's sector.
+    # Falls back to hardcoded S&P values if MCP is unavailable.
+    mcp = state.get("mcp_client")
+    sector = (state.get("fundamentals") or {}).get("sector", "") or ""
+    market_scenarios: dict[str, float] = {
+        "market_crash_2008": -0.565,
+        "covid_crash_2020":  -0.340,
+        "dot_com_bubble":    -0.491,
+        "mild_recession":    -0.254,
     }
+    if mcp:
+        try:
+            r = await mcp.call_tool_by_name("get_scenario_shocks", {"sector": sector})
+            if hasattr(r, "content") and r.content:
+                raw = r.content[0].text if hasattr(r.content[0], "text") else str(r.content[0])
+                live = json.loads(raw).get("shocks", {})
+                if live:
+                    market_scenarios.update(live)
+                    logger.info(
+                        "Live scenario shocks for %s (sector=%s, index=%s): %s",
+                        ticker, sector, json.loads(raw).get("index_used"), live,
+                    )
+        except Exception as _se:
+            logger.warning("get_scenario_shocks failed for %s: %s — using fallback", ticker, _se)
+
     results = {}
     for scenario, mkt_decline in market_scenarios.items():
         adj_decline = mkt_decline * beta
@@ -847,6 +898,7 @@ async def peer_comparison_node(state: QuantAnalysisState) -> dict:
             "rev_growth": inf.get("revenueGrowth"),
             "op_margin": inf.get("operatingMargins"),
             "roe": inf.get("returnOnEquity"),
+            "debt_to_equity": inf.get("debtToEquity"),
             "market_cap": inf.get("marketCap"),
         }
 
@@ -867,6 +919,20 @@ async def peer_comparison_node(state: QuantAnalysisState) -> dict:
         ordered = sorted(vals.keys(), key=lambda t: vals[t], reverse=hib)
         rankings[metric] = ordered.index(ticker) + 1
 
+    # Compute sector medians so scoring functions can do relative comparisons
+    # instead of relying on absolute universal thresholds.
+    medians: dict[str, float] = {}
+    for metric in ("pe", "ev_ebitda", "rev_growth", "op_margin", "roe", "debt_to_equity"):
+        vals_list = sorted(
+            v[metric] for v in comparison.values()
+            if v.get(metric) is not None and isinstance(v[metric], (int, float))
+            # allow negative values for quality metrics; skip negative for valuation ratios
+            and (metric not in ("pe", "ev_ebitda") or v[metric] > 0)
+        )
+        if vals_list:
+            mid = len(vals_list) // 2
+            medians[metric] = vals_list[mid] if len(vals_list) % 2 else (vals_list[mid - 1] + vals_list[mid]) / 2
+
     return {
         "peer_comparison": {
             "industry": industry,
@@ -875,6 +941,7 @@ async def peer_comparison_node(state: QuantAnalysisState) -> dict:
             "comparison": comparison,
             "rankings": rankings,
             "n_peers": len(peer_tickers),
+            "medians": medians,
         }
     }
 
@@ -1098,12 +1165,15 @@ async def format_output_node(state: QuantAnalysisState) -> dict:
         "ok" if peer_comp and peer_comp.get("rankings") else "null",
     )
 
+    # Sector medians from peer_comparison_node for relative scoring
+    peer_medians = (peer_comp or {}).get("medians") if peer_comp else None
+
     # Compute per-group scores
     group_scores = {
         "risk_quality": _score_risk_quality(metrics),
         "dcf_value": _score_dcf(dcf),
-        "fundamental_value": _score_fundamental_value(fundamentals),
-        "fundamental_quality": _score_fundamental_quality(fundamentals),
+        "fundamental_value": _score_fundamental_value(fundamentals, peer_medians),
+        "fundamental_quality": _score_fundamental_quality(fundamentals, peer_medians),
         "technicals_trend": _score_technicals_trend(technicals),
         "technicals_momentum": _score_technicals_momentum(technicals),
         "peer_positioning": _score_peer_positioning(peer_comp),
