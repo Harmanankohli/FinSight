@@ -21,6 +21,9 @@ class QuantAnalysisState(TypedDict):
     dcf_valuation: dict | None  # 5Y DCF intrinsic value, upside %, terminal value assumptions
     dcf_error: str | None  # Human-readable reason when DCF is skipped (e.g. no FCF, high vol)
     correlation_matrix: dict  # Pairwise Pearson correlations across portfolio holdings
+    fundamentals: dict | None  # PE, ROE, margins, growth, D/E — from get_financials info
+    technicals: dict | None  # RSI, MACD, trend, support/resistance — computed from price_data
+    _financials_raw: dict | None  # Raw get_financials response, reused by DCF to avoid double call
     recommendation: str  # Signal vote: BUY / HOLD / SELL
     reasoning: str  # Compact string of all signals for downstream use (or LLM summary)
     mcp_client: Any | None  # Shared MCP connection, injected at graph entry, closed by caller

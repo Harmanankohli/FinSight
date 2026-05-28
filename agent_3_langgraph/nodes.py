@@ -140,6 +140,165 @@ async def compute_metrics_node(state: QuantAnalysisState) -> dict:
     return result
 
 
+async def fundamental_analysis_node(state: QuantAnalysisState) -> dict:
+    """Fetches get_financials and extracts valuation, profitability, leverage, and growth ratios."""
+    ticker = state["ticker"]
+    mcp = state.get("mcp_client")
+    if not mcp:
+        return {"fundamentals": None, "_financials_raw": {}}
+    try:
+        result = await mcp.call_tool_by_name("get_financials", {"ticker": ticker})
+        raw = ""
+        if hasattr(result, "content") and result.content:
+            raw = result.content[0].text if hasattr(result.content[0], "text") else str(result.content[0])
+        if not raw:
+            return {"fundamentals": None, "_financials_raw": {}}
+        data = json.loads(raw)
+        info = data.get("info", {})
+
+        current_price = info.get("currentPrice") or info.get("regularMarketPrice", 0) or 0
+        fifty2w_high = info.get("fiftyTwoWeekHigh") or 0
+        fifty2w_low = info.get("fiftyTwoWeekLow") or 0
+        fifty_day_ma = info.get("fiftyDayAverage") or 0
+        two_hundred_day_ma = info.get("twoHundredDayAverage") or 0
+        total_debt = info.get("totalDebt") or 0
+        total_cash = info.get("totalCash") or 0
+
+        fundamentals = {
+            "trailing_pe": info.get("trailingPE"),
+            "forward_pe": info.get("forwardPE"),
+            "price_to_book": info.get("priceToBook"),
+            "price_to_sales": info.get("priceToSalesTrailing12Months"),
+            "ev_to_ebitda": info.get("enterpriseToEbitda"),
+            "ev_to_revenue": info.get("enterpriseToRevenue"),
+            "gross_margin": info.get("grossMargins"),
+            "operating_margin": info.get("operatingMargins"),
+            "profit_margin": info.get("profitMargins"),
+            "roe": info.get("returnOnEquity"),
+            "roa": info.get("returnOnAssets"),
+            "revenue_growth": info.get("revenueGrowth"),
+            "earnings_growth": info.get("earningsGrowth"),
+            "earnings_quarterly_growth": info.get("earningsQuarterlyGrowth"),
+            "debt_to_equity": info.get("debtToEquity"),
+            "current_ratio": info.get("currentRatio"),
+            "quick_ratio": info.get("quickRatio"),
+            "total_debt": total_debt,
+            "total_cash": total_cash,
+            "market_cap": info.get("marketCap"),
+            "dividend_yield": info.get("dividendYield"),
+            "payout_ratio": info.get("payoutRatio"),
+            "52w_high": fifty2w_high,
+            "52w_low": fifty2w_low,
+            "50d_avg": fifty_day_ma,
+            "200d_avg": two_hundred_day_ma,
+            "current_price": current_price,
+            "pct_from_52w_high": round((current_price - fifty2w_high) / fifty2w_high, 4) if fifty2w_high and current_price else None,
+            "pct_from_52w_low": round((current_price - fifty2w_low) / fifty2w_low, 4) if fifty2w_low and current_price else None,
+            "golden_cross": (fifty_day_ma > two_hundred_day_ma) if fifty_day_ma and two_hundred_day_ma else None,
+            "net_debt": total_debt - total_cash,
+        }
+        return {"fundamentals": fundamentals, "_financials_raw": data}
+    except Exception as e:
+        logger.warning("Fundamentals failed for %s: %s", ticker, e)
+        return {"fundamentals": None, "_financials_raw": {}}
+
+
+async def technical_analysis_node(state: QuantAnalysisState) -> dict:
+    """Computes RSI, MACD, Bollinger, SMAs, EMAs, momentum, support/resistance from price_data."""
+    prices_dict = state.get("price_data", {})
+    ticker = state.get("ticker", "?")
+    if not prices_dict:
+        return {"technicals": None}
+    try:
+        prices = pd.Series(
+            {pd.Timestamp(k): v for k, v in prices_dict.items()}
+        ).sort_index()
+        if len(prices) < 20:
+            return {"technicals": None}
+
+        current = float(prices.iloc[-1])
+
+        sma20 = float(prices.rolling(20).mean().iloc[-1]) if len(prices) >= 20 else None
+        sma50 = float(prices.rolling(50).mean().iloc[-1]) if len(prices) >= 50 else None
+        sma200 = float(prices.rolling(200).mean().iloc[-1]) if len(prices) >= 200 else None
+
+        ema12 = float(prices.ewm(span=12).mean().iloc[-1])
+        ema26 = float(prices.ewm(span=26).mean().iloc[-1])
+        macd_series = prices.ewm(span=12).mean() - prices.ewm(span=26).mean()
+        macd_line = float(macd_series.iloc[-1])
+        signal_line = float(macd_series.ewm(span=9).mean().iloc[-1])
+        macd_histogram = macd_line - signal_line
+        macd_bullish = macd_histogram > 0
+
+        delta = prices.diff()
+        gain = delta.where(delta > 0, 0).rolling(14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+        rs = gain / loss
+        rsi_raw = 100 - 100 / (1 + rs)
+        rsi = float(rsi_raw.iloc[-1]) if not rsi_raw.empty and not np.isnan(rsi_raw.iloc[-1]) else 50.0
+
+        bb_mid = prices.rolling(20).mean()
+        bb_std = prices.rolling(20).std()
+        bb_upper = float((bb_mid + 2 * bb_std).iloc[-1])
+        bb_lower = float((bb_mid - 2 * bb_std).iloc[-1])
+        bb_position = (current - bb_lower) / (bb_upper - bb_lower) if (bb_upper - bb_lower) > 0 else 0.5
+
+        mom_20d = float((current / prices.iloc[-20] - 1) * 100) if len(prices) >= 20 else None
+        mom_60d = float((current / prices.iloc[-60] - 1) * 100) if len(prices) >= 60 else None
+
+        recent = prices.tail(60)
+        local_highs = recent[(recent.shift(1) < recent) & (recent.shift(-1) < recent)]
+        local_lows = recent[(recent.shift(1) > recent) & (recent.shift(-1) > recent)]
+        highs_above = local_highs[local_highs > current]
+        lows_below = local_lows[local_lows < current]
+        resistance = float(highs_above.min()) if len(highs_above) > 0 else None
+        support = float(lows_below.max()) if len(lows_below) > 0 else None
+
+        above_50 = current > sma50 if sma50 else False
+        above_200 = current > sma200 if sma200 else False
+        golden_cross = (sma50 > sma200) if (sma50 and sma200) else False
+
+        if above_50 and above_200 and golden_cross:
+            trend = "strong_uptrend"
+        elif above_50 and above_200:
+            trend = "uptrend"
+        elif above_200 and not above_50:
+            trend = "recovery"
+        elif above_50 and not above_200:
+            trend = "sideways"
+        else:
+            trend = "downtrend"
+
+        return {
+            "technicals": {
+                "sma_20": round(sma20, 2) if sma20 else None,
+                "sma_50": round(sma50, 2) if sma50 else None,
+                "sma_200": round(sma200, 2) if sma200 else None,
+                "ema_12": round(ema12, 2),
+                "ema_26": round(ema26, 2),
+                "macd": round(macd_line, 4),
+                "macd_signal": round(signal_line, 4),
+                "macd_histogram": round(macd_histogram, 4),
+                "macd_bullish": macd_bullish,
+                "rsi_14": round(rsi, 1),
+                "bb_upper": round(bb_upper, 2),
+                "bb_lower": round(bb_lower, 2),
+                "bb_position": round(bb_position, 3),
+                "momentum_20d": round(mom_20d, 2) if mom_20d is not None else None,
+                "momentum_60d": round(mom_60d, 2) if mom_60d is not None else None,
+                "support": round(support, 2) if support is not None else None,
+                "resistance": round(resistance, 2) if resistance is not None else None,
+                "trend": trend,
+                "golden_cross": golden_cross,
+                "above_50d_ma": above_50,
+                "above_200d_ma": above_200,
+            }
+        }
+    except Exception as e:
+        logger.warning("Technical analysis failed for %s: %s", ticker, e)
+        return {"technicals": None}
+
+
 async def stress_test_node(state: QuantAnalysisState) -> dict:
     # Projects price under 4 historical crash scenarios (2008/2020/dot-com/recession) + CVaR of tail losses
     prices_dict = state.get("price_data", {})
@@ -183,6 +342,18 @@ async def stress_test_node(state: QuantAnalysisState) -> dict:
     }
 
 
+def _get_latest_field(financials: dict, field: str) -> float | None:
+    """Walk period-keyed dict (sorted descending), return most recent non-null value for field."""
+    for period_key in sorted(financials.keys(), reverse=True):
+        val = financials[period_key].get(field)
+        if val is not None:
+            try:
+                return float(val)
+            except (TypeError, ValueError):
+                continue
+    return None
+
+
 def _get_fcf_from_financials(financials_dict: dict) -> float | None:
     for period_key, metrics in financials_dict.items():
         if "Free Cash Flow" in metrics:
@@ -203,80 +374,115 @@ def _get_fcf_from_financials(financials_dict: dict) -> float | None:
 
 
 async def dcf_valuation_node(state: QuantAnalysisState) -> dict:
-    # 5-year discounted cash flow valuation with terminal value; fetches FCF from MCP financials
+    """5-year tapered DCF with data-driven WACC and growth; reuses _financials_raw if available."""
     ticker = state["ticker"]
     mcp = state.get("mcp_client")
-    if not mcp:
-        logger.warning("DCF skipped for %s: no MCP client", ticker)
-        return {"dcf_valuation": None, "dcf_error": "DCF skipped: MCP client not connected – the data service may be down or unreachable"}
+
+    # Reuse pre-fetched financials from fundamental_analysis_node when available
+    data = state.get("_financials_raw") or {}
+    if not data:
+        if not mcp:
+            return {"dcf_valuation": None, "dcf_error": "DCF skipped: MCP client not connected"}
+        try:
+            result = await mcp.call_tool_by_name("get_financials", {"ticker": ticker})
+            raw = ""
+            if hasattr(result, "content") and result.content:
+                raw = result.content[0].text if hasattr(result.content[0], "text") else str(result.content[0])
+            if not raw:
+                return {"dcf_valuation": None, "dcf_error": "DCF skipped: financial data server returned empty response"}
+            data = json.loads(raw)
+        except Exception as e:
+            return {"dcf_valuation": None, "dcf_error": str(e)}
 
     try:
-        result = await mcp.call_tool_by_name("get_financials", {"ticker": ticker})
-        raw = ""
-        if hasattr(result, "content") and result.content:
-            raw = result.content[0].text if hasattr(result.content[0], "text") else str(result.content[0])
-        if not raw:
-            logger.warning("DCF skipped for %s: MCP returned empty response", ticker)
-            return {"dcf_valuation": None, "dcf_error": "DCF skipped: financial data server returned an empty response – ticker may not exist or server returned no data"}
-        data = json.loads(raw)
         info = data.get("info", {})
         cash_flow_data = data.get("cash_flow", {})
+        income_stmt = data.get("income_statement", {})
+
         if not cash_flow_data:
-            logger.warning("DCF skipped for %s: no cash flow data available", ticker)
-            return {"dcf_valuation": None, "dcf_error": "DCF skipped: no cash flow data returned for this ticker – yfinance may not have cash flow statements for this security"}
+            return {"dcf_valuation": None, "dcf_error": "DCF skipped: no cash flow data available"}
 
         latest_fcf = _get_fcf_from_financials(cash_flow_data)
         if latest_fcf is None or latest_fcf <= 0:
             fcf_values = [float(m.get("Free Cash Flow", 0)) for m in cash_flow_data.values() if "Free Cash Flow" in m]
             op_values = [float(m.get("Operating Cash Flow", 0)) + float(m.get("Capital Expenditure", 0)) for m in cash_flow_data.values()]
-            logger.warning(
-                "DCF skipped for %s: no positive FCF found. FCF from FCF field: %s, FCF from OCF-CAPEX: %s",
-                ticker, fcf_values, op_values
-            )
-            return {"dcf_valuation": None, "dcf_error": f"DCF skipped: no positive free cash flow for this ticker – may be pre-revenue, distressed, or FCF data not available (FCF fields: {fcf_values}, OCF-CAPEX: {op_values})"}
+            return {"dcf_valuation": None, "dcf_error": f"DCF skipped: no positive FCF (FCF={fcf_values}, OCF-CAPEX={op_values})"}
 
         shares_outstanding = info.get("sharesOutstanding", 0)
         if not shares_outstanding or shares_outstanding <= 0:
-            logger.warning("DCF skipped for %s: missing or invalid shares outstanding (%s)", ticker, shares_outstanding)
-            return {"dcf_valuation": None, "dcf_error": f"DCF skipped: shares outstanding data missing or invalid (value: {shares_outstanding}) – yfinance may not have this data for the ticker"}
+            return {"dcf_valuation": None, "dcf_error": f"DCF skipped: shares outstanding missing (value: {shares_outstanding})"}
 
         current_price = info.get("currentPrice") or info.get("regularMarketPrice", 0)
         if not current_price or current_price <= 0:
-            logger.warning("DCF skipped for %s: missing or invalid current price (%s)", ticker, current_price)
-            return {"dcf_valuation": None, "dcf_error": f"DCF skipped: current market price not available (value: {current_price}) – ticker may be delisted or yfinance data unavailable"}
+            return {"dcf_valuation": None, "dcf_error": f"DCF skipped: current price not available (value: {current_price})"}
 
-        growth_rate = 0.08
-        terminal_growth = 0.025
-        wacc = 0.10
-        num_years = 5
+        # Data-driven growth: blend revenue & earnings growth, bounded 2–25%
+        rg = info.get("revenueGrowth")
+        eg = info.get("earningsGrowth")
+        if rg is not None and eg is not None:
+            growth_rate = max(0.02, min(rg * 0.6 + eg * 0.4, 0.25))
+        elif rg is not None:
+            growth_rate = max(0.02, min(float(rg), 0.25))
+        elif eg is not None:
+            growth_rate = max(0.02, min(float(eg), 0.25))
+        else:
+            growth_rate = 0.08
 
+        # WACC via CAPM cost-of-equity + after-tax cost-of-debt, weighted by capital structure
+        beta = (state.get("metrics") or {}).get("beta") or 1.0
+        risk_free, mkt_premium = 0.043, 0.055
+        cost_of_equity = risk_free + beta * mkt_premium
+
+        interest_expense = _get_latest_field(income_stmt, "Interest Expense")
+        total_debt = info.get("totalDebt") or 0
+        market_cap = info.get("marketCap") or 0
+        tax_rate = info.get("effectiveTaxRate") or 0.21
+
+        if interest_expense and total_debt > 0:
+            after_tax_cod = (abs(interest_expense) / total_debt) * (1 - tax_rate)
+        else:
+            after_tax_cod = 0.04
+
+        total_cap = market_cap + total_debt
+        if total_cap > 0:
+            wacc = (market_cap / total_cap) * cost_of_equity + (total_debt / total_cap) * after_tax_cod
+        else:
+            wacc = cost_of_equity
+        wacc = max(0.06, min(wacc, 0.18))
+
+        terminal_growth = min(0.03, wacc - 0.02) if growth_rate > 0.15 else 0.025
+
+        # Tapered projection: fades toward terminal growth in years 3-5
         pv_fcf = 0
-        for year in range(1, num_years + 1):
-            projected_fcf = latest_fcf * (1 + growth_rate) ** year
+        for year in range(1, 6):
+            if year <= 2:
+                yr_growth = growth_rate
+            else:
+                fade = (year - 2) / 3
+                yr_growth = growth_rate * (1 - fade) + terminal_growth * fade
+            projected_fcf = latest_fcf * (1 + yr_growth) ** year
             pv_fcf += projected_fcf / (1 + wacc) ** year
 
-        terminal_value = (latest_fcf * (1 + growth_rate) ** num_years * (1 + terminal_growth)) / (
-            wacc - terminal_growth
-        )
-        pv_terminal = terminal_value / (1 + wacc) ** num_years
+        terminal_value = (latest_fcf * (1 + growth_rate) ** 5 * (1 + terminal_growth)) / (wacc - terminal_growth)
+        pv_terminal = terminal_value / (1 + wacc) ** 5
         enterprise_value = pv_fcf + pv_terminal
 
-        intrinsic_value = enterprise_value / shares_outstanding if shares_outstanding and shares_outstanding > 0 else 0
+        intrinsic_value = enterprise_value / shares_outstanding if shares_outstanding > 0 else 0
         upside = (intrinsic_value - current_price) / current_price if current_price and intrinsic_value > 0 else 0
 
         logger.info(
-            "DCF calculated for %s: FCF=%s, EV=%s, shares=%s, intrinsic=%s, current=%s, upside=%s%%",
-            ticker, latest_fcf, enterprise_value, shares_outstanding, intrinsic_value, current_price, upside * 100
+            "DCF for %s: FCF=%s, WACC=%.3f, growth=%.3f, terminal=%.3f, intrinsic=%s, upside=%.1f%%",
+            ticker, latest_fcf, wacc, growth_rate, terminal_growth, intrinsic_value, upside * 100,
         )
 
         return {
             "dcf_valuation": {
                 "intrinsic_value": round(intrinsic_value, 2),
-                "current_price": round(float(current_price), 2) if current_price else 0,
+                "current_price": round(float(current_price), 2),
                 "upside_pct": round(float(upside * 100), 1),
-                "wacc": wacc,
-                "growth_rate": growth_rate,
-                "terminal_growth": terminal_growth,
+                "wacc": round(wacc, 4),
+                "growth_rate": round(growth_rate, 4),
+                "terminal_growth": round(terminal_growth, 4),
                 "enterprise_value": round(enterprise_value, 2),
                 "fcf_used": latest_fcf,
             }
@@ -330,17 +536,19 @@ async def correlation_node(state: QuantAnalysisState) -> dict:
 
 
 async def format_output_node(state: QuantAnalysisState) -> dict:
-    # Signal voting: tallies positive vs negative signals (Sharpe, vol, DCF, CVaR) → BUY/HOLD/SELL
+    """Signal voting across risk, DCF, fundamentals, and technicals → BUY/HOLD/SELL."""
     metrics = state.get("metrics", {})
     stress = state.get("stress_test_result")
     dcf = state.get("dcf_valuation")
     corr = state.get("correlation_matrix", {})
+    fundamentals = state.get("fundamentals")
+    technicals = state.get("technicals")
     ticker = state.get("ticker", "?")
     dcf_error = state.get("dcf_error")
 
-    logger.info("Formatting output for %s: dcf=%s, dcf_error=%s, stress=%s, corr=%s",
-                 ticker, "ok" if dcf else "null", dcf_error,
-                 "ok" if stress else "null", "ok" if corr else "null")
+    logger.info("Formatting output for %s: dcf=%s, stress=%s, fundamentals=%s, technicals=%s",
+                 ticker, "ok" if dcf else "null", "ok" if stress else "null",
+                 "ok" if fundamentals else "null", "ok" if technicals else "null")
 
     sharpe = metrics.get("sharpe_ratio", 0)
     vol = metrics.get("annual_volatility", 0)
@@ -364,9 +572,38 @@ async def format_output_node(state: QuantAnalysisState) -> dict:
     if stress and stress.get("cvar_95", 0) < -0.05:
         signals.append("tail_risk")
 
-    pos_signals = sum(
-        1 for s in signals if s in {"positive_risk_adjusted_return", "low_volatility", "undervalued_dcf"}
-    )
+    # Fundamental signals
+    if fundamentals:
+        pe = fundamentals.get("trailing_pe")
+        if pe and pe > 0:
+            if pe < 15:
+                signals.append("low_pe_ratio")
+            elif pe > 40:
+                signals.append("high_pe_ratio")
+        roe = fundamentals.get("roe")
+        if roe is not None:
+            if roe > 0.15:
+                signals.append("strong_roe")
+            elif roe < 0:
+                signals.append("negative_roe")
+
+    # Technical signals
+    if technicals:
+        trend = technicals.get("trend")
+        if trend in ("strong_uptrend", "uptrend"):
+            signals.append("bullish_trend")
+        elif trend == "downtrend":
+            signals.append("bearish_trend")
+        rsi = technicals.get("rsi_14")
+        if rsi is not None:
+            if rsi < 30:
+                signals.append("oversold_rsi")
+            elif rsi > 70:
+                signals.append("overbought_rsi")
+
+    _POS = {"positive_risk_adjusted_return", "low_volatility", "undervalued_dcf",
+             "low_pe_ratio", "strong_roe", "bullish_trend", "oversold_rsi"}
+    pos_signals = sum(1 for s in signals if s in _POS)
     neg_signals = len(signals) - pos_signals
 
     if pos_signals > neg_signals:
@@ -380,15 +617,47 @@ async def format_output_node(state: QuantAnalysisState) -> dict:
 
     reasoning_parts = []
     if metrics:
-        reasoning_parts.append(f"Sharpe: {metrics.get('sharpe_ratio', 'N/A')}, Vol: {metrics.get('annual_volatility', 'N/A')}, Beta: {metrics.get('beta', 'N/A')}")
+        reasoning_parts.append(
+            f"Sharpe: {metrics.get('sharpe_ratio', 'N/A')}, "
+            f"Vol: {metrics.get('annual_volatility', 'N/A')}, "
+            f"Beta: {metrics.get('beta', 'N/A')}"
+        )
     if dcf:
-        reasoning_parts.append(f"DCF intrinsic value: ${dcf.get('intrinsic_value', 'N/A')} (upside: {dcf.get('upside_pct', 'N/A')}%)")
+        reasoning_parts.append(f"DCF intrinsic: ${dcf.get('intrinsic_value', 'N/A')} (upside: {dcf.get('upside_pct', 'N/A')}%, WACC: {dcf.get('wacc', 'N/A'):.1%}, growth: {dcf.get('growth_rate', 'N/A'):.1%})")
     elif dcf_error:
         reasoning_parts.append(f"DCF: {dcf_error}")
 
+    if fundamentals:
+        fund_parts = []
+        if fundamentals.get("trailing_pe") is not None:
+            fund_parts.append(f"PE={fundamentals['trailing_pe']:.1f}")
+        if fundamentals.get("roe") is not None:
+            fund_parts.append(f"ROE={fundamentals['roe']:.1%}")
+        if fundamentals.get("revenue_growth") is not None:
+            fund_parts.append(f"RevGrowth={fundamentals['revenue_growth']:.1%}")
+        if fundamentals.get("operating_margin") is not None:
+            fund_parts.append(f"OpMargin={fundamentals['operating_margin']:.1%}")
+        if fundamentals.get("debt_to_equity") is not None:
+            fund_parts.append(f"D/E={fundamentals['debt_to_equity']:.1f}")
+        if fund_parts:
+            reasoning_parts.append(f"Fundamentals: {', '.join(fund_parts)}")
+
+    if technicals:
+        tech_parts = []
+        if technicals.get("trend"):
+            tech_parts.append(f"Trend={technicals['trend']}")
+        if technicals.get("rsi_14") is not None:
+            tech_parts.append(f"RSI={technicals['rsi_14']:.1f}")
+        if technicals.get("macd_bullish") is not None:
+            tech_parts.append(f"MACD={'bull' if technicals['macd_bullish'] else 'bear'}")
+        if technicals.get("golden_cross") is not None:
+            tech_parts.append(f"GoldenCross={technicals['golden_cross']}")
+        if tech_parts:
+            reasoning_parts.append(f"Technicals: {', '.join(tech_parts)}")
+
     stress_test_info = None
     if stress:
-        reasoning_parts.append(f"Stress test CVaR: {stress.get('cvar_95', 'N/A')}")
+        reasoning_parts.append(f"Stress CVaR: {stress.get('cvar_95', 'N/A')}")
         stress_test_info = stress
     elif vol <= 0.35:
         stress_test_info = {
@@ -411,17 +680,21 @@ async def format_output_node(state: QuantAnalysisState) -> dict:
         "stress_test_result": stress_test_info,
         "dcf_valuation": dcf,
         "correlation_matrix": corr,
+        "fundamentals": fundamentals,
+        "technicals": technicals,
     }
 
 
 async def llm_summary_node(state: QuantAnalysisState) -> dict:
-    # Calls local LLM to produce a 2-3 sentence natural language summary of the full quant analysis
+    """Produces a 3-4 sentence investor summary including fundamentals and technicals."""
     from langchain_openai import ChatOpenAI
     from shared.config import LLM_MODEL, LLM_BASE_URL, LLM_API_KEY
 
     metrics = state.get("metrics", {})
     stress = state.get("stress_test_result")
     dcf = state.get("dcf_valuation")
+    fund = state.get("fundamentals") or {}
+    tech = state.get("technicals") or {}
     ticker = state.get("ticker", "")
     rec = state.get("recommendation", "HOLD")
     reasoning = state.get("reasoning", "")
@@ -429,22 +702,38 @@ async def llm_summary_node(state: QuantAnalysisState) -> dict:
     today = date.today().isoformat()
     prompt = (
         f"Today's date: {today}. "
-        f"You are a financial analyst. Summarize the following quantitative analysis for {ticker} "
-        f"in 2-3 sentences for an investor.\n\n"
+        f"You are a financial analyst. Summarize the quantitative analysis for {ticker} "
+        f"in 3-4 sentences for an investor.\n\n"
         f"Recommendation: {rec}\n"
-        f"Key metrics: Sharpe={metrics.get('sharpe_ratio')}, "
-        f"Volatility={metrics.get('annual_volatility')}, "
-        f"Beta={metrics.get('beta')}, "
-        f"VaR={metrics.get('var_95_daily')}\n"
-        f"Reasoning: {reasoning}\n"
+        f"Risk: Sharpe={metrics.get('sharpe_ratio')}, "
+        f"Vol={metrics.get('annual_volatility')}, "
+        f"Beta={metrics.get('beta')}, MaxDD={metrics.get('max_drawdown')}\n"
     )
+    if fund:
+        prompt += (
+            f"Fundamentals: PE={fund.get('trailing_pe')}, "
+            f"ROE={fund.get('roe')}, D/E={fund.get('debt_to_equity')}, "
+            f"RevGrowth={fund.get('revenue_growth')}, "
+            f"OpMargin={fund.get('operating_margin')}\n"
+        )
+    if tech:
+        prompt += (
+            f"Technicals: Trend={tech.get('trend')}, "
+            f"RSI={tech.get('rsi_14')}, MACD_bull={tech.get('macd_bullish')}, "
+            f"GoldenCross={tech.get('golden_cross')}\n"
+        )
     if dcf:
-        prompt += f"DCF: intrinsic value=${dcf.get('intrinsic_value')}, upside={dcf.get('upside_pct')}%\n"
+        prompt += (
+            f"DCF: intrinsic=${dcf.get('intrinsic_value')}, "
+            f"upside={dcf.get('upside_pct')}%, "
+            f"WACC={dcf.get('wacc')}, growth={dcf.get('growth_rate')}\n"
+        )
     if stress:
-        prompt += f"Stress test CVaR: {stress.get('cvar_95')}\n"
+        prompt += f"Stress CVaR: {stress.get('cvar_95')}\n"
+    prompt += "\nNote any signal conflicts. Be specific about numbers."
 
     try:
-        llm = ChatOpenAI(model=LLM_MODEL, base_url=LLM_BASE_URL, api_key=LLM_API_KEY, temperature=0.3, max_tokens=256)
+        llm = ChatOpenAI(model=LLM_MODEL, base_url=LLM_BASE_URL, api_key=LLM_API_KEY, temperature=0.3, max_tokens=384)
         response = await llm.ainvoke(prompt)
         summary = response.content if hasattr(response, "content") else str(response)
     except Exception as e:

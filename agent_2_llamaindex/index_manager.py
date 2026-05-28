@@ -15,9 +15,34 @@ from llama_index.vector_stores.chroma import ChromaVectorStore
 import chromadb
 
 
+from llama_index.core.response_synthesizers import get_response_synthesizer
+
 from shared.config import LLM_MODEL, EMBED_MODEL, CHROMA_DIR, LLM_BASE_URL, LLM_API_KEY
 
 logger = logging.getLogger(__name__)
+
+
+def _classify_query_intent(query_text: str) -> list[str]:
+    """Return which ChromaDB collections to search based on keywords in the query."""
+    q = query_text.lower()
+    collections = ["sec_filings"]
+    if any(kw in q for kw in (
+        "news", "recent", "latest", "today", "sentiment", "market", "headline",
+        "article", "impact", "event", "announce", "breaking", "update",
+    )):
+        collections.append("news")
+    if any(kw in q for kw in (
+        "earnings", "revenue", "guidance", "quarter", "call", "eps",
+        "beat", "miss", "forecast",
+    )):
+        collections.append("earnings")
+    # Broad analytical queries: search all collections
+    if any(kw in q for kw in (
+        "analyze", "analysis", "overview", "outlook", "recommend",
+        "should i", "what do you think", "bull", "bear",
+    )):
+        return ["sec_filings", "news", "earnings"]
+    return collections
 
 
 class FinancialIndexManager:
@@ -56,53 +81,73 @@ class FinancialIndexManager:
         return index
 
     async def query(self, ticker: str, query_text: str) -> dict:
-        # Metadata filter restricts retrieval to docs matching the ticker (multi-tenant by ticker)
+        """Multi-collection retrieval: routes across sec_filings/news/earnings based on intent."""
         filters = MetadataFilters(
             filters=[ExactMatchFilter(key="ticker", value=ticker)]
         )
-        index = self._get_or_create_index("sec_filings")
-        engine = index.as_query_engine(
-            similarity_top_k=3, filters=filters, response_mode="compact"
-        )
+        collections = _classify_query_intent(query_text)
         today = date.today().isoformat()
+        augmented_query = f"Today's date: {today}. Research {ticker}: {query_text}\nProvide specific data with citations."
+
+        all_nodes = []
+        for coll in collections:
+            try:
+                index = self._get_or_create_index(coll)
+                retriever = index.as_retriever(similarity_top_k=5, filters=filters)
+                nodes = await retriever.aretrieve(augmented_query)
+                all_nodes.extend(nodes)
+            except Exception as e:
+                logger.warning("Retrieval from %s failed for %s: %s", coll, ticker, e)
+
+        if not all_nodes:
+            return {
+                "ticker": ticker,
+                "summary": (
+                    f"Index is warming for {ticker} — initial fetch in progress. "
+                    f"Try again in 10–20 seconds for full results."
+                ),
+                "_warming": True,
+                "sources": [],
+                "relevance_scores": [],
+                "confidence_score": 0.0,
+                "context_texts": [],
+            }
+
+        # Deduplicate by first-200-char hash, keep highest-score copy
+        seen: set[int] = set()
+        unique = []
+        for n in sorted(all_nodes, key=lambda x: x.score or 0, reverse=True):
+            h = hash(n.node.text[:200])
+            if h not in seen:
+                seen.add(h)
+                unique.append(n)
+        unique = unique[:5]
+
         try:
-            response = await engine.aquery(
-                f"Today's date: {today}. "
-                f"Research {ticker}: {query_text}\nProvide specific data with citations."
-            )
-            from llama_index.core.response import Response
-            if isinstance(response, Response):
-                resp_text = str(response)
-                sources = [
-                    n.node.metadata.get("file_name", "unknown")
-                    for n in response.source_nodes
-                ]
-                scores = [round(n.score, 3) for n in response.source_nodes]
-                context_texts = [n.node.get_content() for n in response.source_nodes]
-                return {
-                    "ticker": ticker,
-                    "summary": resp_text,
-                    "sources": sources[:5],
-                    "relevance_scores": scores[:5],
-                    "confidence_score": round(max(scores) if scores else 0.0, 3),
-                    "context_texts": context_texts[:5],
-                }
+            synth = get_response_synthesizer(llm=self.llm, response_mode="compact")
+            response = await synth.asynthesize(query=augmented_query, nodes=unique)
+            resp_text = str(response)
+            sources = [n.node.metadata.get("file_name", "unknown") for n in unique]
+            scores = [round(n.score or 0.0, 3) for n in unique]
+            context_texts = [n.node.get_content() for n in unique]
+            return {
+                "ticker": ticker,
+                "summary": resp_text,
+                "sources": sources,
+                "relevance_scores": scores,
+                "confidence_score": round(max(scores) if scores else 0.0, 3),
+                "context_texts": context_texts,
+            }
         except Exception as e:
-            logger.exception("RAG query failed for %s", ticker)
+            logger.exception("RAG synthesis failed for %s", ticker)
             return {
                 "ticker": ticker,
                 "summary": f"Error: {e}",
                 "sources": [],
                 "relevance_scores": [],
                 "confidence_score": 0.0,
+                "context_texts": [],
             }
-        return {
-            "ticker": ticker,
-            "summary": "No response",
-            "sources": [],
-            "relevance_scores": [],
-            "confidence_score": 0.0,
-        }
 
     async def query_sec_filings(self, ticker: str, query_text: str) -> dict:
         # Same ticker filter but scoped to sec_filings collection; validates first result matches

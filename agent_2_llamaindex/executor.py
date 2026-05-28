@@ -104,9 +104,62 @@ class RAGAgent(BaseAgent):
         except Exception as e:
             logger.warning("Auto-ingest failed for %s: %s", ticker, e)
 
+    async def _ensure_news_ingested(self, ticker: str) -> None:
+        """Fetches recent news via MCP and ingests articles into the 'news' ChromaDB collection."""
+        today = datetime.now(timezone.utc).date()
+        news_key = f"news_{ticker}"
+        if self._last_ingestion.get(news_key) == today:
+            return
+        try:
+            mcp = await get_shared_mcp()
+        except Exception as e:
+            logger.warning("MCP connect failed for news ingestion: %s", e)
+            return
+        if self._ingestion is None:
+            self._ingestion = DocumentIngestionPipeline(self.index)
+        try:
+            result = await mcp.call_tool_by_name(
+                "get_news_sentiment", {"ticker": ticker, "limit": 15}
+            )
+            ingested = 0
+            if hasattr(result, "content"):
+                for item in result.content:
+                    raw = item.text if hasattr(item, "text") else str(item)
+                    if not raw or not raw.strip():
+                        continue
+                    try:
+                        data = json.loads(raw) if isinstance(raw, str) else raw
+                    except json.JSONDecodeError:
+                        continue
+                    articles = []
+                    if isinstance(data, dict):
+                        articles = data.get("articles", data.get("news", []))
+                    elif isinstance(data, list):
+                        articles = data
+                    for article in articles:
+                        if not isinstance(article, dict):
+                            continue
+                        sentiment = article.get("sentiment", 0)
+                        summary = article.get("summary", "") or f"sentiment={sentiment:+.2f}" if sentiment else ""
+                        self._ingestion.ingest_news_article(ticker, {
+                            "title": article.get("title", ""),
+                            "summary": summary,
+                            "url": article.get("link", article.get("url", "")),
+                            "published_at": article.get("published", article.get("published_at", "")),
+                        })
+                        ingested += 1
+            if ingested > 0:
+                logger.info("Ingested %d news articles for %s", ingested, ticker)
+            self._last_ingestion[news_key] = today
+        except Exception as e:
+            logger.warning("News ingestion failed for %s: %s", ticker, e)
+
     async def query(self, ticker: str, query_text: str) -> dict:
-        # Main entry point: auto-ingest today's filings then query ChromaDB via LlamaIndex
-        await self._ensure_ingested(ticker)
+        """Parallel ingestion of filings and news, then multi-collection ChromaDB query."""
+        await asyncio.gather(
+            self._ensure_ingested(ticker),
+            self._ensure_news_ingested(ticker),
+        )
         return await self.index.query(ticker, query_text)
 
     async def stream(
