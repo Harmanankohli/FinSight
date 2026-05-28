@@ -4,6 +4,9 @@ Stores query embeddings in a dedicated Chroma collection. On lookup, finds
 the nearest stored query by cosine similarity; if the similarity exceeds the
 threshold and the entry is within the TTL, returns the cached response.
 
+Cache keys are date-scoped (YYYY-MM-DD): an identical query on a different
+day will miss the cache so analyses always reflect the current trading day.
+
 Usage::
 
     cache = SemanticCache()
@@ -18,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import date
 from uuid import uuid4
 
 logger = logging.getLogger(__name__)
@@ -25,6 +29,10 @@ logger = logging.getLogger(__name__)
 _COLLECTION_NAME = "query_cache"
 _DEFAULT_THRESHOLD = 0.95
 _DEFAULT_TTL_HOURS = 1
+
+
+def _today_key() -> str:
+    return date.today().isoformat()
 
 
 class SemanticCache:
@@ -58,8 +66,10 @@ class SemanticCache:
         except Exception as exc:
             logger.warning("SemanticCache unavailable: %s", exc)
 
-    # Cosine-similarity check against all cached queries; returns only if the
-    # nearest neighbour exceeds the threshold AND its timestamp is within TTL.
+    # Cosine-similarity check against today's cached queries only. Returns the
+    # cached response if the nearest neighbour exceeds the threshold AND its
+    # timestamp is within TTL. Cross-day matches are filtered out via the
+    # `date` metadata so identical queries on different days don't collide.
     def get(self, query: str) -> str | None:
         self._ensure_ready()
         if self._col is None or self._embedder is None:
@@ -69,6 +79,7 @@ class SemanticCache:
             results = self._col.query(
                 query_embeddings=[emb],
                 n_results=1,
+                where={"date": _today_key()},
                 include=["metadatas", "distances"],
             )
             distances = results.get("distances", [[]])[0]
@@ -86,7 +97,7 @@ class SemanticCache:
             logger.warning("SemanticCache.get failed: %s", exc)
         return None
 
-    # Stores query + response embedding with a timestamp for TTL-based expiry.
+    # Stores query + response embedding with today's date and a timestamp.
     # Response is truncated to 4000 chars to keep Chroma metadata size bounded.
     def set(self, query: str, response: str) -> None:
         self._ensure_ready()
@@ -97,7 +108,11 @@ class SemanticCache:
             self._col.add(
                 embeddings=[emb],
                 documents=[query],
-                metadatas=[{"response": response[:4000], "ts": str(time.time())}],
+                metadatas=[{
+                    "response": response[:4000],
+                    "ts": str(time.time()),
+                    "date": _today_key(),
+                }],
                 ids=[str(uuid4())],
             )
         except Exception as exc:

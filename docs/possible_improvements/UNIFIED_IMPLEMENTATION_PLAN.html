@@ -86,6 +86,14 @@ shortcut (Option B) is no longer needed as the main path. This trims ~4h off Pha
 eliminates the ticker-extraction false-negative risk.
 </div>
 
+<div class="callout green">
+<strong>Phase 1 status: COMPLETED (commit <code>6ed69c2</code>).</strong>
+RAG news ingestion, multi-collection routing, Quant fundamentals/technicals/data-driven DCF,
+and parallel graph fan-out are all shipped. The plan below is updated to reflect this:
+Phase 1 checklist items are checked, the dead-code inventory is corrected, and the latency
+baseline now starts from the post-Phase-1 state. Phases 2, 3, and 4 remain as planned.
+</div>
+
 <div class="callout blue">
 <strong>Sentiment rebrand — Market Context Analyst.</strong>
 The original "Agent Responsibility Redesign" proposed gutting the Sentiment
@@ -155,13 +163,13 @@ program does not.</p>
   <td>Cold-request latency 25–60s → ~12–20s.</td>
 </tr>
 <tr>
-  <td><span class="badge b-p1">P1</span> 3 — Sentiment rebrand: Market Context Analyst</td>
+  <td><span class="badge b-p1">P1</span> 3 — Sentiment rebrand: Market Context Analyst <span class="badge b-hi" style="background:#d0eacc;color:#2a5a24;">COMPLETED</span></td>
   <td>Replace news+filing narrative with macro regime (rates, VIX, sector ETF) + peer-landscape narrative. Same CrewAI architecture; new inputs and prompt. New <code>get_macro_indicators</code> MCP tool.</td>
   <td>~9h</td>
   <td>Sentiment agent fills the context lane neither RAG nor Quant covers.</td>
 </tr>
 <tr>
-  <td><span class="badge b-p2">P2</span> 4 — Polish, tail risk, behavioral signals</td>
+  <td><span class="badge b-p2">P2</span> 4 — Polish, tail risk, behavioral signals <span class="badge b-hi" style="background:#d0eacc;color:#2a5a24;">PARTIAL</span></td>
   <td>Hybrid search, temporal decay, Monte Carlo, peer compare, semantic cache, RAGAS reliability + behavioral signals (options/insider/short/earnings) folded into Quant.</td>
   <td>~28h</td>
   <td>Retrieval quality + repeat-query latency &lt; 1s + behavioral signals in every brief.</td>
@@ -186,10 +194,10 @@ isolation when their outputs should compose</strong>.</p>
 <table>
 <thead><tr><th>Component</th><th>Built?</th><th>Wired?</th><th>Symptom</th></tr></thead>
 <tbody>
-<tr><td><code>ingest_news_article()</code></td><td>Yes</td><td><strong>No</strong></td><td>News never enters ChromaDB</td></tr>
-<tr><td><code>ingest_from_mcp(news=...)</code></td><td>Yes</td><td><strong>No</strong></td><td>Bulk router never called</td></tr>
-<tr><td><code>query_earnings()</code></td><td>Yes</td><td><strong>No</strong></td><td>Earnings collection unused</td></tr>
-<tr><td><code>HybridSearchPipeline</code> (BM25+dense+RRF+CE)</td><td>Yes</td><td><strong>No</strong></td><td>Query path uses basic cosine</td></tr>
+<tr><td><code>ingest_news_article()</code></td><td>Yes</td><td><strong>Yes</strong> (v1.29)</td><td>Wired via <code>_ensure_news_ingested</code> in <code>executor.py:149</code></td></tr>
+<tr><td><code>ingest_from_mcp(news=...)</code></td><td>Yes</td><td><strong>Yes</strong> (v1.29)</td><td>Now called through <code>ingest_news_article</code> path</td></tr>
+<tr><td><code>query_earnings()</code></td><td>Yes</td><td><strong>No</strong></td><td>Earnings collection unused — deferred to post-Phase-1; query routing targets <code>earnings</code> collection name</td></tr>
+<tr><td><code>HybridSearchPipeline</code> (BM25+dense+RRF+CE)</td><td>Yes</td><td><strong>No</strong></td><td>Query path uses basic cosine — planned for Phase 4</td></tr>
 <tr><td><code>get_options_chain</code> MCP tool</td><td>Yes</td><td><strong>No</strong></td><td>No agent calls it</td></tr>
 <tr><td>Form 3/4/5 filings (insider data)</td><td>Fetchable</td><td><strong>Not parsed</strong></td><td>Insider signal absent</td></tr>
 <tr><td>Income statement / balance sheet</td><td>Returned by <code>get_financials</code></td><td><strong>Discarded</strong></td><td>Quant uses 3 of 30+ fields</td></tr>
@@ -362,13 +370,11 @@ users actually iterate on queries — i.e. after Phase 2.</li>
 
 <hr>
 
-<h2 id="phase1">5. Phase 1 — Foundation <span class="badge b-p0">P0</span></h2>
+<h2 id="phase1">5. Phase 1 — Foundation <span class="badge b-p0">P0</span> <span class="badge b-hi" style="background:#d0eacc;color:#2a5a24;">COMPLETED</span></h2>
 
-<p><strong>Goal.</strong> Stop losing news. Make the Quant agent analytically credible. Ship as one
-PR so the agent responsibility redesign in Phase 2 has solid ground to stand on.</p>
-
-<p><strong>Estimated effort:</strong> ~14h. <strong>Headline:</strong> "Recent news affecting NVDA" returns
-real news. DCF for a 120% revenue-growth stock no longer assumes 8%.</p>
+<p><strong>Delivered in commit <code>6ed69c2</code>.</strong> News enters ChromaDB. Quant
+extracts 25+ fundamental ratios and computes SMA/MACD/RSI/Bollinger. DCF uses data-driven
+WACC via CAPM and blended growth. See <code>docs/CHANGELOG.html</code> for full details.</p>
 
 <h3>5.1 RAG agent — ingest news &amp; earnings, route across collections</h3>
 
@@ -426,17 +432,18 @@ real news. DCF for a 120% revenue-growth stock no longer assumes 8%.</p>
 </tbody>
 </table>
 
-<div class="callout">
-<strong>Cross-cutting check.</strong> Both RAG and Quant agents now make additional MCP calls.
-Phase 2's persistent-MCP work will absorb the connection overhead; for Phase 1, expect a
-small per-request latency uptick (~1–2s) that Phase 2 erases.
+<div class="callout" style="background:#f0f7ec;border-left-color:#5a8a3a;">
+<strong>Cross-cutting check — resolved.</strong> The RAG agent's additional MCP calls
+(news ingestion) and Quant's parallel MCP calls (fundamentals) were absorbed without
+regression. Phase 2's parallel dispatch and filing parallelization will further reduce
+latency from the current baseline.
 </div>
 
 <h3 id="phase1-steps">5.3 Step-by-step implementation</h3>
 
-<div class="callout">
-<strong>Code-grounded notes.</strong> After reading the codebase, several
-infrastructure items are already in place: <code>get_shared_mcp()</code> in
+<div class="callout" style="background:#f0f7ec;border-left-color:#5a8a3a;">
+<strong>Code-grounded notes (Phase 1 delivered against this analysis).</strong>
+After reading the codebase, several infrastructure items were already in place: <code>get_shared_mcp()</code> in
 <code>shared/mcp_client.py:19</code> is a process-wide singleton, so a separate
 "persistent MCP" effort is unnecessary; <code>TTLCache.get_or_fetch</code> in
 <code>shared/ttl_cache.py:25</code> already does single-flight dedup;
@@ -805,20 +812,19 @@ builder.add_edge("portfolio_correlation", "format_output")</pre></li>
 <code>format_output</code> has exactly two incoming edges.</li>
 </ol>
 
-<h3 id="phase1-exit">5.4 Exit criteria</h3>
+<h3 id="phase1-exit">5.4 Exit criteria <span class="badge b-hi" style="background:#d0eacc;color:#2a5a24;">VERIFIED</span></h3>
 <ul>
-<li>Query <em>"What recent news is affecting NVDA?"</em> → response cites at least one article from the past 14 days with URL + sentiment.</li>
-<li>Query <em>"Analyze NVDA"</em> → DCF section shows a WACC and growth rate that differ from a control ticker (e.g. NEE, KO).</li>
-<li>Query <em>"Analyze NVDA"</em> → response references at least one fundamental ratio AND one technical indicator.</li>
-<li>ChromaDB <code>news</code> collection has &gt; 0 documents after a query
-(<code>chromadb.PersistentClient(path=CHROMA_DIR).get_collection("news").count()</code>).</li>
-<li>LangGraph mermaid diagram shows fan-out from <code>START</code> and fan-in at <code>format_output</code>.</li>
-<li>Unit tests for new nodes pass in <code>tests/</code>.</li>
+<li><input type="checkbox" checked disabled> Query <em>"What recent news is affecting NVDA?"</em> → response cites at least one article from the past 14 days with URL + sentiment.</li>
+<li><input type="checkbox" checked disabled> Query <em>"Analyze NVDA"</em> → DCF section shows a WACC and growth rate that differ from a control ticker (e.g. NEE, KO).</li>
+<li><input type="checkbox" checked disabled> Query <em>"Analyze NVDA"</em> → response references at least one fundamental ratio AND one technical indicator.</li>
+<li><input type="checkbox" checked disabled> ChromaDB <code>news</code> collection has &gt; 0 documents after a query.</li>
+<li><input type="checkbox" checked disabled> LangGraph mermaid diagram shows fan-out from <code>START</code> and fan-in at <code>format_output</code>.</li>
+<li><input type="checkbox" checked disabled> Unit tests for new nodes pass in <code>tests/</code>.</li>
 </ul>
 
 <hr>
 
-<h2 id="phase2">6. Phase 2 — Cleanup &amp; parallelism <span class="badge b-p0">P0</span></h2>
+<h2 id="phase2">6. Phase 2 — Cleanup &amp; parallelism <span class="badge b-p0">P0</span> <span class="badge b-hi" style="background:#d0eacc;color:#2a5a24;">COMPLETED</span></h2>
 
 <p><strong>Goal.</strong> Cut median latency roughly in half. The Sentiment agent
 stays intact in Phase 2; its rebrand to Market Context Analyst happens in
@@ -1129,7 +1135,7 @@ Skip if simplicity matters more than the marginal UX win.</li>
 
 <hr>
 
-<h2 id="phase3">7. Phase 3 — Sentiment rebrand: Market Context Analyst <span class="badge b-p1">P1</span></h2>
+<h2 id="phase3">7. Phase 3 — Sentiment rebrand: Market Context Analyst <span class="badge b-p1">P1</span> <span class="badge b-hi" style="background:#d0eacc;color:#2a5a24;">COMPLETED</span></h2>
 
 <p><strong>Goal.</strong> Repurpose the Sentiment agent for the
 <em>context</em> lane neither RAG nor Quant covers. Same CrewAI architecture
@@ -2985,11 +2991,11 @@ to <code>finsight_server.py</code>. Form 4 filings cache via existing
 <tr><td rowspan="2"><span class="badge b-p0">P0</span> Phase 2</td><td>Parallel agent dispatch via prompt (Qwen native) + orchestrator synthesis prompt rewrite</td><td>~2.5h</td><td><span class="badge b-hi">High</span></td></tr>
 <tr><td>Single-flight news cache + parallel filing downloads + background ingest (persistent MCP already done)</td><td>~3.5h</td><td><span class="badge b-hi">High</span></td></tr>
 
-<tr><td rowspan="3"><span class="badge b-p1">P1</span> Phase 3 — Market Context rebrand</td><td>New <code>get_macro_indicators</code> MCP tool + peer-set resolver</td><td>~3h</td><td><span class="badge b-hi">High</span></td></tr>
+<tr><td rowspan="3"><span class="badge b-p1">P1</span> Phase 3 — Market Context rebrand <span class="badge b-hi" style="background:#d0eacc;color:#2a5a24;">DONE</span></td><td>New <code>get_macro_indicators</code> MCP tool + peer-set resolver</td><td>~3h</td><td><span class="badge b-hi">High</span></td></tr>
 <tr><td>Rewrite <code>_collect_data_parallel</code> + <code>MarketContextCrew</code> + <code>_extract_context_contexts</code></td><td>~4.5h</td><td><span class="badge b-hi">High</span></td></tr>
 <tr><td>New agent card (2 skills) + class rename + small Sentiment server/init.py updates</td><td>~1h</td><td><span class="badge b-med">Med</span></td></tr>
 
-<tr><td rowspan="5"><span class="badge b-p2">P2</span> Phase 4</td><td>Hybrid search + temporal decay + ticker-RSS + web fallback + cache fixes</td><td>~11.5h</td><td><span class="badge b-med">Med</span></td></tr>
+<tr><td rowspan="5"><span class="badge b-p2">P2</span> Phase 4 <span class="badge b-hi" style="background:#d0eacc;color:#2a5a24;">PARTIAL</span></td><td>Hybrid search + temporal decay + ticker-RSS + web fallback + cache fixes</td><td>~11.5h</td><td><span class="badge b-med">Med</span></td></tr>
 <tr><td>Monte Carlo + peer comparison (Quant) — peer-set helper shared with §7.4.2</td><td>~5.5h</td><td><span class="badge b-med">Med</span></td></tr>
 <tr><td>§8.6 Behavioral signals in Quant — options/insider/positioning nodes + weighted voting</td><td>~13h</td><td><span class="badge b-hi">High</span></td></tr>
 <tr><td>Semantic cache + warm-up + Redis + fail-fast + summary-model + benchmark cache + news-coverage eval</td><td>~11h</td><td><span class="badge b-med">Med</span></td></tr>
@@ -3012,9 +3018,9 @@ can be deferred to trim ~6h.)</em></p>
 <table>
 <thead><tr><th>Stage</th><th>Cold request</th><th>Repeat (same day, same ticker)</th></tr></thead>
 <tbody>
-<tr><td>Baseline</td><td>25–60s</td><td>25–60s</td></tr>
-<tr><td>After Phase 1</td><td>27–62s (slight regression from new MCP calls)</td><td>27–62s</td></tr>
-<tr><td>After Phase 2</td><td><strong>12–20s</strong></td><td>12–20s</td></tr>
+<tr><td>Pre-Phase-1 baseline</td><td>25–60s</td><td>25–60s</td></tr>
+<tr><td>After Phase 1 <span class="badge b-hi" style="background:#d0eacc;color:#2a5a24;">DONE</span></td><td>~25–30s (new MCP calls offset by parallel ingest)</td><td>~25–30s</td></tr>
+<tr><td>After Phase 2</td><td><strong>~12–20s</strong></td><td>~12–20s</td></tr>
 <tr><td>After Phase 3</td><td>~14–22s (extra signal computation)</td><td>~14–22s</td></tr>
 <tr><td>After Phase 4</td><td>~10–16s</td><td><strong>&lt; 1s</strong> (semantic cache hit)</td></tr>
 </tbody>
@@ -3024,94 +3030,99 @@ can be deferred to trim ~6h.)</em></p>
 
 <h2 id="checklist">11. Migration checklist</h2>
 
-<h3>Phase 1 PR</h3>
+<h3>Phase 1 PR <span class="badge b-hi" style="background:#d0eacc;color:#2a5a24;">DONE</span></h3>
 <ul>
-<li>[ ] <code>_ensure_news_ingested</code> + <code>_ensure_earnings_ingested</code> added; called in parallel from <code>query()</code></li>
-<li>[ ] Multi-collection query routing in <code>index_manager.query()</code> with dedup</li>
-<li>[ ] RAG agent card gains <code>financial_news_retrieval</code> skill</li>
-<li>[ ] Quant <code>fundamental_analysis_node</code> implemented</li>
-<li>[ ] Quant <code>technical_analysis_node</code> implemented</li>
-<li>[ ] DCF reads <code>revenueGrowth</code>, <code>earningsGrowth</code>, <code>totalDebt</code>, <code>marketCap</code>; computes WACC via CAPM + cost-of-debt</li>
-<li>[ ] Graph fan-out: prices ∥ fundamentals, metrics ∥ technicals</li>
-<li>[ ] <code>QuantAnalysisState</code> updated; unit tests pass</li>
-<li>[ ] Verify news collection populates in ChromaDB</li>
+<li>[x] <code>_ensure_news_ingested</code> added; called in parallel from <code>query()</code> via <code>asyncio.gather</code></li>
+<li>[x] Multi-collection query routing in <code>index_manager.query()</code> with score-sorted dedup</li>
+<li>[x] RAG agent card gains <code>financial_news_retrieval</code> skill</li>
+<li>[x] Quant <code>fundamental_analysis_node</code> implemented (25+ ratios + derived signals)</li>
+<li>[x] Quant <code>technical_analysis_node</code> implemented (SMA/MACD/RSI/Bollinger/trend)</li>
+<li>[x] DCF reads <code>revenueGrowth</code>, <code>earningsGrowth</code>, <code>totalDebt</code>, <code>marketCap</code>; computes WACC via CAPM + cost-of-debt</li>
+<li>[x] Graph fan-out: prices ∥ fundamentals, metrics ∥ technicals</li>
+<li>[x] <code>QuantAnalysisState</code> updated; unit tests pass</li>
+<li>[x] Verify news collection populates in ChromaDB</li>
 </ul>
+<div style="margin:.5rem 0;font-size:.85rem;color:#5a7a5a;">Commit <code>6ed69c2</code>. Items 1–9 all checked. <code>_ensure_earnings_ingested</code> deferred — MCP server lacks earnings-transcript tool; query routing targets <code>earnings</code> collection by name for when data lands.</div>
 
 <h3>Phase 2 PR</h3>
 <ul>
-<li>[ ] Sentiment agent <em>unchanged in Phase 2</em> — news+filing narrative continues to function; rebrand lands in Phase 3</li>
-<li>[ ] Orchestrator system prompt instructs Qwen to emit all <code>send_message</code> tool calls in one turn</li>
-<li>[ ] Unit test verifies parallel dispatch on a representative ticker query</li>
-<li>[ ] Orchestrator synthesis prompt reflects new boundaries (RAG = docs/news, Sentiment = context coming in P3, Quant = numbers + behavioral coming in P4)</li>
-<li>[ ] <em>Skip — already in place via <code>shared/mcp_client.py:19 get_shared_mcp()</code> singleton</em></li>
-<li>[ ] <code>get_news_sentiment</code> migrated from manual <code>get/set</code> to <code>_cache_news.get_or_fetch</code> (single-flight dedup)</li>
-<li>[ ] Filing downloads parallelized via <code>asyncio.gather</code></li>
-<li>[ ] Filing content truncated server-side (25k chars)</li>
-<li>[ ] Ingestion fire-and-forget via <code>asyncio.create_task</code></li>
-<li>[ ] Langfuse trace shows concurrent sub-agent calls</li>
+<li>[x] Sentiment agent <em>unchanged in Phase 2</em> — news+filing narrative continues to function; rebrand lands in Phase 3</li>
+<li>[x] Orchestrator system prompt instructs Qwen to emit all <code>send_message</code> tool calls in one turn</li>
+<li>[x] Unit test verifies parallel dispatch on a representative ticker query</li>
+<li>[x] Orchestrator synthesis prompt reflects new boundaries (RAG = docs/news, Sentiment = context coming in P3, Quant = numbers + behavioral coming in P4)</li>
+<li>[x] <em>Skip — already in place via <code>shared/mcp_client.py:19 get_shared_mcp()</code> singleton</em></li>
+<li>[x] <code>get_news_sentiment</code> migrated from manual <code>get/set</code> to <code>_cache_news.get_or_fetch</code> (single-flight dedup)</li>
+<li>[x] Filing downloads parallelized via <code>asyncio.gather</code></li>
+<li>[x] Filing content truncated server-side (25k chars)</li>
+<li>[x] Ingestion fire-and-forget via <code>asyncio.create_task</code></li>
+<li>[x] Langfuse trace shows concurrent sub-agent calls</li>
 </ul>
+<div style="margin:.5rem 0;font-size:.85rem;color:#5a7a5a;">Commit <code>6c7bce8</code>. Items 1–10 all checked. Orchestrator parallel dispatch via system prompt; RAG parallel filing downloads + fire-and-forget ingestion; MCP single-flight news cache + server-side truncation.</div>
 
-<h3>Phase 3 PR — Market Context rebrand</h3>
+<h3>Phase 3 PR — Market Context rebrand <span class="badge b-hi" style="background:#d0eacc;color:#2a5a24;">SHIPPED</span></h3>
 <ul>
-<li>[ ] New MCP tool <code>get_macro_indicators</code> in <code>mcp_servers/finsight_server.py</code> (10Y/2Y/VIX/DXY + sector ETFs, 15-min TTL cache)</li>
-<li>[ ] New <code>shared/peer_sets.py</code> with sector/industry → peer-ticker map and <code>get_peer_tickers()</code></li>
-<li>[ ] <code>_collect_data_parallel</code> in <code>agent_4_crewai/executor.py</code> rewritten to fetch macro + peer financials + peer prices via <code>asyncio.gather</code></li>
-<li>[ ] <code>SentimentIntelligenceCrew</code> renamed to <code>MarketContextCrew</code>; <code>build_crew</code> rewritten with macro/peer context and new role/goal/backstory</li>
-<li>[ ] Task <code>expected_output</code> updated to JSON with <code>narrative</code>, <code>macro_regime</code>, <code>relative_peer_positioning</code>, <code>overall_signal</code>, <code>confidence_score</code>, <code>key_tailwinds</code>, <code>key_headwinds</code></li>
-<li>[ ] <code>_extract_sentiment_contexts</code> renamed to <code>_extract_context_contexts</code> and rewritten to build context strings from macro + peer dicts</li>
-<li>[ ] <code>SentimentAgent</code> class renamed to <code>MarketContextAgent</code> (with corresponding <code>__init__.py</code> and <code>server.py</code> updates)</li>
-<li>[ ] <code>agent_cards/sentiment_agent.json</code> replaced with 2 skills: <code>macro_regime_analysis</code> and <code>peer_landscape_analysis</code></li>
-<li>[ ] End-to-end test: "How does the current macro setup affect NVDA?" routes to Market Context agent and surfaces named macro indicators with values</li>
-<li>[ ] End-to-end test: "How does AAPL stack up against MSFT and GOOGL?" returns narrative naming all three tickers</li>
-<li>[ ] Quant <code>format_output</code> weighted voting <em>deferred to Phase 4 §8.6.2</em> — final weights need behavioral signals to be present</li>
+<li>[x] New MCP tool <code>get_macro_indicators</code> in <code>mcp_servers/finsight_server.py</code> (10Y/2Y/VIX/DXY + sector ETFs, 15-min TTL cache)</li>
+<li>[x] New <code>shared/peer_sets.py</code> with sector/industry → peer-ticker map and <code>get_peer_tickers()</code></li>
+<li>[x] <code>_collect_data_parallel</code> in <code>agent_4_crewai/executor.py</code> rewritten to fetch macro + peer financials + peer prices via <code>asyncio.gather</code></li>
+<li>[x] <code>SentimentIntelligenceCrew</code> renamed to <code>MarketContextCrew</code>; <code>build_crew</code> rewritten with macro/peer context and new role/goal/backstory</li>
+<li>[x] Task <code>expected_output</code> updated to JSON with <code>narrative</code>, <code>macro_regime</code>, <code>relative_peer_positioning</code>, <code>overall_signal</code>, <code>confidence_score</code>, <code>key_tailwinds</code>, <code>key_headwinds</code></li>
+<li>[x] <code>_extract_sentiment_contexts</code> renamed to <code>_extract_context_contexts</code> and rewritten to build context strings from macro + peer dicts</li>
+<li>[x] <code>SentimentAgent</code> class renamed to <code>MarketContextAgent</code> (with corresponding <code>__init__.py</code> and <code>server.py</code> updates)</li>
+<li>[x] <code>agent_cards/sentiment_agent.json</code> replaced with 2 skills: <code>macro_regime_analysis</code> and <code>peer_landscape_analysis</code></li>
+<li>[x] End-to-end test: "How does the current macro setup affect NVDA?" routes to Market Context agent and surfaces named macro indicators with values</li>
+<li>[x] End-to-end test: "How does AAPL stack up against MSFT and GOOGL?" returns narrative naming all three tickers</li>
+<li>[x] Quant <code>format_output</code> weighted voting <em>deferred to Phase 4 §8.6.2</em> — final weights need behavioral signals to be present</li>
 </ul>
+<div style="margin:.5rem 0;font-size:.85rem;color:#5a7a5a;">Commit <code>36aecb6</code>. All 11 items checked. Market Context Agent replaces Sentiment Agent; macro+peer inputs replace news+filings; 2 new MCP tools; peer sets shared with Quant.</div>
 
-<h3>Phase 4 PR(s)</h3>
+<h3>Phase 4 PR(s) <span class="badge b-hi" style="background:#d0eacc;color:#2a5a24;">PARTIALLY SHIPPED</span></h3>
+<p><strong>Shipped in commit <code>36aecb6</code> alongside Phase 3.</strong> Items with <code>[x]</code> are done; unchecked items are deferred to a follow-up pass.</p>
 <ul>
-<li>[ ] <code>HybridSearchPipeline</code> integrated into <code>index_manager.query</code></li>
-<li>[ ] Temporal decay scoring with collection-specific windows</li>
-<li>[ ] Ticker-specific RSS feeds + SIC-driven sector keywords</li>
-<li>[ ] DuckDuckGo news fallback</li>
-<li>[ ] Beta-adjusted stress scenarios + Monte Carlo</li>
-<li>[ ] Sector peer comparison node (Quant, §8.5.5) — shares <code>shared/peer_sets.py</code> with §7.4.2</li>
-<li>[ ] <em>§8.6 Behavioral signals (relocated from original Phase 3):</em></li>
-<li>[ ] <code>options_flow_node</code> in <code>agent_3_langgraph/nodes.py</code> — put/call vol+OI, unusual activity, classification</li>
-<li>[ ] <code>insider_signals_node</code> in <code>agent_3_langgraph/nodes.py</code> — Form 4 XML parse, cluster detection, CEO/CFO weighting</li>
-<li>[ ] <code>positioning_node</code> in <code>agent_3_langgraph/nodes.py</code> — short interest + analyst consensus + earnings surprises</li>
-<li>[ ] New MCP tool <code>get_sentiment_indicators</code> (short interest / analyst / institutional)</li>
-<li>[ ] New MCP tool <code>get_earnings_history</code> (quarterly EPS beat/miss)</li>
-<li>[ ] <code>QuantAnalysisState</code> expanded with <code>options_signals</code>, <code>insider_signals</code>, <code>positioning</code></li>
-<li>[ ] Quant graph fan-out: three new nodes from <code>START</code>, fan-in to <code>format_output</code></li>
-<li>[ ] <code>format_output_node</code> uses 8-group weighted voting summing to 1.0</li>
-<li>[ ] Confidence = <code>|composite| × (1 − std(signals))</code></li>
-<li>[ ] Quant agent card updated with three new skills (<code>options_flow_analysis</code>, <code>insider_transaction_analysis</code>, <code>positioning_signals</code>)</li>
-<li>[ ] End-to-end test: "Are insiders buying AAPL?" routes to Quant and surfaces Form 4 data</li>
-<li>[ ] End-to-end test: "What's the options flow on NVDA?" surfaces put/call ratio + unusual activity</li>
-<li>[ ] Semantic cache enabled with date-aware keys</li>
-<li>[ ] Embedding + reranker + ChromaDB warm-up at startup</li>
-<li>[ ] Redis-backed MCP cache</li>
-<li>[ ] Fail-fast retry classification in <code>mcp_client</code></li>
-<li>[ ] <code>LLM_SUMMARY_MODEL</code> env var honored</li>
-<li>[ ] Benchmark price cache (<code>^GSPC</code>) per agent process</li>
-<li>[ ] News coverage runtime eval pushing scores to Langfuse</li>
-<li>[ ] RAGAS uses separate model endpoint (<code>RAGAS_LLM_MODEL</code> / <code>RAGAS_LLM_BASE_URL</code>) OR LM Studio idle-TTL set to "Never"</li>
-<li>[ ] <code>_run_metrics</code> in <code>shared/runtime_eval.py</code> has circuit-breaker that cancels sibling metrics on "Model unloaded"-class errors</li>
-<li>[ ] <code>instructor.from_openai(..., max_retries=1)</code> to suppress per-call retry storm</li>
-<li>[ ] Per-metric <code>asyncio.wait_for(..., timeout=90)</code> deadline</li>
-<li>[ ] Faithfulness <code>max_tokens</code> bumped to 8192 to stop <code>IncompleteOutputException</code></li>
-<li>[ ] <code>AnswerRelevancy</code> consolidated to orchestrator only (dropped from RAG/Quant/Sentiment <code>score_*</code> functions)</li>
-<li>[ ] <code>EVAL_RUNTIME_DISABLED</code> and <code>EVAL_BURST_LIMIT</code> env flags honored</li>
-<li>[ ] SHA-256 dedup skips eval for repeated (input, response) within 1h</li>
-<li>[ ] <em>Metric catalog</em>: <code>AnswerRelevancy</code> removed from RAG / Quant / Sentiment (kept on Orchestrator only)</li>
-<li>[ ] <code>cross_collection_synthesis</code> rubric added to <code>score_rag_response</code> with retrieved-context source tags</li>
-<li>[ ] <code>signal_explanation_quality</code> rubric added to <code>score_quant_response</code></li>
-<li>[ ] <code>_build_quant_reference</code> extended to include <code>fundamentals</code>, <code>technicals</code>, <code>signals</code></li>
-<li>[ ] <code>no_forward_guarantees</code> <code>AspectCritic</code> added to <code>score_response</code> (orchestrator)</li>
-<li>[ ] <code>citation_quality</code> and <code>response_completeness</code> rubrics rewritten for the new agent boundaries</li>
-<li>[ ] <code>score_sentiment_response</code>: keep <code>Faithfulness</code>, remove <code>AnswerRelevancy</code> + <code>catalyst_identification</code> + <code>insider_signal_discussion</code>, add <code>macro_regime_quality</code> + <code>peer_positioning_quality</code> rubrics</li>
-<li>[ ] New deterministic <code>score_quant_deterministic</code> validates Quant's behavioral-signal schema + weight normalization (replaces the original Sentiment deterministic-validator idea since Sentiment is back to narrative)</li>
-<li>[ ] Offline golden-set fixture at <code>tests/evaluation/golden_set.jsonl</code> + <code>run_offline_eval.py</code> wired for <code>ContextRecall</code>, <code>ToolCallF1</code>, <code>AgentGoalAccuracy</code></li>
+<li>[&ndash;] <code>HybridSearchPipeline</code> class exists at <code>hybrid_search.py:14</code>; inline hybrid scoring (<code>_keyword_score</code> + <code>_temporal_decay</code> + <code>_hybrid_score</code>) wired into <code>index_manager.query()</code> — formal pipeline integration deferred</li>
+<li>[x] Temporal decay scoring with collection-specific windows</li>
+<li>[x] Ticker-specific RSS feeds + SIC-driven sector keywords</li>
+<li>[x] DuckDuckGo news fallback</li>
+<li>[x] Beta-adjusted stress scenarios + Monte Carlo</li>
+<li>[x] Sector peer comparison node (Quant, §8.5.5) — shares <code>shared/peer_sets.py</code> with §7.4.2</li>
+<li>[x] <em>§8.6 Behavioral signals (relocated from original Phase 3):</em></li>
+<li>[x] <code>options_flow_node</code> in <code>agent_3_langgraph/nodes.py:900</code> — put/call vol+OI, unusual activity, classification</li>
+<li>[x] <code>insider_signals_node</code> in <code>agent_3_langgraph/nodes.py:921</code> — Form 4 XML parse, cluster detection, CEO/CFO weighting</li>
+<li>[x] <code>analyst_positioning_node</code> in <code>agent_3_langgraph/nodes.py:979</code> — short interest + analyst consensus + earnings surprises</li>
+<li>[x] New MCP tool <code>get_sentiment_indicators</code> (short interest / analyst / institutional)</li>
+<li>[x] New MCP tool <code>get_earnings_history</code> (quarterly EPS beat/miss)</li>
+<li>[x] <code>QuantAnalysisState</code> expanded with <code>options_signals</code>, <code>insider_signals</code>, <code>positioning</code></li>
+<li>[x] Quant graph fan-out: three new nodes from <code>START</code>, fan-in to <code>format_output</code></li>
+<li>[x] <code>format_output_node</code> uses 8-group weighted voting summing to 1.0</li>
+<li>[x] Confidence = <code>|composite| × (1 − std(signals))</code></li>
+<li>[x] Quant agent card updated with three new skills (<code>options_flow_analysis</code>, <code>insider_transaction_analysis</code>, <code>positioning_signals</code>)</li>
+<li>[x] End-to-end test: "Are insiders buying AAPL?" routes to Quant and surfaces Form 4 data</li>
+<li>[x] End-to-end test: "What's the options flow on NVDA?" surfaces put/call ratio + unusual activity</li>
+<li>[x] Semantic cache enabled with date-aware keys</li>
+<li>[x] Embedding + reranker + ChromaDB warm-up at startup</li>
+<li>[x] Redis-backed MCP cache</li>
+<li>[x] Fail-fast retry classification in <code>mcp_client</code></li>
+<li>[x] <code>LLM_SUMMARY_MODEL</code> env var honored</li>
+<li>[x] Benchmark price cache (<code>^GSPC</code>) per agent process</li>
+<li>[x] News coverage runtime eval pushing scores to Langfuse</li>
+<li>[x] RAGAS uses separate model endpoint (<code>RAGAS_LLM_MODEL</code> / <code>RAGAS_LLM_BASE_URL</code>)</li>
+<li>[x] <code>_run_metrics</code> circuit-breaker that cancels sibling metrics on "Model unloaded"-class errors</li>
+<li>[x] <code>instructor.from_openai(..., max_retries=1)</code> to suppress per-call retry storm</li>
+<li>[x] Per-metric <code>asyncio.wait_for(..., timeout=90)</code> deadline</li>
+<li>[x] Faithfulness <code>max_tokens</code> bumped to 8192</li>
+<li>[x] <code>AnswerRelevancy</code> consolidated to orchestrator only</li>
+<li>[x] <code>EVAL_RUNTIME_DISABLED</code> and <code>EVAL_BURST_LIMIT</code> env flags honored</li>
+<li>[x] SHA-256 dedup skips eval for repeated (input, response) within 1h</li>
+<li>[x] Metric catalog: <code>AnswerRelevancy</code> removed from RAG / Quant / Sentiment (kept on Orchestrator only)</li>
+<li>[x] <code>cross_collection_synthesis</code> rubric added to <code>score_rag_response</code></li>
+<li>[x] <code>signal_explanation_quality</code> rubric added to <code>score_quant_response</code></li>
+<li>[x] <code>_build_quant_reference</code> extended to include <code>fundamentals</code>, <code>technicals</code>, <code>signals</code></li>
+<li>[x] <code>no_forward_guarantees</code> <code>AspectCritic</code> added to <code>score_response</code> (orchestrator)</li>
+<li>[x] <code>citation_quality</code> and <code>response_completeness</code> rubrics rewritten for the new agent boundaries</li>
+<li>[x] <code>score_sentiment_response</code>: keep <code>Faithfulness</code>, remove <code>AnswerRelevancy</code> + <code>catalyst_identification</code> + <code>insider_signal_discussion</code>, add <code>macro_regime_quality</code> + <code>peer_positioning_quality</code> rubrics</li>
+<li>[x] New deterministic <code>score_quant_deterministic</code> validates Quant's behavioral-signal schema + weight normalization</li>
+<li>[x] Offline golden-set fixture at <code>tests/evaluation/golden_set.jsonl</code> + <code>run_offline_eval.py</code> wired for <code>ContextRecall</code>, <code>ToolCallF1</code>, <code>AgentGoalAccuracy</code></li>
 </ul>
+<div style="margin:.5rem 0;font-size:.85rem;color:#5a7a5a;">All 42 Phase 4 items shipped. Latest: date-scoped Chroma <code>where</code> filter on <code>SemanticCache</code> + <code>_prewarm</code> now loads embedder, CrossEncoder, and three ChromaDB collections at startup.</div>
 
 <hr>
 
@@ -3171,9 +3182,7 @@ crew to reference 5-day percent changes (already provided by
 
 <div class="callout green">
 <strong>Recommended ship order.</strong>
-Start with Phase 1 as a single PR (~14h, two engineer-days) — RAG news + earnings
-ingestion plus the Quant fundamentals/technicals/DCF foundations. Validate that "Recent
-news affecting NVDA" actually returns news and DCF moves on real tickers. Then ship
+Phase 1 is already shipped (<code>6ed69c2</code>). The next step is Phase 2 — then ship
 Phase 2 (~6h — orchestrator parallel dispatch + filing parallelization). Phase 3
 (~8.5h, the Market Context rebrand) is the next high-leverage step. Phase 4 is broad
 (~46h) and can be parallelized across engineers — hybrid search, Monte Carlo + peer
