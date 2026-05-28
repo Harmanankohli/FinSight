@@ -1415,3 +1415,488 @@ The `load_memory` tool returned empty results even after sessions were persisted
 2. **`_persist_to_memory`** — called directly in `agent_executor.py` after response processing (works for A2A requests)
 
 This ensures memory works regardless of invocation path.
+
+## Data-Driven DCF Assumptions
+
+### Why replace the hardcoded 8% WACC with data-driven computation?
+
+The original DCF model assumed a fixed 8% WACC for all tickers. For a high-beta tech stock (AAPL, beta=1.2), CAPM gives cost of equity ≈ 4.3% + 1.2 × 5.5% = 10.9% — 36% higher than the fixed assumption, overvaluing the stock. For a low-beta utility (DUK, beta=0.5), CAPM gives 4.3% + 0.5 × 5.5% = 7.05% — 12% lower, undervaluing it. A single WACC for all tickers systematically biases DCF outputs.
+
+### How is WACC now computed?
+
+Three-step process in `dcf_valuation_node()` (`agent_3_langgraph/nodes.py:737`):
+
+1. **Cost of equity (CAPM)**: `risk_free (4.3%) + beta × equity_premium (5.5%)`. Beta is taken from the computed metrics (yfinance 60-month), fallback to 1.0 if unavailable.
+
+2. **After-tax cost of debt**: `interest_expense / total_debt × (1 - tax_rate)`, with fallback to 4%. Total debt is `longTermDebt + shortTermDebt` from latest financials.
+
+3. **WACC**: Weighted average by market cap and total debt, clamped to [6%, 18%]. `wacc = (E/(E+D)) × coe + (D/(E+D)) × cod_at`. The clamp prevents degenerate values from extreme capital structures (e.g., a company with near-zero debt doesn't get a 2% WACC).
+
+### How is the growth rate determined?
+
+Previously fixed at a single value. Now computed as:
+- **Base growth**: Blend of `revenueGrowth` (60%) and `earningsGrowth` (40%) from yfinance fundamentals
+- **Bounds**: Clamped to [2%, 25%] — a 2% floor reflects long-term GDP trend, 25% ceiling prevents unrealistic perpetual growth
+- **Fallback**: 8% if neither growth metric is available (same as the old hardcoded value)
+- **Terminal growth**: `min(3%, wacc - 2%)` — prevents terminal value from exceeding WACC (which would make terminal value infinite)
+
+### Why a tapered projection instead of a single-stage model?
+
+A 2-stage DCF (high growth → terminal) produces abrupt jumps in the projected FCF. The 5-year tapered model linearly fades the initial growth rate toward the terminal rate over years 3–5, producing smoother valuations. The terminal value uses the Gordon Growth Model discounted to present value.
+
+### Key properties
+
+- ✅ Per-ticker WACC — beta and capital structure influence discount rate
+- ✅ Data-driven growth — revenue/earnings growth sets projections, not a constant
+- ✅ Bounded output — WACC clamped [6%, 18%], growth clamped [2%, 25%]
+- ✅ Smooth projection — tapered fade avoids GGM discontinuity
+- ✅ De facto backward compatible — fallback chain defaults to 8%/3% when data missing
+
+## Parallel Fan-Out Graph Topology
+
+### Why parallel fan-out instead of a sequential chain?
+
+The original Quant graph was largely sequential: `fetch_prices → compute_metrics → DCF/stress → format_output`. Price fetching and fundamentals fetching were sequential, adding ~3-5s per call. The revised graph fans out from START into 5 parallel branches:
+
+```
+START ──→ fetch_prices ──→ compute_base_metrics ──[volatility gate]──→ DCF/stress
+                       └──→ technical_analysis
+       └──→ fetch_fundamentals ──→ peer_comparison
+                               └──→ analyst_positioning
+       └──→ options_flow
+       └──→ insider_signals
+```
+
+All paths converge at `format_output` → `llm_summary`. Since the branches are independent (prices don't depend on fundamentals, technicals don't depend on DCF), there's no reason to serialize them. `LangGraph` supports multiple outgoing edges from a node naturally — no special parallel construct needed.
+
+### Why not merge `fetch_prices` and `fetch_fundamentals` into one node?
+
+They call different MCP tools with different cache profiles and error characteristics. `fetch_prices` uses `get_prices` (TTL-cached at 1 min) and can fail independently of `fetch_fundamentals` (TTL-cached at 1 hr). A single node would couple their lifetimes — if fundamentals data fails, prices are also lost, even though price-only analysis (volatility, Sharpe, technicals) is still useful.
+
+### Why a volatility gate instead of always computing both DCF and stress test?
+
+DCF is meaningless for extremely volatile stocks — the discount rate uncertainty swamps the valuation. The 35% annual-vol threshold gates to stress test only, saving the ~1-2s DCF computation and avoiding a meaningless output. The `dcf_error` field is set in `compute_metrics_node` *before* the routing decision, so callers see "DCF skipped: volatility exceeded 35%" regardless of which path is taken.
+
+### Why add options_flow and insider_signals as separate branches?
+
+These were previously not computed at all (no data source). Adding them as parallel branches from START means they run concurrently with prices/fundamentals with zero added latency (assuming no MCP bottleneck). Their data is incorporated at `format_output` through a weighted signal aggregation alongside the risk/DCF/fundamentals/technicals scores.
+
+### Key properties
+
+- ✅ 5 parallel branches — independent work streams don't block each other
+- ✅ Volatility-gated DCF — saves compute when valuation would be meaningless
+- ✅ No node coupling — price and fundamentals failures are isolated
+- ✅ Zero added latency — new branches (options, insider) run concurrently
+- ✅ All paths converge at format_output — single enrichment point
+
+## Parallel News Ingestion with SEC Filings
+
+### Why fire news and SEC ingestion as concurrent background tasks?
+
+The original RAG agent fetched SEC filings first (`_ensure_ingested`), then queried. News was fetched on-demand via a separate MCP tool call inside the query path. This meant:
+1. News ingestion added 1-3s latency to every query that mentioned "news" or "sentiment"
+2. News and SEC ingestion were sequential (~3s + ~8s = ~11s total cold-start)
+3. No persistent news index — news was re-fetched from MCP each time (no dedup cache)
+
+### Solution
+
+`query()` in `agent_2_llamaindex/executor.py:162` now fires both ingestions as `asyncio.create_task()` without awaiting:
+```python
+asyncio.create_task(self._ensure_ingested(ticker))
+asyncio.create_task(self._ensure_news_ingested(ticker))
+return await self.index.query(ticker, query_text)
+```
+
+The ChromaDB query runs immediately against whatever is already indexed. If a filing or news article was ingested in a prior query, it's found. If the ticker has never been queried before, the ingestion tasks complete in the background and the current query returns results from the first ingestion that finishes (or falls back gracefully).
+
+### Why a separate dedup key for news?
+
+SEC filings use `edgar_url` as the dedup key — immutable and canonical for SEC documents. News articles don't have an EDGAR URL. Using `news_{ticker}` as the daily dedup key in `_last_ingestion` ensures news is re-fetched at most once per day per ticker, regardless of how many times the ticker is queried. The same daily-dedup pattern as `_ensure_ingested` but with a different key namespace.
+
+### Why separate ChromaDB collections for news vs filings?
+
+Different retrieval characteristics: news queries want recency (temporal decay matters), filing queries want relevance (semantic similarity matters). A single collection would mix the two, making it impossible to apply different reranking strategies. The `_classify_query_intent` function selects which collections to search based on query keywords, and the `_hybrid_score` blends vector (0.6), keyword (0.2), and temporal decay (0.2) differently per collection.
+
+### Key properties
+
+- ✅ Zero added latency — ingestion is fire-and-forget, query uses existing index
+- ✅ Parallel cold-start — news and filings ingest concurrently (~8s total vs ~11s)
+- ✅ Daily dedup per ticker — `news_{ticker}` key prevents redundant fetches
+- ✅ Separate collections — per-type retrieval strategies
+- ✅ Graceful degradation — query returns best available data
+
+## Multi-Collection Query Routing
+
+### Why keyword-based intent classification instead of RouterQueryEngine?
+
+LlamaIndex's `RouterQueryEngine` uses an LLM call to decide which tool/index to route to. For every RAG query, this adds ~2-5s of LLM inference time and ~500-2000 tokens, with the risk of the LLM choosing the wrong collection (e.g., routing an earnings question to general SEC filings). A keyword-based `_classify_query_intent()` in `index_manager.py:68` completes in microseconds with deterministic results.
+
+The classifier checks the query text for keyword groups:
+- `news`, `sentiment`, `headline`, `breaking`, etc. → include `"news"` collection
+- `earnings`, `revenue`, `guidance`, `eps`, `beat`, `miss` → include `"earnings"` collection
+- `analyze`, `overview`, `outlook`, `recommend`, `should I` → search ALL collections
+- Default (pure financial analysis queries): search `"sec_filings"` only
+
+### Why score-sorted dedup instead of top-k per collection?
+
+If each collection returns top-5 nodes and they overlap, the final set may have duplicates. The merge-dedup pipeline: collect all nodes from all selected collections → hybrid re-score each node → sort by score descending → deduplicate by content hash (first 200 chars) → truncate to top-5. This guarantees:
+1. The best-matching nodes win regardless of source collection
+2. No duplicate content reaches the LLM (which would waste context window)
+3. A node from a low-priority collection can outrank a weak match from the primary one
+
+### Why a 3-factor hybrid score?
+
+A pure vector score favors semantically similar but potentially old content. Adding keyword overlap (exact term matching) ensures query terms like "Q3 2025 revenue" surface documents with those exact phrases. Adding temporal decay (exponential, λ=0.004, year-old ≈ 0.23) favors recent news/earnings without completely excluding old filings. The weighted blend (0.6 vector + 0.2 keyword + 0.2 temporal) is tuned to balance semantic relevance with recency for financial data, where both matter.
+
+### Why not use LlamaIndex's built-in retriever fusion?
+
+`RetrieverQueryEngine` fusion expects all retrievers to use the same index type and similarity metric. Our collections are independent ChromaDB instances with different embedding profiles (different document types require different chunking strategies). The custom pipeline gives full control over per-collection retrieval parameters (top-k per collection, hybrid scoring weights, dedup strategy) without fighting the framework's assumptions.
+
+### Key properties
+
+- ✅ Deterministic routing — no LLM cost, no latency, no hallucinated choices
+- ✅ Microsecond classification — ~500x faster than RouterQueryEngine
+- ✅ Score-sorted dedup — best content wins, duplicates eliminated
+- ✅ 3-factor hybrid score — semantic + keyword + temporal = financial-grade ranking
+- ✅ Framework-agnostic — works with any vector store, not just LlamaIndex
+
+## Orchestrator Parallel Dispatch via System Prompt
+
+### Why change the system prompt instead of adding code-level dispatch logic?
+
+Two options existed for parallel agent dispatch:
+- **Option A (system prompt)**: Instruct the LLM in `_STATIC_PREAMBLE` to emit all `send_message` calls in a single assistant turn. Qwen3-30B-A3B natively supports multiple tool calls in one response — the instruction simply unlocks existing capability.
+- **Option B (deterministic extraction)**: A Python-side shim that extracts tickers from user input and fires all sub-agent A2A calls simultaneously, bypassing the LLM for routing. ~5h implementation, adds ticker-extraction false-negative risk.
+
+Option A was chosen (implemented in `agent_1_adk/agent.py:184-189`). It's zero new code, zero added latency, and has a documented escape hatch (Option B) if a future model swap breaks parallel tool calling. The `_STATIC_PREAMBLE` is KV prefix cached — adding the instruction has no inference cost.
+
+### Why add agent responsibility boundaries separately?
+
+Without boundaries, the LLM sometimes routes news-related queries to the Sentiment agent ("get news sentiment" sounds like the Sentiment agent's job) even though RAG now owns financial news retrieval. The boundaries block in `_build_instruction()` (`agent.py:253-260`) disambiguates: "Financial RAG Agent owns ALL document and news retrieval." This is a narrow fix — it doesn't refactor any agent — just clarifies the prompt to reduce misrouting.
+
+### Why update step 5 to mention receiving results "together"?
+
+The old step 5 said "After all agents respond" without specifying whether results arrive individually or together. The new wording ("you will receive their results together in the next turn") aligns the LLM's expectation with the actual A2A behavior — all sub-agent responses arrive in the subsequent turn because the LLM doesn't await between `send_message` calls. This prevents the model from trying to process partial results prematurely.
+
+### Key properties
+
+- ✅ Zero new code — pure system prompt instruction, no Python dispatch shim
+- ✅ KV-cached — static preamble keeps prefix cache warm
+- ✅ Documented escape hatch — Option B exists on paper if needed
+- ✅ Narrow boundary fix — prevents LLM misrouting news to Sentiment agent
+- ✅ Explicit parallel contract — step 5 confirms batch reception
+
+## Parallel Filing Downloads + Server-Side Truncation
+
+### Why switch from sequential to parallel filing fetches?
+
+The original `_ensure_ingested()` in `agent_2_llamaindex/executor.py` fetched filing content in a sequential loop: for each filing, call `get_filing_content`, parse, append. For a ticker with 5 new filings, this summed the per-filing latencies (~3-5s each = ~15-25s total). The revised two-phase pattern (`executor.py:74-107`):
+1. **Filter phase**: Iterate filings to find un-ingested candidates (fast, no network)
+2. **Fetch phase**: `asyncio.gather(*[_fetch_one(f) for f in candidates])` — all filing downloads run concurrently
+
+Filing downloads for a 5-filing ingest now complete in ~max(per-filing latency) (~3-5s). The `_fetch_one` helper isolates per-filing errors — one failed filing doesn't block the others.
+
+### Why truncate server-side at 25k instead of client-side at 20k?
+
+The old code truncated `content[:20000]` in the RAG agent after receiving the full response from MCP. A 10-K filing response (~80-150k chars) was fully transmitted over the loopback before being truncated. Moving the truncation to `get_filing_content` in `mcp_servers/finsight_server.py:842` (`result["content"] = result.get("content", "")[:25000]`) cuts the bandwidth to <25k per filing — the RAG agent never receives the full text. The limit was also raised from 20k to 25k (MCP server overhead is negligible, more content is better for retrieval).
+
+### Why not parallelize filing fetches in Phase 1?
+
+Phase 1 added the RAG news ingestion and multi-collection architecture. Parallelizing filing downloads was deferred to Phase 2 because the sequential loop was already functional — the latency impact was hidden behind the total cold-start (~11s). With Phase 2's focus on latency reduction, the parallel fetch was the highest-leverage change in the RAG pipeline.
+
+### Key properties
+
+- ✅ O(max) instead of O(sum) — 5-filing ingest drops from ~20s to ~4s
+- ✅ Isolated errors — per-filing failure doesn't block other filings
+- ✅ Server-side truncation — bandwidth cap, not client-side afterthought
+- ✅ Raised limit — 25k vs 20k, more content for retrieval
+- ✅ Backward compatible — ingestion pipeline downstream unchanged
+
+## Single-Flight News Cache
+
+### Why refactor `get_news_sentiment` into impl + wrapper?
+
+The original `get_news_sentiment` used manual `_cache_news.get(key)` / `_cache_news.set(key, result)` pattern. When two concurrent callers (e.g., RAG agent + dashboard) requested the same uncached ticker simultaneously, both would miss the cache, both would fetch RSS feeds, and both would set the cache — wasting one RSS round-trip (~1-2s). The `TTLCache.get_or_fetch()` method (`shared/ttl_cache.py:25`) was already designed for this: it uses an internal `asyncio.Event` per key so the second caller awaits the first's result instead of duplicating work.
+
+The refactor (`mcp_servers/finsight_server.py:1406-1551`):
+1. Extracted all fetch logic into `_get_news_sentiment_impl(ticker, limit)` — pure data fetching, no caching concern
+2. The outer `get_news_sentiment` tool now just calls `_cache_news.get_or_fetch(cache_key, lambda: _get_news_sentiment_impl(...))`
+
+### Why was this deferred from Phase 1?
+
+Phase 1's news ingestion was single-caller (only the RAG agent's background task calls `get_news_sentiment`). The single-flight pattern matters when multiple concurrent callers exist — which Phase 2 doesn't introduce directly, but the fix is zero-risk (pure refactor) and prevents future regressions when additional consumers (dashboard, sentiment agent's parallel data collection) call the same tool.
+
+### Key properties
+
+- ✅ Single-flight — concurrent callers share one RSS fetch
+- ✅ Zero behavioral change — cache key, TTL, and response format identical
+- ✅ Pure refactor — impl extracted, wrapper delegates to get_or_fetch
+- ✅ Already-supported pattern — TTLCache.get_or_fetch existed, just unused by this tool
+
+## Fire-and-Forget RAG Ingestion
+
+### Why convert `_ensure_ingested` from await to fire-and-forget?
+
+Phase 1's `query()` used `await asyncio.gather(self._ensure_ingested(ticker), self._ensure_news_ingested(ticker))` — the query blocked until both ingestion tasks completed. This added ~8s (filings) + ~3s (news) = ~11s of cold-start latency to every new ticker's first query. The query result could only use data indexed from a previous run.
+
+Phase 2 converts both to `asyncio.create_task()` (`executor.py:162-166`):
+```python
+asyncio.create_task(self._ensure_ingested(ticker))
+asyncio.create_task(self._ensure_news_ingested(ticker))
+return await self.index.query(ticker, query_text)
+```
+
+The ChromaDB query runs immediately against whatever is already indexed. If the ticker was queried before, all data is available. If it's a new ticker, the ingestion finishes in the background and the current query returns a warming signal.
+
+### Why a warming signal instead of silently returning empty results?
+
+Silent empty results are confusing — the user sees "no data found" and doesn't know whether the ticker genuinely has no filings or the index is still warming. The `_warming` flag in `index_manager.py` (`{"_warming": True, "summary": "Index is warming for {ticker}..."}`) makes the state explicit. The orchestrator LLM can use this signal to tell the user "analysis in progress, results will improve."
+
+### Why keep the per-ticker `asyncio.Event` tracking optional?
+
+The plan mentioned optional `self._ingest_events: dict[str, asyncio.Event]` so a same-process second query could briefly await the first's ingestion. This wasn't implemented because:
+1. The warming signal already communicates the incomplete state
+2. An Event-based wait adds complexity for marginal UX gain (the background task completes in ~8s anyway)
+3. The simple approach (fire-and-forget + warming signal) is correct for both first and subsequent queries
+
+### Key properties
+
+- ✅ Zero blocking on first query — ingestion runs in background
+- ✅ Warming signal — explicit incomplete-state communication
+- ✅ Existing data still usable — previously indexed content returns immediately
+- ✅ No complexity — no ingestion-tracking events needed
+- ✅ Graceful degradation — query returns best available data, even if partial
+
+## Sentiment Agent → Market Context Agent Rebrand
+
+### Problem
+
+Phase 1 gave the RAG agent news + filing retrieval. The Sentiment agent's news/filing fetch then became redundant — both agents fetched the same data and produced overlapping narratives. The original redesign proposal wanted to gut the Sentiment agent entirely, but the CrewAI narrative engine was already producing useful qualitative analysis. The question was: what unique analytical lane could Sentiment own that RAG and Quant didn't?
+
+### Solution
+
+Rebrand "Sentiment Intelligence Agent" → "Market Context Agent" and repurpose its CrewAI narrative engine from bottom-up news analysis to top-down macro + peer positioning:
+
+1. **New MCP tool `get_macro_indicators()`** (`finsight_server.py:305`): Fetches Treasury yields (10Y/2Y), VIX, DXY, sector ETF performance — all cached 15 min. No ticker argument (macro is global).
+
+2. **New `shared/peer_sets.py`**: 33 hand-curated peer sets across 10+ sectors. Shared with Quant's `peer_comparison_node` (§8.5.5 in the plan). The resolver returns up to 5 peers, excluding the ticker itself.
+
+3. **`_collect_data_parallel` rewritten** (`executor.py:39-86`): 3-step pipeline — macro + primary financials → resolve peers → parallel peer financials + prices. Drops `get_news_sentiment` and `get_company_filings` entirely.
+
+4. **MarketContextCrew** (`crew.py`): Single agent, role "Market Context Analyst". Task outputs JSON: `narrative`, `macro_regime`, `relative_peer_positioning`, `overall_signal`, `confidence_score` (0-1), `key_tailwinds`, `key_headwinds`.
+
+5. **Agent card** (`market_context_agent.json`): Two skills — `macro_regime_analysis`, `peer_landscape_analysis`.
+
+### Why not keep Sentiment and RAG both fetching news?
+
+Overlap. Both agents called `get_news_sentiment` and `get_company_filings` — the same MCP tools, the same cached data. The single-flight cache (Phase 2) already deduplicated the RSS fetches, but the orchestrator LLM still received two redundant narratives. Giving each agent a distinct data lane eliminates redundancy and makes the orchestrator's synthesis more efficient (RAG = document retrieval, Market Context = macro/peer positioning, Quant = numbers).
+
+### Key properties
+
+- ✅ No redundant data fetches — every agent owns distinct MCP tools
+- ✅ Shared peer sets — Market Context and Quant use the same `peer_sets.py`
+- ✅ Backward compatible — old agent name `sentiment_agent.json` removed; orchestrator discovers `market_context_agent.json` via `SubAgentClient.discover()`
+- ✅ Langfuse trace continuity — trace name `market-context-agent-stream` replaces `sentiment-agent-stream`
+- ✅ RAGAS rubrics updated — `macro_regime_quality` + `peer_positioning_quality` replace old sentiment rubrics
+
+## Quant Behavioral Signals — 8-Group Weighted Voting
+
+### Problem
+
+The Phase 1 Quant agent produced fundamentals + technicals + DCF — strong on logical analysis but blind to market psychology, insider behavior, and options flow. These signals (`put_call_ratio`, `insider_buying`, `short_interest`, `analyst_consensus`) capture what the broader market is *doing*, not just what the numbers say. The original Phase 3 plan assigned them to a redesigned Sentiment agent, but they're deterministic math on structured data — Quant's natural home.
+
+### Solution
+
+Add three new graph nodes to the Quant LangGraph, each fetching data via existing or new MCP tools and computing normalized signals (-1 to +1):
+
+| Node | Data Source | Signal |
+|---|---|---|
+| `options_flow_node` (`nodes.py:900`) | `get_options_chain` MCP | put/call vol ratio, OI ratio, flow classification |
+| `insider_signals_node` (`nodes.py:921`) | `get_company_filings` → Form 4 XML | net direction (90-day), CEO/CFO weighted |
+| `analyst_positioning_node` (`nodes.py:979`) | `get_sentiment_indicators` (new) + `get_earnings_history` (new) | consensus score, upside %, short interest, squeeze risk |
+
+All three fan out from `START` alongside the existing nodes. `format_output_node` collects all 8 signal groups (technical, fundamental, narrative, options, insider, positioning, macro, risk) with weights summing to 1.0:
+
+```python
+_SIGNAL_WEIGHTS = {
+    "technical":    0.15,
+    "fundamental":  0.15,
+    "narrative":    0.10,
+    "options":      0.12,
+    "insider":      0.10,
+    "positioning":  0.11,
+    "macro":        0.12,
+    "risk":         0.15,
+}
+```
+
+Confidence formula (§8.6.2): `|composite| × (1 − std(present_signals))`
+
+### Why raw weighted sum instead of normalized?
+
+The plan's original `normalize_weights = {k: v / sum_present for k, v in _SIGNAL_WEIGHTS.items()}` renormalized weights to sum to 1.0 using only the signals present in a given ticker's response. This made confidence uninformative: a response with only 2 signals (e.g. technical + fundamental, sum=0.30) would normalize them to 0.50 each, producing the same composite as if all 8 were present. The fix (`nodes.py:228`) keeps the raw weighted sum — if only 2 of 8 signals are present, the composite is inherently lower (0.30 × signal values), which correctly reflects the reduced signal density.
+
+### Key properties
+
+- ✅ Deterministic — no LLM calls for signal computation
+- ✅ Same peer resolver (`shared/peer_sets.py`) as Market Context Agent
+- ✅ Normalized signals (-1 to +1) for uniform voting
+- ✅ 8-group coverage across fundamental, technical, behavioral, and macro dimensions
+- ✅ Confidence formula accounts for signal sparsity
+
+## Redis Two-Level Cache (L1 TTLCache + L2 Redis Write-Through)
+
+### Problem
+
+MCP tool results are cached in-process via `TTLCache` (`shared/ttl_cache.py:25`). In a multi-process deployment (e.g. Docker with 3 agent containers each calling the same MCP tools), each process maintains its own cache — the first request to each process pays the full yfinance/RSS fetch cost. A shared cache eliminates this redundancy.
+
+### Solution
+
+`shared/redis_cache.py` implements a two-level cache:
+
+- **L1**: In-process `TTLCache` (fast, no network). Hit → return immediately.
+- **L2**: Redis write-through. L1 miss → read from Redis → populate L1. Every L1 `set()` propagates to Redis.
+
+```python
+def make_cache(ttl_seconds: int = 300, name: str = "") -> TTLCache | RedisCache:
+    if REDIS_URL:
+        return RedisCache(ttl_seconds=ttl_seconds, name=name)
+    return TTLCache(ttl_seconds=ttl_seconds)
+```
+
+All existing `TTLCache(...)` instantiations in `finsight_server.py` remain valid — `make_cache()` returns a `TTLCache` when `REDIS_URL` is unset, identical behavior to before. When `REDIS_URL` is configured, the returned `RedisCache` adds shared persistence transparently.
+
+### Why not Redis-only?
+
+Latency and complexity. An in-process L1 is ~1µs (dict lookup) vs ~1ms (Redis round-trip). The L1 covers the common case (repeated tool calls within the same request), while L2 handles cross-process sharing. The write-through pattern ensures L2 is always fresh without a separate invalidation mechanism.
+
+### Key properties
+
+- ✅ Transparent drop-in — `make_cache()` returns same interface as `TTLCache`
+- ✅ No migration effort — existing `_cache_*` variables accept `TTLCache` or `RedisCache`
+- ✅ L1 speed for repeated calls, L2 sharing across processes
+- ✅ Write-through keeps L2 fresh automatically
+- ✅ Graceful degradation — Redis unreachable falls back to L1-only
+
+## RAGAS Eval Hardening — Circuit Breaker, SHA-256 Dedup, Burst Limiter
+
+### Problem
+
+Each RAG/Quant/Sentiment response fires 2-5 RAGAS LLM metric calls against the same Qwen3-30B model that serves live user queries. Three failure modes were observed (`logs/sentiment.log`, `logs/rag_agent.log`):
+
+1. **Model unload storms**: A single "Model unloaded" error triggers 3 retries per metric × 5 metrics = 15 concurrent load attempts, overwhelming LM Studio and slowing the next user query.
+2. **Identical response re-evals**: When the orchestrator issues the same query in back-to-back requests (e.g. cache miss then cache hit), every metric re-scores the identical (input, response) pair.
+3. **Metric timeout cascade**: A single stuck metric (e.g. Faithfulness with 3000-token context) blocks all other metrics indefinitely.
+
+### Solution
+
+Four hardening layers in `shared/runtime_eval.py`:
+
+1. **Circuit breaker** (`_CIRCUIT_MAX_FAILURES=5`): After 5 consecutive metric failures, all eval is skipped for 5 min. Per-metric `_last_failure` tracking for granular reset.
+
+2. **SHA-256 dedup** (`_dedup_seen` TTL dict, 1h): `sha256(f"{input}|{response}")` key — skips eval when the exact same query+response pair was scored within the last hour.
+
+3. **Burst limiter** (`_burst_ok()`): Deque of timestamps enforces `EVAL_BURST_LIMIT` evaluations per minute per process. Oldest timestamps evicted on overflow.
+
+4. **Per-metric timeout** (`_score_metric_with_timeout()`): Each RAGAS metric wrapped in `asyncio.wait_for(timeout=EVAL_METRIC_TIMEOUT, default=90)`. Timeout raises `CancelledError`, sibling metrics continue.
+
+The unified gate `_gate_ok()` combines all four: `EVAL_RUNTIME_DISABLED → False` | circuit tripped → `False` | burst exceeded → `False` | dedup hit → `False` | else → `True`.
+
+### Why four layers instead of one?
+
+Each addresses a distinct failure mode. The circuit breaker handles sustained failures (model offline). The burst limiter handles transient spikes (batch processing). Dedup handles redundant work (identical responses). Timeouts handle individual metric issues (overly long contexts). Removing any one layer still leaves exposure.
+
+### Key properties
+
+- ✅ Circuit breaker prevents eval storm cascade
+- ✅ SHA-256 dedup eliminates redundant LLM calls for repeated responses
+- ✅ Burst limiter protects against eval batch-processing spikes
+- ✅ Per-metric timeout prevents one stuck metric from blocking others
+- ✅ All controlled via env vars (`EVAL_RUNTIME_DISABLED`, `EVAL_BURST_LIMIT`, `EVAL_METRIC_TIMEOUT`)
+- ✅ Zero-LSM `score_quant_deterministic()` validates schema without LLM calls
+
+## Date-Aware Semantic Cache
+
+### Problem
+
+The semantic cache (`shared/semantic_cache.py`) stores responses keyed by query text. A user asking "Analyze NVDA" on Tuesday would hit the cache from Monday's analysis — missing overnight news, price moves, or macro shifts. The cache was too effective: it served stale content across trading days.
+
+### Solution
+
+Tag each cache entry with the current `YYYY-MM-DD` date on write, and filter by date on read:
+
+```python
+# shared/semantic_cache.py — set()
+today = date.today().isoformat()  # YYYY-MM-DD
+self._collection.add(
+    ids=[entry_id],
+    embeddings=[embedding],
+    metadatas=[{"date": today, "response": ...}],
+    documents=[query],
+)
+
+# get()
+results = self._collection.query(
+    query_embeddings=[embedding],
+    n_results=1,
+    where={"date": today},  # only today's entries
+)
+```
+
+A ChromaDB `where` filter on the metadata `date` field ensures only entries from the current date match. Same query on different days → no metadata match → cache miss → new analysis generated and stored.
+
+### Why not a TTL?
+
+A fixed TTL (e.g. 24 hours) would still serve stale data: a query at 9 AM Monday and another at 9 AM Tuesday would be 24 hours apart, but in practice the open market only trades 6.5 hours per day. A date filter is simpler: it aligns with calendar boundaries and avoids edge cases around market holidays and weekends.
+
+### Key properties
+
+- ✅ Same-day repeat queries still hit cache (fast path)
+- ✅ Cross-day queries always regenerate (fresh analysis)
+- ✅ No TTL configuration — date boundary is unambiguous
+- ✅ ChromaDB `where` filter is O(1) with an index on metadata
+
+## RAG Startup Warm-Up
+
+### Problem
+
+The first RAG query after server start paid a ~3-5s cold-start tax: loading the HuggingFace `all-MiniLM-L6-v2` embedder, connecting to ChromaDB, and loading the CrossEncoder reranker all happened on first use. This made the first query of a session or after a restart noticeably slower than subsequent ones.
+
+### Solution
+
+`_do_prewarm()` at `agent_2_llamaindex/server.py` runs once on Starlette startup via `asyncio.to_thread`:
+
+```python
+async def _do_prewarm():
+    t0 = time.monotonic()
+    # 1. Embedder
+    embedder = HuggingFaceEmbedding(model_name=EMBED_MODEL)
+    embedder._model  # triggers actual model load
+    _ = embedder.get_text_embedding("warmup")
+    logger.info("Embedder loaded in %.2fs", time.monotonic() - t0)
+
+    # 2. ChromaDB collections
+    for coll in ("sec_filings", "news", "earnings"):
+        index._chroma.get_or_create_collection(coll)
+    logger.info("ChromaDB collections ready in %.2fs", ...)
+
+    # 3. CrossEncoder (lazy-loaded in HybridSearchPipeline)
+    from .hybrid_search import HybridSearchPipeline
+    hp = HybridSearchPipeline()
+    hp._get_reranker()  # triggers model load
+    logger.info("Reranker loaded in %.2fs", ...)
+```
+
+Each stage logs elapsed seconds so the cold-start budget is visible in server logs. The warm-up runs concurrently with the first A2A request (Starlette startup fires before the server accepts requests), so the first user query typically finds all models already loaded.
+
+### Why not lazy-load as before?
+
+Lazy-load is simple but unpredictable: the ~3-5s delay hits the first user, not the deployer. Pre-warming shifts the cost to startup time where it's visible in logs and doesn't affect user-facing latency. The trade-off is ~5s longer container startup, which is acceptable for a long-running server process.
+
+### Key properties
+
+- ✅ First RAG query: ~0s warm-up penalty (was ~3-5s)
+- ✅ Per-stage timing logged for cold-start budget analysis
+- ✅ Runs in thread executor — doesn't block the asyncio event loop
+- ✅ Idempotent — ChromaDB `get_or_create_collection` is safe to call multiple times
+- ✅ Graceful if models fail — warm-up errors are logged but don't crash the server

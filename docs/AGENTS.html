@@ -56,7 +56,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <li><strong>Semantic cache</strong> &mdash; When <code>SEMANTIC_CACHE_ENABLED=true</code>, similar queries (cosine &ge; 0.95) return cached responses without running the orchestrator.</li>
 <li><strong>Memory cache callback (before agent)</strong> &mdash; <code>root_agent.before_agent_callback = _memory_cache_callback</code> fires before the LLM runs. Extracts the user&rsquo;s ticker, queries <code>TickerMemory.get_latest()</code>, and if today&rsquo;s brief exists with a valid <code>response_text</code>, returns it as <code>types.Content</code> &mdash; short-circuiting the LLM entirely. This is the fastest path for same-day repeat queries (~200ms vs 30&ndash;60s).</li>
 <li><strong>Memory context injection</strong> &mdash; If the cache callback misses (no today brief), extracts ticker from user input, retrieves latest recommendation from <code>TickerMemory</code>, and prepends it to the user message (~300 token budget). Tags as <code>[TODAY]</code> (fresh) or <code>[STALE]</code> (prior day) &mdash; LLM is instructed <strong>&ldquo;MUST return directly&rdquo;</strong> on <code>[TODAY]</code> rather than the previous &ldquo;MAY return&rdquo;.</li>
-<li><strong>LLM routes to agents</strong> &mdash; LLM calls <code>send_message(agent_name, task)</code> for each sub-agent. Parallel with qwen; sequential with other models. Each call measured with <code>time.monotonic()</code> and emitted as a Langfuse latency span.</li>
+<li><strong>LLM routes to agents in parallel</strong> &mdash; <code>_STATIC_PREAMBLE</code> explicitly instructs the model to emit ALL <code>send_message</code> calls in a SINGLE assistant response for parallel execution (<code>agent.py:184-189</code>). <code>_build_instruction()</code> also appends agent responsibility boundaries (<code>agent.py:253-260</code>) clarifying RAG owns ALL document/news retrieval, Sentiment provides macro context, Quant owns numeric analysis. Each call measured with Langfuse latency span.</li>
 <li><strong>Output guardrails</strong> &mdash; Responses shorter than 50 chars trigger <code>TASK_STATE_FAILED</code>. Missing BUY/HOLD/SELL signal emits a Langfuse warning with <code>missing_signal: true</code>.</li>
 <li><strong>Synthesizes results</strong> &mdash; LLM collects all outputs and produces a BUY/HOLD/SELL recommendation</li>
 <li><strong>Auto-save</strong> &mdash; After each response, persists ticker brief, portfolio holdings, and performance record (with live price snapshot via yfinance) to SQLite. Fires background task to evaluate past recommendations.</li>
@@ -169,6 +169,7 @@ Body:
 <tr><th>ID</th><th>Name</th><th>Description</th></tr>
 <tr><td><code>sec_filing_retrieval</code></td><td>SEC Filing Retrieval</td><td>Retrieves and analyzes SEC 10-K, 10-Q, 8-K filings</td></tr>
 <tr><td><code>earnings_summary</code></td><td>Earnings Summary</td><td>Summarizes earnings call transcripts</td></tr>
+<tr><td><code>financial_news_retrieval</code></td><td>Financial News Retrieval</td><td>Retrieves and analyzes recent financial news articles with sentiment context for impact assessment on stock prices</td></tr>
 </table>
 
 <h3>Architecture</h3>
@@ -184,8 +185,25 @@ Body:
     &rarr; with langfuse.start_as_current_observation(name="rag-agent-stream")
       &rarr; ticker = extract_ticker(query)  &mdash; supports dotted (BRK.A), single-char (V), $prefix
       &rarr; Fallback chain: regex &rarr; MCP resolve &rarr; MCP validate
+      &rarr; asyncio.create_task(self._ensure_ingested(ticker))     (Phase 2 &mdash; fire-and-forget)
+      &rarr; asyncio.create_task(self._ensure_news_ingested(ticker))
+      &rarr; FinancialIndexManager.query(ticker, query)  &mdash; returns immediately from indexed data
+        &#x251C;&#x2500;&#x2500; _classify_query_intent() &rarr; sec_filings &cup; news &cup; earnings
+        &#x251C;&#x2500;&#x2500; Multi-collection retrieval with score-sorted dedup
+        &#x2514;&#x2500;&#x2500; LlamaIndex response synthesizer
       &rarr; if EVAL_ENABLED: asyncio.create_task(score_rag_response(...))
-      &rarr; return {response_type: "data", content: result, ...}</pre>
+      &rarr; return {response_type: "data", content: result, ...}
+
+RAGAgent._ensure_ingested(ticker) [background]:
+  &rarr; MCPClient.connect_all()
+  &rarr; MCP: get_company_filings(ticker) &rarr; filings with edgar_url + ix_url
+  &rarr; Filter: is_filing_ingested(edgar_url) &mdash; skip already-indexed URLs
+  &rarr; Parallel fetch via asyncio.gather:
+    &#x251C;&#x2500;&#x2500; MCP: get_filing_content(edgar_url, ix_url) for candidate 1
+    &#x251C;&#x2500;&#x2500; MCP: get_filing_content(edgar_url, ix_url) for candidate 2
+    &#x2514;&#x2500;&#x2500; ... (all candidates concurrently, truncated server-side at 25k chars)
+  &rarr; DocumentIngestionPipeline.ingest_sec_filings_batch() &rarr; ChromaDB
+  &rarr; mark_filing_ingested(edgar_url, ticker) for each new filing</pre>
 
 <h4>Runtime Evaluation</h4>
 <p>After each response, fires <code>asyncio.create_task(score_rag_response(...))</code> with 3 metrics. Scored from <code>user_input</code>, <code>response</code>, and <code>context_texts</code> (ChromaDB source chunks). No ground-truth reference required.</p>
@@ -216,6 +234,9 @@ Body:
 <table>
 <tr><th>ID</th><th>Name</th><th>Description</th></tr>
 <tr><td><code>quant_analysis</code></td><td>Quantitative Analysis</td><td>Compute Sharpe ratio, Beta, VaR, volatility, DCF valuation, stress tests</td></tr>
+<tr><td><code>options_flow_analysis</code></td><td>Options Flow Analysis</td><td>Analyze put/call volume and open interest ratios to detect unusual options activity</td></tr>
+<tr><td><code>insider_transaction_analysis</code></td><td>Insider Transaction Analysis</td><td>Track Form 4 filings, detect cluster buying/selling patterns by executives</td></tr>
+<tr><td><code>positioning_signals</code></td><td>Positioning Signals</td><td>Evaluate short interest, analyst consensus, earnings surprise history, and squeeze risk</td></tr>
 </table>
 
 <h3>Architecture</h3>
@@ -223,42 +244,96 @@ Body:
   &rarr; QuantAgent.stream(query, context_id, task_id)
     &rarr; extract_holdings(query, exclude_ticker=ticker) &rarr; ["AAPL", "MSFT", "GOOGL"]
     &rarr; QuantAgent.analyze(ticker, portfolio_holdings=holdings)
-      [MCP: get_prices &rarr; parse Close data] &rarr; compute_metrics &rarr; conditional branch (logged)
-        &rarr; high_volatility (annual_vol &gt; 35%) &rarr; stress_test, sets dcf_error
-        &rarr; low_volatility (annual_vol &le; 35%) &rarr; dcf_valuation
-      &rarr; portfolio_correlation (fetches prices for target + each holding)
-        &rarr; format_output (dcf_error in reasoning) &rarr; llm_summary
+      [Parallel fan-out from START]
+        &#x251C;&#x2500;&#x2500; fetch_prices &rarr; compute_metrics &#x2225; technical_analysis
+        &#x2502;     (SMA, MACD, RSI, Bollinger, support/resistance, trend)
+        &#x2502;     &rarr; volatility gate &rarr; stress_test (beta-adjusted) XOR dcf_valuation
+        &#x2502;         (data-driven WACC via CAPM + CoD, tapered growth)
+        &#x2502;     &rarr; monte_carlo (GBM, 10k paths, 60-day horizon)
+        &#x251C;&#x2500;&#x2500; fetch_fundamentals &rarr; 25+ ratios (PE, ROE, margins, D/E, etc.)
+        &#x2502;     + derived signals (golden cross, net debt, 52w extremes)
+        &#x2502;     &rarr; peer_comparison (ranks vs peers on PE, EV/EBITDA, growth, margins, ROE)
+        &#x251C;&#x2500;&#x2500; options_flow_node (put/call vol ratio, OI ratio, flow signal)
+        &#x251C;&#x2500;&#x2500; insider_signals_node (Form 4 90-day, net direction, CEO/CFO weight)
+        &#x2514;&#x2500;&#x2500; analyst_positioning_node (consensus, upside %, short interest, squeeze)
+      &rarr; portfolio_correlation
+      &rarr; format_output (8-group weighted voting, sum=1.0)
+        (technical 0.15, fundamental 0.15, narrative 0.10, options 0.12,
+         insider 0.10, positioning 0.11, macro 0.12, risk 0.15)
+      &rarr; llm_summary (enriched 3-4 sentence summary)
   &rarr; Yields: {response_type: "data", content: result, is_task_complete: true}
       Result includes dcf_error field when DCF is skipped
   &rarr; finally: await self._disconnect() &mdash; closes MCP sockets gracefully</pre>
 
-<p><strong>Portfolio Holdings Extraction</strong>: <code>extract_holdings()</code> in <code>shared/ticker_utils.py</code> uses regex patterns to extract holdings from natural language (e.g. &ldquo;My portfolio holds AAPL, MSFT, GOOGL&rdquo;). The orchestrator LLM is instructed to include holdings in the task text for the Quant agent. Holdings are passed through the full chain and used by <code>correlation_node</code> to compute a correlation matrix.</p>
+<p><strong>Portfolio Holdings Extraction</strong>: <code>extract_holdings()</code> in <code>shared/ticker_utils.py</code> uses regex patterns to extract holdings from natural language. The orchestrator LLM is instructed to include holdings in the task text for the Quant agent. Holdings are passed through the full chain and used by <code>correlation_node</code> to compute a correlation matrix.</p>
 
-<p><strong>Correlation Matrix Notes</strong>: When no holdings are provided, returns <code>{"note": "No portfolio holdings provided..."}</code> instead of <code>{}</code>.</p>
+<p><strong>Logging &amp; Error Propagation</strong>: The graph logs routing decisions, metric computation failures, DCF fallbacks, and beta calculation errors. When DCF is skipped due to high volatility, the <code>dcf_error</code> field is set and propagated through formatting and LLM summary.</p>
 
-<p><strong>Logging &amp; Error Propagation</strong>: The graph logs routing decisions, metric computation failures, DCF fallbacks, and beta calculation errors. When DCF is skipped due to high volatility, the <code>dcf_error</code> field is set and propagated through formatting and LLM summary, giving users visibility into why DCF was not computed.</p>
+<p><strong>Monte Carlo Simulation</strong>: <code>_run_monte_carlo()</code> at <code>nodes.py:42</code> runs 10,000 GBM paths over 60-day horizon. Returns p10/p25/p50/p75/p90, probability of profit, MC VaR(95).</p>
+
+<p><strong>8-Group Weighted Voting</strong>: <code>_SIGNAL_WEIGHTS</code> at <code>nodes.py:107-117</code> sum to 1.0 across 8 groups. Confidence = <code>|composite| &times; (1 &minus; std(present_signals))</code>. Raw weighted sum (not normalized).</p>
+
+<p><strong>Shared Peer Resolver</strong>: Both <code>peer_comparison_node</code> and Market Context Agent use <code>shared/peer_sets.py</code> &mdash; 33 hand-curated peer sets across 10+ sectors.</p>
 
 <h4>Runtime Evaluation</h4>
-<p>After each analysis, fires <code>asyncio.create_task(score_quant_response(...))</code> with 2 metrics. Scored from <code>user_input</code>, <code>response</code>, and full <code>quant_result</code> dict serialized as a reference string.</p>
+<p>After each analysis, fires <code>asyncio.create_task(score_quant_response(...))</code> with 4 metrics. Scored from <code>user_input</code>, <code>response</code>, and full <code>quant_result</code> dict (Sharpe, VaR, DCF, beta, MC, signals) serialized as a reference string. <code>AnswerRelevancy</code> removed from Quant (kept on Orchestrator only, v1.31).</p>
 <table>
 <tr><th>Metric</th><th>Why</th></tr>
-<tr><td><code>FactualCorrectness</code></td><td>Compares the LLM summary's numerical claims against the actual computed metrics. The reference is the raw quant result dict &mdash; if the LLM says &ldquo;Sharpe ratio of 1.5&rdquo; but the computation produced 0.8, this catches it. Prevents hallucinated numbers, the primary failure mode for quantitative analysis.</td></tr>
-<tr><td><code>AnswerRelevancy</code></td><td>Measures whether the response addresses the user's query.</td></tr>
+<tr><td><code>FactualCorrectness</code></td><td>Compares the LLM summary's numerical claims against the actual computed metrics. Prevents hallucinated numbers, the primary failure mode for quantitative analysis.</td></tr>
+<tr><td><code>risk_quality</code> (DomainSpecificRubrics)</td><td>Evaluates whether risk discussion mentions VaR, drawdown, Monte Carlo, and stress test results with specific values.</td></tr>
+<tr><td><code>signal_explanation_quality</code> (DomainSpecificRubrics)</td><td>Scores whether the response explains three or more signal groups (risk, DCF, fundamentals, technicals, peer_positioning, behavioral) with specific numeric values.</td></tr>
+<tr><td><code>deterministic</code></td><td>Zero-LLM schema validation via <code>score_quant_deterministic()</code> — checks all 8 signal groups present, weight sum=1.0, MC percentiles consistent, peer fields, recommendation + confidence invariants.</td></tr>
 </table>
 
 <hr>
 
-<h2>Agent 4: Sentiment (CrewAI)</h2>
+<h2>Agent 4: Market Context (CrewAI)</h2>
 <table>
 <tr><th>Property</th><th>Value</th></tr>
 <tr><td>Framework</td><td>CrewAI</td></tr>
 <tr><td>Executor</td><td><code>GenericAgentExecutor(MarketContextAgent)</code></td></tr>
 <tr><td>LLM</td><td>LM Studio via CrewLLM</td></tr>
-<tr><td>Data Collection</td><td>Parallel via <code>asyncio.gather</code></td></tr>
+<tr><td>Data Collection</td><td>3-step parallel pipeline via <code>asyncio.gather</code></td></tr>
 <tr><td>Port</td><td>8004</td></tr>
 <tr><td>Agent Card</td><td>Built programmatically in <code>agent_4_crewai/server.py</code></td></tr>
 <tr><td>A2A Endpoint</td><td><code>POST /a2a</code></td></tr>
 <tr><td>Health</td><td><code>GET /health</code> &rarr; <code>{"status":"ok","agent":"market_context"}</code></td></tr>
+</table>
+
+<h3>Skills</h3>
+<table>
+<tr><th>ID</th><th>Name</th><th>Description</th></tr>
+<tr><td><code>macro_regime_analysis</code></td><td>Macro Regime Analysis</td><td>Identifies the prevailing macro regime (yield curve, VIX, DXY, sector rotation) and explains whether it favors or penalizes the target ticker</td></tr>
+<tr><td><code>peer_landscape_analysis</code></td><td>Peer Landscape Analysis</td><td>Compares the target ticker against 3-5 named peers on growth, margins, valuation, and recent price action &mdash; explains competitive positioning in narrative form</td></tr>
+</table>
+
+<h3>Architecture</h3>
+<pre>Request &rarr; DefaultRequestHandler &rarr; GenericAgentExecutor(MarketContextAgent)
+  &rarr; MarketContextAgent.stream(query, context_id, task_id)
+    &rarr; MarketContextAgent.analyze(ticker)
+      &rarr; _connect() &rarr; MCPClient.connect_all()
+      &rarr; _collect_data_parallel(ticker)  (Phase 3 &mdash; macro + peers)
+        &rarr; Step 1: get_macro_indicators() &#x2225; get_financials(ticker)
+        &rarr;   &rarr; macro regime (yields, VIX, DXY, sector ETFs, yield curve)
+        &rarr;   &rarr; primary financials (sector/industry for peer resolution)
+        &rarr; Step 2: resolve peer tickers via shared/peer_sets.py
+        &rarr; Step 3: asyncio.gather(peer financials, peer prices)
+      &rarr; MarketContextCrew.analyze(ticker, precollected_data)
+        &rarr; Single Agent ("Market Context Analyst")
+        &rarr; Outputs JSON: narrative, macro_regime, relative_peer_positioning,
+          overall_signal, confidence_score (0-1), key_tailwinds, key_headwinds
+  &rarr; Yields: {response_type: "data", content: result, is_task_complete: true}
+  &rarr; finally: await self._disconnect() &mdash; closes MCP sockets gracefully</pre>
+
+<p><strong>Note</strong>: The old Sentiment agent fetched <code>get_news_sentiment</code> and <code>get_company_filings</code> &mdash; redundant with the RAG agent (Phase 1). As of Phase 3 (v1.31), Market Context fetches only macro indicators (15-min cached, no ticker argument) and peer financials/prices. News and filings are exclusively the RAG agent's domain.</p>
+
+<h4>Runtime Evaluation</h4>
+<p>After each analysis, fires <code>asyncio.create_task(score_market_context_response(...))</code> with 3 metrics. Scored from <code>user_input</code>, <code>response</code>, and <code>_retrieved_contexts</code> (macro indicator values + peer summaries from pre-fetched data). <code>AnswerRelevancy</code> removed from Market Context (kept on Orchestrator only, v1.31).</p>
+<table>
+<tr><th>Metric</th><th>Why</th></tr>
+<tr><td><code>Faithfulness</code></td><td>Verifies the narrative is factually grounded in the collected macro and peer data &mdash; a narrative that fabricates indicator values or peer metrics fails here.</td></tr>
+<tr><td><code>macro_regime_analysis</code> (DomainSpecificRubrics)</td><td>Custom 5-level rubric: scores whether the narrative discusses the yield curve (spread, regime), VIX level, DXY trend, and relevant sector ETF performance with actual values.</td></tr>
+<tr><td><code>peer_landscape_quality</code> (DomainSpecificRubrics)</td><td>Custom 5-level rubric: evaluates depth of peer comparison &mdash; whether named peers are contrasted on at least two metrics (PE, growth, margins, market cap) and competitive positioning is explained.</td></tr>
 </table>
 
 <h3>Skills</h3>

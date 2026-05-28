@@ -1,5 +1,122 @@
 # Changelog
 
+## v1.32 — Phase 4 Final Items: Date-Aware Semantic Cache + RAG Startup Warm-Up
+
+### Semantic Cache — Date-Scoped Keys
+
+- **`SemanticCache.set()` tags entries with today's `YYYY-MM-DD`** (`shared/semantic_cache.py`): On every cache write, the current date is embedded in the stored metadata.
+- **`SemanticCache.get()` filters by date** (`shared/semantic_cache.py`): Queries use a ChromaDB `where` filter that only matches entries tagged with today's date. Same query on different days → cache miss → fresh analysis.
+- **Why**: Without date scoping, a user asking "Analyze NVDA" on Tuesday would see Monday's cached response — missing overnight news, price moves, or macro shifts.
+
+### RAG Agent — Startup Warm-Up
+
+- **`_do_prewarm()` at `agent_2_llamaindex/server.py`**: Runs once on Starlette startup in a thread executor via `asyncio.to_thread`. Pre-loads:
+  - HuggingFace `all-MiniLM-L6-v2` embedder + dummy encode call
+  - Three ChromaDB collections (`sec_filings`, `news`, `earnings`)
+  - CrossEncoder reranker from `hybrid_search.py`
+- **Per-stage timing logged**: Each warm-up phase logs elapsed seconds so the cold-start budget is visible in server logs.
+- **Effect**: First RAG query no longer pays ~3-5s model-load tax. Cold-start drops from ~12s to ~9s (ChromDB query still happens on first hit).
+
+## v1.31 — Phase 3/4: Market Context Rebrand, Quant Behavioral Signals, Redis Cache, Eval Hardening
+
+### Market Context Agent — Sentiment Rebrand + Macro/Peer Inputs
+
+- **Agent renamed** (`agent_4_crewai/executor.py:13-21`): `SentimentAgent` → `MarketContextAgent`, `SentimentIntelligenceCrew` → `MarketContextCrew` (`crew.py:16`). Langfuse trace name: `market-context-agent-stream`. Agent card path: `agent_cards/market_context_agent.json`.
+- **New MCP tool** `get_macro_indicators()` (`mcp_servers/finsight_server.py:305`): Fetches 10Y/2Y Treasury yields, VIX, DXY, yield-curve regime, sector ETF (XLK/XLE/XLF/…) 1mo performance. Cached 15 min via `_cache_macro`.
+- **New `shared/peer_sets.py`**: Hand-curated peer map for 10+ sectors (NVDA→AMD/INTC/AVGO/TSM, JPM→BAC/WFC/C/GS, etc.). 33 entries. Shared between Market Context and Quant.
+- **`_collect_data_parallel` rewritten** (`executor.py:39-86`): 3-step pipeline: macro + primary financials → resolve peers → parallel peer financials + prices. No longer fetches `get_news_sentiment` or `get_company_filings` (those routes are RAG's domain post-Phase 1).
+- **MarketContextCrew rewritten** (`crew.py`): Single-agent crew with role "Market Context Analyst". Task expected_output: JSON with `narrative`, `macro_regime`, `relative_peer_positioning`, `overall_signal`, `confidence_score`, `key_tailwinds`, `key_headwinds`.
+- **`_extract_context_contexts`** (`executor.py:196`): Replaces `_extract_sentiment_contexts` — builds RAGAS context strings from macro indicators + peer financial summaries.
+- **Agent card** (`agent_cards/market_context_agent.json`): Two skills: `macro_regime_analysis`, `peer_landscape_analysis`. Version 2.0.0.
+
+### Quant Agent — Behavioral Signals + Monte Carlo + Peer Comparison
+
+- **`options_flow_node`** (`agent_3_langgraph/nodes.py:900`): Put/call volume ratio, OI ratio, flow signal (bullish/bearish/neutral/unusual).
+- **`insider_signals_node`** (`nodes.py:921`): Form 4 filing count (90-day window), net direction (buy/sell/neutral), CEO/CFO weighting.
+- **`analyst_positioning_node`** (`nodes.py:979`): Consensus score, analyst upside %, short interest, squeeze risk.
+- **Monte Carlo simulation** (`nodes.py:42`): GBM-based, 10,000 paths, 60-day horizon. Returns p10/p25/p50/p75/p90, prob of profit, MC VaR(95).
+- **`peer_comparison_node`** (`nodes.py:801`): Ranks primary ticker vs peers on PE, EV/EBITDA, RevGrowth, OpMargin, ROE.
+- **Stress test beta-adjusted** (`nodes.py:169`): `beta_adj_decline = mkt_decline × beta`, floored at −95%.
+- **8-group weighted voting** (`nodes.py:107-117`, `_weighted_vote` at `nodes.py:228`): `_SIGNAL_WEIGHTS` sums to 1.0 across 8 groups (technical, fundamental, narrative, options, insider, positioning, macro, risk). Confidence = `|composite| × (1 − std(present_signals))`. Fix: raw weighted sum (not normalized) — normalized weights distorted confidence when few signals were present.
+- **`QuantAnalysisState` expanded** (`state.py:27-31`): `monte_carlo`, `peer_comparison`, `options_signals`, `insider_signals`, `positioning` fields.
+- **Agent card** (`agent_cards/quant_agent.json`): Three new skills: `options_flow_analysis`, `insider_transaction_analysis`, `positioning_signals`.
+
+### MCP Server — DuckDuckGo Fallback, Sentiment Indicators, Earnings History
+
+- **DuckDuckGo 4th-tier news fallback** (`mcp_servers/finsight_server.py:1248`): `_fetch_ddg_news()` called when Yahoo Finance + RSS feeds return zero articles. Uses `duckduckgo_search` library with 5s timeout.
+- **New MCP tool `get_sentiment_indicators()`** (`finsight_server.py:1628`): Short interest %, analyst consensus breakdown (buy/hold/sell), institutional ownership %.
+- **New MCP tool `get_earnings_history()`** (`finsight_server.py:1684`): Last N quarters EPS estimates vs actuals, beat rate, average surprise %.
+- **Empty news result caching** (`finsight_server.py:1397`): Normalized cache key on ticker only (not ticker+limit). Empty results cached 5 min to avoid repeated fallback fetches.
+
+### Infrastructure — Redis Two-Level Cache + MCP Client Improvements
+
+- **`shared/redis_cache.py`** (new): `RedisCache` class with L1 (in-process TTLCache) + L2 (Redis write-through). `make_cache()` factory returns `RedisCache` when `REDIS_URL` is set, else bare `TTLCache`. Write-through: every L1 set propagates to Redis; L1 miss reads from Redis; Redis sets populate L1.
+- **`shared/mcp_client.py`** (`mcp_client.py:51-56`): Fail-fast retry classification — `_is_retryable_error()` skips exponential backoff for 404s, "not found", "invalid". Default timeout 30s → 15s.
+- **`shared/config.py`**: `LLM_SUMMARY_MODEL` env var for optional smaller summary model. `REDIS_URL`, `A2A_TIMEOUT_MARKET_CONTEXT`, `EVAL_RUNTIME_DISABLED`, `EVAL_BURST_LIMIT`, `EVAL_METRIC_TIMEOUT`, `RAGAS_LLM_MODEL`, `RAGAS_LLM_BASE_URL`.
+
+### Runtime Evaluation — Circuit Breaker, SHA-256 Dedup, Burst Limiter
+
+- **Circuit breaker** (`shared/runtime_eval.py`): `_CIRCUIT_MAX_FAILURES=5` — after 5 consecutive metric failures, all eval is skipped for 5 min. `_last_failure` tracks per-metric for granular reset.
+- **SHA-256 dedup**: `_dedup_seen` TTL dict (1h) — identical (input, response) pairs skip eval to avoid redundant LLM scoring.
+- **Burst limiter**: `_burst_ok()` — enforces `EVAL_BURST_LIMIT` evaluations per minute per process. Uses a deque of timestamps, oldest evicted on overflow.
+- **Per-metric timeout**: `_score_metric_with_timeout(metric, timeout=EVAL_METRIC_TIMEOUT)` — wraps each RAGAS metric in `asyncio.wait_for` (default 90s). Cancels sibling metrics on timeout via `asyncio.CancelledError`.
+- **`_gate_ok()`**: Unified pre-eval gate: `EVAL_RUNTIME_DISABLED → False` | circuit tripped → `False` | burst exceeded → `False` | dedup hit → `False` | else `True`.
+- **`score_quant_deterministic()`**: Zero-LLM schema validator — checks 8 signal groups present, weight sum = 1.0, MC consistency, peer field presence, recommendation + confidence invariants.
+- **Metric catalog cleanup**: `AnswerRelevancy` removed from RAG/Quant/Sentiment (kept on Orchestrator only). `score_sentiment_response`: removed `catalyst_identification` + `insider_signal_discussion`, added `macro_regime_quality` + `peer_positioning_quality` rubrics.
+- **`cross_collection_synthesis` rubric** on RAG score: checks if response cites sources from ≥2 collections (sec_filings/news/earnings).
+- **Offline evaluation** (`tests/evaluation/`): `golden_set.jsonl` (5 golden examples), `run_offline_eval.py` — loads golden set, runs RAGAS ContextRecall/ContextEntityRecall/AgentGoalAccuracy.
+- **`no_forward_guarantees` AspectCritic** added to orchestrator: flags any language suggesting guaranteed future performance.
+
+### Test Suite — Behavioral E2E + Eval Gates + Parallel Dispatch
+
+- **`tests/integration/test_behavioral_signals_e2e.py`** (5 E2E tests): Covers options flow, insider signals, positioning, peer comparison, Monte Carlo existence.
+- **`tests/unit/test_runtime_eval_gates.py`**: Tests circuit breaker, SHA-256 dedup, burst limiter, kill switch, `_gate_ok`, `score_quant_deterministic`.
+- **`tests/unit/test_parallel_dispatch.py`**: Tests concurrent gather, timeout map matching, key isolation (no "sentiment" in "Market Context Agent").
+- **`tests/unit/test_quant_graph_nodes.py`**: Fixed stale field name `decline_pct` → `beta_adj_decline_pct`.
+
+### Docs Consolidation
+
+- **Removed stale possible_improvements/ files**: `IMPLEMENTATION_PLAN.md/.html`, `LOGGING.md/.html`, `TEST_PLAN.md/.html`, `AGUI_FRONTEND_PLAN.html`, `ARCHITECTURE.md/.html`, `improvements.html`. All consolidated into `UNIFIED_IMPLEMENTATION_PLAN.html`.
+- **Sentiment→Market Context rename propagated**: `AGENTS.md/.html`, `ARCHITECTURE.md/.html`, `DEMO.md/.html`.
+
+## v1.30 — Phase 2: Parallel Agent Dispatch, Parallel Filing Downloads, Single-Flight Cache
+
+### Orchestrator — Parallel Dispatch via System Prompt
+
+- **`_STATIC_PREAMBLE` step 2 updated** (`agent_1_adk/agent.py:184-189`): Now explicitly instructs the LLM to emit ALL `send_message` calls in a SINGLE assistant response for parallel execution: "you MUST emit ALL `send_message` calls in a SINGLE assistant response so they execute in PARALLEL. Do NOT wait for one agent's result before issuing the next call."
+- **Step 5 updated**: "After ALL agents have responded (you will receive their results together in the next turn)" — makes the parallel contract explicit.
+- **Agent responsibility boundaries** (`agent.py:253-260`): `_build_instruction()` appends a responsibility block clarifying: RAG Agent owns ALL document and news retrieval; Market Context Agent provides macro regime and peer narrative; Quant Agent owns numeric risk, fundamentals, technicals, DCF, and behavioral signals. Prevents the LLM from routing news queries to the Sentiment agent.
+
+### RAG Agent — Parallel Filing Downloads
+
+- **`_ensure_ingested()` filing fetch converted to `asyncio.gather`** (`agent_2_llamaindex/executor.py:74-107`): The per-filing sequential `get_filing_content` loop replaced with a two-phase pattern: filter candidates → `asyncio.gather(*[_fetch_one(f) for f in candidates])`. Filing downloads for a 5-filing ingest now complete in ~max(per-filing) latency (~3-5s) instead of sum (~15-25s).
+- **`get_filing_content` server-side truncation** (`mcp_servers/finsight_server.py:842`): Content truncated at 25,000 chars on the MCP server instead of 20,000 on the client — reduces bandwidth on large 10-K fetches.
+- **`query()` fire-and-forget ingestion** (`executor.py:162-166`): `_ensure_ingested` and `_ensure_news_ingested` converted from `await asyncio.gather(...)` to `asyncio.create_task()` (fire-and-forget). Query returns immediately from whatever ChromaDB content is already indexed. First-query partial-data warning via `_warming` flag.
+- **`index_manager.py` warming signal**: When `index.query()` finds zero matching documents, returns `{"_warming": True, "summary": "Index is warming for {ticker}..."}`.
+
+### MCP Server — Single-Flight News Cache
+
+- **`get_news_sentiment` refactored** (`mcp_servers/finsight_server.py:1406-1551`): Extracted core fetch logic into `_get_news_sentiment_impl()`. The outer tool wrapper delegates to `_cache_news.get_or_fetch()` — two concurrent callers for the same uncached ticker share one RSS round-trip instead of both fetching independently.
+
+## v1.29 — Phase 1: RAG News Ingestion, Quant Fundamentals/Technicals, Data-Driven DCF
+
+### RAG Agent — News & Earnings Ingestion
+
+- **`_ensure_news_ingested()` added** (`agent_2_llamaindex/executor.py`): Fetches `get_news_sentiment` (15 articles) and ingests into ChromaDB `news` collection via `DocumentIngestionPipeline.ingest_news_article()`. Separate daily dedup key (`news_{ticker}`) so news and SEC filing ingestion run independently.
+- **`query()` parallel ingest**: `asyncio.gather` for filings + news ingestion — both paths run concurrently.
+- **Multi-collection query routing** (`agent_2_llamaindex/index_manager.py`): New `_classify_query_intent()` routes across `sec_filings`/`news`/`earnings` collections based on keywords; broad analytical queries hit all three. Deduplicates by text hash, synthesizes via `LlamaIndex response_synthesizer`. Returns warming signal when index is empty.
+- **Agent card** (`agent_cards/rag_agent.json`): Added `financial_news_retrieval` skill with news/sentiment/market tags.
+
+### Quant Agent — Fundamentals, Technicals, Data-Driven DCF
+
+- **`fundamental_analysis_node`** (`agent_3_langgraph/nodes.py`): Fetches `get_financials`, extracts 25+ ratios (PE, PB, EV/EBITDA, ROE, ROA, margins, D/E, growth) + derived signals (pct from 52w high/low, golden cross, net debt). Sets `_financials_raw` for DCF reuse.
+- **`technical_analysis_node`**: SMA 20/50/200, EMA 12/26, MACD + crossover, RSI(14), Bollinger bands, momentum 20d/60d, support/resistance, trend classification (strong_uptrend → downtrend).
+- **`dcf_valuation_node` — data-driven assumptions**: WACC via CAPM + after-tax cost-of-debt (weighted by capital structure). Growth rate blended from `revenueGrowth`/`earningsGrowth` (bounded 2–25%). Tapered 5-year projection fading to terminal. Reuses `_financials_raw` when available.
+- **`format_output_node` — expanded voting**: Adds fundamental signals (`low_pe`, `strong_roe`) and technical signals (`bullish_trend`, `oversold_rsi`) to signal voting. Reasoning surfaces DCF WACC/growth percentages.
+- **`llm_summary_node` — enriched prompt**: 3-4 sentence summary including fundamentals + technicals; `max_tokens` 256→384.
+- **Graph topology — parallel fan-out**: `START` → `fetch_prices` ∥ `fetch_fundamentals`; `fetch_prices` → `compute_base_metrics` ∥ `technical_analysis`; fan-in at `portfolio_correlation` + `format_output`.
+- **State** (`agent_3_langgraph/state.py`): Added `fundamentals`, `technicals`, `_financials_raw` fields.
+
 ## v1.28 — Full Synthesis in save_brief + Cache-Hit on Company Names + RAG Latency Cut
 
 ### Full Synthesis Persistence

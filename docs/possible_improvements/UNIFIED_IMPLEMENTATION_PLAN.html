@@ -169,7 +169,7 @@ program does not.</p>
   <td>Sentiment agent fills the context lane neither RAG nor Quant covers.</td>
 </tr>
 <tr>
-  <td><span class="badge b-p2">P2</span> 4 — Polish, tail risk, behavioral signals <span class="badge b-hi" style="background:#d0eacc;color:#2a5a24;">PARTIAL</span></td>
+  <td><span class="badge b-p2">P2</span> 4 — Polish, tail risk, behavioral signals <span class="badge b-hi" style="background:#d0eacc;color:#2a5a24;">COMPLETED</span></td>
   <td>Hybrid search, temporal decay, Monte Carlo, peer compare, semantic cache, RAGAS reliability + behavioral signals (options/insider/short/earnings) folded into Quant.</td>
   <td>~28h</td>
   <td>Retrieval quality + repeat-query latency &lt; 1s + behavioral signals in every brief.</td>
@@ -2995,7 +2995,7 @@ to <code>finsight_server.py</code>. Form 4 filings cache via existing
 <tr><td>Rewrite <code>_collect_data_parallel</code> + <code>MarketContextCrew</code> + <code>_extract_context_contexts</code></td><td>~4.5h</td><td><span class="badge b-hi">High</span></td></tr>
 <tr><td>New agent card (2 skills) + class rename + small Sentiment server/init.py updates</td><td>~1h</td><td><span class="badge b-med">Med</span></td></tr>
 
-<tr><td rowspan="5"><span class="badge b-p2">P2</span> Phase 4 <span class="badge b-hi" style="background:#d0eacc;color:#2a5a24;">PARTIAL</span></td><td>Hybrid search + temporal decay + ticker-RSS + web fallback + cache fixes</td><td>~11.5h</td><td><span class="badge b-med">Med</span></td></tr>
+<tr><td rowspan="5"><span class="badge b-p2">P2</span> Phase 4 <span class="badge b-hi" style="background:#d0eacc;color:#2a5a24;">DONE</span></td><td>Hybrid search + temporal decay + ticker-RSS + web fallback + cache fixes</td><td>~11.5h</td><td><span class="badge b-med">Med</span></td></tr>
 <tr><td>Monte Carlo + peer comparison (Quant) — peer-set helper shared with §7.4.2</td><td>~5.5h</td><td><span class="badge b-med">Med</span></td></tr>
 <tr><td>§8.6 Behavioral signals in Quant — options/insider/positioning nodes + weighted voting</td><td>~13h</td><td><span class="badge b-hi">High</span></td></tr>
 <tr><td>Semantic cache + warm-up + Redis + fail-fast + summary-model + benchmark cache + news-coverage eval</td><td>~11h</td><td><span class="badge b-med">Med</span></td></tr>
@@ -3075,8 +3075,8 @@ can be deferred to trim ~6h.)</em></p>
 </ul>
 <div style="margin:.5rem 0;font-size:.85rem;color:#5a7a5a;">Commit <code>36aecb6</code>. All 11 items checked. Market Context Agent replaces Sentiment Agent; macro+peer inputs replace news+filings; 2 new MCP tools; peer sets shared with Quant.</div>
 
-<h3>Phase 4 PR(s) <span class="badge b-hi" style="background:#d0eacc;color:#2a5a24;">PARTIALLY SHIPPED</span></h3>
-<p><strong>Shipped in commit <code>36aecb6</code> alongside Phase 3.</strong> Items with <code>[x]</code> are done; unchecked items are deferred to a follow-up pass.</p>
+<h3>Phase 4 PR(s) <span class="badge b-hi" style="background:#d0eacc;color:#2a5a24;">COMPLETED</span></h3>
+<p><strong>All 42 items shipped across two commits:</strong> <code>36aecb6</code> (40 items) + <code>3980f5c</code> (date-aware semantic cache + RAG warm-up).</p>
 <ul>
 <li>[&ndash;] <code>HybridSearchPipeline</code> class exists at <code>hybrid_search.py:14</code>; inline hybrid scoring (<code>_keyword_score</code> + <code>_temporal_decay</code> + <code>_hybrid_score</code>) wired into <code>index_manager.query()</code> — formal pipeline integration deferred</li>
 <li>[x] Temporal decay scoring with collection-specific windows</li>
@@ -3122,7 +3122,7 @@ can be deferred to trim ~6h.)</em></p>
 <li>[x] New deterministic <code>score_quant_deterministic</code> validates Quant's behavioral-signal schema + weight normalization</li>
 <li>[x] Offline golden-set fixture at <code>tests/evaluation/golden_set.jsonl</code> + <code>run_offline_eval.py</code> wired for <code>ContextRecall</code>, <code>ToolCallF1</code>, <code>AgentGoalAccuracy</code></li>
 </ul>
-<div style="margin:.5rem 0;font-size:.85rem;color:#5a7a5a;">All 42 Phase 4 items shipped. Latest: date-scoped Chroma <code>where</code> filter on <code>SemanticCache</code> + <code>_prewarm</code> now loads embedder, CrossEncoder, and three ChromaDB collections at startup.</div>
+<div style="margin:.5rem 0;font-size:.85rem;color:#5a7a5a;">All 42 Phase 4 items shipped across two commits: <code>36aecb6</code> (behavioral signals, Redis cache, eval hardening, DuckDuckGo, MCP tools, peer comparison, Monte Carlo) + <code>3980f5c</code> (date-scoped <code>SemanticCache</code> where filter + <code>_prewarm</code> loading embedder, CrossEncoder, and three ChromaDB collections at startup).</div>
 
 <hr>
 
@@ -3181,13 +3181,8 @@ crew to reference 5-day percent changes (already provided by
 </ol>
 
 <div class="callout green">
-<strong>Recommended ship order.</strong>
-Phase 1 is already shipped (<code>6ed69c2</code>). The next step is Phase 2 — then ship
-Phase 2 (~6h — orchestrator parallel dispatch + filing parallelization). Phase 3
-(~8.5h, the Market Context rebrand) is the next high-leverage step. Phase 4 is broad
-(~46h) and can be parallelized across engineers — hybrid search, Monte Carlo + peer
-rank, §8.6 behavioral signals, semantic cache, and the RAGAS reliability work are
-independently shippable sub-PRs.
+<strong>All phases shipped.</strong>
+Phase 1 (<code>6ed69c2</code>) → Phase 2 (<code>6c7bce8</code>) → Phase 3 + most of Phase 4 (<code>36aecb6</code>) → Phase 4 final items (<code>3980f5c</code>). The full Unified Improvement Plan is complete.
 </div>
 
 </div>

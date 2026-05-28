@@ -2,7 +2,7 @@
 
 ## Overview
 
-FinSight is a multi-agent investment research system where four specialized agents communicate via the **Google A2A Protocol** (Agent-to-Agent). The orchestrator (ADK `LlmAgent`) discovers sub-agents at startup via `A2ACardResolver`, delegates tasks via a single `send_message` tool, and the LLM routes to each agent sequentially. Each sub-agent processes tasks internally using its own framework and tools.
+FinSight is a multi-agent investment research system where four specialized agents communicate via the **Google A2A Protocol** (Agent-to-Agent). The orchestrator (ADK `LlmAgent`) discovers sub-agents at startup via `A2ACardResolver`, delegates tasks via a single `send_message` tool, and the LLM routes to all agents in parallel (instructed via system prompt to emit all `send_message` calls in one assistant turn). Each sub-agent processes tasks internally using its own framework and tools.
 
 ## Communication Pattern
 
@@ -40,12 +40,12 @@ A2A Request → FinSightAgentExecutor.execute()
   → _get_today_cached_text(ticker)  — [CACHE: return today brief if exists]
   → _build_memory_context(query)    — inject [MEMORY CONTEXT] with [TODAY]/[STALE] tag
   → RUNNER.run_async(user_query)
-  → LlmAgent (no pre-fetch)
+    → LlmAgent (no pre-fetch)
     → before_agent_callback: _memory_cache_callback  — [CACHE: return types.Content if today brief exists]
-    → LLM calls send_message(agent_name, task) for each agent
-    → SubAgentClient → A2A task to sub-agent
+    → LLM emits ALL send_message calls in ONE assistant turn (parallel per system prompt instruction)
+    → SubAgentClient → A2A task to sub-agent (parallel)
     → SubAgentClient → A2A response (text or data parts)
-    → LLM calls next agent
+    → LLM receives all results together in the next turn
     → LLM synthesizes BUY/HOLD/SELL
   → after_agent_callback: _persist_memory_callback
     → add_events_to_memory()
@@ -82,22 +82,31 @@ A2A Request → DefaultRequestHandler → GenericAgentExecutor.execute()
 ```
 A2A Request → DefaultRequestHandler → GenericAgentExecutor(RAGAgent)
   → RAGAgent.stream()
-    → RAGAgent._ensure_ingested(ticker)
-      ├── MCPClient.connect_all()
-      ├── MCP: get_company_filings(ticker) → returns filings with edgar_url + ix_url
-      ├── Filter: is_filing_ingested(edgar_url) — skip already-indexed URLs
-      ├── MCP: get_filing_content(edgar_url, ix_url) for each new filing → raw text
-      ├── DocumentIngestionPipeline.ingest_sec_filings_batch() → ChromaDB
-      └── mark_filing_ingested(edgar_url, ticker) for each new filing
-    → FinancialIndexManager.query(ticker, query)
-      ├── Try: RouterQueryEngine (response_mode="compact", similarity_top_k=3)
-      └── Fallback: SEC filings index directly (same settings)
+    → RAGAgent._build_response(query)
+      → Fire-and-forget (asyncio.create_task):
+        ├── self._ensure_ingested(ticker) — runs in background, non-blocking
+        └── self._ensure_news_ingested(ticker) — runs in background, non-blocking
+      → FinancialIndexManager.query(ticker, query) — returns immediately from indexed data
+        ├── _classify_query_intent() → sec_filings ∪ news ∪ earnings
+        ├── Multi-collection retrieval with score-sorted dedup
+        └── LlamaIndex response synthesizer (response_mode="compact")
   → Yields data response with summary + sources
+
+RAGAgent._ensure_ingested(ticker) [background]:
+  → MCPClient.connect_all()
+  → MCP: get_company_filings(ticker) → filings with edgar_url + ix_url
+  → Filter: is_filing_ingested(edgar_url) — skip already-indexed URLs
+  → Parallel fetch via asyncio.gather:
+    ├── MCP: get_filing_content(edgar_url, ix_url) for candidate 1
+    ├── MCP: get_filing_content(edgar_url, ix_url) for candidate 2
+    └── ... (all candidates concurrently, truncated server-side at 25k chars)
+  → DocumentIngestionPipeline.ingest_sec_filings_batch() → ChromaDB
+  → mark_filing_ingested(edgar_url, ticker) for each new filing
 ```
 
 **Incremental Ingestion**: `_ensure_ingested()` checks the `ingested_filings` SQLite table before fetching any filing content. URLs already indexed in a previous run are skipped entirely — restarts and same-day re-queries do not re-ingest immutable historical filings.
 
-**Pre-warm**: `FinancialIndexManager` is instantiated at server startup in a thread executor via Starlette `on_startup`. The embedding model download is complete before the first A2A request arrives.
+**Startup warm-up** (`agent_2_llamaindex/server.py`, v1.32): `_do_prewarm()` runs once on Starlette `on_startup` in a thread executor via `asyncio.to_thread`. Three stages: HuggingFace embedder pre-load + dummy encode, three ChromaDB collections (`sec_filings`/`news`/`earnings`) via `get_or_create_collection`, CrossEncoder reranker from `HybridSearchPipeline`. Each stage logs elapsed seconds. Effect: first RAG query pays ~0s model-load tax (was ~3-5s). Warm-up errors are logged but don't crash the server.
 
 **Content Ingestion**: Fetches actual SEC filing content (10-K, 10-Q, 8-K) via `get_filing_content()`, which extracts text from raw EDGAR URLs with fallback to IXBRL viewer URLs.
 
@@ -108,13 +117,28 @@ A2A Request → DefaultRequestHandler → GenericAgentExecutor(QuantAgent)
   → QuantAgent.stream()
     → extract_holdings(query) → portfolio_holdings list
     → analyze(ticker, portfolio_holdings=holdings)
-      [MCP: get_prices → parse Close data]
-      → compute_metrics → conditional branch (logged with ticker + volatility):
-          high volatility (vol > 35%) → stress_test, dcf_error set
-          low volatility  (vol ≤ 35%) → dcf_valuation [MCP: get_financials → cash_flow]
-      → portfolio_correlation [MCP: get_prices per holding + target ticker]
-      → format_output (dcf_error included in reasoning if DCF skipped)
-      → llm_summary
+      [Parallel fan-out from START]
+        ├── fetch_prices [MCP: get_prices → parse Close data]
+        │     → compute_base_metrics (Sharge, vol, VaR, beta)
+        │     → technical_analysis (SMA, MACD, RSI, Bollinger, trend)
+        │     → volatility gate
+        │         ├── high vol (> 35%) → stress_test [CVaR scenarios]
+        │         └── low vol (≤ 35%) → dcf_valuation [data-driven WACC + growth]
+        └── fetch_fundamentals [MCP: get_financials → 25+ ratios]
+              → PE, PB, ROE, margins, D/E, growth, golden cross
+      |     → monte_carlo (GBM, 10k paths, 60-day horizon)
+      ├── fetch_fundamentals [MCP: get_financials → 25+ ratios]
+      |     → PE, PB, ROE, margins, D/E, growth, golden cross
+      |     → peer_comparison (ranks vs peers on PE, EV/EBITDA, growth, margins, ROE)
+      ├── options_flow_node (put/call vol ratio, OI ratio, flow signal)
+      ├── insider_signals_node (Form 4 90-day, net direction, CEO/CFO weight)
+      └── analyst_positioning_node (consensus, upside %, short interest, squeeze)
+      [Fan-in]
+        ├── portfolio_correlation [MCP: get_prices per holding + target]
+        └── format_output (8-group weighted voting: technical 0.15, fundamental 0.15,
+              narrative 0.10, options 0.12, insider 0.10, positioning 0.11,
+              macro 0.12, risk 0.15 → sum=1.0)
+        → llm_summary (enriched 3-4 sentence summary)
   → Yields data response with dcf_error in result
 ```
 
@@ -133,28 +157,50 @@ A2A Request → DefaultRequestHandler → GenericAgentExecutor(QuantAgent)
 ```
 A2A Request → DefaultRequestHandler → GenericAgentExecutor(MarketContextAgent)
   → MarketContextAgent.stream()
-    → Parallel MCP data collection (asyncio.gather):
-      ├── get_news_sentiment
-      └── get_company_filings
-    → 1-agent CrewAI: Analysis → narrative directly
+    → 3-step parallel data collection (Phase 3):
+      ├── Step 1: get_macro_indicators() ∥ get_financials(ticker)
+      │     → macro regime (yields, VIX, DXY, sector ETFs, yield curve)
+      │     → primary financials (sector/industry for peer resolution)
+      ├── Step 2: resolve peer tickers via shared/peer_sets.py
+      └── Step 3: asyncio.gather(peer financials, peer prices)
+    → 1-agent CrewAI ("Market Context Analyst"):
+      → Outputs JSON: narrative, macro_regime, relative_peer_positioning,
+        overall_signal, confidence_score (0-1), key_tailwinds, key_headwinds
   → Yields data response
 ```
 
+**Note**: The old Sentiment agent fetched `get_news_sentiment` and `get_company_filings`. Both were redundant with the RAG agent after Phase 1 and are no longer called. Market Context exclusively owns macro regime analysis and peer landscape positioning.
+
 ## Caching Layer
 
-Three independent caching tiers reduce latency and external API load:
+Four independent caching tiers reduce latency and external API load:
 
 ### MCP Tool-Result Cache (Tier 1A)
 
-`_TTLCache` in `mcp_servers/finsight_server.py` — `OrderedDict`-backed with `time.monotonic()` expiry, no new dependencies:
+`TTLCache` (or `RedisCache` when `REDIS_URL` is configured) in `mcp_servers/finsight_server.py` — created via `make_cache()` factory in `shared/redis_cache.py`:
 
 | Cache | TTL | Key | Notes |
 |---|---|---|---|
 | `_cache_prices` | 5 min | `(ticker, period, interval)` | yfinance OHLCV |
 | `_cache_financials` | 24 h | `(ticker,)` | income/balance/cashflow |
 | `_cache_news` | 15 min | `(ticker, limit)` | only cached when articles found |
+| `_cache_macro` | 15 min | `"macro"` | Treasury yields, VIX, DXY, sector ETFs |
 | `_cache_filing` | permanent (LRU-200) | `edgar_url` | filings are immutable |
 | `_cache_submissions` | 6 h | `cik` | EDGAR CIK submissions |
+| `_cache_benchmark` | 1 h | ticker | `^GSPC` and other index benchmarks |
+
+### Redis Two-Level Cache (Tier 1C, v1.31)
+
+`shared/redis_cache.py` — L1 (in-process `TTLCache`) + L2 (Redis write-through). Created via `make_cache()`:
+
+```python
+def make_cache(ttl_seconds=300, name=""):
+    if REDIS_URL:
+        return RedisCache(ttl_seconds=ttl_seconds, name=name)
+    return TTLCache(ttl_seconds=ttl_seconds)
+```
+
+L1 miss → read from Redis → populate L1. Every L1 `set()` propagates to Redis via write-through. Transparent drop-in: when `REDIS_URL` is unset, `make_cache()` returns a bare `TTLCache` with identical behavior.
 
 ### LangChain SQLiteCache (Tier 1B)
 
@@ -162,7 +208,9 @@ Three independent caching tiers reduce latency and external API load:
 
 ### Semantic Cache (Tier 1D)
 
-`shared/semantic_cache.py` — ChromaDB collection `finsight_semantic_cache` + `all-MiniLM-L6-v2` embedder (already in-use). Cosine similarity threshold: 0.95; TTL: 1 h; response stored up to 4000 chars in Chroma metadata.
+`shared/semantic_cache.py` — ChromaDB collection `finsight_semantic_cache` + `all-MiniLM-L6-v2` embedder (already in-use). Cosine similarity threshold: 0.95; response stored up to 4000 chars in Chroma metadata.
+
+**Date-scoped** (v1.32): `SemanticCache.set()` tags entries with `YYYY-MM-DD` in Chroma metadata. `SemanticCache.get()` uses a `where` filter on `date` — same query on a different day misses cache. Prevents stale cross-day results without a TTL.
 
 Wired into `agent_1_adk/agent_executor.py`:
 - **Before** `runner.run_async`: `SemanticCache.get(query)` — on hit, return immediately
