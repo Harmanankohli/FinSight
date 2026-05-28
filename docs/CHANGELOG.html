@@ -31,7 +31,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <body>
 <div class="container">
 <div class="header-nav">
-<a href="index.html">Home</a><a href="../README.html">Overview</a><a href="ARCHITECTURE.html">Architecture</a><a href="AGENTS.html">Agents</a><a href="MCP_SERVERS.html">MCP</a><a href="DESIGN_DECISIONS.html">Decisions</a><a href="DEMO.html">Demo</a><a href="CHANGELOG.html">Changelog</a><a href="TESTS.html">Tests</a>
+<a href="index.html">Home</a><a href="../README.html">Overview</a><a href="ARCHITECTURE.html">Architecture</a><a href="AGENTS.html">Agents</a><a href="MCP_SERVERS.html">MCP</a><a href="DESIGN_DECISIONS.html">Decisions</a><a href="CHANGELOG.html">Changelog</a><a href="TESTS.html">Tests</a>
 </div>
 
 <h1>Changelog</h1>
@@ -49,6 +49,14 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <li><strong><code>_do_prewarm()</code> at <code>agent_2_llamaindex/server.py</code></strong>: Runs once on Starlette startup via <code>asyncio.to_thread</code>. Pre-loads HuggingFace embedder, three ChromaDB collections, and CrossEncoder reranker.</li>
 <li><strong>Per-stage timing logged</strong>: Each phase logs elapsed seconds for cold-start budget visibility.</li>
 <li><strong>Effect</strong>: First RAG query no longer pays ~3-5s model-load tax.</li>
+</ul>
+
+<h2>v1.33 &mdash; Quant Graph Fixes: Concurrent Update Resolution &amp; Fan-In Reducers</h2>
+
+<h3 class="version">Quant Graph &mdash; Fan-In Passthrough Key Removal</h3>
+<ul>
+<li><strong>Fixed <code>INVALID_CONCURRENT_GRAPH_UPDATE</code> at <code>positioning</code> key</strong> (<code>agent_3_langgraph/nodes.py</code>): <code>format_output_node</code> was returning passthrough copies of state keys (<code>positioning</code>, <code>dcf_valuation</code>, <code>correlation_matrix</code>, <code>fundamentals</code>) that other nodes already wrote in the same checkpoint step. LangGraph's fan-in saw conflicting writes, triggering the error.</li>
+<li><strong>Fix</strong>: Removed all passthrough keys from <code>format_output_node</code>'s return dict. It now only emits what it actually computes: <code>recommendation</code>, <code>reasoning</code>, <code>metrics</code> (with signals/confidence), and <code>stress_test_result</code>. Full state from <code>ainvoke()</code> still carries every key via the owning nodes, so <code>graph.run()</code> reads are unaffected.</li>
 </ul>
 
 <h2>v1.31 &mdash; Phase 3/4: Market Context Rebrand, Quant Behavioral Signals, Redis Cache, Eval Hardening</h2>

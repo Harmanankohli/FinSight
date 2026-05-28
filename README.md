@@ -6,7 +6,7 @@ An autonomous multi-agent system that answers investment queries like *"Should I
 
 - **Multi-framework orchestration**: Google ADK orchestrator delegates to LlamaIndex (RAG), LangGraph (Quant), and CrewAI (Market Context) agents
 - **A2A protocol**: Standard-compliant agent discovery and streaming communication via JSON-RPC over HTTP
-- **Multi-tier caching**: TTL-based tool-result cache in the MCP server (5 min prices, 24 h financials, 15 min news, permanent filings), LangChain SQLiteCache for LLM responses, and semantic cache using ChromaDB cosine similarity
+- **Multi-tier caching**: TTL-based tool-result cache in the MCP server (1 min prices, 1 h financials, 5 min news, permanent filings, 24h peers, 7d scenario shocks), LangChain SQLiteCache for LLM responses, and semantic cache using ChromaDB cosine similarity
 - **Input/output guardrails**: Off-topic filter, pre-flight ticker validation, empty-response guard, and BUY/HOLD/SELL signal enforcement with auto-retry
 - **Persistent memory layer**: SQLite-backed session storage, cross-session memory search, ticker brief history, portfolio persistence, and recommendation tracking with live price snapshots
 - **Incremental RAG ingestion**: Tracks ingested filing URLs in SQLite — restarts never re-ingest already-indexed documents
@@ -16,7 +16,7 @@ An autonomous multi-agent system that answers investment queries like *"Should I
 - **Distributed tracing**: Langfuse traces span all four agent processes in a single trace tree via text-based context propagation, with automatic filtering of noisy A2A internal spans
 - **Health monitoring**: `/health` endpoints on all five services with docker-compose healthcheck integration
 - **Local LLM inference**: All agents use LM Studio (OpenAI-compatible API) — no cloud dependencies
-- **MCP data tools**: Unified server providing SEC filings, price data, financials, news sentiment, and more
+- **MCP data tools**: Unified server providing SEC filings, price data, financials, news sentiment, insider transactions, peer discovery, scenario shocks, and more
 
 ## Architecture
 
@@ -50,6 +50,9 @@ An autonomous multi-agent system that answers investment queries like *"Should I
 │                        │  full_text_search,            │   │
 │                        │  get_news_sentiment,          │   │
 │                        │  get_earnings_calendar,       │   │
+│                        │  get_insider_transactions,    │   │
+│                        │  get_peers,                   │   │
+│                        │  get_scenario_shocks,         │   │
 │                        │  execute_python, ...          │   │
 │                        └─────────────────────────────────┘   │
 └──────────────────────────────────────────────────────────────┘
@@ -248,7 +251,7 @@ Key environment variables in `.env`:
 
 ## Testing
 
-**~148 test cases** across 11 test files — see [TESTS.md](docs/TESTS.md) for details.
+**~160 parametrized test cases** across 15 test files — see [TESTS.md](docs/TESTS.md) for details.
 
 ## License
 

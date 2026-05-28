@@ -33,7 +33,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <body>
 <div class="container">
 <div class="header-nav">
-<a href="index.html">Home</a><a href="../README.html">Overview</a><a href="ARCHITECTURE.html">Architecture</a><a href="AGENTS.html">Agents</a><a href="MCP_SERVERS.html">MCP</a><a href="DESIGN_DECISIONS.html">Decisions</a><a href="DEMO.html">Demo</a><a href="CHANGELOG.html">Changelog</a><a href="TESTS.html">Tests</a>
+<a href="index.html">Home</a><a href="../README.html">Overview</a><a href="ARCHITECTURE.html">Architecture</a><a href="AGENTS.html">Agents</a><a href="MCP_SERVERS.html">MCP</a><a href="DESIGN_DECISIONS.html">Decisions</a><a href="CHANGELOG.html">Changelog</a><a href="TESTS.html">Tests</a>
 </div>
 
 <h1>Architecture</h1>
@@ -111,10 +111,14 @@ A2A Request &rarr; FinSightAgentExecutor.execute()
       &rarr; Fire-and-forget (asyncio.create_task):
         &#x251C;&#x2500;&#x2500; self._ensure_ingested(ticker) &mdash; runs in background, non-blocking
         &#x2514;&#x2500;&#x2500; self._ensure_news_ingested(ticker) &mdash; runs in background, non-blocking
-      &rarr; FinancialIndexManager.query(ticker, query) &mdash; returns immediately from indexed data
+      &rarr; FinancialIndexManager.query(ticker, query) &mdash; returns from indexed data
         &#x251C;&#x2500;&#x2500; _classify_query_intent() &rarr; sec_filings &#x222A; news &#x222A; earnings
         &#x251C;&#x2500;&#x2500; Multi-collection retrieval with score-sorted dedup
         &#x2514;&#x2500;&#x2500; LlamaIndex response synthesizer (response_mode="compact")
+      &rarr; If index has no data for this ticker (first query):
+        &#x251C;&#x2500;&#x2500; Returns A2A WORKING event with "Index is warming for {ticker}..." message
+        &#x251C;&#x2500;&#x2500; Awaits background ingestion to complete
+        &#x2514;&#x2500;&#x2500; Re-queries index and returns actual data on COMPLETED
   &rarr; Yields data response with summary + sources
 
 RAGAgent._ensure_ingested(ticker) [background]:
@@ -144,24 +148,24 @@ RAGAgent._ensure_ingested(ticker) [background]:
         &#x2502;     &rarr; compute_base_metrics (Sharpe, vol, VaR, beta)
         &#x2502;     &rarr; technical_analysis (SMA, MACD, RSI, Bollinger, trend)
         &#x2502;     &rarr; volatility gate
-        &#x2502;         &#x251C;&#x2500;&#x2500; high vol (&gt; 35%) &rarr; stress_test [CVaR scenarios]
+        &#x2502;         &#x251C;&#x2500;&#x2500; high vol (&gt; 35%) &rarr; stress_test [sector-aware scenario shocks]
         &#x2502;         &#x2514;&#x2500;&#x2500; low vol (&le; 35%) &rarr; dcf_valuation [data-driven WACC + growth]
-        &#x2514;&#x2500;&#x2500; fetch_fundamentals [MCP: get_financials &rarr; 25+ ratios]
-              &rarr; PE, PB, ROE, margins, D/E, growth, golden cross
-      &#x2502;     &rarr; monte_carlo (GBM, 10k paths, 60-day horizon)
-      &#x251C;&#x2500;&#x2500; fetch_fundamentals [MCP: get_financials &rarr; 25+ ratios]
-      &#x2502;     &rarr; PE, PB, ROE, margins, D/E, growth, golden cross
-      &#x2502;     &rarr; peer_comparison (ranks vs peers on PE, EV/EBITDA, growth, margins, ROE)
-      &#x251C;&#x2500;&#x2500; options_flow_node (put/call vol ratio, OI ratio, flow signal)
-      &#x251C;&#x2500;&#x2500; insider_signals_node (Form 4 90-day, net direction, CEO/CFO weight)
-      &#x2514;&#x2500;&#x2500; analyst_positioning_node (consensus, upside %, short interest, squeeze)
+        &#x2502;     &rarr; monte_carlo (GBM, 5k paths, 252d horizon) &mdash; runs in BOTH paths
+        &#x251C;&#x2500;&#x2500; fetch_fundamentals [MCP: get_financials &rarr; 25+ ratios]
+        &#x2502;     &rarr; PE, PB, ROE, margins, D/E, growth, golden cross
+        &#x2502;     &rarr; peer_comparison (dynamic yfinance Industry/Sector peers, ranks on PE,
+        &#x2502;         EV/EBITDA, growth, margins, ROE, D/E + sector medians for relative scoring)
+        &#x251C;&#x2500;&#x2500; options_flow_node (put/call vol ratio, OI ratio, flow signal, no-data handling)
+        &#x251C;&#x2500;&#x2500; insider_signals_node (get_insider_transactions MCP &mdash; structured buy/sell data)
+        &#x2514;&#x2500;&#x2500; analyst_positioning_node (consensus, upside %, short interest, squeeze)
       [Fan-in]
         &#x251C;&#x2500;&#x2500; portfolio_correlation [MCP: get_prices per holding + target]
-        &#x2514;&#x2500;&#x2500; format_output (8-group weighted voting: technical 0.15, fundamental 0.15,
-              narrative 0.10, options 0.12, insider 0.10, positioning 0.11,
-              macro 0.12, risk 0.15 &rarr; sum=1.0)
+        &#x2514;&#x2500;&#x2500; format_output (8-group weighted voting: risk 0.15, dcf 0.20, fund_value 0.13,
+              fund_quality 0.12, tech_trend 0.15, tech_momentum 0.10,
+              peer 0.10, behavioral 0.05 &rarr; sum=1.0)
       &rarr; llm_summary (enriched 3-4 sentence summary)
-  &rarr; Yields data response with dcf_error in result</pre>
+      &rarr; Live sector-aware shocks via MCP get_scenario_shocks (QQQ/XLP/XLF per sector)
+  &rarr; Yields data response</pre>
 
 <p><strong>Portfolio Holdings Extraction</strong>: <code>stream()</code> uses <code>extract_holdings(query, exclude_ticker=ticker)</code> from <code>shared/ticker_utils.py</code> to extract holdings from natural language (e.g. "My portfolio holds AAPL, MSFT, GOOGL"). Holdings are passed through the full chain: <code>stream()</code> &rarr; <code>analyze()</code> &rarr; <code>graph.run()</code> &rarr; <code>correlation_node</code>.</p>
 
@@ -173,6 +177,18 @@ RAGAgent._ensure_ingested(ticker) [background]:
 
 <p><strong>DCF Skip Messaging</strong>: When annual volatility exceeds the 35% threshold, <code>compute_metrics_node</code> sets a descriptive <code>dcf_error</code> field (e.g. "DCF skipped: annual volatility (41.0%) exceeds 35% threshold &ndash; routed to stress test instead"). This error is propagated through the graph into the final output and LLM reasoning, providing visibility into why DCF was not computed.</p>
 
+<p><strong>Sector-Relative Scoring</strong>: <code>format_output_node</code> now passes <code>peer_comparison.medians</code> (sector medians for PE, EV/EBITDA, ROE, margins, D/E) into <code>_score_fundamental_value</code> and <code>_score_fundamental_quality</code>. When available, these use <code>_relative_score()</code> to score metrics relative to the sector median instead of absolute universal thresholds &mdash; making fundamental scoring sector-aware.</p>
+
+<p><strong>Live Scenario Shocks</strong>: <code>stress_test_node</code> fetches <code>get_scenario_shocks(sector)</code> via MCP for live historical crash returns per sector ETF (QQQ for tech, XLF for financials, etc.), replacing hardcoded S&P-only fallbacks.</p>
+
+<h3>Quant Agent &mdash; LangGraph Fan-In Topology</h3>
+<p>The quant agent's LangGraph state machine required three fixes in v1.33-1.34 to handle concurrent fan-in writes:</p>
+<ul>
+<li><strong>Annotated reducers</strong> (<code>agent_3_langgraph/state.py</code>): State keys written by multiple nodes (<code>metrics</code>, <code>reasoning</code>, <code>recommendation</code>, <code>stress_test_result</code>, <code>dcf_error</code>) use <code>Annotated[type, reducer]</code> &mdash; <code>_merge_dict</code>, <code>_last_str</code>, <code>_last_nonnull</code>. Without reducers, LangGraph raises <code>INVALID_CONCURRENT_GRAPH_UPDATE</code> when two nodes write to the same key in the same checkpoint step.</li>
+<li><strong>Diamond dependency removed</strong> (<code>agent_3_langgraph/graph.py</code>): The direct <code>fetch_fundamentals &rarr; format_output</code> edge was removed. <code>fetch_fundamentals</code> already fans into <code>peer_comparison_node</code> which fans into <code>format_output</code> &mdash; the direct edge created a diamond pattern where <code>format_output</code> triggered twice in the same step.</li>
+<li><strong>Passthrough keys removed</strong> (<code>agent_3_langgraph/nodes.py</code>): <code>format_output_node</code> was returning copies of state keys (<code>positioning</code>, <code>dcf_valuation</code>, <code>correlation_matrix</code>, <code>fundamentals</code>) that other nodes already wrote. Now only emits <code>recommendation</code>, <code>reasoning</code>, <code>metrics</code>, and <code>stress_test_result</code> &mdash; only what it actually computes.</li>
+</ul>
+
 <h3>Market Context Agent (CrewAI)</h3>
 <pre>A2A Request &rarr; DefaultRequestHandler &rarr; GenericAgentExecutor(MarketContextAgent)
   &rarr; MarketContextAgent.stream()
@@ -180,7 +196,7 @@ RAGAgent._ensure_ingested(ticker) [background]:
       &#x251C;&#x2500;&#x2500; Step 1: get_macro_indicators() &#x2225; get_financials(ticker)
       &#x2502;     &rarr; macro regime (yields, VIX, DXY, sector ETFs, yield curve)
       &#x2502;     &rarr; primary financials (sector/industry for peer resolution)
-      &#x251C;&#x2500;&#x2500; Step 2: resolve peer tickers via shared/peer_sets.py
+      &#x251C;&#x2500;&#x2500; Step 2: resolve peers via MCP get_peers (dynamic yfinance Industry/Sector)
       &#x2514;&#x2500;&#x2500; Step 3: asyncio.gather(peer financials, peer prices)
     &rarr; 1-agent CrewAI (&ldquo;Market Context Analyst&rdquo;):
       &rarr; Outputs JSON: narrative, macro_regime, relative_peer_positioning,
@@ -195,13 +211,15 @@ RAGAgent._ensure_ingested(ticker) [background]:
 <p><code>TTLCache</code> (or <code>RedisCache</code> when <code>REDIS_URL</code> is configured) in <code>mcp_servers/finsight_server.py</code> &mdash; created via <code>make_cache()</code> factory in <code>shared/redis_cache.py</code>:</p>
 <table>
 <tr><th>Cache</th><th>TTL</th><th>Key</th><th>Notes</th></tr>
-<tr><td><code>_cache_prices</code></td><td>5 min</td><td><code>(ticker, period, interval)</code></td><td>yfinance OHLCV</td></tr>
-<tr><td><code>_cache_financials</code></td><td>24 h</td><td><code>(ticker,)</code></td><td>income/balance/cashflow</td></tr>
+<tr><td><code>_cache_prices</code></td><td>1 min</td><td><code>(ticker, period, interval)</code></td><td>yfinance OHLCV</td></tr>
+<tr><td><code>_cache_financials</code></td><td>1 h</td><td><code>(ticker,)</code></td><td>income/balance/cashflow</td></tr>
 <tr><td><code>_cache_macro</code></td><td>15 min</td><td><code>"macro"</code></td><td>Treasury yields, VIX, DXY, sector ETFs</td></tr>
 <tr><td><code>_cache_benchmark</code></td><td>1 h</td><td>ticker</td><td><code>^GSPC</code> and other index benchmarks</td></tr>
-<tr><td><code>_cache_news</code></td><td>15 min</td><td><code>(ticker, limit)</code></td><td>only cached when articles found</td></tr>
+<tr><td><code>_cache_news</code></td><td>5 min</td><td><code>(ticker, limit)</code></td><td>only cached when articles found</td></tr>
 <tr><td><code>_cache_filing</code></td><td>permanent (LRU-200)</td><td><code>edgar_url</code></td><td>filings are immutable</td></tr>
 <tr><td><code>_cache_submissions</code></td><td>6 h</td><td><code>cik</code></td><td>EDGAR CIK submissions</td></tr>
+<tr><td><code>_cache_peers</code></td><td>24 h</td><td>ticker</td><td>yfinance Industry/Sector peer lists</td></tr>
+<tr><td><code>_cache_shocks</code></td><td>7 days</td><td>sector</td><td>Historical crash returns per sector ETF</td></tr>
 </table>
 
 <h3>Redis Two-Level Cache (Tier 1C, v1.31)</h3>
@@ -261,7 +279,10 @@ RAGAgent._ensure_ingested(ticker) [background]:
 &#x2502;                         &#x2502;  &#x251C;&#x2500;&#x2500; resolve_company_ticker()    &#x2502;
 &#x2502;                         &#x2502;  &#x251C;&#x2500;&#x2500; full_text_search()          &#x2502;
 &#x2502;                         &#x2502;  &#x251C;&#x2500;&#x2500; get_news_sentiment()        &#x2502;
-&#x2502;                         &#x2502;  &#x251C;&#x2500;&#x2500; get_earnings_calendar()     &#x2502;
+&#x2502;                         &#x2502;  &#x251C;&#x2500;&#x2500; get_earnings_calendar()         &#x2502;
+&#x2502;                         &#x2502;  &#x251C;&#x2500;&#x2500; get_insider_transactions()    &#x2502;
+&#x2502;                         &#x2502;  &#x251C;&#x2500;&#x2500; get_peers()                   &#x2502;
+&#x2502;                         &#x2502;  &#x251C;&#x2500;&#x2500; get_scenario_shocks()         &#x2502;
 &#x2502;                         &#x2502;  &#x2514;&#x2500;&#x2500; execute_python()            &#x2502;
 &#x2514;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2518;</pre>
 <p>Agent cards loaded from <code>agent_cards/*.json</code>, embedded via <code>sentence-transformers</code>, queried via <code>find_agent</code> tool using dot-product similarity.</p>
@@ -274,7 +295,7 @@ RAGAgent._ensure_ingested(ticker) [background]:
 <tr><td>A2A messaging (global)</td><td>680s</td><td>ClientConfig + httpx.AsyncClient</td></tr>
 <tr><td>A2A &mdash; RAG agent</td><td>600s</td><td><code>asyncio.wait_for</code> in <code>send_message</code></td></tr>
 <tr><td>A2A &mdash; Quant agent</td><td>600s</td><td><code>asyncio.wait_for</code> in <code>send_message</code></td></tr>
-<tr><td>A2A &mdash; Sentiment agent</td><td>600s</td><td><code>asyncio.wait_for</code> in <code>send_message</code></td></tr>
+<tr><td>A2A &mdash; Market Context agent</td><td>600s</td><td><code>asyncio.wait_for</code> in <code>send_message</code></td></tr>
 <tr><td>MCP tool calls</td><td>30s</td><td>MCPClient default</td></tr>
 </table>
 
@@ -295,7 +316,7 @@ RAGAgent._ensure_ingested(ticker) [background]:
 <tr><td>Orchestrator (ADK)</td><td><code>qwen/qwen3-30b-a3b-2507</code></td><td><code>openai/</code> prefix (LM Studio endpoint)</td></tr>
 <tr><td>RAG (LlamaIndex)</td><td><code>qwen/qwen3-30b-a3b-2507</code></td><td><code>llama-index-llms-openai-like</code></td></tr>
 <tr><td>Quant (LangGraph)</td><td><code>qwen/qwen3-30b-a3b-2507</code></td><td><code>langchain-openai</code></td></tr>
-<tr><td>Sentiment (CrewAI)</td><td><code>qwen/qwen3-30b-a3b-2507</code></td><td>CrewLLM (OpenAI-compatible)</td></tr>
+<tr><td>Market Context (CrewAI)</td><td><code>qwen/qwen3-30b-a3b-2507</code></td><td>CrewLLM (OpenAI-compatible)</td></tr>
 </table>
 
 <h2>Observability &amp; Tracing</h2>
@@ -333,7 +354,7 @@ Sub-agents (agent_2, agent_3, agent_4)
 <tr><td>Orchestrator</td><td><code>orchestrator</code></td><td>GoogleADKInstrumentor, HTTPXClientInstrumentor</td><td><code>orchestrator-execute</code> span, per-sub-agent latency spans</td></tr>
 <tr><td>RAG Agent</td><td><code>rag_agent</code></td><td>LlamaIndexInstrumentor</td><td><code>rag-agent-stream</code> span</td></tr>
 <tr><td>Quant Agent</td><td><code>quant_agent</code></td><td>StarletteInstrumentor, <strong>LangChainInstrumentor</strong></td><td><code>quant-agent-stream</code> span + CallbackHandler for LangGraph nodes</td></tr>
-<tr><td>Market Context Agent</td><td><code>sentiment_agent</code></td><td>CrewAIInstrumentor, StarletteInstrumentor</td><td><code>market-context-agent-stream</code> span</td></tr>
+<tr><td>Market Context Agent</td><td><code>market_context_agent</code></td><td>CrewAIInstrumentor, StarletteInstrumentor</td><td><code>market-context-agent-stream</code> span</td></tr>
 <tr><td>MCP Server</td><td><code>mcp_server</code></td><td>&mdash;</td><td><code>@observe()</code> on individual tools</td></tr>
 </table>
 
@@ -360,10 +381,10 @@ Sub-agents (agent_2, agent_3, agent_4)
 
 <table>
 <tr><th>Agent</th><th>Background Task</th><th>Metrics</th><th>Why Each Metric</th><th>Data Required</th></tr>
-<tr><td>Orchestrator</td><td><code>score_response()</code></td><td>AnswerRelevancy, citation_quality, risk_disclosure, recommendation_clarity, response_completeness</td><td>AnswerRelevancy: generic catch-all. citation_quality: unsubstantiated financial claims are worthless &mdash; must cite filing dates/amounts. risk_disclosure: no risk discussion means incomplete thesis. recommendation_clarity: core output is BUY/HOLD/SELL signal &mdash; ambiguous synthesis fails. response_completeness: must synthesize all 3 analysis types.</td><td><code>user_input</code>, <code>response</code></td></tr>
-<tr><td>RAG</td><td><code>score_rag_response()</code></td><td>Faithfulness, AnswerRelevancy, ContextPrecisionWithoutReference</td><td>Faithfulness: prevents hallucinated dates/numbers by verifying claims against retrieved SEC text. ContextPrecisionWithoutReference: flags retrieval drift &mdash; when RAG returns irrelevant filings, this drops even if Faithfulness passes.</td><td><code>user_input</code>, <code>response</code>, <code>context_texts</code> (ChromaDB nodes)</td></tr>
-<tr><td>Quant</td><td><code>score_quant_response()</code></td><td>FactualCorrectness, AnswerRelevancy</td><td>FactualCorrectness: compares LLM summary numbers (Sharpe, VaR, DCF) against actual computed values &mdash; primary failure mode is hallucinated numbers.</td><td><code>user_input</code>, <code>response</code>, <code>quant_result</code> (computed metrics dict)</td></tr>
-<tr><td>Sentiment</td><td><code>score_sentiment_response()</code></td><td>AnswerRelevancy, catalyst_identification, insider_signal_discussion, Faithfulness</td><td>catalyst_identification: vague "sentiment is positive" without naming the catalyst scores low &mdash; must identify specific events. insider_signal_discussion: omitting insider trading patterns misses a key signal. Faithfulness: verifies narrative is grounded in collected data.</td><td><code>user_input</code>, <code>response</code>, <code>_retrieved_contexts</code> (news/filing titles)</td></tr>
+<tr><td>Orchestrator</td><td><code>score_response()</code></td><td>AnswerRelevancy, citation_quality, risk_disclosure, recommendation_clarity, response_completeness, no_forward_guarantees</td><td>AnswerRelevancy: generic catch-all. citation_quality: unsubstantiated financial claims are worthless &mdash; must cite filing dates/amounts. risk_disclosure: no risk discussion means incomplete thesis. recommendation_clarity: core output is BUY/HOLD/SELL signal &mdash; ambiguous synthesis fails. response_completeness: must synthesize all 3 analysis types. no_forward_guarantees: flags any language suggesting guaranteed future performance.</td><td><code>user_input</code>, <code>response</code></td></tr>
+<tr><td>RAG</td><td><code>score_rag_response()</code></td><td>Faithfulness, ContextPrecisionWithoutReference, cross_collection_synthesis</td><td>Faithfulness: prevents hallucinated dates/numbers by verifying claims against retrieved source text. ContextPrecisionWithoutReference: flags retrieval drift &mdash; when RAG returns irrelevant filings, this drops even if Faithfulness passes. cross_collection_synthesis: checks whether response cites sources from &ge;2 collections (sec_filings, news, earnings).</td><td><code>user_input</code>, <code>response</code>, <code>context_texts</code> (ChromaDB nodes)</td></tr>
+<tr><td>Quant</td><td><code>score_quant_response()</code></td><td>FactualCorrectness, signal_explanation_quality, deterministic</td><td>FactualCorrectness: compares LLM summary numbers (Sharpe, VaR, DCF) against actual computed values &mdash; primary failure mode is hallucinated numbers. signal_explanation_quality: scores whether three or more signal groups are explained with specific numeric values. deterministic: zero-LLM schema validator for all 8 signal groups.</td><td><code>user_input</code>, <code>response</code>, <code>quant_result</code> (computed metrics dict)</td></tr>
+<tr><td>Market Context</td><td><code>score_market_context_response()</code></td><td>Faithfulness, macro_regime_analysis, peer_landscape_quality</td><td>Faithfulness: verifies narrative is factually grounded in collected macro and peer data. macro_regime_analysis: scores whether yield curve, VIX, DXY, and sector ETFs are discussed with actual values. peer_landscape_quality: evaluates depth of peer comparison on at least two metrics.</td><td><code>user_input</code>, <code>response</code>, <code>_retrieved_contexts</code> (macro + peer data)</td></tr>
 </table>
 
 <h3>Per-Metric Streaming</h3>

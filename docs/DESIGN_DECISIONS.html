@@ -33,7 +33,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <body>
 <div class="container">
 <div class="header-nav">
-<a href="index.html">Home</a><a href="../README.html">Overview</a><a href="ARCHITECTURE.html">Architecture</a><a href="AGENTS.html">Agents</a><a href="MCP_SERVERS.html">MCP</a><a href="DESIGN_DECISIONS.html">Decisions</a><a href="DEMO.html">Demo</a><a href="CHANGELOG.html">Changelog</a><a href="TESTS.html">Tests</a>
+<a href="index.html">Home</a><a href="../README.html">Overview</a><a href="ARCHITECTURE.html">Architecture</a><a href="AGENTS.html">Agents</a><a href="MCP_SERVERS.html">MCP</a><a href="DESIGN_DECISIONS.html">Decisions</a><a href="CHANGELOG.html">Changelog</a><a href="TESTS.html">Tests</a>
 </div>
 
 <h1>Design Decisions</h1>
@@ -1262,6 +1262,47 @@ else:
 <li>&check; All paths converge at format_output &mdash; single enrichment point</li>
 </ul>
 
+<hr>
+
+<h2>Quant Graph Fan-In Resolution: Diamond Dependency, Reducers &amp; Passthrough Keys</h2>
+
+<h3>Problem</h3>
+<p>The parallel fan-out graph had a subtle topology bug. <code>fetch_fundamentals</code> fed into three downstream nodes: <code>peer_comparison</code>, <code>analyst_positioning</code>, and a direct edge to <code>format_output</code>. This created a <strong>diamond dependency</strong> &mdash; <code>format_output</code> had two indirect predecessors via <code>peer_comparison</code>/<code>analyst_positioning</code> AND a direct edge from <code>fetch_fundamentals</code>. LangGraph scheduled <code>format_output</code> twice in the same checkpoint step when the two intermediate nodes completed concurrently. Each duplicate run wrote every state key, triggering <code>INVALID_CONCURRENT_GRAPH_UPDATE</code> at whichever key was updated first &mdash; typically <code>positioning</code> or <code>metrics</code>.</p>
+
+<h3>Solution</h3>
+<p>Three-part fix:</p>
+<ol>
+<li><strong>Remove diamond dependency</strong> (<code>agent_3_langgraph/graph.py:39</code>): Deleted <code>builder.add_edge(&quot;fetch_fundamentals&quot;, &quot;format_output&quot;)</code>. Fundamentals data flows through <code>peer_comparison</code> and <code>analyst_positioning</code> into shared state &mdash; <code>format_output</code> reads it from state, not from a direct edge. <code>format_output</code> now has exactly 5 clean predecessors and runs exactly once per invocation.</li>
+<li><strong>Add Annotated reducers for concurrent writes</strong> (<code>agent_3_langgraph/state.py:6-22</code>): Three state keys are written by multiple nodes in the same step, so they needed reducers even without the diamond:
+<ul>
+<li><code>metrics</code> &rarr; <code>_merge_dict</code> (merges dicts from <code>compute_metrics</code> and <code>format_output</code>, second wins on key collision)</li>
+<li><code>stress_test_result</code> &rarr; <code>_last_nonnull</code> (last non-null value wins &mdash; <code>stress_test_node</code> writes real data, <code>format_output</code>'s initial write is <code>None</code>)</li>
+<li><code>dcf_error</code> &rarr; <code>_last_nonnull</code></li>
+<li><code>reasoning</code> &rarr; <code>_last_str</code> (last non-empty string wins, then <code>llm_summary_node</code> overwrites)</li>
+<li><code>recommendation</code> &rarr; <code>_last_str</code> (idempotent &mdash; both runs produce same BUY/HOLD/SELL)</li>
+<li><code>monte_carlo</code> &rarr; <code>_last_nonnull</code></li>
+</ul>
+</li>
+<li><strong>Remove passthrough keys from format_output</strong> (<code>agent_3_langgraph/nodes.py</code>): <code>format_output_node</code> was returning copies of state keys (<code>positioning</code>, <code>dcf_valuation</code>, <code>correlation_matrix</code>, <code>fundamentals</code>, <code>technicals</code>, <code>peer_comparison</code>, <code>options_signals</code>, <code>insider_signals</code>) that other nodes already wrote. Even with reducers, writing every key from <code>format_output</code> is wasteful and confusing &mdash; the node should only emit what it computes: <code>recommendation</code>, <code>reasoning</code>, <code>metrics</code> (with signals/confidence), and <code>stress_test_result</code>. Full state from <code>ainvoke()</code> still carries every key via the owning nodes.</li>
+</ol>
+
+<h3>Why not use LangGraph's built-in fan-in handling?</h3>
+<p>LangGraph handles fan-in naturally &mdash; multiple predecessors can converge on a single node. The problem wasn't fan-in by itself but the <em>diamond</em>: <code>format_output</code> being reachable via two different path lengths from <code>fetch_fundamentals</code>. LangGraph triggers the node twice when its predecessors complete in different checkpoint steps (or in the same step via separate schedule entries). The reducers would have caught the symptom (<code>INVALID_CONCURRENT_GRAPH_UPDATE</code>) but the diamond removal fixes the root cause.</p>
+
+<h3>Why keep the reducers after fixing the diamond?</h3>
+<p>The reducers are still needed for the remaining concurrent writes &mdash; <code>metrics</code> is written by <code>compute_metrics</code> AND <code>format_output</code> in the same step, <code>stress_test_result</code> by <code>stress_test</code> AND <code>format_output</code>, and <code>dcf_error</code> by <code>compute_metrics</code> AND <code>dcf_valuation</code>. These are not diamond-induced duplicates but legitimate multi-writer keys. The reducers act as a safety net for any future topology changes that might introduce similar conflicts.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; Root cause fixed &mdash; diamond edge removed, <code>format_output</code> runs once</li>
+<li>&check; Reducers handle legitimate multi-writer keys</li>
+<li>&check; Passthrough keys removed &mdash; <code>format_output</code> only emits what it computes</li>
+<li>&check; Full state still accessible &mdash; owning nodes write their keys before fan-in</li>
+<li>&check; Safety net &mdash; reducers prevent regression from future topology changes</li>
+</ul>
+
+<hr>
+
 <h2>Parallel News Ingestion with SEC Filings</h2>
 
 <h3>Why fire news and SEC ingestion as concurrent background tasks?</h3>
@@ -1461,6 +1502,59 @@ return await self.index.query(ticker, query_text)</code></pre>
 
 <hr>
 
+<h2>Dynamic Peer Discovery via Yahoo Finance API</h2>
+
+<h3>Why replace static lookup with live API call?</h3>
+<p>The original <code>shared/peer_sets.py</code> required hand-curated entries for every ticker's industry. When a ticker's industry wasn't in the map, peer comparison broke silently (<code>get_peer_tickers</code> returned <code>[]</code>). Maintaining coverage across thousands of listed stocks was impractical &mdash; only ~33 sectors had entries.</p>
+
+<h3>Solution</h3>
+<p>New MCP tool <code>get_peers(ticker)</code> (<code>mcp_servers/finsight_server.py</code>) hitting Yahoo Finance's <code>/v6/finance/recommendationsBySymbol</code> endpoint (&quot;People also watch&quot;). Returns 3-5 peer tickers for any exchange-listed stock without maintaining a static map. Results cached 24h &mdash; peer sets are stable intraday.</p>
+<p>Both Quant's <code>peer_comparison_node</code> and the Market Context agent use it. Fallback chain: MCP <code>get_peers</code> &rarr; <code>shared/peer_sets.py</code> via <code>get_peer_tickers()</code> &rarr; empty list.</p>
+
+<h3>Why keep peer_sets.py after migration?</h3>
+<p>As a fallback. The MCP server might be cold, rate-limited, or unreachable. <code>get_peer_tickers()</code> from <code>shared/peer_sets.py</code> provides a zero-latency fallback for the ~33 sectors already mapped. Future cleanup can deprecate the file when the MCP tool is proven stable in production.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; Live discovery &mdash; works for any exchange-listed ticker</li>
+<li>&check; No maintenance &mdash; Yahoo Finance crowdsources peer curation</li>
+<li>&check; 24h cache &mdash; peers are stable intraday</li>
+<li>&check; Dual fallback &mdash; MCP &rarr; peer_sets.py &rarr; empty list</li>
+<li>&check; Both agents use the same tool &mdash; no divergence</li>
+</ul>
+
+<hr>
+
+<h2>Market Context Agent &mdash; Peer Key Fixes &amp; Sector/Industry Restoration</h2>
+
+<h3>Problem</h3>
+<p>Two bugs silently degraded Market Context agent output after the peer refactor:</p>
+<ol>
+<li><strong>Wrong <code>get_financials</code> response key</strong> (<code>executor.py</code>): The code read <code>primary_fin.get(&quot;financials&quot;, {}).get(&quot;info&quot;, {})</code>, but <code>get_financials</code> MCP tool returns top-level keys directly &mdash; no <code>&quot;financials&quot;</code> wrapper. Every ticker got <code>info = {}</code>, so <code>sector</code> and <code>industry</code> were always empty, and <code>get_peer_tickers</code> returned <code>[]</code> for every ticker. Silent data loss &mdash; the agent still produced JSON, but <code>macro_regime</code> and <code>peer_landscape</code> analyses had no sector context.</li>
+<li><strong>Undefined <code>sector</code>/<code>industry</code> in return dict</strong> (<code>executor.py:73-74</code>): The <code>_collect_data_parallel</code> return dict referenced <code>sector</code> and <code>industry</code> variables that were never assigned &mdash; leftover from before the peer refactor removed the extraction code. CrewAI's <code>data.get(&quot;sector&quot;, &quot;&quot;)</code> handled the <code>NameError</code> gracefully, but the keys were always empty strings.</li>
+</ol>
+
+<h3>Solution</h3>
+<ol>
+<li><strong>Fix data extraction</strong> (<code>executor.py</code>): Changed <code>primary_fin.get(&quot;financials&quot;, {}).get(&quot;info&quot;, {})</code> to <code>primary_fin.get(&quot;info&quot;, {})</code>. Uses <code>res</code> (the full MCP response) directly for peer financials instead of the wrapper.</li>
+<li><strong>Restore sector/industry extraction</strong> (<code>executor.py</code>): Re-added <code>info = primary_fin.get(&quot;info&quot;, {}); sector = info.get(&quot;sector&quot;, &quot;&quot;); industry = info.get(&quot;industry&quot;, &quot;&quot;)</code> before the <code>get_peers</code> call. The return dict now gets populated values.</li>
+<li><strong>Expand peer sets</strong> (<code>shared/peer_sets.py</code>): Added ~30 new entries covering missing industries (Discount Stores, Grocery Stores, Consumer Defensive/Cyclical sectors). Fixed em-dash vs. hyphen mismatch &mdash; <code>_PEER_SETS</code> used &quot;Software&mdash;Infrastructure&quot; (U+2014) but yfinance returns &quot;Software - Infrastructure&quot; (hyphen+spaces). Added <code>_norm()</code> normalization function that collapses all dash variants to a single hyphen, with <code>_NORM_MAP</code> for O(1) fuzzy lookup.</li>
+</ol>
+
+<h3>Why wasn't this caught by testing?</h3>
+<p>No integration tests for the Market Context agent's data pipeline existed. The agent produced structurally valid JSON regardless &mdash; the narrative was just less informed. These bugs highlight the need for integration tests that verify non-empty <code>sector</code>/<code>industry</code>/<code>peers</code> in the CrewAI output, especially after data-source refactors.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; Non-empty sector/industry now flows to CrewAI narrative</li>
+<li>&check; Peer sets expanded to cover all major sectors</li>
+<li>&check; Em-dash/hyphen normalization prevents silent empty sets</li>
+<li>&check; Dynamic <code>get_peers</code> MCP tool works for any ticker</li>
+<li>&check; <code>peer_sets.py</code> remains as fallback for MCP failures</li>
+</ul>
+
+<hr>
+
 <h2>Quant Behavioral Signals &mdash; 8-Group Weighted Voting</h2>
 
 <h3>Problem</h3>
@@ -1486,6 +1580,44 @@ return await self.index.query(ticker, query_text)</code></pre>
 <li>&check; Normalized signals (-1 to +1) for uniform voting</li>
 <li>&check; 8-group coverage across fundamental, technical, behavioral, and macro dimensions</li>
 <li>&check; Confidence formula accounts for signal sparsity</li>
+</ul>
+
+<hr>
+
+<h2>Quant Behavioral Signal Refinements: Options Flow, Insider Data, Monte Carlo &amp; Schema Validator</h2>
+
+<h3>Options Flow &mdash; Why return <code>no_data</code> instead of misleading ratios?</h3>
+<p>When a ticker has zero options volume (no open positions, illiquid, or the options chain fetch returned empty), the old code computed <code>put_call_vol = 0/0 = NaN</code> and <code>oi_ratio = 0/0 = NaN</code>. These NaNs propagated through <code>_normalize_to_signal</code> as <code>0.0</code>, producing a neutral signal that looked like &quot;no unusual activity&quot; when it meant &quot;no data available.&quot;</p>
+<p><strong>Fix</strong> (<code>nodes.py:949</code>): Check total volume before computing ratios. If zero, return <code>flow_signal=&quot;no_data&quot;</code>, <code>note=&quot;No options volume &mdash; ticker may lack active options market&quot;</code>, and <code>put_call_vol_ratio=oi_ratio=0.5</code> (neutral). The <code>format_output_node</code> checks <code>flow_signal == &quot;no_data&quot;</code> and excludes it from behavioral signal aggregation rather than scoring it as neutral.</p>
+
+<h3>Insider Signals &mdash; Why replace Form 4 keyword matching with yfinance structured data?</h3>
+<p>The original <code>insider_signals_node</code> used <code>get_company_filings</code> filtered for Form 4 documents, then matched keywords (<code>&quot;P&quot;</code>/<code>&quot;A&quot;</code> for buys, <code>&quot;D&quot;</code>/<code>&quot;S&quot;</code> for sells) on filing descriptions. Many Form 4 filings have empty or inconsistent description fields &mdash; the XML content contains the actual transaction data, but the MCP tool only returns the filing metadata, not the parsed XML.</p>
+<p><strong>Fix</strong> (<code>nodes.py:997</code>): Switched to <code>yf.Ticker.insider_transactions</code> via a new <code>get_insider_transactions</code> MCP tool. Returns structured DataFrame with actual buy/sell records, dollar amounts, and executive roles. The node now computes: net direction (buys - sells / total), CEO/CFO weighted score, and net dollar volume. Since <code>get_insider_transactions</code> uses yfinance (no SEC EDGAR parsing), it's faster and more reliable than the Form 4 scraping approach.</p>
+
+<h3>Monte Carlo &mdash; Why run on low-volatility tickers?</h3>
+<p>The original graph only ran <code>_run_monte_carlo</code> on the high-volatility path (stress test branch). Low-volatility tickers went through the DCF valuation path, which ran no simulation. This meant DCF-only tickers (utilities, consumer staples) had <code>monte_carlo = None</code>, breaking downstream consumers that expected percentiles or <code>prob_profit</code>.</p>
+<p><strong>Fix</strong> (<code>nodes.py:733</code>): <code>dcf_valuation_node</code> now runs <code>_run_monte_carlo</code> on the price data it already holds. The simulation is computationally cheap (~50ms for 5,000 paths) and produces the same percentile/prob_profit/VaR output regardless of volatility route. Added <code>_last_nonnull</code> reducer for <code>monte_carlo</code> in state to handle the concurrent writer scenario.</p>
+
+<h3>Peer Comparison &mdash; Why fall back to peer_sets.py when MCP returns empty?</h3>
+<p><code>get_peers</code> MCP tool can return <code>[]</code> when Yahoo Finance's recommendations API is rate-limited, the server is cold, or the ticker has no recommendations. Without a fallback, <code>peer_comparison_node</code> returned <code>{&quot;peers&quot;: []}</code>, which <code>format_output</code> scored as neutral &mdash; but the user lost the peer context entirely.</p>
+<p><strong>Fix</strong> (<code>nodes.py:852</code>): When <code>get_peers</code> returns <code>[]</code>, fall back to <code>get_peer_tickers(ticker)</code> from <code>shared/peer_sets.py</code> (the hand-curated map). This gives the ~33 covered sectors a zero-network fallback. If both return empty, the node logs a warning and continues with an empty peer set.</p>
+
+<h3>Schema Validator &mdash; Why fix key paths?</h3>
+<p><code>score_quant_deterministic()</code> (<code>shared/runtime_eval.py:614</code>) is a zero-LLM schema validator that runs on every Quant response. It had three bugs:</p>
+<ol>
+<li>Wrong access path: <code>result[&quot;signal_scores&quot;]</code> &rarr; correct <code>result[&quot;metrics&quot;][&quot;signal_scores&quot;]</code></li>
+<li>Shortened group names: <code>&quot;dcf&quot;</code> in old signal score dict keys &rarr; <code>&quot;dcf_value&quot;</code> (actual key in <code>_SIGNAL_WEIGHTS</code>)</li>
+<li><code>conf</code> path: same deep-nesting fix</li>
+</ol>
+<p>The validator now checks all 8 signal groups present, weight sum &asymp; 1.0, MC percentiles consistent, peer fields present, recommendation + confidence invariants.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; No-data handling for zero-volume options &mdash; <code>flow_signal=&quot;no_data&quot;</code> instead of NaN</li>
+<li>&check; Structured insider transactions &mdash; yfinance DataFrame, not Form 4 keyword heuristics</li>
+<li>&check; Monte Carlo runs on both volatility paths &mdash; DCF tickers get simulation too</li>
+<li>&check; Peer fallback chain &mdash; MCP &rarr; peer_sets.py &rarr; empty</li>
+<li>&check; Schema validator actually validates &mdash; corrected key paths</li>
 </ul>
 
 <hr>
@@ -1585,6 +1717,71 @@ return await self.index.query(ticker, query_text)</code></pre>
 <li>&check; Runs in thread executor &mdash; doesn't block asyncio event loop</li>
 <li>&check; Idempotent &mdash; <code>get_or_create_collection</code> is safe to call multiple times</li>
 <li>&check; Graceful if models fail &mdash; errors logged but server doesn't crash</li>
+</ul>
+
+<hr>
+
+<h2>Live Sector-Aware Scenario Shocks with Sector-Relative Ratio Scoring</h2>
+
+<h3>Problem</h3>
+<p>The stress test node ran a static scenario: fixed market decline percentage across all tickers. A 20% market decline on a low-beta utility ticker (&beta;=0.4, so -8% adjusted) vs. a high-beta tech ticker (&beta;=1.5, so -30% adjusted) produced the same stress loss narrative as a uniform -20% shock. Worse, the old formula <code>mkt_decline * beta</code> could produce absurd values &mdash; &beta;=2.5 during a 50% decline = -125% loss, which is impossible since equity can't go below -100%.</p>
+
+<h3>Solution</h3>
+<p><strong>Live market data</strong> (<code>nodes.py:660</code>): Replaced the static <code>_MKT_DECLINE_PCT = {&quot;mild&quot;: -0.10, ...}</code> with live data from the <code>get_macro_indicators</code> MCP tool &mdash; specifically the YTD return of the sector's SPDR ETF (XLK for tech, XLU for utilities, etc.) resolved via <code>_SECTOR_ETF_MAP</code>. Four scenarios:</p>
+<table>
+<tr><th>Scenario</th><th>Multiplier</th><th>Shock =</th></tr>
+<tr><td>Severe</td><td>&times;2.0</td><td><code>max(-0.95, beta &times; (sector_ytd &times; 2))</code></td></tr>
+<tr><td>Moderate</td><td>&times;1.0</td><td><code>-abs(beta &times; sector_ytd)</code></td></tr>
+<tr><td>Mild</td><td>&times;0.5</td><td><code>max(-0.10, beta &times; sector_ytd &times; 0.5)</code></td></tr>
+<tr><td>Recovery</td><td>&mdash;</td><td><code>sector_ytd</code> (no multiplication)</td></tr>
+</table>
+<p><strong>Sector-relative ratio</strong> (<code>nodes.py:688</code>): The stress result now includes <code>sector_ratio = portfolio_loss / sector_decline</code> &mdash; normalizing the loss relative to what the sector experienced. A ticker that drops 12% while its sector drops 10% gets a ratio of 1.2 (slightly worse than sector), independent of absolute decline size.</p>
+<p><strong>Lower bound</strong>: <code>max(-0.95, beta * mkt_decline)</code> prevents the impossible &lt; -100% scenario. The 95% floor is an accounting estimate &mdash; in practice, a stock losing 95% of its value is likely undergoing bankruptcy proceedings.</p>
+
+<h3>Why compute from sector YTD instead of VIX or general market indices?</h3>
+<p>VIX measures expected volatility, not realized return. S&amp;P 500 YTD is a broader market proxy but doesn't capture sector-specific dynamics &mdash; during a sector rotation, tech might be down 15% while healthcare is flat. Using the sector-specific SPDR ETF produces more relevant stress scenarios: an energy stock should be stressed against XLE's YTD performance, not SPY's.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; Live sector YTD &mdash; scenarios reflect actual market conditions, not hardcoded values</li>
+<li>&check; Sector-relative ratio &mdash; normalizes stress loss across sectors</li>
+<li>&check; Hard lower bound (&minus;95%) &mdash; prevents impossible loss values</li>
+<li>&check; Volatility gate preserved &mdash; high-vol tickers still skip stress test</li>
+<li>&check; 4 scenarios &mdash; severe through recovery give a range of outcomes</li>
+</ul>
+
+<hr>
+
+<h2>RAG Index Warming via A2A WORKING Events &mdash; From Fire-and-Forget to Await-able</h2>
+
+<h3>Problem</h3>
+<p>The RAG agent's <code>_build_response()</code> fired <code>asyncio.create_task(self._ensure_ingested(ticker))</code> and returned <code>{&quot;_warming&quot;: True, &quot;summary&quot;: &quot;Index is warming for [ticker]...&quot;}</code> immediately. The orchestrator saw a completed task with a warming placeholder &mdash; no data to synthesize. The user would then have to re-query to get the actual analysis after ingestion completed in background. Poor UX: every first query for a new ticker returned a &quot;come back later&quot; placeholder regardless of whether filing downloads were fast (5s) or slow (30s+).</p>
+<p>The root issue: A2A only reports terminal events (COMPLETED/FAILED). The RAG agent couldn't say &quot;I'm working on it, hold on&quot; &mdash; it had to return something immediately or block the A2A protocol indefinitely.</p>
+
+<h3>Solution</h3>
+<p>Two-part fix using A2A streaming's intermediate states:</p>
+<ol>
+<li><strong>RAG agent emits <code>TASK_STATE_WORKING</code> SSE events</strong> (<code>agent_2_llamaindex/executor.py:19-34</code>): Before entering ingestion, yields a <code>ServerTaskUpdateEvent</code> with <code>status: TASK_STATE_WORKING</code> and a message like <code>&quot;Ingesting SEC filings and news for [ticker]...&quot;</code>. This keeps the A2A channel open and tells the orchestrator &quot;not done yet, but making progress.&quot;</li>
+<li><strong>Orchestrator processes WORKING events</strong> (<code>SubAgentClient</code> via <code>a2a-sdk</code>): The <code>BaseClient</code>'s streaming event handler skips non-terminal events by default. Changed to accumulate WORKING events &mdash; when the streaming loop gets a <code>status_update</code> with <code>TASK_STATE_WORKING</code>, it updates a <code>_status_msg</code> on the client and continues listening. Once the terminal event arrives, the accumulated working messages are prepended to the result text, so the orchestrator LLM sees both the progress message and the final analysis.</li>
+<li><strong>Index check before ingestion</strong> (<code>_ensure_ingested</code>): Checks <code>is_filing_ingested(edgar_url)</code> before downloading &mdash; if all filings are already indexed, skips ingestion entirely and returns data from existing index. Combined with WORKING events, the path is:
+<ul>
+<li>Already indexed &rarr; immediate data return (no WORKING event)</li>
+<li>Not indexed &rarr; emit WORKING &rarr; download + ingest &rarr; emit data</li>
+<li>Timeout &rarr; orchestrator's per-agent timeout catches it</li>
+</ul>
+</li>
+</ol>
+
+<h3>Why not just increase the request timeout?</h3>
+<p>The A2A protocol is designed for near-immediate responses &mdash; the orchestrator's <code>asyncio.wait_for</code> wraps the entire <code>send_message()</code> call. Increasing the timeout would fix the symptom but not the UX: the user would still wait silently. WORKING events provide progress visibility and let the orchestrator send intermediate status back if desired (e.g. &quot;Analyzing NVDA... ingesting 10-K filings&quot;).</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; No more &quot;come back later&quot; placeholders &mdash; first queries on new tickers work end-to-end</li>
+<li>&check; WORKING events &mdash; progress visibility for long-running ingestion</li>
+<li>&check; Existing index check &mdash; already-indexed tickers skip ingestion entirely</li>
+<li>&check; Timeout preserved &mdash; orchestrator still has safety net</li>
+<li>&check; Minimal protocol change &mdash; WORKING events are part of the A2A spec</li>
 </ul>
 
 <hr>

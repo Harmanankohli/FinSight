@@ -1,6 +1,6 @@
 # Test Coverage
 
-**~105 test functions (~160 parametrized cases) across 15 test files + offline eval driver.**
+**~105 test functions (~160 parametrized cases) across 15 test files + offline eval driver. No new tests added in v1.34 — the commits focused on production bug fixes and feature work.**
 
 ## Running Tests
 

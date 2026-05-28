@@ -1,5 +1,55 @@
 # Changelog
 
+## v1.34 — Phase 5: Dynamic Peers, Sector-Relative Scoring, Live Scenario Shocks, Insider MCP Tool
+
+### Quant Agent — Sector-Relative Fundamental Scoring + Live Scenario Shocks
+
+- **Sector-relative fundamental scoring** (`agent_3_langgraph/nodes.py`): `_score_fundamental_value()` and `_score_fundamental_quality()` accept optional `medians` dict from `peer_comparison_node`. When available, scores are computed relative to sector median instead of absolute universal thresholds. New `_relative_score(value, median, higher_is_better)` returns [-1, 1] based on ratio to median. PE/EV/EBITDA use lower-is-better logic; ROE/margin/D/E use higher-is-better logic.
+- **Sector medians computed in `peer_comparison_node`** (`nodes.py:919-935`): After ranking peers, computes median per metric (PE, EV/EBITDA, RevGrowth, OpMargin, ROE, D/E) from peer values. Passed to `format_output_node` via `peer_comparison.medians`.
+- **Live sector-aware scenario shocks** (`mcp_servers/finsight_server.py`): New `get_scenario_shocks` MCP tool computes historical crash returns from live price data using sector-specific ETFs (QQQ for Tech, XLP for Consumer Defensive, XLK, XLF, etc.) via `_SECTOR_ETFs` mapping. Falls back to S&P 500 (^GSPC) when ETF lacks history for a given window. 4 scenarios: market_crash_2008, covid_crash_2020, dot_com_bubble, mild_recession (2022). Cached 7 days (`_cache_shocks`).
+- **Stress test uses live shocks** (`nodes.py:677-720`): `stress_test_node` fetches `get_scenario_shocks(sector)` via MCP before applying beta adjustment. When MCP returns live data, overrides the hardcoded S&P fallback values with sector-specific crash returns. Logs `index_used` for traceability.
+- **Monte Carlo runs on both paths** (`nodes.py:832-850`, `state.py:88`): `dcf_valuation_node` now also runs `_run_monte_carlo()` for low-volatility tickers (routed to DCF). `monte_carlo` state field uses `_last_nonnull` reducer so format_output always gets whichever node produced the MC.
+- **`debt_to_equity` added to peer comparison** (`nodes.py:898`): Fundamental comparison now includes D/E ratio alongside PE, EV/EBITDA, revenue growth, op margin, ROE.
+
+### Quant Agent — Fan-In Reducer Fixes + Graph Topology
+
+- **Annotated reducers for multi-writer keys** (`agent_3_langgraph/state.py`): Added `_merge_dict`, `_last_str`, `_last_nonnull` reducers to `metrics`, `reasoning`, `recommendation`, `stress_test_result`, `dcf_error` fields. LangGraph requires explicit `Annotated[type, reducer]` when multiple nodes write to the same state key in the same checkpoint step.
+- **`_merge_stress_test` reducer** (`state.py:20-42`): Custom reducer that prefers the stress_test_result with real scenario data over the "skipped" placeholder. When `format_output_node` writes a placeholder before the real stress data arrives, this ensures the real data wins.
+- **Removed diamond dependency edge** (`agent_3_langgraph/graph.py`): Removed the direct `fetch_fundamentals → format_output` edge. `fetch_fundamentals` already fans into `peer_comparison_node` which fans into `format_output` — the direct edge created a diamond pattern where `format_output` received two distinct inputs in the same step, violating LangGraph's fan-in constraint.
+- **Removed passthrough keys from `format_output_node`** (`agent_3_langgraph/nodes.py`): Was returning passthrough copies of `positioning`, `dcf_valuation`, `correlation_matrix`, `fundamentals` that other nodes already wrote. Now only emits `recommendation`, `reasoning`, `metrics` (with signals/confidence), and `stress_test_result`. Fixes `INVALID_CONCURRENT_GRAPH_UPDATE` at `positioning` key.
+
+### Dynamic Peer Discovery — yfinance Industry/Sector Classes
+
+- **`get_peers` MCP tool rewritten** (`mcp_servers/finsight_server.py`): Now uses yfinance `Industry(slug).top_companies` and `Sector(slug).top_companies` instead of the Yahoo Finance HTTP `recommendationsBySymbol` API. No scraping, no cookies, no rate limits. Falls through to Sector if Industry returns nothing. `_industry_to_slug()` converts yfinance strings to URL slugs. Cached 24h.
+- **Both Quant and Market Context use `get_peers`**: `peer_comparison_node` and `MarketContextAgent._collect_data_parallel()` call `mcp.call_tool_by_name("get_peers", {"ticker": ...})` for dynamic peer discovery.
+
+### Peer Sets — Expanded + Normalised Key Matching
+
+- **`shared/peer_sets.py` — 80+ entries** (up from 33): Added comprehensive sector coverage: Banks, Asset Management, Insurance (Life and P&C), Capital Markets, Financial Services, Healthcare (Drug Manufacturers, Medical Devices, Biotech), Consumer Defensive (Discount Stores, Grocery, Household, Packaged Foods, Beverages, Tobacco), Consumer Cyclical (Retail, Auto, Restaurants, Apparel, Leisure), Energy (Integrated, E&P, Refining, Midstream), Industrials (Aerospace, Rail, Trucking, Construction, Distribution, Electrical Equipment), Communication Services, Basic Materials (Specialty Chemicals, Gold, Copper), Real Estate (Industrial, Office, Residential, Retail REITs), Utilities (Regulated Electric, Regulated Gas), Food Distribution.
+- **Normalised key matching** (`shared/peer_sets.py`): New `_norm()` function collapses em-dashes/en-dashes/hyphens to single hyphen, lowercases, strips. `_NORM_MAP` pre-built for O(1) fuzzy lookup. Lookup order: exact industry → normalised industry → exact sector → normalised sector. Handles yfinance's inconsistent punctuation (e.g. "Banks—Regional" vs "Banks - Regional").
+
+### Insider Signals — Structured MCP Tool
+
+- **`get_insider_transactions` MCP tool** (`mcp_servers/finsight_server.py`): Uses yfinance `Ticker.insider_transactions` DataFrame — structured buy/sell data with share counts, values, and transaction types. No Form 4 keyword parsing. Returns `transactions` list and `summary` dict with total/buys/sells/direction/net_shares/net_value. 90-day lookback default.
+- **`insider_signals_node` rewritten** (`agent_3_langgraph/nodes.py`): Now calls `get_insider_transactions` instead of `get_company_filings` + keyword matching on Form 4 text. Uses structured `summary.buys/sells/direction` fields. Returns `net_shares` and `net_value` from the summary.
+- **Agent card updated**: Insider skill description updated to reflect structured data source.
+
+### Options Flow — Zero-Volume Edge Case
+
+- **Zero-volume guard** (`agent_3_langgraph/nodes.py:979-993`): When `call_vol + put_vol == 0`, returns `flow_signal: "no_data"` with `put_call_volume_ratio: None` instead of a misleading 1.0. Uses `None` for ratios when denominator is zero (no calls at all).
+
+### Schema Validator — Null-Safe Signal Key Matching
+
+- **`score_quant_deterministic()` updated** (`shared/runtime_eval.py`): Signal group keys changed to match `_SIGNAL_WEIGHTS` in `nodes.py` (e.g. `"dcf"` → `"dcf_value"`, `"fund_value"` → `"fundamental_value"`). Now reads `signal_scores` from `metrics.signal_scores` nested path instead of top-level `signal_scores`. Reads `quant_confidence` from `metrics.quant_confidence` instead of top-level `confidence_score`.
+
+### RAG Agent — A2A WORKING Event Warm-Up
+
+- **A2A WORKING events for index warm-up** (`agent_2_llamaindex/executor.py`): When the RAG agent receives a query for an un-ingested ticker, it returns a `status_update` with `state: WORKING` and message `"Index is warming for {ticker}..."`. The orchestrator's streaming event handler skips WORKING events and waits for a COMPLETED/WORKING-termination signal. This replaces the previous polling pattern where the orchestrator re-queried RAG until the index was ready.
+
+### Market Context Agent — Sector/Industry Fix
+
+- **Restored sector/industry extraction** (`agent_4_crewai/executor.py`): `_collect_data_parallel()` now extracts `sector` and `industry` from `get_financials` response and passes them to the crew context. These keys were previously undefined (referenced but never populated) after the peer discovery refactor in Phase 3 — the crew context had empty strings for both fields. Fix closes the v1.31 known issue.
+
 ## v1.32 — Phase 4 Final Items: Date-Aware Semantic Cache + RAG Startup Warm-Up
 
 ### Semantic Cache — Date-Scoped Keys
@@ -16,6 +66,13 @@
   - CrossEncoder reranker from `hybrid_search.py`
 - **Per-stage timing logged**: Each warm-up phase logs elapsed seconds so the cold-start budget is visible in server logs.
 - **Effect**: First RAG query no longer pays ~3-5s model-load tax. Cold-start drops from ~12s to ~9s (ChromDB query still happens on first hit).
+
+## v1.33 — Quant Graph Fixes: Concurrent Update Resolution & Fan-In Reducers
+
+### Quant Graph — Fan-In Passthrough Key Removal
+
+- **Fixed `INVALID_CONCURRENT_GRAPH_UPDATE` at `positioning` key** (`agent_3_langgraph/nodes.py`): `format_output_node` was returning passthrough copies of state keys (`positioning`, `dcf_valuation`, `correlation_matrix`, `fundamentals`) that other nodes already wrote in the same checkpoint step. LangGraph's fan-in saw conflicting writes, triggering the error.
+- **Fix**: Removed all passthrough keys from `format_output_node`'s return dict. It now only emits what it actually computes: `recommendation`, `reasoning`, `metrics` (with signals/confidence), and `stress_test_result`. Full state from `ainvoke()` still carries every key via the owning nodes, so `graph.run()` reads are unaffected.
 
 ## v1.31 — Phase 3/4: Market Context Rebrand, Quant Behavioral Signals, Redis Cache, Eval Hardening
 

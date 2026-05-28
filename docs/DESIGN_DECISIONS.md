@@ -1489,6 +1489,44 @@ These were previously not computed at all (no data source). Adding them as paral
 - ✅ Zero added latency — new branches (options, insider) run concurrently
 - ✅ All paths converge at format_output — single enrichment point
 
+## Quant Graph Fan-In Resolution: Diamond Dependency, Reducers & Passthrough Keys
+
+### Problem
+
+The parallel fan-out graph had a subtle topology bug. `fetch_fundamentals` fed into three downstream nodes: `peer_comparison`, `analyst_positioning`, and a direct edge to `format_output`. This created a **diamond dependency** — `format_output` had two indirect predecessors via `peer_comparison`/`analyst_positioning` AND a direct edge from `fetch_fundamentals`. LangGraph scheduled `format_output` twice in the same checkpoint step when the two intermediate nodes completed concurrently. Each duplicate run wrote every state key, triggering `INVALID_CONCURRENT_GRAPH_UPDATE` at whichever key was updated first — typically `positioning` or `metrics`.
+
+### Solution
+
+Three-part fix:
+
+**1. Remove diamond dependency** (`agent_3_langgraph/graph.py:39`): Deleted `builder.add_edge("fetch_fundamentals", "format_output")`. Fundamentals data flows through `peer_comparison` and `analyst_positioning` into shared state — `format_output` reads it from state, not from a direct edge. `format_output` now has exactly 5 clean predecessors and runs exactly once per invocation.
+
+**2. Add Annotated reducers for concurrent writes** (`agent_3_langgraph/state.py:6-22`): Three state keys are written by multiple nodes in the same step, so they needed reducers even without the diamond:
+- `metrics` → `_merge_dict` (merges dicts from `compute_metrics` and `format_output`, second wins on key collision)
+- `stress_test_result` → `_last_nonnull` (last non-null value wins — `stress_test_node` writes real data, `format_output`'s initial write is `None`)
+- `dcf_error` → `_last_nonnull`
+- `reasoning` → `_last_str` (last non-empty string wins, then `llm_summary_node` overwrites)
+- `recommendation` → `_last_str` (idempotent — both runs produce same BUY/HOLD/SELL)
+- `monte_carlo` → `_last_nonnull`
+
+**3. Remove passthrough keys from format_output** (`agent_3_langgraph/nodes.py`): `format_output_node` was returning copies of state keys (`positioning`, `dcf_valuation`, `correlation_matrix`, `fundamentals`, `technicals`, `peer_comparison`, `options_signals`, `insider_signals`) that other nodes already wrote. Even with reducers, writing every key from `format_output` is wasteful and confusing — the node should only emit what it computes: `recommendation`, `reasoning`, `metrics` (with signals/confidence), and `stress_test_result`. Full state from `ainvoke()` still carries every key via the owning nodes.
+
+### Why not use LangGraph's built-in fan-in handling?
+
+LangGraph handles fan-in naturally — multiple predecessors can converge on a single node. The problem wasn't fan-in by itself but the *diamond*: `format_output` being reachable via two different path lengths from `fetch_fundamentals`. LangGraph triggers the node twice when its predecessors complete in different checkpoint steps (or in the same step via separate schedule entries). The reducers would have caught the symptom (`INVALID_CONCURRENT_GRAPH_UPDATE`) but the diamond removal fixes the root cause.
+
+### Why keep the reducers after fixing the diamond?
+
+The reducers are still needed for the remaining concurrent writes — `metrics` is written by `compute_metrics` AND `format_output` in the same step, `stress_test_result` by `stress_test` AND `format_output`, and `dcf_error` by `compute_metrics` AND `dcf_valuation`. These are not diamond-induced duplicates but legitimate multi-writer keys. The reducers act as a safety net for any future topology changes that might introduce similar conflicts.
+
+### Key properties
+
+- ✅ Root cause fixed — diamond edge removed, `format_output` runs once
+- ✅ Reducers handle legitimate multi-writer keys
+- ✅ Passthrough keys removed — `format_output` only emits what it computes
+- ✅ Full state still accessible — owning nodes write their keys before fan-in
+- ✅ Safety net — reducers prevent regression from future topology changes
+
 ## Parallel News Ingestion with SEC Filings
 
 ### Why fire news and SEC ingestion as concurrent background tasks?
@@ -1699,6 +1737,74 @@ Overlap. Both agents called `get_news_sentiment` and `get_company_filings` — t
 - ✅ Langfuse trace continuity — trace name `market-context-agent-stream` replaces `sentiment-agent-stream`
 - ✅ RAGAS rubrics updated — `macro_regime_quality` + `peer_positioning_quality` replace old sentiment rubrics
 
+## Dynamic Peer Discovery via yfinance Industry/Sector Classes
+
+### How peer discovery evolved
+
+Peer discovery went through three iterations:
+
+**Phase 3 (v1.31) — Static `peer_sets.py`**: Hand-curated map with ~33 entries. Required maintenance, had gaps, and broke silently when a ticker's industry wasn't in the map.
+
+**Phase 4 (v1.32) — Yahoo Finance HTTP API**: New MCP tool `get_peers` hitting `/v6/finance/recommendationsBySymbol`. Returned engagement-optimized recommendations, not necessarily true industry peers. Required explicit `User-Agent` headers and had reliability issues with mid-cap/international tickers. Fallback chain: MCP → peer_sets.py → empty.
+
+**Phase 5 (v1.34) — yfinance Industry/Sector classes**: Rewrote `get_peers` to use `yfinance.Industry(slug).top_companies` and `Sector(slug).top_companies`. Returns market-cap-weighted DataFrame of companies in the same classification — deterministic, no scraping, no cookies, no rate limits. `_industry_to_slug()` converts yfinance strings to URL slugs. Falls through industry → sector → empty.
+
+### Why the third rewrite?
+
+The Yahoo Finance HTTP recommendations API had three fundamental problems:
+1. **Engagement-optimized**, not fundamental-similarity — "People also watch" returns tickers that Yahoo's algorithms think a user might click, not tickers that share industry/valuation characteristics
+2. **Rate-limit fragility** — the HTTP endpoint returned 429 errors under moderate load, requiring the user-agent cat-and-mouse game
+3. **No ticker coverage** — international and mid-cap tickers often returned empty, while large-caps like AAPL returned oddly specific recommendations
+
+The yfinance `Industry`/`Sector` API solves all three: it's a deterministic data source (same classification every call), doesn't hit external HTTP endpoints (uses yfinance's cached data), and covers any ticker that yfinance knows about.
+
+### Why remove the peer_sets.py fallback?
+
+With the yfinance Industry/Sector approach, the static peer_sets.py became redundant — the MCP tool covers any yfinance ticker without gaps. Keeping a fallback to an incomplete static map risks returning wrong peers silently. A clean "Peer discovery unavailable" message when the MCP server is down is better than silently falling back to potentially stale static data.
+
+### Why keep peer_sets.py at all?
+
+`shared/peer_sets.py` now serves as: (1) the sector→ETF mapping for `get_scenario_shocks` (via `_SECTOR_ETF`), (2) documentation of expected peer groupings, (3) a reference for the yfinance Industry/Sector slug mapping. It's no longer called at runtime for peer discovery.
+
+### Key properties
+
+- ✅ Deterministic — same ticker always returns same peers
+- ✅ No HTTP scraping — uses yfinance's cached Industry/Sector data
+- ✅ No rate limits — no external HTTP calls for peer resolution
+- ✅ Comprehensive coverage — any yfinance ticker works
+- ✅ Clean failure mode — "unavailable" message instead of wrong peers
+- ✅ peer_sets.py retained for ETF mapping and documentation
+
+## Market Context Agent — Peer Key Fixes & Sector/Industry Restoration
+
+### Problem
+
+Two bugs silently degraded Market Context agent output after the peer refactor:
+
+1. **Wrong `get_financials` response key** (`executor.py`): The code read `primary_fin.get("financials", {}).get("info", {})`, but `get_financials` MCP tool returns top-level keys directly — no `"financials"` wrapper. Every ticker got `info = {}`, so `sector` and `industry` were always empty, and `get_peer_tickers` returned `[]` for every ticker. This was a silent data loss — the agent still produced JSON, but `macro_regime` and `peer_landscape` analyses had no sector context.
+
+2. **Undefined `sector`/`industry` in return dict** (`executor.py:73-74`): The `_collect_data_parallel` return dict referenced `sector` and `industry` variables that were never assigned — leftover from before the peer refactor removed the extraction code. CrewAI's `data.get("sector", "")` handled the `NameError` gracefully, but the keys were always empty strings.
+
+### Solution
+
+1. **Fix data extraction** (`executor.py`): Changed `primary_fin.get("financials", {}).get("info", {})` to `primary_fin.get("info", {})`. Also uses `res` (the full MCP response) directly for peer financials instead of the wrapper.
+
+2. **Restore sector/industry extraction** (`executor.py`): Re-added `info = primary_fin.get("info", {}); sector = info.get("sector", ""); industry = info.get("industry", "")` before the `get_peers` call. The return dict now gets populated values.
+
+3. **Expand peer sets** (`shared/peer_sets.py`): Added ~30 new entries covering missing industries (Discount Stores, Grocery Stores, Consumer Defensive/Cyclical sectors). Fixed em-dash vs hyphen mismatch — `_PEER_SETS` used "Software—Infrastructure" (U+2014) but yfinance returns "Software - Infrastructure" (hyphen+spaces). Added `_norm()` normalization function that collapses all dash variants to a single hyphen, with `_NORM_MAP` for O(1) fuzzy lookup.
+
+### Why wasn't this caught by testing?
+
+No integration tests for the Market Context agent's data pipeline existed. The agent produced structurally valid JSON regardless — the narrative was just less informed. These bugs highlight the need for integration tests that verify non-empty `sector`/`industry`/`peers` in the CrewAI output, especially after data-source refactors.
+
+### Key properties
+
+- ✅ Non-empty sector/industry now flows to CrewAI narrative
+- ✅ Peer sets expanded to cover all major sectors
+- ✅ Em-dash/hyphen normalization prevents silent empty sets
+- ✅ Dynamic `get_peers` MCP tool works for any ticker
+- ✅ `peer_sets.py` remains as fallback for MCP failures
+
 ## Quant Behavioral Signals — 8-Group Weighted Voting
 
 ### Problem
@@ -1743,6 +1849,51 @@ The plan's original `normalize_weights = {k: v / sum_present for k, v in _SIGNAL
 - ✅ Normalized signals (-1 to +1) for uniform voting
 - ✅ 8-group coverage across fundamental, technical, behavioral, and macro dimensions
 - ✅ Confidence formula accounts for signal sparsity
+
+## Quant Behavioral Signal Refinements: Options Flow, Insider Data, Monte Carlo & Schema Validator
+
+### Options Flow — Why return `no_data` instead of misleading ratios?
+
+When a ticker has zero options volume (no open positions, illiquid, or the options chain fetch returned empty), the old code computed `put_call_vol = 0/0 = NaN` and `oi_ratio = 0/0 = NaN`. These NaNs propagated through `_normalize_to_signal` as `0.0`, producing a neutral signal that looked like "no unusual activity" when it should mean "no data available."
+
+**Fix** (`nodes.py:949`): Check total volume before computing ratios. If zero, return `flow_signal="no_data"`, `note="No options volume — ticker may lack active options market"`, and `put_call_vol_ratio=oi_ratio=0.5` (neutral). The `format_output_node` checks `flow_signal == "no_data"` and excludes it from behavioral signal aggregation rather than scoring it as neutral.
+
+### Insider Signals — Why replace Form 4 keyword matching with yfinance structured MCP tool?
+
+The original `insider_signals_node` used `get_company_filings` filtered for Form 4 documents, then matched keywords (`"P"`/`"A"` for buys, `"D"`/`"S"` for sells) on filing descriptions. Many Form 4 filings have empty or inconsistent description fields — the XML content contains the actual transaction data, but the MCP tool only returns the filing metadata, not the parsed XML.
+
+**Phase 5 fix** (`mcp_servers/finsight_server.py`, `nodes.py:1022`): New `get_insider_transactions(ticker, days=90)` MCP tool using `yf.Ticker.insider_transactions` — returns structured buy/sell data with share counts and dollar values, not Form 4 keyword heuristics. The tool classifies each transaction row by its `Transaction` column ("Sale", "Buy", "Option Exercise") with buy/sell/other labels, then computes `summary` with `total`, `buys`, `sells`, `direction`, `net_shares`, `net_value`.
+
+The node now reads `summary.buys`, `summary.sells`, `summary.direction` directly from the structured response. This is faster (no SEC EDGAR parsing), more reliable (structured yfinance data feed), and more informative (includes net share/value amounts). The MCP abstraction ensures `_yfinance_limiter` rate-limiting is applied and the result can be cached for any consumer.
+
+### Monte Carlo — Why run on low-volatility tickers?
+
+The original graph only ran `_run_monte_carlo` on the high-volatility path (stress test branch). Low-volatility tickers went through the DCF valuation path, which ran no simulation. This meant DCF-only tickers (utilities, consumer staples) had `monte_carlo = None`, breaking downstream consumers that expected percentiles or `prob_profit`.
+
+**Fix** (`nodes.py:733`): `dcf_valuation_node` now runs `_run_monte_carlo` on the price data it already holds. The simulation is computationally cheap (~50ms for 5,000 paths) and produces the same percentile/prob_profit/VaR output regardless of volatility route. Added `_last_nonnull` reducer for `monte_carlo` in state to handle the concurrent writer scenario.
+
+### Peer Comparison — Why remove the peer_sets.py fallback?
+
+The v1.33 `peer_comparison_node` had a fallback chain: `get_peers` MCP → `shared/peer_sets.py` → empty. In v1.34 (Phase 5), the fallback was removed because the MCP tool now uses yfinance `Industry`/`Sector` classes instead of the Yahoo Finance HTTP recommendations API — it's more reliable, covers any ticker that yfinance knows about, and doesn't suffer from rate-limit issues that plagued the HTTP-based approach. The `shared/peer_sets.py` static map is inherently incomplete (80+ entries but still misses many sectors) and a silent fallback to a potentially wrong peer set is worse than a clean "Peer discovery unavailable" note.
+
+**Fix** (`nodes.py:881`): Removed the `peer_sets.py` fallback call. When `get_peers` returns `[]`, the node returns a clean message: `"Peer discovery unavailable for {ticker} — get_peers returned no results. Restart MCP server if recently deployed."` This gives operators a clear signal that something is wrong with the MCP server, rather than silently falling back to potentially stale static data.
+
+### Schema Validator — Why fix key paths?
+
+`score_quant_deterministic()` (`shared/runtime_eval.py:614`) is a zero-LLM schema validator that runs on every Quant response. It had three bugs:
+1. Wrong access path: `result["signal_scores"]` → correct `result["metrics"]["signal_scores"]`
+2. Shortened group names: `"dcf"` in old signal score dict keys → `"dcf_value"` (actual key in `_SIGNAL_WEIGHTS`)
+3. `conf` path: same deep-nesting fix
+
+These made the validator always return `False` for well-formed responses — it was checking the wrong dict paths. The validator is now accurate: it checks all 8 signal groups present, weight sum ≈ 1.0, MC percentiles consistent, peer fields present, recommendation + confidence invariants.
+
+### Key properties
+
+- ✅ No-data handling for zero-volume options — `flow_signal="no_data"` instead of NaN
+- ✅ Structured insider transactions — yfinance DataFrame via MCP tool, not Form 4 keyword heuristics
+- ✅ Monte Carlo runs on both volatility paths — DCF tickers get simulation too
+- ✅ MCP peer discovery uses yfinance Industry/Sector classes — no static fallback needed
+- ✅ Schema validator actually validates — corrected key paths and nesting
 
 ## Redis Two-Level Cache (L1 TTLCache + L2 Redis Write-Through)
 
@@ -1900,3 +2051,211 @@ Lazy-load is simple but unpredictable: the ~3-5s delay hits the first user, not 
 - ✅ Runs in thread executor — doesn't block the asyncio event loop
 - ✅ Idempotent — ChromaDB `get_or_create_collection` is safe to call multiple times
 - ✅ Graceful if models fail — warm-up errors are logged but don't crash the server
+
+## Live Sector-Aware Scenario Shocks via MCP get_scenario_shocks
+
+### Problem
+
+The stress test node originally used hardcoded S&P 500 crash percentages in `_SECTOR_ETF_MAP` with the `get_macro_indicators` YTD approach. This had three issues: (1) YTD performance is a single-year snapshot, not a crash scenario — a mild bear market could be -10% YTD while the historical crash templates (2008: -37%, 2020: -34%) are far more severe; (2) the sector ETF YTD was a single point estimate with no scenario diversity; (3) the formula `mkt_decline * beta` on a single YTD value couldn't differentiate between orderly drawdowns and crash scenarios.
+
+### Solution
+
+**MCP tool `get_scenario_shocks(sector)`** (`mcp_servers/finsight_server.py`): Computes historical crash returns from live price data using sector-specific ETFs resolved via `_SECTOR_ETF` mapping:
+
+| Sector | ETF | Scenario Windows |
+|---|---|---|
+| Technology | QQQ | 2008 crash, 2020 COVID, dot-com, 2022 bear |
+| Consumer Defensive | XLP | same windows, different returns |
+| Energy | XLE | same windows, different returns |
+| (14 sectors mapped) | | |
+
+Each scenario window is a (`start_date`, `end_date`) tuple. The tool fetches the sector ETF's full price history, slices the window, and computes `return = price_end / price_start - 1`. Falls back to `^GSPC` (S&P 500) when the sector ETF lacks history for a given window (e.g. XLRE doesn't cover 2008). Falls back to hardcoded `_SHOCK_FALLBACKS` when price history is unavailable entirely.
+
+**Four historical scenarios** with actual peak-to-trough returns:
+
+| Scenario | Window | S&P Fallback | Purpose |
+|---|---|---|---|
+| `market_crash_2008` | 2007-10-09 → 2009-03-09 | -56.5% | Global financial crisis |
+| `covid_crash_2020` | 2020-02-19 → 2020-03-23 | -34.0% | Pandemic panic |
+| `dot_com_bubble` | 2000-03-24 → 2002-10-09 | -49.1% | Tech bust |
+| `mild_recession` | 2022-01-03 → 2022-10-12 | -25.4% | Recent bear market |
+
+**Beta-adjusted**: Stress test applies `max(-0.95, scenario_return * beta)` to each scenario's sector-specific return — so a high-beta tech stock gets a larger stress hit than a low-beta utility, both relative to their sector's actual historical crash experience.
+
+### Why historical crash windows instead of YTD or Monte Carlo scenarios?
+
+Historical crash windows capture real market dynamics (serial correlation, volatility clustering, sector rotation) that synthetic scenarios miss. A 2008-style crash on a defensive sector (XLP: -36%) looks very different from the same crash on tech (QQQ: -43%) — using the actual historical returns preserves these sector-specific characteristics. The 4 windows cover a range of severity and market regimes (credit crisis, pandemic shock, tech bust, recession).
+
+### Why sector-specific ETFs instead of just S&P 500?
+
+A 2008 crash on financials (XLF: -60%) was far more severe than on healthcare (XLV: -25%). Using S&P 500 returns (-37%) for every sector would overstate stress on defensive stocks and understate it on cyclical stocks. The sector ETF approach produces stress scenarios that are calibrated to what actually happened to similar companies during each crisis.
+
+### Why 7-day cache?
+
+Crash windows don't change — they're historical time ranges. Once computed, a sector's crash returns are valid until the next data revision. The 7-day cache avoids re-fetching price history on every Quant request while auto-refreshing weekly (in case of yfinance data corrections).
+
+### Key properties
+
+- ✅ 4 historical crash scenarios — actual peak-to-trough returns per sector
+- ✅ 14 sector ETFs mapped — sector-specific stress calibration
+- ✅ Fallback chain — sector ETF → S&P 500 → hardcoded fallback
+- ✅ Beta-adjusted — ticker's own volatility amplifies or dampens sector shock
+- ✅ Hard floor at -95% — prevents impossible loss values
+- ✅ 7-day cached — weekly refresh of crash returns
+- ✅ Visible `index_used` — logged for traceability
+
+## Sector-Relative Fundamental Scoring
+
+### Problem
+
+The original `_score_fundamental_value()` and `_score_fundamental_quality()` used absolute universal thresholds: PE < 12 → good, ROE > 25% → excellent. These thresholds were arbitrary and sector-blind — a PE of 20 might be cheap for a tech stock but expensive for a utility. The same ROE of 15% would score "moderate" on the absolute scale, but might be the sector median for banks and quite strong for retail.
+
+### Solution
+
+**`_relative_score(value, median, higher_is_better)`** (`agent_3_langgraph/nodes.py`): Scores a metric relative to its sector median ratio. Returns in [-1, 1]:
+
+```
+For higher_is_better (ROE, margin):
+  ratio > 2.0× median → +1.0
+  ratio > 1.5× median → +0.6
+  ratio > 1.1× median → +0.2
+  ratio > 0.7× median → -0.1
+  ratio > 0.4× median → -0.4
+  else → -0.7
+
+For lower_is_better (PE, EV/EBITDA, D/E):
+  ratio < 0.5× median → +1.0 (much cheaper)
+  ratio < 0.75× median → +0.6
+  ratio < 0.95× median → +0.2
+  ratio < 1.2× median → -0.1
+  ratio < 1.6× median → -0.4
+  else → -0.7
+```
+
+**Sector medians computed in `peer_comparison_node`** (`nodes.py:919-935`): After ranking all peer tickers on each fundamental metric, the node computes the median value per metric across all peers. These medians are passed to `format_output_node` via `peer_comparison.medians`.
+
+**Fallback**: When no peer medians are available (no peers found, or all peers lack a given metric), `_score_fundamental_value` and `_score_fundamental_quality` fall back to the original absolute thresholds — no regression for tickers without peer coverage.
+
+### Why relative scoring instead of industry-standard thresholds?
+
+Industry-standard thresholds (e.g. "PE < 15 is cheap") are broad heuristics that work across many sectors but miss sector-specific pricing. A biotech stock with PE = 30 might be at the 90th percentile for its sector (very expensive) while a consumer staple with PE = 30 might be at the median (fairly valued). Relative scoring captures the sector-specific context that absolute thresholds miss, without requiring separate threshold sets per sector.
+
+### Why median instead of mean?
+
+Median is robust to outliers — one peer with an extreme PE (e.g. a startup with PE = 300) would skew the mean but barely affect the median. For peer sets of 3-8 tickers, a single outlier can dominate the mean. Median gives a stable reference point that reflects the typical peer's valuation.
+
+### Why D/E added to peer comparison?
+
+Debt-to-equity varies enormously by sector — utilities and banks carry high leverage by design, while tech companies often have near-zero debt. Adding D/E to the peer comparison enables the relative scoring to capture whether a ticker is over- or under-leveraged relative to its sector, which is a more informative signal than an absolute "D/E > 80 is bad" threshold.
+
+### Key properties
+
+- ✅ Scores relative to sector median — PE, EV/EBITDA, ROE, OpMargin, D/E
+- ✅ Higher-is-better and lower-is-better logic separately handled
+- ✅ Absolute fallback when no peers available — no regression
+- ✅ Median computed from peer_comparison_node — no separate data fetch
+- ✅ D/E added to peer comparison for leverage context
+
+## Dynamic Peer Discovery via yfinance Industry/Sector Classes
+
+### Why replace Yahoo Finance HTTP API with yfinance Industry/Sector?
+
+The original `get_peers` tool used Yahoo Finance's `/v6/finance/recommendationsBySymbol` HTTP endpoint ("People also watch"). This HTTP API had several problems: (1) required explicit `User-Agent` headers that changed periodically, (2) occasionally returned empty or stale recommendations for mid-cap and international tickers, (3) returned "recommended" tickers that were not always true industry peers (Yahoo's algorithm optimizes for user engagement, not fundamental similarity).
+
+**New approach** (`mcp_servers/finsight_server.py`): Uses yfinance's built-in `Industry(slug).top_companies` and `Sector(slug).top_companies` methods. These return market-cap-weighted DataFrames of companies in the same industry/sector classification. The mapping is deterministic — same ticker always returns the same peers (modulo yfinance data updates).
+
+`_industry_to_slug(name)` converts yfinance industry/sector strings (e.g. "Semiconductor Equipment & Materials") to URL slugs (`semiconductor-equipment-materials`) for the yfinance API. Falls through from industry to sector when the industry slug returns no data.
+
+### Why remove the curated peer_sets.py fallback from the quant agent?
+
+The original Phase 3 fallback chain was: MCP `get_peers` → `shared/peer_sets.py` → empty list. In Phase 5, the curated fallback was removed from `peer_comparison_node` because both agents now call the same MCP tool, and the `peer_sets.py` static map is inherently incomplete (only covers ~80 industry/sector strings). The MCP tool using yfinance Industry/Sector classes is more comprehensive (covers any ticker that yfinance knows about) and doesn't need a static fallback. MCP server cold-start or rate-limit failures produce a clean "Peer discovery unavailable" note instead of silently falling back to a potentially wrong static peer set.
+
+### Why keep peer_sets.py at all?
+
+`shared/peer_sets.py` is still used by the `_SECTOR_ETF` mapping in `get_scenario_shocks` (which maps sector strings to ETFs) and serves as documentation of expected peer groupings. It's no longer referenced by `peer_comparison_node` or `MarketContextAgent` for runtime peer discovery.
+
+### Key properties
+
+- ✅ Deterministic peers — yfinance Industry/Sector classification, not engagement-optimized recommendations
+- ✅ No HTTP scraping — uses yfinance's built-in yfin.Industry/Sector API
+- ✅ Slug normalization — handles any yfinance industry string
+- ✅ Falls through industry → sector → empty
+- ✅ peer_sets.py retained for ETF mapping and documentation
+
+## Structured Insider Transactions via MCP get_insider_transactions
+
+### Why replace Form 4 keyword matching with yfinance structured data?
+
+The original `insider_signals_node` called `get_company_filings(ticker, form_types="4", limit=15)` and keyword-matched filing descriptions for buy/sell signals. This was unreliable: (1) Form 4 filing titles are inconsistent — some say "Statement of changes in beneficial ownership of securities" (uninformative), others say "Sale - 10000 shares" (informative); (2) the filing description field in the SEC EDGAR response is truncated or empty for many filings; (3) keyword matching on "purchase" vs "sale" misses nuanced transactions like option exercises, grants, and gifts.
+
+**New `get_insider_transactions` MCP tool** (`mcp_servers/finsight_server.py`): Uses yfinance `Ticker.insider_transactions` which returns a structured DataFrame directly from Yahoo Finance's insider data feed. Each row has: `Insider`, `Position` (CEO/CFO/COO), `Transaction` ("Sale", "Buy", "Option Exercise"), `Shares`, `Value`, `Start Date`. The tool:
+1. Fetches the DataFrame
+2. Filters to the lookback window (default 90 days)
+3. Classifies each row as buy, sell, or other based on the `Transaction` column
+4. Computes `net_shares` and `net_value` (sum of buys minus sum of sells)
+5. Emits a `direction` summary (net_buy/net_sell/neutral)
+
+The node reads the structured summary directly — no parsing, no keyword heuristics.
+
+### Why not use the existing `yf.Ticker.insider_transactions` directly in the node?
+
+The Quant agent doesn't import `yfinance` — all data access goes through the MCP layer. Keepinsider data behind the MCP tool ensures the rate limiter (`_yfinance_limiter`) protects Yahoo from excessive calls, and the result is cached/structured for any consumer (not just the Quant node). The MCP abstraction is consistent with how all other data sources are accessed.
+
+### Key properties
+
+- ✅ Structured buy/sell data — no Form 4 keyword heuristics
+- ✅ Net shares and net dollar values — quantitative signal, not just direction
+- ✅ 90-day lookback — configurable via `days` parameter
+- ✅ MCP rate-limited — protects Yahoo Finance API
+- ✅ Cache-friendly — calls are idempotent for same ticker+window
+
+## Peer Sets — Expanded with Normalised Key Matching
+
+### Why expand from 33 to 80+ entries?
+
+The original 33 entries covered only broad categories ("Technology", "Healthcare", "Financials"). When the Market Context agent looked up "Banks—Regional" (with em-dash), it didn't match "Banks - Regional" (with hyphens) — the match failed silently. The expanded version covers all major industries with their exact yfinance strings, plus alternative dash variants. Each sector also gets a canonical "Sector"-level entry as catch-all.
+
+### Why the `_norm()` normalisation function?
+
+Yahoo Finance's industry/sector strings use inconsistent punctuation: semiconductor—equipment vs semiconductor - equipment vs semiconductor– equipment. The `_norm()` function collapses all dash variants (em dash U+2014, en dash U+2013, hyphen U+002D with optional surrounding spaces) to a single hyphen, then lowercase and strips. `_NORM_MAP` pre-computes all normalized forms at module load for O(1) lookup. Without this, every em-dash/hyphen mismatch silently returned an empty peer set.
+
+### Key properties
+
+- ✅ 80+ entries across all major sectors and industries
+- ✅ Em-dash/hyphen normalization — fuzzy key matching
+- ✅ O(1) lookup via pre-built `_NORM_MAP`
+- ✅ Lookup order: exact industry → normalized industry → exact sector → normalized sector
+- ✅ Self-excluding — ticker never appears in its own peer set
+
+## RAG Index Warming via A2A WORKING Events — From Fire-and-Forget to Await-able
+
+### Problem
+
+The RAG agent's `_build_response()` fired `asyncio.create_task(self._ensure_ingested(ticker))` and returned `{"_warming": True, "summary": "Index is warming for [ticker]..."}` immediately. The orchestrator saw a completed task with a warming placeholder — no data to synthesize. The user would then have to re-query to get the actual analysis after ingestion completed in the background. This was a poor UX: every first query for a new ticker returned a "come back later" placeholder regardless of whether filing downloads were fast (5s) or slow (30s+).
+
+The root issue: A2A only reports terminal events (COMPLETED/FAILED). The RAG agent couldn't say "I'm working on it, hold on" — it had to return something immediately or block the A2A protocol indefinitely.
+
+### Solution
+
+**Two-part fix** using A2A streaming's intermediate states:
+
+1. **RAG agent emits `TASK_STATE_WORKING` SSE events** (`agent_2_llamaindex/executor.py:19-34`): Before entering ingestion, the RAG agent yields a `ServerTaskUpdateEvent` with `status: TASK_STATE_WORKING` and a message like `"Ingesting SEC filings and news for [ticker]..."`. This keeps the A2A channel open and tells the orchestrator "not done yet, but making progress."
+
+2. **Orchestrator processes WORKING events** (`SubAgentClient` via `a2a-sdk`): The `BaseClient`'s streaming event handler skips non-terminal events by default. Changed to accumulate WORKING events — when the streaming loop gets a `status_update` with `TASK_STATE_WORKING`, it updates a `_status_msg` on the client and continues listening. Once the terminal event arrives, the accumulated working messages are prepended to the result text, so the orchestrator LLM sees both the progress message and the final analysis.
+
+3. **Index check before ingestion** (`_ensure_ingested`): The function now checks `is_filing_ingested(edgar_url)` before downloading — if all filings are already indexed, it skips ingestion entirely and the agent returns data from the existing index. Combined with the WORKING events, the path is:
+   - Already indexed → immediate data return (no WORKING event)
+   - Not indexed → emit WORKING → download + ingest → emit data
+   - Timeout → orchestrator's per-agent timeout catches it
+
+### Why not just increase the request timeout?
+
+The A2A protocol is designed for near-immediate responses — the orchestrator's `asyncio.wait_for` wraps the entire `send_message()` call. Increasing the timeout would fix the symptom but not the UX: the user would still wait silently. WORKING events provide progress visibility and let the orchestrator send intermediate status back if desired (e.g. "Analyzing NVDA... ingesting 10-K filings").
+
+### Key properties
+
+- ✅ No more "come back later" placeholders — first queries on new tickers work end-to-end
+- ✅ WORKING events — progress visibility for long-running ingestion
+- ✅ Existing index check — already-indexed tickers skip ingestion entirely
+- ✅ Timeout preserved — orchestrator still has safety net
+- ✅ Minimal protocol change — WORKING events are part of the A2A spec

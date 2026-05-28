@@ -86,10 +86,14 @@ A2A Request → DefaultRequestHandler → GenericAgentExecutor(RAGAgent)
       → Fire-and-forget (asyncio.create_task):
         ├── self._ensure_ingested(ticker) — runs in background, non-blocking
         └── self._ensure_news_ingested(ticker) — runs in background, non-blocking
-      → FinancialIndexManager.query(ticker, query) — returns immediately from indexed data
+      → FinancialIndexManager.query(ticker, query) — returns from indexed data
         ├── _classify_query_intent() → sec_filings ∪ news ∪ earnings
         ├── Multi-collection retrieval with score-sorted dedup
         └── LlamaIndex response synthesizer (response_mode="compact")
+      → If index has no data for this ticker (first query):
+        ├── Returns A2A WORKING event with "Index is warming for {ticker}..." message
+        ├── Awaits background ingestion to complete
+        └── Re-queries index and returns actual data on COMPLETED
   → Yields data response with summary + sources
 
 RAGAgent._ensure_ingested(ticker) [background]:
@@ -121,25 +125,25 @@ A2A Request → DefaultRequestHandler → GenericAgentExecutor(QuantAgent)
         ├── fetch_prices [MCP: get_prices → parse Close data]
         │     → compute_base_metrics (Sharge, vol, VaR, beta)
         │     → technical_analysis (SMA, MACD, RSI, Bollinger, trend)
-        │     → volatility gate
-        │         ├── high vol (> 35%) → stress_test [CVaR scenarios]
-        │         └── low vol (≤ 35%) → dcf_valuation [data-driven WACC + growth]
-        └── fetch_fundamentals [MCP: get_financials → 25+ ratios]
-              → PE, PB, ROE, margins, D/E, growth, golden cross
-      |     → monte_carlo (GBM, 10k paths, 60-day horizon)
-      ├── fetch_fundamentals [MCP: get_financials → 25+ ratios]
-      |     → PE, PB, ROE, margins, D/E, growth, golden cross
-      |     → peer_comparison (ranks vs peers on PE, EV/EBITDA, growth, margins, ROE)
-      ├── options_flow_node (put/call vol ratio, OI ratio, flow signal)
-      ├── insider_signals_node (Form 4 90-day, net direction, CEO/CFO weight)
-      └── analyst_positioning_node (consensus, upside %, short interest, squeeze)
-      [Fan-in]
-        ├── portfolio_correlation [MCP: get_prices per holding + target]
-        └── format_output (8-group weighted voting: technical 0.15, fundamental 0.15,
-              narrative 0.10, options 0.12, insider 0.10, positioning 0.11,
-              macro 0.12, risk 0.15 → sum=1.0)
-        → llm_summary (enriched 3-4 sentence summary)
-  → Yields data response with dcf_error in result
+          │     → volatility gate
+          │         ├── high vol (> 35%) → stress_test [sector-aware scenario shocks]
+          │         └── low vol (≤ 35%) → dcf_valuation [data-driven WACC + growth]
+          │     → monte_carlo (GBM, 5k paths, 252d horizon) — runs in BOTH paths
+          ├── fetch_fundamentals [MCP: get_financials → 25+ ratios]
+          |     → PE, PB, ROE, margins, D/E, growth, golden cross
+          |     → peer_comparison (dynamic yfinance Industry/Sector peers, ranks on PE,
+          |         EV/EBITDA, growth, margins, ROE, D/E + sector medians for relative scoring)
+          ├── options_flow_node (put/call vol ratio, OI ratio, flow signal, no-data handling)
+          ├── insider_signals_node (get_insider_transactions MCP — structured buy/sell data)
+          └── analyst_positioning_node (consensus, upside %, short interest, squeeze)
+          [Fan-in]
+            ├── portfolio_correlation [MCP: get_prices per holding + target]
+            └── format_output (8-group weighted voting: risk 0.15, dcf 0.20, fund_value 0.13,
+                  fund_quality 0.12, tech_trend 0.15, tech_momentum 0.10,
+                  peer 0.10, behavioral 0.05 → sum=1.0)
+            → llm_summary (enriched 3-4 sentence summary)
+            → Live sector-aware shocks via MCP get_scenario_shocks (QQQ/XLP/XLF per sector)
+   → Yields data response
 ```
 
 **Portfolio Holdings Extraction**: `stream()` uses `extract_holdings(query, exclude_ticker=ticker)` from `shared/ticker_utils.py` to extract holdings from natural language (e.g. "My portfolio holds AAPL, MSFT, GOOGL"). Holdings are passed through the full chain: `stream()` → `analyze()` → `graph.run()` → `correlation_node`.
@@ -152,6 +156,20 @@ A2A Request → DefaultRequestHandler → GenericAgentExecutor(QuantAgent)
 
 **DCF Skip Messaging**: When annual volatility exceeds the 35% threshold, `compute_metrics_node` sets a descriptive `dcf_error` field (e.g. "DCF skipped: annual volatility (41.0%) exceeds 35% threshold – routed to stress test instead"). This error is propagated through the graph into the final output and LLM reasoning, providing visibility into why DCF was not computed.
 
+**Sector-Relative Scoring**: `format_output_node` now passes `peer_comparison.medians` (sector medians for PE, EV/EBITDA, ROE, margins, D/E) into `_score_fundamental_value` and `_score_fundamental_quality`. When available, these use `_relative_score()` to score metrics relative to the sector median instead of absolute universal thresholds — making fundamental scoring sector-aware.
+
+**Live Scenario Shocks**: `stress_test_node` fetches `get_scenario_shocks(sector)` via MCP for live historical crash returns per sector ETF (QQQ for tech, XLF for financials, etc.), replacing hardcoded S&P-only fallbacks.
+
+### Quant Agent — LangGraph Fan-In Topology
+
+The quant agent's LangGraph state machine required three fixes in v1.33-1.34 to handle concurrent fan-in writes:
+
+- **Annotated reducers** (`agent_3_langgraph/state.py`): State keys written by multiple nodes (`metrics`, `reasoning`, `recommendation`, `stress_test_result`, `dcf_error`) use `Annotated[type, reducer]` — `_merge_dict`, `_last_str`, `_last_nonnull`. Without reducers, LangGraph raises `INVALID_CONCURRENT_GRAPH_UPDATE` when two nodes write to the same key in the same checkpoint step.
+
+- **Diamond dependency removed** (`agent_3_langgraph/graph.py`): The direct `fetch_fundamentals → format_output` edge was removed. `fetch_fundamentals` already fans into `peer_comparison_node` which fans into `format_output` — the direct edge created a diamond pattern where `format_output` triggered twice in the same step.
+
+- **Passthrough keys removed** (`agent_3_langgraph/nodes.py`): `format_output_node` was returning copies of state keys (`positioning`, `dcf_valuation`, `correlation_matrix`, `fundamentals`) that other nodes already wrote. Now only emits `recommendation`, `reasoning`, `metrics`, and `stress_test_result` — only what it actually computes.
+
 ### Market Context Agent (CrewAI)
 
 ```
@@ -161,7 +179,7 @@ A2A Request → DefaultRequestHandler → GenericAgentExecutor(MarketContextAgen
       ├── Step 1: get_macro_indicators() ∥ get_financials(ticker)
       │     → macro regime (yields, VIX, DXY, sector ETFs, yield curve)
       │     → primary financials (sector/industry for peer resolution)
-      ├── Step 2: resolve peer tickers via shared/peer_sets.py
+      ├── Step 2: resolve peers via MCP get_peers (dynamic yfinance Industry/Sector)
       └── Step 3: asyncio.gather(peer financials, peer prices)
     → 1-agent CrewAI ("Market Context Analyst"):
       → Outputs JSON: narrative, macro_regime, relative_peer_positioning,
@@ -181,13 +199,17 @@ Four independent caching tiers reduce latency and external API load:
 
 | Cache | TTL | Key | Notes |
 |---|---|---|---|
-| `_cache_prices` | 5 min | `(ticker, period, interval)` | yfinance OHLCV |
-| `_cache_financials` | 24 h | `(ticker,)` | income/balance/cashflow |
-| `_cache_news` | 15 min | `(ticker, limit)` | only cached when articles found |
+| `_cache_prices` | 1 min | `(ticker, period, interval)` | yfinance OHLCV |
+| `_cache_financials` | 1 h | `(ticker,)` | income/balance/cashflow |
+| `_cache_news` | 5 min | `(ticker, limit)` | only cached when articles found |
 | `_cache_macro` | 15 min | `"macro"` | Treasury yields, VIX, DXY, sector ETFs |
 | `_cache_filing` | permanent (LRU-200) | `edgar_url` | filings are immutable |
 | `_cache_submissions` | 6 h | `cik` | EDGAR CIK submissions |
 | `_cache_benchmark` | 1 h | ticker | `^GSPC` and other index benchmarks |
+| `_cache_peers` | 24 h | ticker | yfinance Industry/Sector peer lists |
+| `_cache_shocks` | 7 days | sector | Historical crash returns per sector ETF |
+| `_cache_peers` | 24 h | ticker | Yahoo Finance Industry/Sector peer lists |
+| `_cache_shocks` | 7 days | sector | Historical crash returns per sector ETF |
 
 ### Redis Two-Level Cache (Tier 1C, v1.31)
 
@@ -257,7 +279,10 @@ Single unified MCP server (`mcp_servers/finsight_server.py`, port 8010) hosting 
 │                         │  ├── resolve_company_ticker()    │
 │                         │  ├── full_text_search()          │
 │                         │  ├── get_news_sentiment()        │
-│                         │  ├── get_earnings_calendar()     │
+│                         │  ├── get_earnings_calendar()         │
+│                         │  ├── get_insider_transactions()    │
+│                         │  ├── get_peers()                   │
+│                         │  ├── get_scenario_shocks()         │
 │                         │  └── execute_python()            │
 └──────────────────────────────────────────────────────┘
 ```
@@ -274,7 +299,7 @@ Timeouts configured via `.env` with `A2A_TIMEOUT=680.0`:
 | A2A messaging (global) | 680s | ClientConfig + httpx.AsyncClient |
 | A2A — RAG agent | 600s | `asyncio.wait_for` in `send_message` |
 | A2A — Quant agent | 600s | `asyncio.wait_for` in `send_message` |
-| A2A — Sentiment agent | 600s | `asyncio.wait_for` in `send_message` |
+| A2A — Market Context agent | 600s | `asyncio.wait_for` in `send_message` |
 | MCP tool calls | 30s | MCPClient default |
 
 ## Error Handling
