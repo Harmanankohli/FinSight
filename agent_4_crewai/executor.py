@@ -48,10 +48,15 @@ class MarketContextAgent(BaseAgent):
             call("get_financials", {"ticker": ticker}),
         )
 
+        # Extract industry/sector from primary financials for crew context
+        info = primary_fin.get("info", {}) if isinstance(primary_fin, dict) and not primary_fin.get("error") else {}
+        industry = info.get("industry", "")
+        sector = info.get("sector", "")
+
         # Step 2: discover peers dynamically via Yahoo Finance recommendations API
         peers_result = await call("get_peers", {"ticker": ticker})
         peer_tickers = peers_result.get("peers", []) if isinstance(peers_result, dict) else []
-        logger.debug("Dynamic peers for %s: %s", ticker, peer_tickers)
+        logger.debug("Dynamic peers for %s (sector=%s): %s", ticker, sector, peer_tickers)
 
         # Step 3: peer financials in parallel
         peer_fin_results = await asyncio.gather(
