@@ -42,8 +42,7 @@ class QuantAnalysisGraph:
 
         START ──→ fetch_prices ──→ compute_base_metrics ──[conditional]──→ run_stress_test ──→ portfolio_correlation ──→ format_output
                                └──→ technical_analysis ──────────────────────────────────────→ portfolio_correlation    ↑
-               └──→ fetch_fundamentals ──→ format_output                                                               │
-                                      └──→ peer_comparison ──────────────────────────────────────────────────────────→ │
+               └──→ fetch_fundamentals ──→ peer_comparison ──────────────────────────────────────────────────────────→ │
                                       └──→ analyst_positioning ──────────────────────────────────────────────────────→ │
                └──→ options_flow ──────────────────────────────────────────────────────────────────────────────────── → │
                └──→ insider_signals ───────────────────────────────────────────────────────────────────────────────── → │
@@ -88,8 +87,12 @@ class QuantAnalysisGraph:
         builder.add_edge("run_dcf", "portfolio_correlation")
         builder.add_edge("technical_analysis", "portfolio_correlation")
 
-        # Fundamentals fan-out: direct to format_output + downstream enrichment nodes
-        builder.add_edge("fetch_fundamentals", "format_output")
+        # Fundamentals fan-out to enrichment nodes only — NO direct edge to format_output.
+        # A direct fetch_fundamentals → format_output edge creates a diamond dependency
+        # (fetch_fundamentals reaches format_output via 3 paths: direct + peer_comparison +
+        # analyst_positioning), causing LangGraph to trigger format_output multiple times in
+        # the same step, which raises INVALID_CONCURRENT_GRAPH_UPDATE on every key it writes.
+        # fundamentals data is available to format_output through the shared state regardless.
         builder.add_edge("fetch_fundamentals", "peer_comparison")
         builder.add_edge("fetch_fundamentals", "analyst_positioning")
 
