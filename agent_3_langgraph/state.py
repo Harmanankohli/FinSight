@@ -3,6 +3,20 @@ from typing import Annotated, Any, TypedDict
 from langgraph.graph.message import add_messages
 
 
+def _merge_dict(a: dict, b: dict) -> dict:
+    """Merge two dicts — used as a LangGraph reducer for keys written by multiple nodes."""
+    if not a:
+        return b or {}
+    if not b:
+        return a
+    return {**a, **b}
+
+
+def _last_nonnull(a: Any, b: Any) -> Any:
+    """Return b if non-None, else a — last-writer-wins reducer that preserves prior data."""
+    return b if b is not None else a
+
+
 class QuantAnalysisState(TypedDict):
     # Input fields
     ticker: str  # Target equity symbol for analysis
@@ -16,10 +30,13 @@ class QuantAnalysisState(TypedDict):
     is_high_volatility: bool  # Threshold gate (>35%) → routes to stress test vs DCF
 
     # Analysis outputs
-    metrics: dict  # Sharpe, Vol, Beta, VaR, Max Drawdown
-    stress_test_result: dict | None  # Scenario projections (2008/2020/dot-com/recession) + CVaR
+    # metrics and stress_test_result are written by multiple nodes (compute + format_output),
+    # so they use reducers to avoid INVALID_CONCURRENT_GRAPH_UPDATE in LangGraph's fan-in.
+    metrics: Annotated[dict, _merge_dict]  # Sharpe, Vol, Beta, VaR, Max Drawdown
+    stress_test_result: Annotated[dict | None, _last_nonnull]  # Scenario projections + CVaR
     dcf_valuation: dict | None  # 5Y DCF intrinsic value, upside %, terminal value assumptions
-    dcf_error: str | None  # Human-readable reason when DCF is skipped (e.g. no FCF, high vol)
+    # dcf_error written by both compute_metrics_node (high-vol skip) and dcf_valuation_node
+    dcf_error: Annotated[str | None, _last_nonnull]
     correlation_matrix: dict  # Pairwise Pearson correlations across portfolio holdings
     fundamentals: dict | None  # PE, ROE, margins, growth, D/E — from get_financials info
     technicals: dict | None  # RSI, MACD, trend, support/resistance — computed from price_data
