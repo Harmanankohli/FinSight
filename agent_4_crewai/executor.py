@@ -52,7 +52,7 @@ class MarketContextAgent(BaseAgent):
         # Step 2: resolve peers from primary ticker's industry/sector
         info = {}
         if isinstance(primary_fin, dict) and not primary_fin.get("error"):
-            info = (primary_fin.get("financials") or {}).get("info", {})
+            info = primary_fin.get("info", {})
         industry = info.get("industry", "")
         sector = info.get("sector", "")
         peer_tickers = get_peer_tickers(ticker, industry, sector)
@@ -68,7 +68,8 @@ class MarketContextAgent(BaseAgent):
             if isinstance(res, Exception):
                 peers[sym] = {"financials": {}}
             else:
-                fin_data = res.get("financials", {}) if isinstance(res, dict) and not res.get("error") else {}
+                # get_financials returns {"info": {...}, "cash_flow": {...}, ...} directly
+                fin_data = res if isinstance(res, dict) and not res.get("error") else {}
                 peers[sym] = {"financials": fin_data}
 
         return {
