@@ -623,17 +623,20 @@ def score_quant_deterministic(quant_result: dict) -> dict:
     Returns a dict of bool checks plus a `passed` aggregate. Cheap enough to
     run on every Quant response without rate limiting.
     """
+    # Keys match _SIGNAL_WEIGHTS in agent_3_langgraph/nodes.py
     expected_groups = {
-        "risk_quality", "dcf", "fund_value", "fund_quality",
-        "tech_trend", "tech_momentum", "peer_positioning", "behavioral",
+        "risk_quality", "dcf_value", "fundamental_value", "fundamental_quality",
+        "technicals_trend", "technicals_momentum", "peer_positioning", "behavioral",
     }
     expected_weights = {
-        "risk_quality": 0.15, "dcf": 0.20, "fund_value": 0.13, "fund_quality": 0.12,
-        "tech_trend": 0.15, "tech_momentum": 0.10, "peer_positioning": 0.10, "behavioral": 0.05,
+        "risk_quality": 0.15, "dcf_value": 0.20, "fundamental_value": 0.13,
+        "fundamental_quality": 0.12, "technicals_trend": 0.15, "technicals_momentum": 0.10,
+        "peer_positioning": 0.10, "behavioral": 0.05,
     }
 
     checks: dict = {}
-    sig = quant_result.get("signal_scores") or {}
+    # signal_scores lives under metrics, not at the top level
+    sig = (quant_result.get("metrics") or {}).get("signal_scores") or {}
     checks["signal_scores_present"] = bool(sig)
     checks["signal_groups_complete"] = expected_groups.issubset(set(sig.keys()))
     checks["weights_sum_to_1"] = abs(sum(expected_weights.values()) - 1.0) < 1e-6
@@ -656,7 +659,8 @@ def score_quant_deterministic(quant_result: dict) -> dict:
     rec = quant_result.get("recommendation")
     checks["recommendation_valid"] = rec in {"BUY", "HOLD", "SELL", None}
 
-    conf = quant_result.get("confidence_score")
+    # quant_confidence lives under metrics
+    conf = (quant_result.get("metrics") or {}).get("quant_confidence")
     checks["confidence_in_range"] = conf is None or (isinstance(conf, (int, float)) and 0.0 <= conf <= 1.0)
 
     checks["passed"] = all(v for k, v in checks.items() if k != "passed")

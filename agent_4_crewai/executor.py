@@ -56,7 +56,8 @@ class MarketContextAgent(BaseAgent):
         # Step 2: discover peers dynamically via Yahoo Finance recommendations API
         peers_result = await call("get_peers", {"ticker": ticker})
         peer_tickers = peers_result.get("peers", []) if isinstance(peers_result, dict) else []
-        logger.debug("Dynamic peers for %s (sector=%s): %s", ticker, sector, peer_tickers)
+        if not peer_tickers:
+            logger.warning("get_peers returned no results for %s — peer analysis will be skipped", ticker)
 
         # Step 3: peer financials in parallel
         peer_fin_results = await asyncio.gather(

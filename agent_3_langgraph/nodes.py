@@ -882,14 +882,8 @@ async def peer_comparison_node(state: QuantAnalysisState) -> dict:
         logger.warning("get_peers failed for %s: %s", ticker, _pe)
 
     if not peer_tickers:
-        from shared.peer_sets import get_peer_tickers as _static_peers
-        peer_tickers = _static_peers(ticker, industry, sector)
-        if peer_tickers:
-            logger.info("Dynamic peers empty for %s — using curated fallback: %s", ticker, peer_tickers)
-
-    if not peer_tickers:
         return {"peer_comparison": {
-            "note": f"No peers found for {ticker} (industry='{industry}', sector='{sector}')",
+            "note": f"Peer discovery unavailable for {ticker} — get_peers returned no results. Restart MCP server if recently deployed.",
             "industry": industry,
             "sector": sector,
         }}
@@ -985,10 +979,27 @@ async def options_flow_node(state: QuantAnalysisState) -> dict:
         call_oi = _sum(calls, "openInterest")
         put_oi = _sum(puts, "openInterest")
 
-        pc_vol = round(put_vol / call_vol, 3) if call_vol > 0 else 1.0
-        pc_oi = round(put_oi / call_oi, 3) if call_oi > 0 else 1.0
+        total_vol = call_vol + put_vol
+        if total_vol == 0:
+            # No volume — market closed or no active options chain; don't produce misleading ratios
+            return {
+                "options_signals": {
+                    "put_call_volume_ratio": None,
+                    "put_call_oi_ratio": round(put_oi / call_oi, 3) if call_oi > 0 else None,
+                    "call_volume": 0,
+                    "put_volume": 0,
+                    "total_volume": 0,
+                    "flow_signal": "no_data",
+                    "note": "No options volume — market may be closed or chain is illiquid",
+                }
+            }
 
-        if pc_vol < 0.5:
+        pc_vol = round(put_vol / call_vol, 3) if call_vol > 0 else None
+        pc_oi = round(put_oi / call_oi, 3) if call_oi > 0 else None
+
+        if pc_vol is None:
+            flow_signal = "no_data"
+        elif pc_vol < 0.5:
             flow_signal = "bullish"
         elif pc_vol > 1.5:
             flow_signal = "bearish"
@@ -1001,7 +1012,7 @@ async def options_flow_node(state: QuantAnalysisState) -> dict:
                 "put_call_oi_ratio": pc_oi,
                 "call_volume": call_vol,
                 "put_volume": put_vol,
-                "total_volume": call_vol + put_vol,
+                "total_volume": total_vol,
                 "flow_signal": flow_signal,
             }
         }
@@ -1011,53 +1022,37 @@ async def options_flow_node(state: QuantAnalysisState) -> dict:
 
 
 async def insider_signals_node(state: QuantAnalysisState) -> dict:
-    """Counts recent Form 4 filings and infers net buy/sell direction from filing text."""
+    """Fetches insider buy/sell transactions via yfinance (structured data, not keyword matching)."""
     ticker = state["ticker"]
     mcp = state.get("mcp_client")
     if not mcp:
         return {"insider_signals": None}
     try:
-        result = await mcp.call_tool_by_name(
-            "get_company_filings",
-            {"ticker": ticker, "form_types": "4", "limit": 15},
-        )
+        result = await mcp.call_tool_by_name("get_insider_transactions", {"ticker": ticker, "days": 90})
         if not hasattr(result, "content") or not result.content:
             return {"insider_signals": None}
         raw = result.content[0].text if hasattr(result.content[0], "text") else str(result.content[0])
         data = json.loads(raw)
-        filings = data.get("filings", [])
+        summary = data.get("summary", {})
 
-        cutoff = (date.today() - timedelta(days=90)).isoformat()
-        recent = [f for f in filings if (f.get("filing_date") or "") >= cutoff]
-
-        buys, sells = 0, 0
-        for f in recent:
-            text = " ".join(
-                str(f.get(k, "")) for k in ("description", "title", "form")
-            ).lower()
-            if any(w in text for w in ("purchase", "acquisition", " buy", "acquired")):
-                buys += 1
-            elif any(w in text for w in ("sale", "sell", "sold", "disposition", "disposed")):
-                sells += 1
-
-        if buys > sells and buys > 0:
-            direction = "net_buy"
-        elif sells > buys and sells > 0:
-            direction = "net_sell"
-        else:
-            direction = "neutral"
+        buys = summary.get("buys", 0)
+        sells = summary.get("sells", 0)
+        direction = summary.get("direction", "neutral")
 
         raw_fin = state.get("_financials_raw") or {}
         insider_pct = (raw_fin.get("info") or {}).get("heldPercentInsiders")
 
+        total = summary.get("total", 0)
         return {
             "insider_signals": {
-                "recent_form4_count": len(recent),
+                "recent_transaction_count": total,
                 "buy_signals": buys,
                 "sell_signals": sells,
                 "direction": direction,
+                "net_shares": summary.get("net_shares"),
+                "net_value": summary.get("net_value"),
                 "insider_pct_held": insider_pct,
-                "activity_level": "high" if len(recent) >= 5 else "moderate" if len(recent) >= 2 else "low",
+                "activity_level": "high" if total >= 5 else "moderate" if total >= 2 else "low",
             }
         }
     except Exception as e:

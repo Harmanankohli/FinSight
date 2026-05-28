@@ -1768,6 +1768,94 @@ _SECTOR_ETF: dict[str, str] = {
 }
 
 
+@app.tool()
+@observe()
+async def get_insider_transactions(ticker: str, days: int = 90) -> dict:
+    """Fetch recent insider buy/sell transactions using yfinance insider_transactions.
+
+    More reliable than parsing SEC Form 4 filing titles — returns structured
+    transaction type ("Sale", "Buy", "Option Exercise"), share counts, and values.
+
+    Args:
+        ticker: Stock ticker symbol (e.g. WMT, AAPL)
+        days:   Look-back window in calendar days (default 90)
+
+    Returns:
+        dict with keys:
+          ticker       — input symbol
+          transactions — list of {insider, position, direction, shares, value, date, transaction}
+          summary      — {total, buys, sells, direction, net_shares, net_value}
+    """
+    logger.info("Tool called", extra={"tool": "get_insider_transactions", "ticker": ticker})
+    try:
+        await _yfinance_limiter.acquire()
+        stock = yf.Ticker(ticker.upper())
+        df = stock.insider_transactions
+        if df is None or df.empty:
+            return {"ticker": ticker.upper(), "transactions": [], "summary": {"total": 0, "buys": 0, "sells": 0, "direction": "neutral"}}
+
+        cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=days)
+        # Start Date may be tz-aware or tz-naive
+        start_col = df["Start Date"] if "Start Date" in df.columns else df.index
+        try:
+            mask = pd.to_datetime(start_col, utc=True) >= cutoff
+        except Exception:
+            mask = slice(None)
+        recent = df[mask] if not isinstance(mask, slice) else df
+
+        transactions = []
+        buys = sells = 0
+        net_shares = net_value = 0
+        for _, row in recent.iterrows():
+            txn = str(row.get("Transaction", ""))
+            txn_lower = txn.lower()
+            if any(w in txn_lower for w in ("buy", "purchase", "acquisition")):
+                direction = "buy"
+                buys += 1
+                net_shares += int(row.get("Shares", 0) or 0)
+                net_value += float(row.get("Value", 0) or 0)
+            elif any(w in txn_lower for w in ("sale", "sell", "sold")):
+                direction = "sell"
+                sells += 1
+                net_shares -= int(row.get("Shares", 0) or 0)
+                net_value -= float(row.get("Value", 0) or 0)
+            else:
+                direction = "other"
+            transactions.append({
+                "insider": str(row.get("Insider", "")),
+                "position": str(row.get("Position", "")),
+                "direction": direction,
+                "shares": int(row.get("Shares", 0) or 0),
+                "value": float(row.get("Value", 0) or 0),
+                "date": str(row.get("Start Date", ""))[:10],
+                "transaction": txn,
+            })
+
+        if buys > sells and buys > 0:
+            net_dir = "net_buy"
+        elif sells > buys and sells > 0:
+            net_dir = "net_sell"
+        else:
+            net_dir = "neutral"
+
+        return {
+            "ticker": ticker.upper(),
+            "transactions": transactions[:20],
+            "summary": {
+                "total": len(transactions),
+                "buys": buys,
+                "sells": sells,
+                "direction": net_dir,
+                "net_shares": net_shares,
+                "net_value": round(net_value, 2),
+            },
+        }
+    except Exception as exc:
+        logger.warning("get_insider_transactions failed for %s: %s", ticker, exc)
+        return {"ticker": ticker.upper(), "transactions": [], "error": str(exc),
+                "summary": {"total": 0, "buys": 0, "sells": 0, "direction": "neutral"}}
+
+
 async def _get_scenario_shocks_uncached(sector: str) -> dict:
     """Compute historical crash returns from live price data.
 
@@ -1837,29 +1925,49 @@ async def get_scenario_shocks(sector: str = "") -> dict:
     return await _cache_shocks.get_or_fetch(cache_key, lambda: _get_scenario_shocks_uncached(sector))
 
 
+def _industry_to_slug(name: str) -> str:
+    """Convert a yfinance industry/sector string to a yfinance URL slug."""
+    import re
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+
+
 async def _get_peers_uncached(ticker: str) -> dict:
-    """Fetch similar tickers from Yahoo Finance's recommendationsBySymbol API."""
+    """Fetch peer tickers via yfinance Industry/Sector classes.
+
+    yfinance.Industry(slug).top_companies returns a market-cap-weighted
+    DataFrame of companies in the same industry — no scraping, no cookies.
+    Falls back to yf.Sector if the industry slug returns nothing.
+    """
+    ticker_up = ticker.upper()
+    loop = asyncio.get_event_loop()
+
+    def _fetch() -> list[str]:
+        try:
+            info = yf.Ticker(ticker_up).info
+            industry = info.get("industry", "")
+            sector = info.get("sector", "")
+        except Exception:
+            return []
+
+        for name, cls in ((industry, yf.Industry), (sector, yf.Sector)):
+            if not name:
+                continue
+            try:
+                slug = _industry_to_slug(name)
+                df = cls(slug).top_companies
+                if df is not None and not df.empty:
+                    return [s for s in df.index.tolist() if s and s != ticker_up][:8]
+            except Exception as exc:
+                logger.debug("yf.%s('%s') failed: %s", cls.__name__, name, exc)
+        return []
+
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(
-                f"https://query2.finance.yahoo.com/v6/finance/recommendationsBySymbol/{ticker.upper()}",
-                headers={
-                    "User-Agent": "Mozilla/5.0 (compatible; FinSight/1.0)",
-                    "Accept": "application/json",
-                },
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            result = (data.get("finance", {}).get("result") or [{}])[0]
-            recommended = result.get("recommendedSymbols", [])
-            peers = [
-                r["symbol"] for r in recommended
-                if r.get("symbol") and r["symbol"].upper() != ticker.upper()
-            ][:8]
-            return {"ticker": ticker.upper(), "peers": peers}
+        await _yfinance_limiter.acquire()
+        peers = await loop.run_in_executor(None, _fetch)
+        return {"ticker": ticker_up, "peers": peers}
     except Exception as exc:
-        logger.warning("Yahoo peers API failed for %s: %s", ticker, exc)
-        return {"ticker": ticker.upper(), "peers": [], "error": str(exc)}
+        logger.warning("get_peers failed for %s: %s", ticker, exc)
+        return {"ticker": ticker_up, "peers": [], "error": str(exc)}
 
 
 @app.tool()
