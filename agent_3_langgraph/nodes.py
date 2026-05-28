@@ -1235,14 +1235,6 @@ async def format_output_node(state: QuantAnalysisState) -> dict:
             "signal_scores": group_scores,
         },
         "stress_test_result": stress_test_info,
-        "dcf_valuation": dcf,
-        "correlation_matrix": corr,
-        "fundamentals": fundamentals,
-        "technicals": technicals,
-        "peer_comparison": peer_comp,
-        "options_signals": options,
-        "insider_signals": insider,
-        "positioning": positioning,
     }
 
 
