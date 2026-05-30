@@ -1,0 +1,181 @@
+"use client";
+
+import { Suspense, useEffect, useState, FormEvent } from "react";
+import { useSearchParams } from "next/navigation";
+
+interface Brief {
+  id: string; ticker: string; recommendation: string; confidence: number;
+  brief_json: string; created_at: string; analysis_date: string;
+}
+
+const COMMON_TICKERS = ["NVDA", "AAPL", "MSFT", "TSLA", "GOOGL", "AMZN", "META", "LLY"];
+
+export default function MemoryPage() {
+  return (
+    <Suspense fallback={<div className="topbar"><div><h1>Memory</h1></div></div>}>
+      <MemoryContent />
+    </Suspense>
+  );
+}
+
+function MemoryContent() {
+  const searchParams = useSearchParams();
+  const urlTicker = searchParams.get("ticker")?.toUpperCase() || "";
+  const [briefs, setBriefs] = useState<Brief[]>([]);
+  const [input, setInput] = useState(urlTicker);
+  const [searchedTicker, setSearchedTicker] = useState("all");
+  const [loading, setLoading] = useState(true);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  const fetchBriefs = async (sym: string) => {
+    setLoading(true);
+    setSearchedTicker(sym.toUpperCase());
+    try {
+      const r = await fetch(`/api/orch/api/memory/ticker/${sym.toUpperCase()}`);
+      if (r.ok) setBriefs(await r.json());
+      else setBriefs([]);
+    } catch { setBriefs([]); }
+    setLoading(false);
+  };
+
+  const fetchAll = async () => {
+    setLoading(true);
+    setSearchedTicker("all");
+    const all: Brief[] = [];
+    const seen = new Set<string>();
+    await Promise.all(COMMON_TICKERS.map(async (t) => {
+      try {
+        const r = await fetch(`/api/orch/api/memory/ticker/${t}`);
+        if (r.ok) for (const b of await r.json()) if (!seen.has(b.id)) { seen.add(b.id); all.push(b); }
+      } catch { /* skip */ }
+    }));
+    all.sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
+    setBriefs(all);
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    if (urlTicker) { setInput(urlTicker); fetchBriefs(urlTicker); }
+    else fetchAll();
+  }, [urlTicker]);
+
+  const handleSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    if (input.trim()) fetchBriefs(input.trim());
+    else fetchAll();
+  };
+
+  const toggleExpand = (id: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const signalClass = (r: string) => r === "BUY" ? "buy" : r === "SELL" ? "sell" : "hold";
+
+  const parseText = (b: Brief): string => {
+    try {
+      const raw = b.brief_json;
+      const data = typeof raw === "string" ? JSON.parse(raw) : raw;
+      return data?.response_text || "";
+    } catch { return ""; }
+  };
+
+  return (
+    <>
+      <div className="topbar">
+        <div>
+          <h1>Memory</h1>
+          <div className="sub">Persistent briefs, portfolio, and recommendation history · SQLite</div>
+        </div>
+        <div style={{ marginLeft: "auto" }} />
+        <span className="pill mono">{loading ? "…" : `${briefs.length} brief(s)`}</span>
+      </div>
+      <div className="scroll">
+        <div style={{ maxWidth: 1060, margin: "0 auto", padding: "24px 30px 60px" }}>
+          {/* Search */}
+          <form onSubmit={handleSubmit} style={{ display: "flex", gap: 8, marginBottom: 24, alignItems: "center" }}>
+            <input
+              value={input}
+              onChange={(e) => setInput(e.target.value.toUpperCase())}
+              className="mono"
+              style={{ padding: "8px 14px", borderRadius: 8, border: "1px solid var(--sand)", background: "#fff", fontSize: 14, fontWeight: 700, width: 120, color: "var(--clay-deep)" }}
+              placeholder="TICKER"
+            />
+            <button type="submit" className="pill" style={{ cursor: "pointer", padding: "8px 16px" }}>Search</button>
+            <button type="button" onClick={fetchAll} className="pill" style={{ cursor: "pointer", padding: "8px 16px" }}>Show all</button>
+          </form>
+
+          {/* Brief cards */}
+          <div style={{ display: "grid", gap: 13 }}>
+            {briefs.map((b) => {
+              const text = parseText(b);
+              const isOpen = expanded.has(b.id);
+              const preview = text.slice(0, 200);
+              const signal = extractSignal(b.recommendation);
+
+              return (
+                <div
+                  key={b.id}
+                  className="card"
+                  style={{ padding: 0, cursor: "pointer", transition: "border-color 0.15s" }}
+                  onClick={() => toggleExpand(b.id)}
+                >
+                  {/* Header row — always visible */}
+                  <div style={{ display: "flex", gap: 18, alignItems: "center", padding: "16px 20px" }}>
+                    <div style={{ flexShrink: 0, width: 70 }}>
+                      <div className="mono" style={{ fontSize: 18, fontWeight: 700, color: "var(--clay-deep)" }}>{b.ticker}</div>
+                      <div style={{ fontSize: 10.5, color: "var(--text-muted)", marginTop: 2 }}>
+                        {b.analysis_date || b.created_at?.split("T")[0]}
+                      </div>
+                    </div>
+                    <div style={{ width: 1, height: 36, background: "var(--sand)", flexShrink: 0 }} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <p style={{ fontSize: 12.5, lineHeight: 1.5, color: "var(--text-secondary)", margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: isOpen ? undefined : "nowrap" }}>
+                        {isOpen ? "" : (preview || "No summary")}
+                      </p>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+                      <span className={`signal ${signal}`} style={{ padding: "3px 11px", fontSize: 11 }}>
+                        {b.recommendation}
+                      </span>
+                      <span className="mono" style={{ fontSize: 10, color: "var(--text-muted)" }}>
+                        {b.confidence?.toFixed(2)}
+                      </span>
+                      <span style={{ fontSize: 12, color: "var(--text-muted)" }}>{isOpen ? "▲" : "▼"}</span>
+                    </div>
+                  </div>
+
+                  {/* Expanded content */}
+                  {isOpen && text && (
+                    <div style={{ padding: "0 20px 18px", borderTop: "1px solid var(--sand)" }}>
+                      <div style={{ fontSize: 13, lineHeight: 1.62, color: "var(--text-primary)", paddingTop: 14, whiteSpace: "pre-wrap" }}>
+                        {text}
+                      </div>
+                      <div className="mono" style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 12, paddingTop: 10, borderTop: "1px solid var(--sand)" }}>
+                        session: {b.id?.slice(0, 12)} · conf: {b.confidence?.toFixed(2)} · {b.created_at}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            {!loading && briefs.length === 0 && (
+              <div style={{ textAlign: "center", padding: 40, color: "var(--text-muted)", fontSize: 13 }}>
+                {searchedTicker === "all" ? "No briefs stored yet. Run an analysis on the Research page." : `No briefs for ${searchedTicker}.`}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function extractSignal(rec: string): string {
+  if (rec === "BUY") return "buy";
+  if (rec === "SELL") return "sell";
+  return "hold";
+}

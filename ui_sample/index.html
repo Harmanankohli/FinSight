@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>FinSight — Overview</title>
+<link rel="stylesheet" href="finsight.css" />
+<style>
+  .scroll { padding-bottom: 60px; }
+  .wrap { max-width: 940px; margin: 0 auto; padding: 0 30px; }
+
+  /* hero */
+  .hero { padding: 60px 0 30px; }
+  .hero .eyebrow { margin-bottom: 18px; }
+  .hero h1 {
+    font-size: 46px; line-height: 1.08; max-width: 16ch;
+    letter-spacing: -0.02em;
+  }
+  .hero h1 em { font-style: italic; color: var(--clay); }
+  .hero p.lead {
+    font-size: 17px; line-height: 1.6; color: var(--text-secondary);
+    max-width: 60ch; margin-top: 22px;
+  }
+  .hero .cta { display: flex; gap: 12px; margin-top: 30px; align-items: center; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 11px 20px; border-radius: 999px; font-size: 14px; font-weight: 600;
+    border: 1px solid var(--sand); background: var(--ivory); color: var(--text-primary);
+    transition: all 0.15s;
+  }
+  .btn:hover { border-color: var(--clay-light); }
+  .btn.primary { background: var(--clay); color: #fff; border-color: var(--clay); }
+  .btn.primary:hover { background: var(--clay-deep); }
+  .hero .qexample {
+    margin-top: 36px;
+    display: inline-flex; align-items: center; gap: 12px;
+    padding: 14px 18px; border-radius: 12px;
+    background: var(--ivory-dark); border: 1px solid var(--sand);
+    font-family: var(--mono); font-size: 13.5px; color: var(--text-secondary);
+  }
+  .qexample .q { color: var(--text-primary); }
+  .qexample .arrow { color: var(--clay-light); }
+
+  /* flow diagram */
+  .flow { margin: 46px 0; }
+  .flow-grid {
+    display: grid; gap: 14px;
+  }
+  .flow-row { display: flex; gap: 14px; align-items: stretch; }
+  .node {
+    border-radius: 12px; border: 1px solid var(--sand);
+    background: var(--ivory-dark); padding: 16px 18px;
+    box-shadow: var(--shadow-sm);
+  }
+  .node .nlabel { font-size: 12px; font-weight: 600; color: var(--text-primary); display:flex; align-items:center; gap:8px; }
+  .node .nmeta { font-family: var(--mono); font-size: 11px; color: var(--text-muted); margin-top: 5px; }
+  .node.orch { flex: 1; border-color: var(--clay-light); background: var(--orch-bg); }
+  .node.protocol {
+    flex: 1; text-align: center; background: var(--ivory);
+    border-style: dashed; color: var(--text-muted); font-family: var(--mono); font-size: 11.5px;
+    display: grid; place-items: center; padding: 9px;
+  }
+  .agent-node { flex: 1; }
+  .agent-node .bar { height: 3px; border-radius: 2px; margin-bottom: 11px; }
+  .mcp-node { flex: 1; border-color: var(--mcp); background: var(--mcp-bg); }
+
+  .swatch { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+
+  /* agents detail */
+  .section-head { margin: 50px 0 20px; }
+  .section-head h2 { font-size: 26px; }
+  .section-head p { color: var(--text-muted); font-size: 14px; margin-top: 6px; }
+
+  .agents { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .agent-card { padding: 22px; border-radius: 14px; }
+  .agent-card .top { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+  .agent-card .ico {
+    width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center;
+    font-family: var(--serif); font-size: 18px; font-weight: 700; flex-shrink: 0;
+  }
+  .agent-card h3 { font-size: 16px; }
+  .agent-card .fw { font-family: var(--mono); font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+  .agent-card p { font-size: 13px; line-height: 1.55; color: var(--text-secondary); margin: 0 0 14px; }
+  .skills { display: flex; flex-wrap: wrap; gap: 6px; }
+
+  /* features */
+  .features { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .feature { padding: 20px; }
+  .feature h4 { font-size: 14px; margin-bottom: 7px; }
+  .feature p { font-size: 12.5px; line-height: 1.55; color: var(--text-secondary); margin: 0; }
+  .feature .fnum { font-family: var(--mono); font-size: 11px; color: var(--clay); font-weight: 600; }
+
+  /* stack table */
+  .stack { display: grid; grid-template-columns: 1fr 1fr; gap: 0 40px; }
+  .stack-row {
+    display: flex; justify-content: space-between; gap: 16px;
+    padding: 11px 0; border-bottom: 1px solid var(--sand); font-size: 13px;
+  }
+  .stack-row .k { color: var(--text-muted); }
+  .stack-row .v { font-family: var(--mono); font-size: 12px; color: var(--text-primary); text-align: right; }
+
+  .divider { height: 1px; background: var(--sand); margin: 4px 0; }
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <div class="sb-logo">
+      <div class="sb-mark"><span></span></div>
+      <div class="sb-word">
+        <div class="name">FinSight</div>
+        <div class="tag">Investment Research</div>
+      </div>
+    </div>
+    <div class="sb-sec">Workspace</div>
+    <nav class="sb-nav">
+      <a class="sb-link active" href="index.html"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9.5 12 3l9 6.5V21H3z"/></svg>Overview</a>
+      <a class="sb-link" href="research.html"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.4 8.4 0 0 1-12 7.6L3 21l1.9-6A8.5 8.5 0 1 1 21 11.5z"/></svg>Research</a>
+      <a class="sb-link" href="trace.html"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4v16M4 8h7M4 14h11M4 20h5"/></svg>Trace</a>
+      <a class="sb-link" href="memory.html"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3a9 9 0 1 0 9 9M12 3v9l5 3"/></svg>Memory</a>
+      <a class="sb-link" href="operator.html"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M19 12a7 7 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7 7 0 0 0-2-1.2L14 2h-4l-.5 2.6a7 7 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6A7 7 0 0 0 5 12c0 .4 0 .8.1 1.2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 2 1.2L10 22h4l.5-2.6a7 7 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6c.1-.4.1-.8.1-1.2z"/></svg>Operator</a>
+    </nav>
+    <div class="sb-foot">
+      <span class="dot-live"></span> 5 services · AG-UI
+    </div>
+  </aside>
+
+  <!-- MAIN -->
+  <div class="main">
+    <div class="topbar">
+      <div>
+        <h1>Overview</h1>
+        <div class="sub">What FinSight is and how its agents work together</div>
+      </div>
+      <div class="spacer"></div>
+      <a class="pill mono" href="https://github.com/Harmanankohli/FinSight" target="_blank">v1.34 · Apache-2.0</a>
+    </div>
+
+    <div class="scroll">
+      <div class="wrap">
+
+        <!-- HERO -->
+        <section class="hero">
+          <div class="eyebrow">Multi-agent · A2A protocol · AG-UI frontend</div>
+          <h1>An analyst team that answers <em>“should I invest?”</em></h1>
+          <p class="lead">
+            FinSight coordinates four specialized agents — each built on a different framework —
+            into a single, citation-backed investment brief. The orchestrator delegates over the
+            Agent-to-Agent protocol, every agent pulls live data through one MCP server, and the
+            whole run streams to a CopilotKit v2 chat surface over AG-UI.
+          </p>
+          <div class="cta">
+            <a class="btn primary" href="research.html">Open Research
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+            </a>
+            <a class="btn" href="operator.html">System status</a>
+          </div>
+          <div class="qexample">
+            <span class="q">“Should I invest in NVIDIA?”</span>
+            <span class="arrow">→</span>
+            <span class="signal buy" style="padding:3px 11px;font-size:11px;">BUY · 0.78</span>
+          </div>
+        </section>
+
+        <!-- FLOW -->
+        <section class="flow">
+          <div class="flow-grid">
+            <div class="flow-row">
+              <div class="node orch" style="flex:1">
+                <div class="nlabel"><span class="swatch" style="background:var(--clay)"></span>Investment Orchestrator</div>
+                <div class="nmeta">Google ADK · LlmAgent · single send_message tool · :8080</div>
+              </div>
+            </div>
+            <div class="flow-row">
+              <div class="node protocol">A2A Protocol &nbsp;·&nbsp; JSON-RPC over HTTP &nbsp;·&nbsp; streaming &nbsp;·&nbsp; parallel fan-out ↓</div>
+            </div>
+            <div class="flow-row">
+              <div class="node agent-node">
+                <div class="bar" style="background:var(--rag)"></div>
+                <div class="nlabel"><span class="swatch" style="background:var(--rag)"></span>RAG Agent</div>
+                <div class="nmeta">LlamaIndex · :8002</div>
+              </div>
+              <div class="node agent-node">
+                <div class="bar" style="background:var(--quant)"></div>
+                <div class="nlabel"><span class="swatch" style="background:var(--quant)"></span>Quant Agent</div>
+                <div class="nmeta">LangGraph · :8003</div>
+              </div>
+              <div class="node agent-node">
+                <div class="bar" style="background:var(--market)"></div>
+                <div class="nlabel"><span class="swatch" style="background:var(--market)"></span>Market Context</div>
+                <div class="nmeta">CrewAI · :8004</div>
+              </div>
+            </div>
+            <div class="flow-row">
+              <div class="node protocol">MCP (Model Context Protocol) &nbsp;·&nbsp; SSE &nbsp;·&nbsp; multi-tier TTL cache ↓</div>
+            </div>
+            <div class="flow-row">
+              <div class="node mcp-node" style="flex:1">
+                <div class="nlabel"><span class="swatch" style="background:var(--mcp)"></span>Unified finsight-mcp Server <span class="mono" style="font-size:11px;color:var(--text-muted);font-weight:400">· :8010</span></div>
+                <div class="nmeta">get_prices · get_financials · get_company_filings · get_news_sentiment · get_peers · get_insider_transactions · get_scenario_shocks · find_agent</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- AGENTS -->
+        <div class="section-head">
+          <h2>The agent pool</h2>
+          <p>Four agents, four frameworks, one shared protocol. Each owns a slice of the thesis.</p>
+        </div>
+        <section class="agents">
+          <div class="card agent-card">
+            <div class="top">
+              <div class="ico" style="background:var(--rag-bg);color:var(--rag)">R</div>
+              <div>
+                <h3>Financial RAG Agent</h3>
+                <div class="fw">LlamaIndex · ChromaDB · :8002</div>
+              </div>
+            </div>
+            <p>Retrieves and reasons over SEC 10-K / 10-Q / 8-K filings and financial news with citation-backed insights. Hybrid BM25 + dense + reranker retrieval, incremental ingestion.</p>
+            <div class="skills">
+              <span class="pill">SEC filing retrieval</span>
+              <span class="pill">Earnings summary</span>
+              <span class="pill">News retrieval</span>
+            </div>
+          </div>
+
+          <div class="card agent-card">
+            <div class="top">
+              <div class="ico" style="background:var(--quant-bg);color:var(--quant)">Q</div>
+              <div>
+                <h3>Quant Analysis Agent</h3>
+                <div class="fw">LangGraph · yfinance · :8003</div>
+              </div>
+            </div>
+            <p>A LangGraph state machine computing Sharpe, beta, VaR, DCF, Monte Carlo, stress tests and peer comparison — fused by an 8-group weighted vote into a signal.</p>
+            <div class="skills">
+              <span class="pill">Risk &amp; DCF</span>
+              <span class="pill">Options flow</span>
+              <span class="pill">Insider signals</span>
+              <span class="pill">Positioning</span>
+            </div>
+          </div>
+
+          <div class="card agent-card">
+            <div class="top">
+              <div class="ico" style="background:var(--market-bg);color:var(--market)">M</div>
+              <div>
+                <h3>Market Context Agent</h3>
+                <div class="fw">CrewAI · :8004</div>
+              </div>
+            </div>
+            <p>Reads the macro regime — yield curve, VIX, DXY, sector rotation — and positions the stock against dynamically resolved sector peers for tailwinds and headwinds.</p>
+            <div class="skills">
+              <span class="pill">Macro regime</span>
+              <span class="pill">Peer landscape</span>
+            </div>
+          </div>
+
+          <div class="card agent-card">
+            <div class="top">
+              <div class="ico" style="background:var(--orch-bg);color:var(--clay)">O</div>
+              <div>
+                <h3>Investment Orchestrator</h3>
+                <div class="fw">Google ADK · :8080</div>
+              </div>
+            </div>
+            <p>Discovers agents via A2ACardResolver, fans out all delegations in one turn, then synthesizes a single BUY / HOLD / SELL brief — guarded by input &amp; output rails.</p>
+            <div class="skills">
+              <span class="pill">send_message</span>
+              <span class="pill">Guardrails</span>
+              <span class="pill">Synthesis</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- FEATURES -->
+        <div class="section-head">
+          <h2>What makes it sturdy</h2>
+          <p>The infrastructure beneath the brief.</p>
+        </div>
+        <section class="features">
+          <div class="card feature">
+            <div class="fnum">01</div>
+            <h4>Multi-tier caching</h4>
+            <p>TTL tool cache (1 min prices → 7 day shocks), LangChain SQLite LLM cache, and ChromaDB semantic cache for repeated queries.</p>
+          </div>
+          <div class="card feature">
+            <div class="fnum">02</div>
+            <h4>Input &amp; output guardrails</h4>
+            <p>Off-topic filter, pre-flight ticker validation, empty-response guard, and BUY/HOLD/SELL signal enforcement with auto-retry.</p>
+          </div>
+          <div class="card feature">
+            <div class="fnum">03</div>
+            <h4>Persistent memory</h4>
+            <p>SQLite ticker briefs, portfolio holdings, and recommendation tracking with live price snapshots — same-day cache in ~200ms.</p>
+          </div>
+          <div class="card feature">
+            <div class="fnum">04</div>
+            <h4>Distributed tracing</h4>
+            <p>Langfuse joins all four agent processes into one trace tree via text-based A2A context propagation, with noise filtering.</p>
+          </div>
+          <div class="card feature">
+            <div class="fnum">05</div>
+            <h4>Runtime RAGAS eval</h4>
+            <p>Per-query Faithfulness, FactualCorrectness and relevancy scored in the background, streamed per-metric to Langfuse.</p>
+          </div>
+          <div class="card feature">
+            <div class="fnum">06</div>
+            <h4>Local-first inference</h4>
+            <p>Every agent runs on LM Studio (OpenAI-compatible) with local embeddings and reranker — no cloud dependency required.</p>
+          </div>
+        </section>
+
+        <!-- STACK -->
+        <div class="section-head">
+          <h2>Tech stack</h2>
+          <p>The frameworks behind each layer.</p>
+        </div>
+        <section class="card" style="padding: 22px 26px;">
+          <div class="stack">
+            <div>
+              <div class="stack-row"><span class="k">Agent communication</span><span class="v">Google A2A (JSON-RPC)</span></div>
+              <div class="stack-row"><span class="k">Orchestrator</span><span class="v">ADK LlmAgent</span></div>
+              <div class="stack-row"><span class="k">RAG</span><span class="v">LlamaIndex + ChromaDB</span></div>
+              <div class="stack-row"><span class="k">Quant</span><span class="v">LangChain + LangGraph</span></div>
+              <div class="stack-row"><span class="k">Market context</span><span class="v">CrewAI</span></div>
+              <div class="stack-row" style="border-bottom:none"><span class="k">Frontend</span><span class="v">CopilotKit v2 · AG-UI</span></div>
+            </div>
+            <div>
+              <div class="stack-row"><span class="k">Data tools</span><span class="v">FastMCP server</span></div>
+              <div class="stack-row"><span class="k">Memory</span><span class="v">SQLite (aiosqlite)</span></div>
+              <div class="stack-row"><span class="k">Embeddings</span><span class="v">all-MiniLM-L6-v2</span></div>
+              <div class="stack-row"><span class="k">Reranker</span><span class="v">ms-marco-MiniLM-L-6</span></div>
+              <div class="stack-row"><span class="k">Evaluation</span><span class="v">RAGAS + Langfuse</span></div>
+              <div class="stack-row" style="border-bottom:none"><span class="k">Inference</span><span class="v">LM Studio (local)</span></div>
+            </div>
+          </div>
+        </section>
+
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

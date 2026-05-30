@@ -1,0 +1,206 @@
+"""REST API routes for the Next.js frontend.
+
+All routes are read-only JSON endpoints. User identity is read from the
+X-FinSight-User-Id request header.
+"""
+
+from __future__ import annotations
+
+import logging
+
+import httpx
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+from starlette.routing import Route
+
+logger = logging.getLogger(__name__)
+
+
+def _user_id(request: Request) -> str | None:
+    return request.headers.get("X-FinSight-User-Id")
+
+
+# ── /api/memory/ticker/{symbol} ──────────────────────────────────────────────
+
+async def memory_ticker_history(request: Request) -> JSONResponse:
+    symbol = request.path_params["symbol"].upper()
+    limit = int(request.query_params.get("limit", "10"))
+    from shared.memory import TickerMemory
+    tm = TickerMemory()
+    history = await tm.get_history(symbol, limit=limit)
+    return JSONResponse(history)
+
+
+async def memory_ticker_latest(request: Request) -> JSONResponse:
+    symbol = request.path_params["symbol"].upper()
+    from shared.memory import TickerMemory
+    tm = TickerMemory()
+    latest = await tm.get_latest(symbol)
+    if not latest:
+        return JSONResponse({"error": "No briefs found"}, status_code=404)
+    return JSONResponse(latest)
+
+
+async def memory_ticker_changed(request: Request) -> JSONResponse:
+    symbol = request.path_params["symbol"].upper()
+    from shared.memory import TickerMemory
+    tm = TickerMemory()
+    result = await tm.has_changed(symbol)
+    if result is None:
+        return JSONResponse({"changed": False, "reason": "insufficient_history"})
+    return JSONResponse(result)
+
+
+# ── /api/sessions ─────────────────────────────────────────────────────────────
+
+async def sessions_list(request: Request) -> JSONResponse:
+    """List all sessions (or filtered by user_id)."""
+    import aiosqlite
+    user_id = _user_id(request) or request.query_params.get("user_id")
+    try:
+        db = await aiosqlite.connect("./db/adk_sessions.db")
+        if user_id:
+            cursor = await db.execute(
+                "SELECT id, user_id, app_name, update_time FROM sessions WHERE user_id = ? ORDER BY update_time DESC LIMIT 50",
+                (user_id,),
+            )
+        else:
+            cursor = await db.execute(
+                "SELECT id, user_id, app_name, update_time FROM sessions ORDER BY update_time DESC LIMIT 50"
+            )
+        rows = await cursor.fetchall()
+        result = []
+        for row in rows:
+            sid = row[0]
+            ev_cursor = await db.execute(
+                "SELECT COUNT(*) FROM events WHERE session_id = ?", (sid,)
+            )
+            ev_count = (await ev_cursor.fetchone())[0]
+            result.append({
+                "id": sid,
+                "user_id": row[1],
+                "app_name": row[2],
+                "last_update_time": row[3],
+                "event_count": ev_count,
+            })
+        await db.close()
+        return JSONResponse(result)
+    except Exception as exc:
+        logger.exception("Failed to list sessions")
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+async def session_events(request: Request) -> JSONResponse:
+    """Return events for a specific session."""
+    import json as _json
+    import aiosqlite
+    session_id = request.path_params["id"]
+    try:
+        db = await aiosqlite.connect("./db/adk_sessions.db")
+        cursor = await db.execute(
+            "SELECT id, user_id, timestamp, event_data FROM events WHERE session_id = ? ORDER BY timestamp",
+            (session_id,),
+        )
+        rows = await cursor.fetchall()
+        await db.close()
+        if not rows:
+            return JSONResponse({"error": "Session not found or no events"}, status_code=404)
+        events = []
+        for row in rows:
+            try:
+                data = _json.loads(row[3]) if row[3] else {}
+            except Exception:
+                data = {}
+            author = data.get("author") or data.get("role") or ""
+            content_parts = []
+            content = data.get("content", {})
+            for part in (content.get("parts") or []):
+                if isinstance(part, dict):
+                    if part.get("text"):
+                        content_parts.append({"type": "text", "text": part["text"]})
+                    elif part.get("functionCall"):
+                        fc = part["functionCall"]
+                        content_parts.append({"type": "function_call", "name": fc.get("name", ""), "args": fc.get("args", {})})
+                    elif part.get("functionResponse"):
+                        fr = part["functionResponse"]
+                        content_parts.append({"type": "function_response", "name": fr.get("name", ""), "response": str(fr.get("response", ""))[:500]})
+            events.append({
+                "id": row[0],
+                "author": author,
+                "timestamp": row[2],
+                "content": content_parts,
+            })
+        return JSONResponse({"session_id": session_id, "events": events})
+    except Exception as exc:
+        logger.exception("Failed to load session events")
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+def _serialize_content(event) -> list:
+    content = getattr(event, "content", None)
+    if not content:
+        return []
+    parts = []
+    for part in (getattr(content, "parts", None) or []):
+        if getattr(part, "text", None):
+            parts.append({"type": "text", "text": part.text})
+        elif getattr(part, "function_call", None):
+            fc = part.function_call
+            parts.append({
+                "type": "function_call",
+                "name": fc.name,
+                "args": dict(fc.args or {}),
+            })
+        elif getattr(part, "function_response", None):
+            fr = part.function_response
+            parts.append({
+                "type": "function_response",
+                "name": fr.name,
+                "response": fr.response if isinstance(fr.response, str) else str(fr.response),
+            })
+    return parts
+
+
+# ── /api/agents ───────────────────────────────────────────────────────────────
+
+async def agents_list(request: Request) -> JSONResponse:
+    """List discovered sub-agents with names, descriptions, and skills."""
+    from agent_1_adk.agent import _client
+    agents = _client.list_agents()
+    return JSONResponse(agents)
+
+
+async def agent_health(request: Request) -> JSONResponse:
+    """Fan-out health check to a named agent's /health endpoint."""
+    name = request.path_params["name"]
+    from agent_1_adk.agent import _client
+    agents = {a["name"]: a for a in _client.list_agents()}
+    if name not in agents:
+        return JSONResponse({"error": f"Unknown agent: {name}"}, status_code=404)
+
+    # The agent card URL ends with /.well-known/agent-card — strip to get base
+    entry = _client._agents.get(name)
+    if not entry:
+        return JSONResponse({"status": "unknown"})
+    base_url = entry["url"].rstrip("/")
+    health_url = f"{base_url}/health"
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as http:
+            resp = await http.get(health_url)
+            return JSONResponse({"status": "ok" if resp.status_code == 200 else "degraded", "detail": resp.json()})
+    except Exception as exc:
+        return JSONResponse({"status": "unreachable", "error": str(exc)})
+
+
+# ── Route list ────────────────────────────────────────────────────────────────
+
+def get_api_routes() -> list[Route]:
+    return [
+        Route("/api/memory/ticker/{symbol}", memory_ticker_history, methods=["GET"]),
+        Route("/api/memory/ticker/{symbol}/latest", memory_ticker_latest, methods=["GET"]),
+        Route("/api/memory/ticker/{symbol}/changed", memory_ticker_changed, methods=["GET"]),
+        Route("/api/sessions", sessions_list, methods=["GET"]),
+        Route("/api/sessions/{id}/events", session_events, methods=["GET"]),
+        Route("/api/agents", agents_list, methods=["GET"]),
+        Route("/api/agents/{name}/health", agent_health, methods=["GET"]),
+    ]

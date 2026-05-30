@@ -1,0 +1,754 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FinSight — AG-UI Bridge + Next.js Frontend Plan (v2)</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:1.7;color:#2c2c2c;background:#faf8f5;padding:2rem 1rem}
+.container{max-width:780px;margin:0 auto}
+h1,h2,h3,h4{font-family:Georgia,"Times New Roman",serif;color:#1a1a1a;line-height:1.3}
+h1{font-size:2.2rem;margin-bottom:.25rem;border-bottom:2px solid #e8dcc8;padding-bottom:.5rem}
+h2{font-size:1.5rem;margin-top:2.5rem;margin-bottom:.75rem}
+h3{font-size:1.2rem;margin-top:1.5rem;margin-bottom:.5rem}
+h4{font-size:1.05rem;margin-top:1.2rem;margin-bottom:.4rem}
+p{margin-bottom:1rem;color:#444}
+a{color:#8b6f4e;text-decoration:none;font-weight:500}
+a:hover{text-decoration:underline}
+code{background:#f0ebe3;padding:.15em .4em;border-radius:3px;font-size:.875em;font-family:"SF Mono","Fira Code","Fira Mono",monospace}
+pre{background:#f0ebe3;padding:1rem;border-radius:6px;overflow-x:auto;margin-bottom:1rem;font-size:.875em;line-height:1.5}
+pre code{background:0 0;padding:0}
+table{width:100%;border-collapse:collapse;margin-bottom:1rem;font-size:.925rem}
+th,td{padding:.5rem .75rem;text-align:left;border-bottom:1px solid #e0d8cc;vertical-align:top}
+th{background:#f0ebe3;font-weight:600}
+ul,ol{margin-bottom:1rem;padding-left:1.5rem}
+li{margin-bottom:.25rem}
+hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
+.header-nav{margin-bottom:2rem;padding-bottom:1rem;border-bottom:1px solid #e0d8cc}
+.header-nav a{margin-right:1.2rem;font-size:.9rem}
+.tag{display:inline-block;font-size:.75rem;padding:.15em .6em;border-radius:3px;font-weight:600;margin-right:.4rem}
+.tag-tier0{background:#e3f0e3;color:#2a6b2a}
+.tag-tier1{background:#e0e6f0;color:#2c4a7c}
+.tag-tier2{background:#fce8d9;color:#8b4513}
+.tag-tier3{background:#f0d8d8;color:#7a2c2c}
+.tag-must{background:#f0d8d8;color:#7a2c2c}
+.tag-nice{background:#e0e6f0;color:#2c4a7c}
+.tag-done{background:#e3f0e3;color:#2a6b2a}
+.tag-partial{background:#fce8d9;color:#8b4513}
+.effort{font-size:.85rem;color:#888;margin-bottom:.25rem}
+.callout{background:#f5efe4;border-left:3px solid #8b6f4e;padding:.75rem 1rem;margin-bottom:1rem;border-radius:0 4px 4px 0;font-size:.95rem}
+.callout strong{color:#1a1a1a}
+.callout-warn{background:#fef3e0;border-left:3px solid #d4a017}
+.callout-new{background:#e8f4e8;border-left:3px solid #4a8b4a}
+.index-list{columns:2;column-gap:2rem;margin-bottom:1.5rem;padding-left:0;list-style:none}
+.index-list li{margin-bottom:.2rem;break-inside:avoid}
+.index-list a{font-size:.925rem}
+.mockup{background:#fefbf5;border:1px solid #e0d8cc;border-radius:6px;padding:1rem;margin-bottom:1rem;font-family:"SF Mono","Fira Code",monospace;font-size:.8em;line-height:1.5;white-space:pre;overflow-x:auto;color:#3a3a3a}
+.strikethrough{text-decoration:line-through;color:#999}
+@media(max-width:600px){body{padding:1rem}h1{font-size:1.8rem}table{font-size:.85rem}.index-list{columns:1}}
+</style>
+</head>
+<body>
+<div class="container">
+<div class="header-nav">
+<a href="../index.html">Home</a><a href="../ARCHITECTURE.html">Architecture</a><a href="../AGENTS.html">Agents</a><a href="IMPLEMENTATION_PLAN.html">Other Improvements</a>
+</div>
+
+<h1>AG-UI Bridge + Next.js Frontend <span style="font-size:.6em;color:#8b6f4e">(v2 &mdash; 2025-05-30)</span></h1>
+<p>Updated plan incorporating all backend changes shipped since v1 (Phases 1&ndash;4 improvements, memory layer,
+guardrails, semantic cache, performance tracker, runtime eval) and learnings from the prior
+<code>feature/web-ui</code> prototype that validated A2A streaming.</p>
+
+<div class="callout">
+<strong>Decisions locked in:</strong>
+<ul style="margin-bottom:0">
+<li><strong>Bridge mode</strong>: <em>Augment</em> &mdash; add <code>/a2a-agui</code> endpoint
+that drives the orchestrator through its A2A JSON-RPC interface. The existing
+<code>/agentic_chat</code> (Runner-backed, used by RAGAS evaluation) is untouched.</li>
+<li><strong>Frontend stack</strong>: Next.js 16 + CopilotKit (<code>@copilotkit/react-core</code>,
+<code>@copilotkit/react-ui</code>, <code>@copilotkit/runtime</code>) talking AG-UI to the Python bridge.</li>
+<li><strong>Feature floor</strong>: every capability currently exposed by <code>adk web</code> (sessions,
+memory, event trace, tool inspection, multi-turn replay) must be available in the new UI
+before it can replace it.</li>
+<li><strong>Multi-page layout</strong>: two primary views (Research, Operator)
+adapted to CopilotKit&rsquo;s sidebar/chat model.</li>
+</ul>
+</div>
+
+<div class="callout callout-new">
+<strong>What changed since v1:</strong>
+<ul style="margin-bottom:0">
+<li><code>FinSightAgentExecutor</code> now has inline guardrails: off-topic filter, ticker validation,
+today&rsquo;s brief cache, semantic cache, output length/signal checks, memory context injection.</li>
+<li>Memory layer is complete: <code>TickerMemory</code>, <code>PortfolioStore</code>, <code>PerformanceTracker</code>,
+<code>SQLiteMemoryService</code> (hybrid BM25+embedding search).</li>
+<li><code>SQLiteTaskStore</code> persists A2A tasks across restarts.</li>
+<li>Per-agent A2A timeouts (<code>A2A_TIMEOUT_RAG</code>, <code>_QUANT</code>, <code>_MARKET_CONTEXT</code>).</li>
+<li>Agent progress events: executor emits <code>TASK_STATE_WORKING</code> per sub-agent call.</li>
+<li>Runtime RAGAS eval fires on every response (when <code>EVAL_ENABLED=true</code>).</li>
+<li>Prior prototype on <code>feature/web-ui</code> validated A2A streaming end-to-end
+(frontend code was lost when branch was deleted; backend stash survives).</li>
+</ul>
+</div>
+
+<hr>
+
+<h2>Index</h2>
+<p><strong>Part A &mdash; A2A &rarr; AG-UI bridge (backend)</strong></p>
+<ol class="index-list">
+<li><a href="#a1">Current state (updated)</a></li>
+<li><a href="#a2">Target architecture</a></li>
+<li><a href="#a3">Event translation table</a></li>
+<li><a href="#a4">New module: <code>agui_bridge.py</code></a></li>
+<li><a href="#a5">Session &amp; memory continuity</a></li>
+<li><a href="#a6">Trace propagation + Langfuse</a></li>
+<li><a href="#a7">New REST API routes</a></li>
+<li><a href="#a8">Step-by-step implementation</a></li>
+<li><a href="#a9">Backend test plan</a></li>
+</ol>
+
+<p><strong>Part B &mdash; Next.js frontend (CopilotKit + AG-UI)</strong></p>
+<ol class="index-list" start="10">
+<li><a href="#b1">Stack &amp; dependencies</a></li>
+<li><a href="#b2">App routing &amp; layout</a></li>
+<li><a href="#b3">ADK-Web feature parity matrix</a></li>
+<li><a href="#b4">&ldquo;Killer&rdquo; features &mdash; generative UI</a></li>
+<li><a href="#b5">Human-in-the-loop checkpoints</a></li>
+<li><a href="#b6">Component inventory</a></li>
+<li><a href="#b7">Build phases (revised)</a></li>
+<li><a href="#b8">Frontend test plan</a></li>
+</ol>
+
+<p><a href="#learnings">Prior prototype learnings</a> &middot;
+<a href="#risks">Risks &amp; open questions</a> &middot;
+<a href="#refs">References</a></p>
+
+<hr>
+
+<!-- ───────────────────── PART A ───────────────────── -->
+<h1 style="font-size:1.8rem;margin-top:2rem;border:none">Part A &mdash; A2A &rarr; AG-UI bridge</h1>
+
+<h2 id="a1">1. Current state (updated)</h2>
+<p>The orchestrator (<code>agent_1_adk/main.py</code>) runs on port <code>8001</code>
+with three route groups:</p>
+<ul>
+<li><code>/a2a</code> &mdash; A2A JSON-RPC, backed by <code>FinSightAgentExecutor</code>.</li>
+<li><code>/.well-known/agent-card</code> &mdash; A2A agent-card discovery.</li>
+<li><code>/agentic_chat</code> &mdash; AG-UI SSE endpoint, Runner-backed, <code>_EVAL_USER_ID = "eval_user"</code>.</li>
+<li><code>/health</code> &mdash; simple JSON health check.</li>
+</ul>
+
+<h3>1.1 &mdash; FinSightAgentExecutor capabilities (new since v1)</h3>
+<p>The A2A executor (<code>agent_executor.py</code>) now owns significant business logic
+that the AG-UI bridge gets for free by routing through <code>/a2a</code>:</p>
+
+<table>
+<thead><tr><th>Capability</th><th>What it does</th><th>Bridge implication</th></tr></thead>
+<tbody>
+<tr><td>Off-topic guardrail</td><td>Regex rejects non-investment queries (weather, recipes, sports, etc.) before hitting LLM</td><td>Fast error &rarr; bridge emits <code>RUN_ERROR</code> or short text response</td></tr>
+<tr><td>Ticker validation</td><td>Pre-checks ticker against SEC EDGAR; rejects invalid tickers</td><td>Same fast-path handling</td></tr>
+<tr><td>Today&rsquo;s brief cache</td><td><code>_get_today_cached_text()</code> returns today&rsquo;s stored brief without calling any agents</td><td>Bridge sees a <code>TASK_STATE_COMPLETED</code> with cached text &mdash; no tool calls emitted</td></tr>
+<tr><td>Semantic cache</td><td>Embedding-similarity cache returns identical/near-identical prior responses</td><td>Same as today&rsquo;s brief &mdash; fast completion</td></tr>
+<tr><td>Memory context injection</td><td><code>_build_memory_context()</code> prepends <code>[TODAY]</code>/<code>[STALE]</code> context + portfolio holdings</td><td>Transparent &mdash; bridge never sees this</td></tr>
+<tr><td>Output guardrails</td><td>Rejects &lt;50-char responses; warns on missing BUY/HOLD/SELL signal</td><td>Bridge maps <code>TASK_STATE_FAILED</code> to <code>RUN_ERROR</code></td></tr>
+<tr><td>Agent progress events</td><td>Emits <code>TASK_STATE_WORKING</code> status updates per sub-agent delegation</td><td>Bridge translates to <code>STEP_STARTED</code> / <code>STATE_DELTA</code></td></tr>
+<tr><td>Memory persistence</td><td>Calls <code>_add_events_to_memory()</code> + <code>_persist_to_memory()</code> after each run</td><td>Transparent &mdash; sessions are persisted for replay</td></tr>
+<tr><td>Runtime RAGAS eval</td><td>Fires <code>score_response()</code> async on every completed response</td><td>Transparent &mdash; eval runs as fire-and-forget</td></tr>
+</tbody>
+</table>
+
+<h3>1.2 &mdash; Memory layer (complete)</h3>
+<p>All tables live in <code>db/finsight_memory.db</code> (shared across all endpoints):</p>
+<table>
+<thead><tr><th>Table</th><th>Written by</th><th>Exposed to UI via</th></tr></thead>
+<tbody>
+<tr><td><code>ticker_briefs</code></td><td><code>TickerMemory</code></td><td>New <code>GET /api/memory/ticker/{symbol}</code></td></tr>
+<tr><td><code>user_profiles</code></td><td><code>PortfolioStore</code></td><td>Internal only (used by executor&rsquo;s memory context)</td></tr>
+<tr><td><code>recommendation_records</code></td><td><code>PerformanceTracker</code></td><td>Internal only (background evaluation)</td></tr>
+<tr><td><code>memory_entries</code></td><td><code>SQLiteMemoryService</code></td><td>Searched via <code>load_memory</code> tool</td></tr>
+<tr><td><code>a2a_tasks</code></td><td><code>SQLiteTaskStore</code></td><td>Queryable for session replay</td></tr>
+<tr><td><code>ingested_filings</code></td><td>RAG pipeline</td><td>Status in Operator page</td></tr>
+</tbody>
+</table>
+
+<h3>1.3 &mdash; Two code paths</h3>
+<p>Important distinction for the bridge design:</p>
+<table>
+<thead><tr><th>Path</th><th>Entry point</th><th>Guardrails</th><th>Used by</th></tr></thead>
+<tbody>
+<tr><td>A2A</td><td><code>FinSightAgentExecutor.execute()</code></td><td>All inline guardrails (off-topic, ticker, cache, output)</td><td>A2A clients, <strong>new UI bridge</strong></td></tr>
+<tr><td>ADK Web</td><td><code>agents/finsight_agent/agent.py</code> callbacks</td><td>Before-agent cache callback only</td><td><code>adk web</code> dev UI</td></tr>
+<tr><td>AG-UI (RAGAS)</td><td><code>agui_endpoint.py</code> &rarr; Runner</td><td>None (eval path)</td><td>RAGAS offline eval</td></tr>
+</tbody>
+</table>
+<p>The new UI bridge routes through A2A, getting all guardrails for free.</p>
+
+<h2 id="a2">2. Target architecture</h2>
+<div class="mockup">
+┌────────────────────────────┐       ┌─────────────────────────────────────────┐
+│  Next.js (browser :3000)   │       │  Orchestrator (port 8001)               │
+│  ─ CopilotChat / Sidebar   │       │                                         │
+│  ─ Research / Operator     │       │  ┌────────────────────────────────┐     │
+│    pages                    │       │  │ /agentic_chat (kept, RAGAS)    │     │
+│                            │       │  │   Runner-backed, eval_user     │     │
+│  /api/copilotkit ───────┐  │       │  └────────────────────────────────┘     │
+│   (Next route handler)  │  │       │                                         │
+│                         │  │       │  ┌────────────────────────────────┐     │
+│   @copilotkit/runtime   │  │       │  │ /a2a-agui   ◀── NEW            │     │
+│      HttpAgent ─────────┼──┼──SSE──┼─▶│   agui_bridge.py               │     │
+│                         │  │       │  │   • RunAgentInput → A2A        │     │
+│  /api/memory/* ─────────┼──┼──GET──┼─▶│   • A2A events → AG-UI         │     │
+│  /api/health ───────────┼──┼──GET──┼─▶│   • Guardrails via executor    │     │
+│  /api/sessions/* ───────┼──┼──GET──┼─▶└──────────┬─────────────────────┘     │
+│  /api/agents/* ─────────┼──┼──GET──┼─▶│          │ JSON-RPC (in-proc)  │     │
+└─────────────────────────┘  │       │  ┌────────────────────────────────┐     │
+                             │       │  │ /a2a (existing)                │     │
+                             │       │  │   DefaultRequestHandler        │     │
+                             │       │  │   FinSightAgentExecutor        │     │
+                             │       │  │   ─ guardrails, cache, eval    │     │
+                             │       │  └────────────────────────────────┘     │
+                             │       │                                         │
+                             │       │  REST API routes (NEW):                 │
+                             │       │  ┌────────────────────────────────┐     │
+                             │       │  │ GET /api/memory/ticker/{sym}   │     │
+                             │       │  │ GET /api/sessions?user_id=     │     │
+                             │       │  │ GET /api/sessions/{id}/events  │     │
+                             │       │  └────────────────────────────────┘     │
+                             │       └─────────────────────────────────────────┘
+</div>
+
+<h2 id="a3">3. Event translation table</h2>
+<p>The bridge consumes A2A events from <code>FinSightAgentExecutor</code> and emits
+AG-UI events. Updated to reflect actual executor behavior:</p>
+<table>
+<thead><tr><th>A2A event from executor</th><th>AG-UI event(s) emitted</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td>(connection open)</td><td><code>RUN_STARTED</code></td><td>Emit once per <code>run_id</code>.</td></tr>
+<tr><td><code>TaskStatusUpdateEvent</code> (WORKING, msg=&ldquo;Processing your request&hellip;&rdquo;)</td><td><code>STEP_STARTED</code> (name=&ldquo;orchestrator&rdquo;)</td><td>Initial step before any agent calls.</td></tr>
+<tr><td><code>TaskStatusUpdateEvent</code> (WORKING, msg=&ldquo;Consulting {agent_name}&hellip;&rdquo;)</td><td><code>STATE_DELTA</code> (key=<code>active_agent</code>, value=agent_name)</td><td>Per-agent progress. Source: <code>_emit_agent_progress()</code>.</td></tr>
+<tr><td><code>TaskArtifactUpdateEvent</code> (artifact named <code>{agent}-result</code>)</td><td><code>TOOL_CALL_START</code> + <code>TOOL_CALL_ARGS</code> + <code>TOOL_CALL_END</code> + <code>TOOL_CALL_RESULT</code></td><td>One complete tool-call cycle per sub-agent response. Artifact name identifies the agent.</td></tr>
+<tr><td><code>TaskStatusUpdateEvent</code> (COMPLETED, msg=final synthesis)</td><td><code>TEXT_MESSAGE_START</code> &rarr; <code>TEXT_MESSAGE_CONTENT</code> &rarr; <code>TEXT_MESSAGE_END</code></td><td>Final synthesis text. If &gt;500 chars, chunk into multiple <code>CONTENT</code> deltas.</td></tr>
+<tr><td><code>TaskStatusUpdateEvent</code> (COMPLETED, msg=cached brief)</td><td><code>TEXT_MESSAGE_*</code> (same as above)</td><td>Fast path: today&rsquo;s cache hit or semantic cache hit. No tool calls emitted.</td></tr>
+<tr><td><code>TaskStatusUpdateEvent</code> (FAILED)</td><td><code>RUN_ERROR</code></td><td>From output guardrails (too short / off-topic / invalid ticker).</td></tr>
+<tr><td><code>TaskStatusUpdateEvent</code> (COMPLETED) + brief JSON in artifact</td><td><code>STATE_SNAPSHOT</code> (key=<code>brief</code>) + <code>CUSTOM</code> event</td><td>Structured <code>InvestmentBrief</code> JSON for generative UI rendering.</td></tr>
+</tbody>
+</table>
+
+<h2 id="a4">4. New module: <code>agent_1_adk/agui_bridge.py</code></h2>
+<p>Sits next to <code>agui_endpoint.py</code>. Does not replace it.</p>
+<pre>def make_agui_bridge_endpoint(
+    a2a_client_factory: Callable[[], A2AClient],
+    *,
+    session_service: DatabaseSessionService,
+    ticker_memory: TickerMemory,
+) -> Callable[[Request], Awaitable[Response]]:
+    """Return a Starlette POST handler for /a2a-agui."""</pre>
+
+<p>Internal pieces:</p>
+<ul>
+<li><code>_A2AToAGUI</code> &mdash; stateful translator; per-run state:
+<code>pending_calls: dict[str, str]</code>, <code>msg_id</code>, <code>text_started</code>,
+<code>active_agents: set[str]</code>.</li>
+<li><code>_emit(event_obj) -&gt; str</code> &mdash; SSE framer. Extract into
+<code>shared/agui_sse.py</code> so both endpoints share it.</li>
+<li><code>_extract_user_text(payload: RunAgentInput) -&gt; str</code> &mdash; from
+<code>agui_endpoint</code>.</li>
+<li><code>_resolve_session(thread_id, run_id, payload) -&gt; SessionHandle</code> &mdash; see &sect;5.</li>
+<li><code>_parse_agent_from_artifact(artifact_name: str) -&gt; str</code> &mdash; extracts
+agent name from artifact names like <code>financial-rag-agent-result</code>.</li>
+</ul>
+
+<div class="callout callout-new">
+<strong>Design simplification (v2):</strong> Because <code>FinSightAgentExecutor</code>
+now handles all guardrails, caching, and memory persistence inline, the bridge
+is purely a <em>translator</em> &mdash; it maps A2A events to AG-UI events and manages
+session identity. No business logic in the bridge.
+</div>
+
+<h2 id="a5">5. Session &amp; memory continuity</h2>
+<p>Same principle as v1, now with additional stores:</p>
+
+<table>
+<thead><tr><th>AG-UI concept</th><th>FinSight concept</th><th>Mapping</th></tr></thead>
+<tbody>
+<tr><td><code>thread_id</code></td><td>ADK <code>session_id</code></td><td>1:1. New thread &rarr; new session in <code>adk_sessions.db</code>.</td></tr>
+<tr><td><code>run_id</code></td><td>A2A <code>task_id</code> / <code>context_id</code></td><td>Each AG-UI run &rarr; one A2A task. <code>context_id</code> = <code>thread_id</code>.</td></tr>
+<tr><td>User identity</td><td><code>user_id</code></td><td>From <code>X-FinSight-User-Id</code> header or CopilotKit <code>properties.user_id</code>. Never <code>eval_user</code>.</td></tr>
+<tr><td>Long-term memory</td><td><code>SQLiteMemoryService</code></td><td>Executor persists automatically. Bridge doesn&rsquo;t touch.</td></tr>
+<tr><td>Ticker memory</td><td><code>TickerMemory</code></td><td>Exposed via <code>GET /api/memory/ticker/{symbol}</code> for sidebar.</td></tr>
+</tbody>
+</table>
+
+<p><code>_resolve_session</code> looks up (<code>app_name</code>, <code>user_id</code>,
+<code>thread_id</code>) via the same <code>DatabaseSessionService</code> instance the orchestrator
+already constructs in <code>main.py</code>.</p>
+
+<h2 id="a6">6. Trace propagation + Langfuse</h2>
+<p>The executor already starts a Langfuse span (<code>finsight-query</code>) per A2A task
+and injects W3C <code>traceparent</code> into sub-agent calls via
+<code>shared/trace_context.py</code>. The bridge adds:</p>
+<ol>
+<li>Start a parent OTel span <code>agui.run</code> on each incoming POST.</li>
+<li>Stamp <code>thread_id</code>, <code>run_id</code>, <code>user_id</code> as span attributes.</li>
+<li>The executor&rsquo;s child span inherits from the bridge&rsquo;s span.</li>
+<li>After <code>RUN_FINISHED</code>, emit a <code>CUSTOM</code> event:
+<code>{type: "langfuse_trace", url: "..."}</code> so the UI shows a &ldquo;View trace&rdquo; chip.</li>
+</ol>
+
+<h2 id="a7">7. New REST API routes</h2>
+<p>The orchestrator&rsquo;s <code>main.py</code> gets new routes for the frontend&rsquo;s
+non-streaming data needs. All read-only, all JSON.</p>
+
+<table>
+<thead><tr><th>Route</th><th>Method</th><th>Backed by</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td><code>/api/memory/ticker/{symbol}</code></td><td>GET</td><td><code>TickerMemory.get_history(symbol, limit=10)</code></td><td>Past briefs for the ticker timeline sidebar</td></tr>
+<tr><td><code>/api/memory/ticker/{symbol}/latest</code></td><td>GET</td><td><code>TickerMemory.get_latest(symbol)</code></td><td>Most recent brief (for &ldquo;what changed?&rdquo; diff)</td></tr>
+<tr><td><code>/api/memory/ticker/{symbol}/changed</code></td><td>GET</td><td><code>TickerMemory.has_changed(symbol)</code></td><td>Recommendation change detection</td></tr>
+<tr><td><code>/api/sessions</code></td><td>GET</td><td><code>DatabaseSessionService.list_sessions(user_id)</code></td><td>Session list for replay</td></tr>
+<tr><td><code>/api/sessions/{id}/events</code></td><td>GET</td><td>Session events as JSON array</td><td>Full event trace for session replay</td></tr>
+<tr><td><code>/api/agents</code></td><td>GET</td><td><code>SubAgentClient.list_agents()</code></td><td>Agent list with names + descriptions</td></tr>
+<tr><td><code>/api/agents/{name}/health</code></td><td>GET</td><td>Fan-out to agent <code>/health</code> endpoints</td><td>Operator page: service health</td></tr>
+</tbody>
+</table>
+
+<h2 id="a8">8. Step-by-step implementation</h2>
+
+<h3>8.1 &mdash; Extract shared SSE helper <span class="tag tag-tier0">tier 0</span></h3>
+<p class="effort">~20 min</p>
+<ol>
+<li>Create <code>shared/agui_sse.py</code> with <code>sse(event) -&gt; str</code>.</li>
+<li>Replace <code>_sse</code> in <code>agui_endpoint.py</code> with the import.</li>
+<li>Verify: <code>python -m pytest tests/evaluation/ -k agui -q</code></li>
+</ol>
+
+<h3>8.2 &mdash; Scaffold bridge module <span class="tag tag-tier1">tier 1</span></h3>
+<p class="effort">~1&ndash;2 hrs</p>
+<ol>
+<li>New file <code>agent_1_adk/agui_bridge.py</code> per &sect;4.</li>
+<li>Internal A2A client: reuse <code>a2a.client.ClientFactory</code> pointed at
+<code>http://{HOST}:{PORT}/a2a</code>. Even though same-process, going over HTTP
+guarantees AG-UI and external A2A paths are identical.</li>
+<li>Implement the translator per &sect;3. Use a dataclass <code>RunCtx</code>
+for per-run state (<code>msg_id</code>, <code>pending_calls</code>, <code>text_started</code>,
+<code>active_agents</code>).</li>
+<li><strong>New (v2)</strong>: Parse artifact names to extract agent identity
+(e.g. <code>financial-rag-agent-result</code> &rarr; &ldquo;Financial RAG Agent&rdquo;).
+The executor normalizes agent names in artifact names.</li>
+</ol>
+
+<h3>8.3 &mdash; Wire route in <code>main.py</code> <span class="tag tag-tier0">tier 0</span></h3>
+<p class="effort">~15 min</p>
+<pre>from .agui_bridge import make_agui_bridge_endpoint
+
+routes.append(Route(
+    "/a2a-agui",
+    make_agui_bridge_endpoint(
+        a2a_client_factory=lambda: build_local_a2a_client(HOST, PORT),
+        session_service=session_service,
+        ticker_memory=TickerMemory(),
+    ),
+    methods=["POST"],
+))</pre>
+
+<h3>8.4 &mdash; REST API routes <span class="tag tag-tier1">tier 1</span></h3>
+<p class="effort">~2 hrs</p>
+<ol>
+<li>Add all routes from &sect;7 as Starlette route handlers in <code>main.py</code>
+(or factor into <code>agent_1_adk/api_routes.py</code> if &gt;6 routes).</li>
+<li>Each route reads <code>user_id</code> from <code>X-FinSight-User-Id</code> header.</li>
+<li>All use existing memory layer classes &mdash; no new DB queries.</li>
+<li>Add CORS middleware for <code>localhost:3000</code> (dev) and configurable origins.</li>
+</ol>
+
+<h3>8.5 &mdash; User identity <span class="tag tag-tier1">tier 1</span></h3>
+<p class="effort">~1 hr</p>
+<ol>
+<li>Read <code>X-FinSight-User-Id</code> header from request (set by Next.js).</li>
+<li>If absent, check CopilotKit&rsquo;s <code>properties.user_id</code> in payload.</li>
+<li>If still absent, mint <code>anon-{uuid4}</code> and return in response headers;
+Next.js stores in cookie.</li>
+<li><strong>Never</strong> default to <code>eval_user</code> &mdash; reserved for RAGAS.</li>
+<li><strong>Never</strong> default to <code>a2a_user</code> &mdash; that&rsquo;s the A2A-client fallback.</li>
+</ol>
+
+<h3>8.6 &mdash; Cancellation <span class="tag tag-tier2">tier 2</span></h3>
+<p class="effort">~&frac12; day</p>
+<p>AG-UI clients close the SSE connection on stop. The bridge propagates as
+A2A <code>cancelTask</code>. The executor already has <code>cancel()</code> that calls
+<code>self._task.cancel()</code>. Wire via <code>Request.is_disconnected()</code> polling
+in the streaming generator.</p>
+
+<h2 id="a9">9. Backend test plan</h2>
+<ul>
+<li><strong>Unit</strong> &mdash; <code>tests/agui_bridge/test_translator.py</code>: feed
+recorded A2A event sequences from executor; assert AG-UI stream matches golden file.</li>
+<li><strong>Integration</strong> &mdash; <code>tests/agui_bridge/test_e2e.py</code>: spin up
+orchestrator, POST <code>RunAgentInput</code>, collect SSE stream, assert <code>RUN_FINISHED</code>
+and at least one <code>TOOL_CALL_START</code> per sub-agent.</li>
+<li><strong>Fast-path</strong> &mdash; test that a cached-brief query returns
+<code>TEXT_MESSAGE_*</code> without any <code>TOOL_CALL_*</code> events.</li>
+<li><strong>Guardrail</strong> &mdash; test that off-topic/invalid-ticker queries return
+<code>RUN_ERROR</code> or <code>TEXT_MESSAGE_*</code> with rejection text.</li>
+<li><strong>REST API</strong> &mdash; <code>tests/api/test_rest_routes.py</code>: hit each
+<code>/api/*</code> route with test data in the SQLite DB; assert JSON shape.</li>
+</ul>
+
+<hr>
+
+<!-- ───────────────────── PART B ───────────────────── -->
+<h1 style="font-size:1.8rem;margin-top:2rem;border:none">Part B &mdash; Next.js frontend</h1>
+
+<h2 id="b1">10. Stack &amp; dependencies</h2>
+<table>
+<thead><tr><th>Layer</th><th>Choice</th><th>Reason</th></tr></thead>
+<tbody>
+<tr><td>App framework</td><td>Next.js 16 (App Router, RSC)</td><td>SSR for dashboard, streamable Suspense for chat.</td></tr>
+<tr><td>AG-UI client</td><td><code>@copilotkit/react-core</code>, <code>@copilotkit/react-ui</code></td><td>Drop-in <code>&lt;CopilotChat&gt;</code>, generative-UI hooks, tool-call rendering.</td></tr>
+<tr><td>Runtime adapter</td><td><code>@copilotkit/runtime</code> in <code>/api/copilotkit/route.ts</code></td><td>Wraps Python <code>/a2a-agui</code> as AG-UI <code>HttpAgent</code>. Adds Next.js-side auth and header injection.</td></tr>
+<tr><td>State</td><td>Zustand for client state</td><td>Sidebar state, recent queries, theme.</td></tr>
+<tr><td>Charts</td><td>Recharts + TradingView Lightweight Charts</td><td>Recharts for metrics cards; TradingView for OHLC candles.</td></tr>
+<tr><td>UI primitives</td><td>shadcn/ui on Radix</td><td>Owns the components &mdash; restyle into FinSight palette.</td></tr>
+<tr><td>Styling</td><td>Tailwind 4 + CSS custom properties</td><td>Design tokens: clay <code>#8b6f4e</code>, ivory <code>#faf8f5</code>, serif headings, agent colors (RAG/Quant/Sentiment vars). Validated in prior prototype&rsquo;s <code>globals.css</code>.</td></tr>
+<tr><td>Auth</td><td>Anonymous cookie (v1) &rarr; Auth.js v5 (v2)</td><td>Maps to <code>X-FinSight-User-Id</code> header.</td></tr>
+<tr><td>Markdown</td><td><code>react-markdown</code> + <code>remark-gfm</code> + KaTeX</td><td>Citations and DCF math render natively.</td></tr>
+<tr><td>Fonts</td><td>Inter (body) + JetBrains Mono (code)</td><td>Validated in prior prototype.</td></tr>
+</tbody>
+</table>
+
+<h2 id="b2">11. App routing &amp; layout</h2>
+<p>Two-page layout merged with CopilotKit chat:</p>
+<pre>web/nextjs-app/
+├─ app/
+│  ├─ layout.tsx              # CopilotKit provider + Sidebar shell
+│  ├─ page.tsx                # Research page (primary chat + brief rendering)
+│  ├─ operator/page.tsx       # Operator: KPIs, service health, agent status, RAGAS
+│  ├─ chat/
+│  │   └─ [threadId]/page.tsx # Dedicated chat thread (session replay)
+│  ├─ ticker/
+│  │   └─ [symbol]/page.tsx   # Per-ticker hub (memory timeline, price chart)
+│  └─ api/
+│      ├─ copilotkit/route.ts # AG-UI runtime adapter → Python /a2a-agui
+│      ├─ a2a/route.ts        # Raw A2A proxy (for non-CopilotKit flows)
+│      ├─ health/route.ts     # Fan-out health check to all services
+│      ├─ agents/route.ts     # Agent card fetcher
+│      ├─ memory/
+│      │   └─ ticker/[symbol]/route.ts
+│      └─ sessions/
+│          ├─ route.ts
+│          └─ [id]/events/route.ts
+├─ components/
+│  ├─ Sidebar.tsx             # Nav, recent queries (localStorage), avatar
+│  ├─ chat/                   # CopilotChat wrappers + custom renderers
+│  ├─ research/               # QueryCard, OrchStrip, AgentCards, SynthesisCard
+│  ├─ generative/             # InvestmentBriefCard, QuantPanel, SentimentGauge
+│  ├─ operator/               # ServiceHealth, AgentCapabilities, RAGASPanel
+│  └─ traces/                 # EventTimeline, TraceDrawer
+├─ lib/
+│  ├─ agui.ts                 # CopilotKit config, custom action registrations
+│  ├─ a2a.ts                  # buildStreamPayload, buildSendPayload helpers
+│  ├─ recentQueries.ts        # localStorage recent queries + custom event
+│  ├─ stores/                 # Zustand stores (sidebar, theme)
+│  └─ schemas/                # Zod mirrors of shared/models.py
+└─ public/
+    └─ fonts/                 # Inter, JetBrains Mono</pre>
+
+<h2 id="b3">12. ADK-Web feature parity matrix</h2>
+<table>
+<thead><tr><th>ADK Web feature</th><th>New UI equivalent</th><th>Backed by</th><th>Status gate</th></tr></thead>
+<tbody>
+<tr><td>Free-form chat with orchestrator</td><td><code>&lt;CopilotChat&gt;</code> on Research page</td><td><code>/a2a-agui</code></td><td><span class="tag tag-must">must</span></td></tr>
+<tr><td>Token streaming</td><td>CopilotChat default behavior</td><td><code>TEXT_MESSAGE_CONTENT</code> deltas</td><td><span class="tag tag-must">must</span></td></tr>
+<tr><td>Session list / switch</td><td>Sidebar recent queries + <code>/chat/[threadId]</code></td><td><code>GET /api/sessions</code></td><td><span class="tag tag-must">must</span></td></tr>
+<tr><td>Multi-turn history reload</td><td>Hydrated from session events on thread mount</td><td><code>GET /api/sessions/{id}/events</code></td><td><span class="tag tag-must">must</span></td></tr>
+<tr><td>Events panel (function calls)</td><td>Right-hand collapsible Trace drawer</td><td>SSE event buffer</td><td><span class="tag tag-must">must</span></td></tr>
+<tr><td>Function call args / response inspection</td><td>Expandable row in Trace drawer; JSON viewer</td><td><code>TOOL_CALL_ARGS</code> + <code>TOOL_CALL_RESULT</code></td><td><span class="tag tag-must">must</span></td></tr>
+<tr><td>Sub-agent identification</td><td>Color-coded agent tiles with avatars</td><td>Artifact name &rarr; agent card lookup</td><td><span class="tag tag-must">must</span></td></tr>
+<tr><td>State inspector</td><td>State tab in right drawer</td><td><code>STATE_SNAPSHOT</code> + <code>STATE_DELTA</code></td><td><span class="tag tag-must">must</span></td></tr>
+<tr><td>Memory recall view</td><td>&ldquo;Recalled memories&rdquo; chip under assistant message</td><td>Custom AG-UI event on <code>load_memory</code></td><td><span class="tag tag-must">must</span></td></tr>
+<tr><td>Persistent sessions across restart</td><td>Same <code>adk_sessions.db</code></td><td><code>DatabaseSessionService</code></td><td><span class="tag tag-must">must</span></td></tr>
+<tr><td>User identity scoping</td><td>Anonymous cookie &rarr; Auth.js</td><td><code>X-FinSight-User-Id</code> header</td><td><span class="tag tag-must">must</span></td></tr>
+</tbody>
+</table>
+
+<p><strong>New UI-only features (no ADK-Web equivalent):</strong></p>
+<table>
+<thead><tr><th>Feature</th><th>Component</th><th>Backed by</th></tr></thead>
+<tbody>
+<tr><td>Ticker brief history</td><td><code>BriefHistory</code></td><td><code>GET /api/memory/ticker/{sym}</code></td></tr>
+<tr><td>Service health dashboard</td><td><code>ServiceHealth</code></td><td><code>GET /api/agents/{name}/health</code></td></tr>
+<tr><td>Agent capabilities view</td><td><code>AgentCapabilities</code></td><td><code>GET /api/agents</code></td></tr>
+<tr><td>Recommendation change alerts</td><td><code>ChangeAlert</code></td><td><code>GET /api/memory/ticker/{sym}/changed</code></td></tr>
+</tbody>
+</table>
+
+<h2 id="b4">13. &ldquo;Killer&rdquo; features &mdash; generative UI</h2>
+
+<h3>13.1 &mdash; Live sub-agent &ldquo;thinking&rdquo; tiles</h3>
+<p>Three tiles (RAG / Quant / Market Context) driven by <code>STATE_DELTA</code>
+on key <code>active_agent</code>. Each tile shows animated status. On completion,
+flips to one-sentence summary + expandable artifact.</p>
+<div class="mockup">
+┌─────────────────────────────┐ ┌─────────────────────────────┐ ┌─────────────────────────────┐
+│ ● RAG (LlamaIndex)          │ │ ● Quant (LangGraph)         │ │ ● Market Context (CrewAI)   │
+│   indexing 12 SEC filings…  │ │   running DCF + stress…     │ │   macro regime + peers…     │
+│   ▓▓▓▓▓▓▓░░  72%            │ │   ▓▓▓▓▓░░░░░  48%           │ │   ▓▓▓▓▓▓▓▓▓▓ 100% ✓         │
+└─────────────────────────────┘ └─────────────────────────────┘ └─────────────────────────────┘
+</div>
+<div class="callout callout-new">
+<strong>v2 note:</strong> The prior prototype validated this pattern with an
+<code>OrchStrip</code> component showing 4 orchestration steps. The CopilotKit version
+uses <code>useCoAgentStateRender</code> to render these tiles inline in the chat.
+</div>
+
+<h3>13.2 &mdash; Investment Brief card (structured)</h3>
+<p>When the final <code>investment_brief</code> artifact arrives: BUY/HOLD/SELL chip,
+confidence meter, key catalysts &amp; risks columns, citations with clickable
+filing links, and a DCF/Sharpe/VaR mini-panel.</p>
+<div class="callout callout-new">
+<strong>v2 note:</strong> The prior prototype&rsquo;s <code>SynthesisCard</code> component
+validated the basic layout. CopilotKit version extends it with
+<code>useCopilotAction</code> for interactive drill-down into each section.
+</div>
+
+<h3>13.3 &mdash; Inline price chart</h3>
+<p>Ticker symbols in assistant text autolink to a TradingView Lightweight Chart
+popover (6-month daily candles). Data via a Next.js edge function that proxies
+<code>get_prices</code> from the MCP server.</p>
+
+<h3>13.4 &mdash; Memory timeline sidebar</h3>
+<p>Per-ticker timeline of past briefs from <code>TickerMemory.get_history()</code>:
+date, recommendation, confidence, and realized return (from
+<code>PerformanceTracker</code>). Click to load historical brief.</p>
+
+<h3>13.5 &mdash; &ldquo;What changed?&rdquo; diffing</h3>
+<p>When a ticker is queried again, call <code>TickerMemory.has_changed(ticker)</code>
+to detect recommendation changes. Show a diff card: new vs. old recommendation,
+confidence delta, new catalysts/risks. Uses <code>GET /api/memory/ticker/{sym}/changed</code>.</p>
+
+<h3>13.6 &mdash; Trace deep-link</h3>
+<p>&ldquo;Open in Langfuse&rdquo; chip in the trace drawer footer, linking to the
+Langfuse trace URL from the bridge&rsquo;s <code>CUSTOM</code> event (&sect;6).</p>
+
+<h2 id="b5">14. Human-in-the-loop checkpoints</h2>
+<p>CopilotKit&rsquo;s <code>renderAndWaitForResponse</code> on <code>useCopilotAction</code>
+gates three orchestrator behaviors:</p>
+<ol>
+<li><strong>Before large external fetches</strong> &mdash; if orchestrator requests &gt;10 SEC
+filings or full-text search, ask user to approve (cost &amp; latency).</li>
+<li><strong>Before writing to memory</strong> &mdash; show the brief snapshot about to be
+persisted; user can edit notes before save.</li>
+</ol>
+
+<h2 id="b6">15. Component inventory</h2>
+<table>
+<thead><tr><th>Component</th><th>Path</th><th>Drives off</th></tr></thead>
+<tbody>
+<tr><td><code>&lt;Sidebar&gt;</code></td><td><code>components/Sidebar.tsx</code></td><td>Nav links, recent queries (localStorage), user avatar</td></tr>
+<tr><td><code>&lt;ChatShell&gt;</code></td><td><code>components/chat/ChatShell.tsx</code></td><td>CopilotChat + Trace drawer + State tab</td></tr>
+<tr><td><code>&lt;QueryCard&gt;</code></td><td><code>components/research/QueryCard.tsx</code></td><td>User input with ticker autocomplete</td></tr>
+<tr><td><code>&lt;OrchStrip&gt;</code></td><td><code>components/research/OrchStrip.tsx</code></td><td>4-step orchestration progress (validated in prototype)</td></tr>
+<tr><td><code>&lt;AgentCard&gt;</code></td><td><code>components/research/AgentCard.tsx</code></td><td><code>STATE_DELTA</code> on <code>active_agent</code> + <code>TOOL_CALL_RESULT</code></td></tr>
+<tr><td><code>&lt;SynthesisCard&gt;</code></td><td><code>components/research/SynthesisCard.tsx</code></td><td><code>TASK_STATE_COMPLETED</code> with BUY/HOLD/SELL</td></tr>
+<tr><td><code>&lt;InvestmentBriefCard&gt;</code></td><td><code>components/generative/InvestmentBriefCard.tsx</code></td><td>Custom event <code>investment_brief</code></td></tr>
+<tr><td><code>&lt;QuantPanel&gt;</code></td><td><code>components/generative/QuantPanel.tsx</code></td><td>Brief&rsquo;s <code>quant</code> (Sharpe, DCF, VaR)</td></tr>
+<tr><td><code>&lt;SentimentGauge&gt;</code></td><td><code>components/generative/SentimentGauge.tsx</code></td><td>Brief&rsquo;s <code>sentiment.overall_signal</code></td></tr>
+<tr><td><code>&lt;CitationList&gt;</code></td><td><code>components/generative/CitationList.tsx</code></td><td>Brief&rsquo;s <code>rag.citations[]</code></td></tr>
+<tr><td><code>&lt;TraceDrawer&gt;</code></td><td><code>components/traces/TraceDrawer.tsx</code></td><td>SSE event buffer</td></tr>
+<tr><td><code>&lt;EventTimeline&gt;</code></td><td><code>components/traces/EventTimeline.tsx</code></td><td>Session events for replay</td></tr>
+<tr><td><code>&lt;BriefHistory&gt;</code></td><td><code>components/generative/BriefHistory.tsx</code></td><td><code>GET /api/memory/ticker/{sym}</code></td></tr>
+<tr><td><code>&lt;ServiceHealth&gt;</code></td><td><code>components/operator/ServiceHealth.tsx</code></td><td><code>GET /api/agents/{name}/health</code></td></tr>
+<tr><td><code>&lt;AgentCapabilities&gt;</code></td><td><code>components/operator/AgentCapabilities.tsx</code></td><td><code>GET /api/agents</code></td></tr>
+<tr><td><code>&lt;MemoryTimeline&gt;</code></td><td><code>components/generative/MemoryTimeline.tsx</code></td><td><code>GET /api/memory/ticker/{sym}</code></td></tr>
+<tr><td><code>&lt;ChangeAlert&gt;</code></td><td><code>components/generative/ChangeAlert.tsx</code></td><td><code>GET /api/memory/ticker/{sym}/changed</code></td></tr>
+</tbody>
+</table>
+
+<h2 id="b7">16. Build phases (revised)</h2>
+
+<div class="callout callout-warn">
+<strong>Changed from v1:</strong> Phases restructured to front-load the Research page
+(the core value prop) and defer the Operator page. Backend API routes are
+a parallel workstream since the memory layer is already complete.
+</div>
+
+<h3>Phase B1 &mdash; Backend API routes <span class="tag tag-tier1">tier 1</span></h3>
+<p class="effort">~1 day (parallel with F1)</p>
+<ul>
+<li>All REST routes from &sect;7 wired in <code>main.py</code></li>
+<li>CORS middleware for <code>localhost:3000</code></li>
+<li>User identity resolution (&sect;8.5)</li>
+<li>Verify: <code>curl</code> each route with test data</li>
+</ul>
+
+<h3>Phase B2 &mdash; AG-UI bridge <span class="tag tag-tier1">tier 1</span></h3>
+<p class="effort">~1 day (parallel with F1)</p>
+<ul>
+<li>SSE helper extraction (&sect;8.1)</li>
+<li>Bridge module (&sect;8.2)</li>
+<li>Wire route (&sect;8.3)</li>
+<li>Verify: <code>curl -N -X POST localhost:8001/a2a-agui</code> with a test payload streams AG-UI events</li>
+</ul>
+
+<h3>Phase F1 &mdash; Walking skeleton <span class="tag tag-tier1">tier 1</span></h3>
+<p class="effort">~1 day</p>
+<ul>
+<li><code>npx create-next-app@latest web/nextjs-app</code> (use <code>--use-pnpm</code> or <code>--use-npm</code>)</li>
+<li>Install: <code>@copilotkit/react-core</code>, <code>@copilotkit/react-ui</code>, <code>@copilotkit/runtime</code></li>
+<li><code>/api/copilotkit/route.ts</code> wires <code>HttpAgent</code> to <code>http://localhost:8001/a2a-agui</code></li>
+<li>Root layout: <code>&lt;CopilotKit&gt;</code> provider + Sidebar shell (Inter + JetBrains Mono fonts)</li>
+<li>Design tokens in <code>globals.css</code>: clay/ivory palette, agent color vars, dark theme toggle</li>
+<li>Verify: round-trip query renders streamed tokens in browser</li>
+</ul>
+
+<h3>Phase F2 &mdash; Research page <span class="tag tag-tier2">tier 2</span></h3>
+<p class="effort">~3 days</p>
+<ul>
+<li><code>&lt;QueryCard&gt;</code> with ticker input + submit</li>
+<li><code>&lt;OrchStrip&gt;</code> showing 4 orchestration steps (connect &rarr; delegate &rarr; synthesize &rarr; save)</li>
+<li><code>&lt;AgentCard&gt;</code> &times;3 (RAG / Quant / Market Context) with working/complete states</li>
+<li><code>&lt;SynthesisCard&gt;</code> with BUY/HOLD/SELL rendering</li>
+<li>Recent queries in Sidebar (localStorage)</li>
+<li>Trace drawer (collapsible right panel) with event timeline</li>
+</ul>
+
+<h3>Phase F3 &mdash; Session continuity <span class="tag tag-tier2">tier 2</span></h3>
+<p class="effort">~2 days</p>
+<ul>
+<li>Session list in sidebar or dedicated page</li>
+<li>Thread route <code>/chat/[threadId]</code> hydrates from <code>GET /api/sessions/{id}/events</code></li>
+<li>Anonymous user cookie + <code>X-FinSight-User-Id</code> header</li>
+<li>State tab in trace drawer (AG-UI <code>STATE_*</code> events)</li>
+<li>Parity tests green vs. <code>adk web</code></li>
+</ul>
+
+<h3>Phase F4 &mdash; Generative UI <span class="tag tag-tier2">tier 2</span></h3>
+<p class="effort">~3 days</p>
+<ul>
+<li><code>&lt;InvestmentBriefCard&gt;</code> + sub-cards (Quant, Sentiment, Citations)</li>
+<li>Sub-agent tiles with live progress via <code>useCoAgentStateRender</code></li>
+<li>Memory timeline sidebar (per-ticker brief history)</li>
+<li>Inline price-chart popovers</li>
+<li>&ldquo;What changed?&rdquo; diff view</li>
+</ul>
+
+<h3>Phase F5 &mdash; Operator page <span class="tag tag-tier2">tier 2</span></h3>
+<p class="effort">~1 day</p>
+<ul>
+<li><code>ServiceHealth</code> (fan-out to agent <code>/health</code> endpoints)</li>
+<li><code>AgentCapabilities</code> (from <code>/api/agents</code>)</li>
+<li>RAGAS scores panel</li>
+</ul>
+
+<h3>Phase F6 &mdash; HITL + polish <span class="tag tag-tier3">tier 3</span></h3>
+<p class="effort">~2&ndash;3 days</p>
+<ul>
+<li>Large-fetch / memory-write confirmation modals</li>
+<li>Auth.js (email magic link or Google) replacing anon cookies</li>
+<li>Theme pass: clay/ivory palette, serif headings, copy-edit</li>
+<li>Empty states, error boundaries, loading skeletons</li>
+<li>Mobile responsive (collapsible sidebar + drawers)</li>
+<li>Langfuse trace deep-link chip</li>
+</ul>
+
+<h2 id="b8">17. Frontend test plan</h2>
+<ul>
+<li><strong>Component</strong> &mdash; Vitest + React Testing Library for each generative
+component, fed fixtures from <code>shared/models.py</code> via Zod schemas.</li>
+<li><strong>SSE integration</strong> &mdash; Playwright spec that POSTs through
+<code>/api/copilotkit</code>, waits for streamed tokens, asserts the Trace
+drawer contains a row per sub-agent.</li>
+<li><strong>Fast-path</strong> &mdash; Playwright spec for cached-brief flow:
+query a ticker that has today&rsquo;s brief, assert response appears in &lt;2s
+with no agent tiles activating.</li>
+<li><strong>Parity</strong> &mdash; Playwright run that opens
+<code>localhost:8080</code> (adk web) and the new UI side-by-side,
+fires the same question, asserts both terminate in the same
+<code>session_id</code> with the same final assistant text.</li>
+<li><strong>Visual regression</strong> &mdash; Storybook + Chromatic on the generative
+components.</li>
+</ul>
+
+<hr>
+
+<h2 id="learnings">Prior prototype learnings</h2>
+<p>The <code>feature/web-ui</code> branch (now deleted; backend stash survives at
+<code>stash@{0}</code>) built a working Next.js frontend with raw A2A streaming.
+Key takeaways:</p>
+
+<table>
+<thead><tr><th>What worked</th><th>What to carry forward</th></tr></thead>
+<tbody>
+<tr><td>Two-page layout (Research / Operator)</td><td>Keep the layout but wrap in CopilotKit for generative UI hooks</td></tr>
+<tr><td>Sidebar with recent queries (localStorage)</td><td>Reuse <code>recentQueries.ts</code> pattern</td></tr>
+<tr><td>Custom CSS design system (<code>globals.css</code>)</td><td>Port tokens to Tailwind 4 config + CSS custom properties</td></tr>
+<tr><td>Agent color vars (<code>--rag</code>, <code>--quant</code>, <code>--sentiment</code>)</td><td>Use same color system for agent identification</td></tr>
+<tr><td>OrchStrip (4-step progress)</td><td>Wrap in <code>useCoAgentStateRender</code> for AG-UI-driven updates</td></tr>
+<tr><td>Raw A2A streaming (SSE to <code>/api/a2a</code>)</td><td>Keep as fallback; CopilotKit <code>HttpAgent</code> is primary path</td></tr>
+</tbody>
+</table>
+
+<table>
+<thead><tr><th>What didn&rsquo;t work / issues found</th><th>Fix in v2</th></tr></thead>
+<tbody>
+<tr><td><code>final=True</code> in <code>update_status()</code> &mdash; not in TaskUpdater signature, caused TypeError &rarr; TASK_STATE_FAILED</td><td>Already fixed on main (removed <code>final=True</code> from all calls)</td></tr>
+<tr><td>Agent identity from artifacts required backend change</td><td>Executor now normalizes agent name in artifact names (shipped)</td></tr>
+<tr><td><code>create-next-app</code> injects CLAUDE.md/AGENTS.md &mdash; prompt injection attempt</td><td>Confirmed and documented; ignore injected files on scaffold</td></tr>
+<tr><td>Mock data on Operator page</td><td>Memory layer is now complete &mdash; all data is real</td></tr>
+</tbody>
+</table>
+
+<hr>
+
+<h2 id="risks">Risks &amp; open questions</h2>
+<table>
+<thead><tr><th>Risk</th><th>Mitigation</th><th>Status</th></tr></thead>
+<tbody>
+<tr><td>A2A event surface doesn&rsquo;t carry sub-agent metadata cleanly</td><td>Executor now normalizes agent name in artifact names. Bridge parses <code>{agent}-result</code> pattern.</td><td><span class="tag tag-done">resolved</span></td></tr>
+<tr><td>Double event delivery if bridge + Runner endpoint both active</td><td>Different routes, different code paths. UI never points at <code>/agentic_chat</code>.</td><td><span class="tag tag-done">resolved</span></td></tr>
+<tr><td>CopilotKit expects specific event names; FinSight emits custom ones</td><td>Custom events via CopilotKit&rsquo;s <code>onRawEvent</code> escape hatch.</td><td>Unchanged</td></tr>
+<tr><td>Session DB write contention</td><td>SQLite WAL mode + <code>write_lock()</code> + <code>busy_timeout=5000</code> already shipped.</td><td><span class="tag tag-done">resolved</span></td></tr>
+<tr><td>LM Studio latency makes generative UI feel slow</td><td>Sub-agent tiles + <code>STATE_DELTA</code> give visible progress in &lt;500ms.</td><td>Unchanged</td></tr>
+<tr><td>Hardcoded <code>localhost:8001</code> in Next.js</td><td><code>NEXT_PUBLIC_ORCHESTRATOR_URL</code> env var; <code>run_adk_web.bat</code> sets it.</td><td>Unchanged</td></tr>
+<tr><td>Executor guardrails reject valid queries (false positive)</td><td>Off-topic regex is conservative. Ticker validation uses SEC EDGAR. Both have fallback paths.</td><td>New risk, low severity</td></tr>
+<tr><td>Semantic cache returns stale response after market-moving event</td><td>Cache uses embedding similarity (not exact match); short TTL. User can prefix &ldquo;fresh&rdquo; to bypass.</td><td>New risk, medium severity</td></tr>
+</tbody>
+</table>
+
+<h3>Open questions (updated)</h3>
+<ol>
+<li><span class="strikethrough">Authentication scope</span> &mdash; <strong>Decided:</strong>
+anonymous cookie for phases F1&ndash;F5, Auth.js in F6.</li>
+<li><span class="strikethrough">Replace or run alongside adk web?</span> &mdash;
+<strong>Decided:</strong> alongside (port 3000) until parity tests pass in F3, then replace.</li>
+<li><span class="strikethrough">Memory recall as first-class AG-UI events?</span> &mdash;
+<strong>Decided:</strong> yes, first-class custom events. Highest-value differentiator.</li>
+<li><strong>New:</strong> Should the bridge support <em>batch mode</em> (multiple tickers in one query)?
+The executor currently extracts a single ticker. Recommendation: defer to v3; user
+can issue multiple sequential queries.</li>
+<li><strong>New:</strong> Should the Operator page show RAGAS eval scores in real time?
+The executor fires <code>score_response()</code> async; scores land in Langfuse.
+Recommendation: show latest scores from Langfuse API, not live stream.</li>
+<li><strong>New:</strong> Should the raw A2A proxy (<code>/api/a2a/route.ts</code>) be kept alongside
+the CopilotKit adapter? Recommendation: yes &mdash; the Research page uses CopilotKit,
+but the Operator page may need raw A2A for agent-card fetching and health checks.</li>
+</ol>
+
+<hr>
+
+<h2 id="refs">References</h2>
+<ul>
+<li><a href="https://developers.googleblog.com/delight-users-by-combining-adk-agents-with-fancy-frontends-using-ag-ui/">Google Developers &mdash; Combining ADK Agents with AG-UI</a></li>
+<li><a href="https://docs.copilotkit.ai">CopilotKit docs</a> &mdash; <code>useCopilotAction</code>, <code>useCoAgentStateRender</code></li>
+<li><a href="https://docs.ag-ui.com">AG-UI protocol</a> &mdash; event types, <code>RunAgentInput</code> schema</li>
+<li><a href="../ARCHITECTURE.html">FinSight Architecture</a></li>
+<li><code>agent_1_adk/agui_endpoint.py</code> &mdash; existing Runner-backed AG-UI (RAGAS eval)</li>
+<li><code>agent_1_adk/agent_executor.py</code> &mdash; FinSightAgentExecutor with all guardrails</li>
+<li><code>shared/memory/</code> &mdash; TickerMemory, PortfolioStore, PerformanceTracker, SQLiteMemoryService</li>
+<li><code>shared/a2a_store.py</code> &mdash; SQLiteTaskStore for persistent A2A tasks</li>
+</ul>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>FinSight — Research</title>
+<link rel="stylesheet" href="finsight.css" />
+<style>
+  .main { background: var(--ivory); }
+
+  /* layout: chat column + trace rail */
+  .research { display: flex; flex: 1; overflow: hidden; }
+  .chatcol { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+
+  /* run status bar (orchestrator strip) */
+  .runbar {
+    margin: 16px 26px 0;
+    display: flex; align-items: stretch;
+    border: 1px solid var(--sand); border-radius: 10px; overflow: hidden;
+    background: var(--ivory-dark);
+  }
+  .step { flex: 1; display: flex; align-items: center; gap: 9px; padding: 10px 16px; border-right: 1px solid var(--sand); }
+  .step:last-child { border-right: none; }
+  .step .glyph { font-size: 14px; line-height: 1; }
+  .step .lbl { font-size: 12.5px; font-weight: 600; }
+  .step .det { font-size: 11px; color: var(--text-muted); font-family: var(--mono); }
+  .step.idle .lbl { color: var(--text-muted); }
+  .step.idle .glyph { color: var(--text-muted); }
+  .step.done .glyph { color: var(--quant); }
+  .step.active .glyph { color: var(--clay); }
+
+  /* generative-UI agent tiles */
+  .tiles { margin: 12px 26px 0; display: flex; gap: 12px; }
+  .tile {
+    flex: 1; border-radius: 10px; border: 1px solid var(--sand);
+    background: var(--ivory-dark); padding: 13px 15px; min-width: 0; transition: all 0.2s;
+  }
+  .tile .th { display: flex; align-items: center; gap: 8px; }
+  .tile .tname { font-size: 12.5px; font-weight: 700; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tile .tsub { font-size: 10.5px; color: var(--text-muted); font-family: var(--mono); margin-top: 1px; }
+  .tile .tbody { font-size: 11.5px; color: var(--text-secondary); margin-top: 9px; line-height: 1.45; }
+  .tile .check { margin-left: auto; font-size: 12px; font-weight: 700; }
+  .tile.rag    { border-color: var(--rag);    background: var(--rag-bg); }
+  .tile.quant  { border-color: var(--quant);  background: var(--quant-bg); }
+  .tile.market { border-color: var(--market); background: var(--market-bg); }
+
+  /* thread */
+  .thread { flex: 1; overflow-y: auto; padding: 18px 26px 8px; }
+  .turn { max-width: 760px; margin: 0 auto 22px; }
+
+  .msg-user { display: flex; justify-content: flex-end; }
+  .bubble-user {
+    background: var(--clay); color: #fff; padding: 11px 16px; border-radius: 16px 16px 4px 16px;
+    font-size: 14px; max-width: 80%; line-height: 1.5;
+  }
+
+  .msg-asst { display: flex; gap: 12px; }
+  .ava {
+    width: 30px; height: 30px; border-radius: 9px; flex-shrink: 0;
+    background: var(--clay); display: grid; place-items: center; margin-top: 2px;
+  }
+  .ava span { width: 11px; height: 11px; background: var(--ivory); transform: rotate(45deg); border-radius: 2px; }
+  .asst-body { flex: 1; min-width: 0; }
+  .asst-name { font-size: 12px; font-weight: 600; color: var(--clay-deep); margin-bottom: 6px; }
+
+  /* reasoning collapsible */
+  .reasoning {
+    border: 1px solid var(--sand); border-radius: 9px; background: var(--ivory-dark);
+    padding: 10px 13px; margin-bottom: 12px; font-size: 12px; color: var(--text-muted);
+    display: flex; align-items: center; gap: 9px;
+  }
+  .reasoning .rdot { width: 6px; height: 6px; border-radius: 50%; background: var(--clay-light); }
+  .reasoning .rtext { font-family: var(--mono); }
+  .reasoning .rchev { margin-left: auto; }
+
+  /* synthesis card */
+  .synth { border: 1px solid var(--sand); border-radius: 12px; background: var(--ivory-dark); padding: 20px 22px; }
+  .synth .shead { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+  .synth .stitle { font-size: 13px; font-weight: 600; color: var(--text-secondary); }
+  .synth .price { margin-left: auto; font-family: var(--mono); font-size: 12px; color: var(--text-muted); }
+  .synth h2 { font-size: 19px; margin: 0 0 8px; }
+  .synth p { font-size: 13.5px; line-height: 1.62; color: var(--text-primary); margin: 0 0 12px; }
+  .synth p:last-child { margin-bottom: 0; }
+  .synth strong { color: var(--text-primary); }
+  .synth ul { margin: 0 0 12px; padding-left: 0; list-style: none; display: grid; gap: 7px; }
+  .synth li { font-size: 13px; line-height: 1.5; color: var(--text-secondary); display: flex; gap: 9px; }
+  .synth li .lb { color: var(--clay); font-family: var(--mono); flex-shrink: 0; }
+  .cite { font-family: var(--mono); font-size: 11px; color: var(--rag); background: var(--rag-bg); padding: 1px 5px; border-radius: 4px; }
+
+  .factrow { display: flex; gap: 10px; flex-wrap: wrap; margin: 14px 0; }
+  .fact { border: 1px solid var(--sand); border-radius: 8px; padding: 8px 12px; background: var(--ivory); }
+  .fact .fk { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); }
+  .fact .fv { font-family: var(--mono); font-size: 14px; font-weight: 600; color: var(--text-primary); margin-top: 2px; }
+
+  .srcline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--sand); }
+  .srcline .slbl { font-size: 11px; color: var(--text-muted); }
+
+  /* composer */
+  .composer { padding: 14px 26px 20px; border-top: 1px solid var(--sand); background: var(--ivory); }
+  .suggs { display: flex; gap: 8px; margin-bottom: 11px; flex-wrap: wrap; }
+  .sugg {
+    font-size: 12px; padding: 6px 13px; border-radius: 999px; border: 1px solid var(--sand);
+    background: var(--ivory-dark); color: var(--text-secondary); cursor: pointer; transition: all 0.14s;
+  }
+  .sugg:hover { border-color: var(--clay-light); color: var(--text-primary); }
+  .inputbox {
+    display: flex; align-items: center; gap: 10px; max-width: 1000px;
+    border: 1px solid var(--sand-deep); border-radius: 14px; background: #fff;
+    padding: 11px 12px 11px 18px; box-shadow: var(--shadow-sm);
+  }
+  .inputbox input { flex: 1; border: none; outline: none; font-size: 14px; background: transparent; color: var(--text-primary); font-family: var(--sans); }
+  .inputbox input::placeholder { color: var(--text-muted); }
+  .send {
+    width: 36px; height: 36px; border-radius: 10px; border: none; background: var(--clay);
+    display: grid; place-items: center; cursor: pointer; flex-shrink: 0;
+  }
+  .send svg { color: #fff; }
+  .attach { color: var(--text-muted); display: grid; place-items: center; cursor: pointer; }
+
+  /* trace rail */
+  .trail { width: 312px; flex-shrink: 0; border-left: 1px solid var(--sand); background: var(--ivory-dark); display: flex; flex-direction: column; overflow: hidden; }
+  .trail-head { padding: 14px 16px; border-bottom: 1px solid var(--sand); display: flex; align-items: center; gap: 8px; }
+  .trail-head .tt { font-size: 13px; font-weight: 600; }
+  .trail-head .tc { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
+  .trail-body { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 7px; }
+  .ev { border: 1px solid var(--sand); border-radius: 8px; background: var(--ivory); overflow: hidden; }
+  .ev-h { display: flex; align-items: center; gap: 8px; padding: 8px 10px; }
+  .ev-tag { font-family: var(--mono); font-size: 9.5px; font-weight: 600; padding: 2px 6px; border-radius: 4px; }
+  .ev-tag.call { background: var(--rag-bg); color: var(--rag); }
+  .ev-tag.res  { background: var(--quant-bg); color: var(--quant); }
+  .ev-tag.state { background: var(--orch-bg); color: var(--clay-deep); }
+  .ev-name { font-family: var(--mono); font-size: 11px; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
+  .ev-ms { font-family: var(--mono); font-size: 10px; color: var(--text-muted); }
+  .ev-args { padding: 0 10px 9px; font-family: var(--mono); font-size: 10px; color: var(--text-muted); }
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <div class="sb-logo">
+      <div class="sb-mark"><span></span></div>
+      <div class="sb-word"><div class="name">FinSight</div><div class="tag">Investment Research</div></div>
+    </div>
+    <div class="sb-sec">Workspace</div>
+    <nav class="sb-nav">
+      <a class="sb-link" href="index.html"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9.5 12 3l9 6.5V21H3z"/></svg>Overview</a>
+      <a class="sb-link active" href="research.html"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.4 8.4 0 0 1-12 7.6L3 21l1.9-6A8.5 8.5 0 1 1 21 11.5z"/></svg>Research</a>
+      <a class="sb-link" href="trace.html"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4v16M4 8h7M4 14h11M4 20h5"/></svg>Trace</a>
+      <a class="sb-link" href="memory.html"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3a9 9 0 1 0 9 9M12 3v9l5 3"/></svg>Memory</a>
+      <a class="sb-link" href="operator.html"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M19 12a7 7 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7 7 0 0 0-2-1.2L14 2h-4l-.5 2.6a7 7 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6A7 7 0 0 0 5 12c0 .4 0 .8.1 1.2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 2 1.2L10 22h4l.5-2.6a7 7 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6c.1-.4.1-.8.1-1.2z"/></svg>Operator</a>
+    </nav>
+    <div class="sb-sec">Recent</div>
+    <nav class="sb-nav" style="padding-top:2px">
+      <a class="sb-link" style="font-weight:400;font-size:12.5px;color:var(--text-muted)" href="#">Should I invest in NVIDIA?</a>
+      <a class="sb-link" style="font-weight:400;font-size:12.5px;color:var(--text-muted)" href="#">Analyze AAPL for a long hold</a>
+      <a class="sb-link" style="font-weight:400;font-size:12.5px;color:var(--text-muted)" href="#">TSLA vs auto peers</a>
+    </nav>
+    <div class="sb-foot"><span class="dot-live"></span> 5 services · AG-UI</div>
+  </aside>
+
+  <!-- MAIN -->
+  <div class="main">
+    <div class="topbar">
+      <div>
+        <h1>Investment Research</h1>
+        <div class="sub">Ask about any stock for a BUY / HOLD / SELL brief</div>
+      </div>
+      <div class="spacer"></div>
+      <span class="pill mono">thread · 7c1f…a9</span>
+      <span class="pill" style="background:var(--orch-bg);border-color:var(--clay-light);color:var(--clay-deep)">● Run complete · 31.4s</span>
+    </div>
+
+    <div class="research">
+      <div class="chatcol">
+
+        <!-- ORCHESTRATOR STRIP -->
+        <div class="runbar">
+          <div class="step done"><span class="glyph">●</span><div><div class="lbl">Connect</div><div class="det">3 agents discovered</div></div></div>
+          <div class="step done"><span class="glyph">●</span><div><div class="lbl">Delegate</div><div class="det">parallel · send_message ×3</div></div></div>
+          <div class="step done"><span class="glyph">●</span><div><div class="lbl">Synthesize</div><div class="det">BUY signal</div></div></div>
+          <div class="step done"><span class="glyph">●</span><div><div class="lbl">Save</div><div class="det">brief · NVDA</div></div></div>
+        </div>
+
+        <!-- GENERATIVE UI TILES (tool-rendered) -->
+        <div class="tiles">
+          <div class="tile rag">
+            <div class="th">
+              <div style="min-width:0"><div class="tname" style="color:var(--rag)">Financial RAG</div><div class="tsub">LlamaIndex · 4 filings</div></div>
+              <span class="check" style="color:var(--rag)">✓</span>
+            </div>
+            <div class="tbody">Indexed FY25 10-K + 3 8-Ks. Data-center revenue +142% YoY; supply commentary flagged.</div>
+          </div>
+          <div class="tile quant">
+            <div class="th">
+              <div style="min-width:0"><div class="tname" style="color:var(--quant)">Quant Analysis</div><div class="tsub">LangGraph · 8 nodes</div></div>
+              <span class="check" style="color:var(--quant)">✓</span>
+            </div>
+            <div class="tbody">Sharpe 1.42 · vol 38% → stress-tested. Weighted vote 0.71 bullish; momentum strong.</div>
+          </div>
+          <div class="tile market">
+            <div class="th">
+              <div style="min-width:0"><div class="tname" style="color:var(--market)">Market Context</div><div class="tsub">CrewAI · macro + peers</div></div>
+              <span class="check" style="color:var(--market)">✓</span>
+            </div>
+            <div class="tbody">Risk-on regime, VIX 14. Premium to semis peers justified by growth lead.</div>
+          </div>
+        </div>
+
+        <!-- THREAD -->
+        <div class="thread">
+          <div class="turn">
+            <div class="msg-user"><div class="bubble-user">Should I invest in NVIDIA? I hold AAPL and MSFT already.</div></div>
+          </div>
+
+          <div class="turn">
+            <div class="msg-asst">
+              <div class="ava"><span></span></div>
+              <div class="asst-body">
+                <div class="asst-name">Investment Orchestrator</div>
+
+                <div class="reasoning">
+                  <span class="rdot pulse"></span>
+                  <span class="rtext">Routed to 3 agents in parallel · correlation requested (AAPL, MSFT) · synthesized in 1 turn</span>
+                  <svg class="rchev" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+                </div>
+
+                <div class="synth">
+                  <div class="shead">
+                    <span class="signal buy">BUY</span>
+                    <span class="stitle">Investment Recommendation · confidence 0.78</span>
+                    <span class="price">NVDA · $1,184.20</span>
+                  </div>
+
+                  <h2>NVIDIA screens as a high-conviction buy, with position-sizing the only caveat.</h2>
+
+                  <p>All three desks align. The <strong>RAG agent</strong> confirms FY25 data-center revenue grew <strong>+142% YoY</strong> with management guiding continued supply-constrained demand <span class="cite">10-K · p.41</span>. The <strong>quant agent</strong> returns a bullish weighted vote of 0.71 — strong momentum and a golden cross — though 38% annualized volatility routed valuation to a stress test rather than DCF.</p>
+
+                  <div class="factrow">
+                    <div class="fact"><div class="fk">Sharpe</div><div class="fv">1.42</div></div>
+                    <div class="fact"><div class="fk">Beta</div><div class="fv">1.71</div></div>
+                    <div class="fact"><div class="fk">95% VaR</div><div class="fv">−4.8%</div></div>
+                    <div class="fact"><div class="fk">Annual vol</div><div class="fv">38.0%</div></div>
+                    <div class="fact"><div class="fk">P/E</div><div class="fv">48.6</div></div>
+                  </div>
+
+                  <ul>
+                    <li><span class="lb">+</span><span>Macro regime is risk-on (VIX 14, steepening curve) — favourable for high-beta growth, per <strong>Market Context</strong>.</span></li>
+                    <li><span class="lb">+</span><span>Trades at a premium to semis peers, but the growth lead and margin profile justify it on a relative basis.</span></li>
+                    <li><span class="lb">!</span><span>Correlation to your <strong>MSFT</strong> holding is 0.64 — adding NVDA concentrates mega-cap tech exposure. Size accordingly.</span></li>
+                  </ul>
+
+                  <p>Net: initiate or add, but cap the position so combined NVDA + MSFT + AAPL stays within your tech-sector limit. Re-evaluate after the next earnings print.</p>
+
+                  <div class="srcline">
+                    <span class="slbl">Sources</span>
+                    <span class="cite">NVDA 10-K FY25</span>
+                    <span class="cite">8-K · 2026-04</span>
+                    <span class="cite">yfinance · OHLCV</span>
+                    <span class="cite">get_scenario_shocks · QQQ</span>
+                    <span class="cite">get_peers · semis</span>
+                  </div>
+                </div>
+
+                <div style="display:flex;gap:8px;margin-top:11px;align-items:center">
+                  <span class="pill" style="cursor:pointer">↻ Regenerate</span>
+                  <span class="pill" style="cursor:pointer">⤓ Save to memory</span>
+                  <span class="pill mono" style="margin-left:auto;color:var(--text-muted)">ragas · faithfulness 0.91</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- COMPOSER -->
+        <div class="composer">
+          <div class="suggs">
+            <span class="sugg">What are the key risks in NVDA's 10-K?</span>
+            <span class="sugg">Run a DCF on AAPL</span>
+            <span class="sugg">Is there insider buying at MSFT?</span>
+            <span class="sugg">Compare TSLA to auto peers</span>
+          </div>
+          <div class="inputbox">
+            <span class="attach"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5 12.5 20a5 5 0 0 1-7-7l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7L9 16.4a1.7 1.7 0 0 1-2.3-2.3l7.8-7.8"/></svg></span>
+            <input placeholder="Ask about any stock — e.g. “Analyze NVDA” or “Should I buy AAPL?”" />
+            <button class="send"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+          </div>
+        </div>
+      </div>
+
+      <!-- TRACE RAIL -->
+      <div class="trail">
+        <div class="trail-head">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--clay)" stroke-width="2"><path d="M4 4v16M4 8h7M4 14h11M4 20h5"/></svg>
+          <span class="tt">AG-UI events</span>
+          <span class="tc">18 calls</span>
+        </div>
+        <div class="trail-body">
+          <div class="ev"><div class="ev-h"><span class="ev-tag state">STATE</span><span class="ev-name">active_agent</span><span class="ev-ms">0ms</span></div><div class="ev-args">→ "Financial RAG Agent"</div></div>
+          <div class="ev"><div class="ev-h"><span class="ev-tag call">CALL</span><span class="ev-name">send_message</span><span class="ev-ms">2ms</span></div><div class="ev-args">name="rag" · task="NVDA filings risk"</div></div>
+          <div class="ev"><div class="ev-h"><span class="ev-tag call">CALL</span><span class="ev-name">get_company_filings</span><span class="ev-ms">410ms</span></div></div>
+          <div class="ev"><div class="ev-h"><span class="ev-tag call">CALL</span><span class="ev-name">get_filing_content</span><span class="ev-ms">880ms</span></div></div>
+          <div class="ev"><div class="ev-h"><span class="ev-tag res">RES</span><span class="ev-name">rag → artifact</span><span class="ev-ms">11.2s</span></div></div>
+          <div class="ev"><div class="ev-h"><span class="ev-tag call">CALL</span><span class="ev-name">get_prices</span><span class="ev-ms">120ms</span></div><div class="ev-args">NVDA · 1y · 1d</div></div>
+          <div class="ev"><div class="ev-h"><span class="ev-tag call">CALL</span><span class="ev-name">get_financials</span><span class="ev-ms">340ms</span></div></div>
+          <div class="ev"><div class="ev-h"><span class="ev-tag call">CALL</span><span class="ev-name">get_scenario_shocks</span><span class="ev-ms">90ms</span></div><div class="ev-args">sector=tech · QQQ</div></div>
+          <div class="ev"><div class="ev-h"><span class="ev-tag res">RES</span><span class="ev-name">quant → artifact</span><span class="ev-ms">14.8s</span></div></div>
+          <div class="ev"><div class="ev-h"><span class="ev-tag call">CALL</span><span class="ev-name">get_macro_indicators</span><span class="ev-ms">260ms</span></div></div>
+          <div class="ev"><div class="ev-h"><span class="ev-tag call">CALL</span><span class="ev-name">get_peers</span><span class="ev-ms">cached</span></div></div>
+          <div class="ev"><div class="ev-h"><span class="ev-tag res">RES</span><span class="ev-name">market → artifact</span><span class="ev-ms">9.6s</span></div></div>
+          <div class="ev"><div class="ev-h"><span class="ev-tag state">STATE</span><span class="ev-name">active_agent → null</span><span class="ev-ms">—</span></div></div>
+          <div class="ev"><div class="ev-h"><span class="ev-tag res">RES</span><span class="ev-name">synthesis · COMPLETED</span><span class="ev-ms">31.4s</span></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>
