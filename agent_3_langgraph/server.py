@@ -40,8 +40,8 @@ host = os.environ.get("HOST", "localhost")
 
 agent_card = AgentCard(
     name="Quant Analysis Agent",
-    description="Computes quantitative risk metrics and financial analysis using yfinance and LangGraph",
-    version="1.0.0",
+    description="Computes quantitative risk metrics, financial analysis, behavioral signals, and peer comparisons using yfinance and LangGraph",
+    version="2.0.0",
     capabilities=AgentCapabilities(streaming=True),
     supported_interfaces=[
         AgentInterface(
@@ -54,14 +54,47 @@ agent_card = AgentCard(
         AgentSkill(
             id="quant_analysis",
             name="Quantitative Analysis",
-            description="Compute Sharpe ratio, Beta, VaR, volatility, DCF valuation, stress tests, and portfolio correlation",
-            tags=["quantitative", "risk metrics", "sharpe", "beta", "dcf", "valuation"],
+            description="Compute Sharpe ratio, Beta, VaR, volatility, DCF valuation, stress tests, Monte Carlo simulation, and portfolio correlation",
+            tags=["quantitative", "risk metrics", "sharpe", "beta", "dcf", "valuation", "monte carlo"],
             examples=[
                 "Calculate risk metrics for NVDA",
                 "Run a DCF valuation on AAPL",
                 "Stress test MSFT under different market scenarios",
             ],
-        )
+        ),
+        AgentSkill(
+            id="options_flow_analysis",
+            name="Options Flow Analysis",
+            description="Analyze put/call volume ratio, open interest imbalance, and unusual options activity to gauge market positioning",
+            tags=["options", "put/call", "open interest", "flow", "positioning", "unusual activity"],
+            examples=[
+                "What's the options flow on NVDA?",
+                "Is there unusual options activity in AAPL?",
+                "Show me the put/call ratio for TSLA",
+            ],
+        ),
+        AgentSkill(
+            id="insider_transaction_analysis",
+            name="Insider Transaction Analysis",
+            description="Parse SEC Form 4 filings to detect insider buying/selling patterns, cluster activity, and net insider direction over 90 days",
+            tags=["insider", "form 4", "sec", "insider buying", "insider selling"],
+            examples=[
+                "Are insiders buying AAPL?",
+                "Show me recent insider transactions for MSFT",
+                "Is there a cluster of insider selling at NVDA?",
+            ],
+        ),
+        AgentSkill(
+            id="positioning_signals",
+            name="Positioning & Analyst Signals",
+            description="Aggregate analyst consensus ratings, price target upside, short interest, and earnings surprise history into a composite positioning signal",
+            tags=["analyst", "short interest", "price target", "consensus", "earnings surprise"],
+            examples=[
+                "What is analyst consensus on TSLA?",
+                "What is the short interest on NVDA?",
+                "Has AAPL been consistently beating earnings estimates?",
+            ],
+        ),
     ],
 )
 
@@ -71,11 +104,23 @@ request_handler = DefaultRequestHandler(
     agent_card=agent_card,
 )
 
+async def _prewarm_llm():
+    # Fire a minimal request so LM Studio loads model weights before the first real query.
+    try:
+        from langchain_openai import ChatOpenAI
+        from shared.config import LLM_SUMMARY_MODEL, LLM_BASE_URL, LLM_API_KEY
+        llm = ChatOpenAI(model=LLM_SUMMARY_MODEL, base_url=LLM_BASE_URL, api_key=LLM_API_KEY, temperature=0.0, max_tokens=1)
+        await llm.ainvoke("ping")
+        logger.info("LLM pre-warmed (%s)", LLM_SUMMARY_MODEL)
+    except Exception as e:
+        logger.warning("LLM warmup failed (non-fatal): %s", e)
+
+
 routes = [Route("/health", health)]  # Liveness check
 routes.extend(create_agent_card_routes(agent_card))  # A2A agent card discovery
 routes.extend(create_jsonrpc_routes(request_handler, "/a2a"))  # JSON-RPC task endpoints
 
-app = Starlette(routes=routes, debug=True)
+app = Starlette(routes=routes, on_startup=[_prewarm_llm], debug=True)
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8003)

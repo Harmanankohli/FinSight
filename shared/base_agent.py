@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 
 class BaseAgent(BaseModel, ABC):
-    """Abstract base for all FinSight A2A sub-agents (RAG, Quant, Sentiment).
+    """Abstract base for all FinSight A2A sub-agents (RAG, Quant, Market Context).
 
     Each concrete subclass implements ``stream()`` — an async generator that
     yields streaming status dicts and a final result.  GenericAgentExecutor

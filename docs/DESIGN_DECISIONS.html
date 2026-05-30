@@ -33,7 +33,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <body>
 <div class="container">
 <div class="header-nav">
-<a href="index.html">Home</a><a href="../README.html">Overview</a><a href="ARCHITECTURE.html">Architecture</a><a href="AGENTS.html">Agents</a><a href="MCP_SERVERS.html">MCP</a><a href="DESIGN_DECISIONS.html">Decisions</a><a href="DEMO.html">Demo</a><a href="CHANGELOG.html">Changelog</a><a href="TESTS.html">Tests</a>
+<a href="index.html">Home</a><a href="../README.html">Overview</a><a href="ARCHITECTURE.html">Architecture</a><a href="AGENTS.html">Agents</a><a href="MCP_SERVERS.html">MCP</a><a href="DESIGN_DECISIONS.html">Decisions</a><a href="CHANGELOG.html">Changelog</a><a href="TESTS.html">Tests</a>
 </div>
 
 <h1>Design Decisions</h1>
@@ -193,6 +193,8 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <p><strong>Why <code>BaseException</code> guard in <code>_run_metrics</code>?</strong> Python's <code>CancelledError</code> inherits from <code>BaseException</code>, not <code>Exception</code>. <code>asyncio.gather(return_exceptions=True)</code> catches <code>CancelledError</code> as a result value, but <code>isinstance(result, Exception)</code> returns <code>False</code> for it. The fallthrough code <code>round(float(result), 4)</code> crashes with <code>TypeError</code>, killing the entire eval task silently via <code>create_task</code> fire-and-forget. Checking <code>isinstance(result, BaseException)</code> catches both regular exceptions and <code>CancelledError</code>.</p>
 
 <p><strong>Why increase HTTP timeout to 180s?</strong> Faithfulness makes multiple sequential LLM calls within a single <code>ascore()</code> &mdash; it decomposes the response into atomic claims, then verifies each against the retrieved contexts. On a 20B local model at ~20&ndash;30s per call, three claims require 60&ndash;90s total. The default 60s client timeout kills the metric mid-decomposition. 180s provides headroom for up to 6 claims with retries.</p>
+
+<p><strong>Why <code>max_retries=5</code> instead of the previous <code>max_retries=1</code>?</strong> LM Studio periodically unloads idle models from GPU memory. When a RAGAS metric call arrives after an idle period, LM Studio reloads the model &mdash; the first request times out, succeeding on retry. With <code>max_retries=1</code>, the single retry was sometimes insufficient for model reload (~2-5s). Increasing to 5 gives the SDK enough budget to absorb reload latency at the httpx layer rather than failing instructor&rsquo;s structured-output calls. The <code>instructor.from_openai(max_retries=1)</code> override was removed so instructor calls inherit the client&rsquo;s retry count. Separate <code>asyncio.TimeoutError</code> handling prevents timeouts from appearing as bare colons in logs.</p>
 
 <p><strong>Why <code>sys.stdout.reconfigure(encoding='utf-8')</code>?</strong> RAGAS internal log messages (from <code>ragas/llms/base.py</code>) contain Unicode characters like curly quotes (<code>\u2010</code>, <code>\u2011</code>) when formatting LLM responses. On Windows with cp1252 console encoding, these characters trigger <code>UnicodeEncodeError</code>, producing noisy &ldquo;--- Logging error ---&rdquo; tracebacks. Setting UTF-8 at import time in <code>shared/config.py</code> prevents this for both stdout and stderr.</p>
 
@@ -1037,6 +1039,19 @@ async with lock:
 <li>&minus;131 lines of boilerplate across 4 executor files</li>
 </ul>
 
+<h3>Why remove the fail-fast first-attempt timeout?</h3>
+<p><strong>Original design</strong>: The MCP client's <code>call_tool_by_name</code> used <code>self.timeout / 3</code> on the first retry attempt to fail fast (5s for a 15s timeout), then fell back to the full timeout on subsequent attempts. The rationale was: if the first attempt fails quickly, the total latency across all retries is bounded.</p>
+<p><strong>Problem</strong>: yfinance HTTP requests have natural latency variance &mdash; a call that takes 4 seconds one time might take 6 seconds the next (rate limiter queue, Yahoo backend load, network jitter). Under the /3 logic, a first attempt that took 5.5s would timeout (5s threshold), triggering a retry. The retry using the full 15s would then succeed &mdash; but the total latency was 5.5s + 6s = 11.5s instead of just 6s. The fail-fast pattern <em>added</em> latency by creating false-positive timeouts on naturally variable endpoints.</p>
+<p><strong>Fix</strong>: All retry attempts now use the full configured timeout. The exponential backoff still provides fast retries for genuine failures (connection errors, 503s). The timeout only fires when a request truly hangs beyond the configured limit, not when it's merely slower than average.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>No false-positive timeouts from normal latency variance</li>
+<li>Total latency per retry chain is <code>timeout &times; max_retries</code> worst-case (was <code>timeout/3 + timeout &times; (max_retries-1)</code>)</li>
+<li>Exponential backoff still provides fast retries on genuine failures</li>
+<li>Simplifies mental model &mdash; one timeout value, not context-dependent thresholds</li>
+</ul>
+
 <h2>Lazy OpenTelemetry Instrumentation</h2>
 
 <h3>Why lazy instead of module-level instrument()?</h3>
@@ -1197,6 +1212,620 @@ else:
 <li><strong><code>_persist_to_memory</code></strong> &mdash; called directly in <code>agent_executor.py</code> after response processing (works for A2A requests)</li>
 </ol>
 <p>This ensures memory works regardless of invocation path.</p>
+
+<h2>Data-Driven DCF Assumptions</h2>
+
+<h3>Why replace the hardcoded 8% WACC with data-driven computation?</h3>
+<p>The original DCF model assumed a fixed 8% WACC for all tickers. For a high-beta tech stock (AAPL, beta=1.2), CAPM gives cost of equity &approx; 4.3% + 1.2 &times; 5.5% = 10.9% &mdash; 36% higher than the fixed assumption, overvaluing the stock. For a low-beta utility (DUK, beta=0.5), CAPM gives 4.3% + 0.5 &times; 5.5% = 7.05% &mdash; 12% lower, undervaluing it. A single WACC for all tickers systematically biases DCF outputs.</p>
+
+<h3>How is WACC now computed?</h3>
+<p>Three-step process in <code>dcf_valuation_node()</code> (<code>agent_3_langgraph/nodes.py:737</code>):</p>
+<ol>
+<li><strong>Cost of equity (CAPM)</strong>: <code>risk_free (4.3%) + beta &times; equity_premium (5.5%)</code>. Beta is taken from the computed metrics (yfinance 60-month), fallback to 1.0 if unavailable.</li>
+<li><strong>After-tax cost of debt</strong>: <code>interest_expense / total_debt &times; (1 - tax_rate)</code>, with fallback to 4%. Total debt is <code>longTermDebt + shortTermDebt</code> from latest financials.</li>
+<li><strong>WACC</strong>: Weighted average by market cap and total debt, clamped to [6%, 18%]. <code>wacc = (E/(E+D)) &times; coe + (D/(E+D)) &times; cod_at</code>. The clamp prevents degenerate values from extreme capital structures (e.g., a company with near-zero debt doesn't get a 2% WACC).</li>
+</ol>
+
+<h3>How is the growth rate determined?</h3>
+<p>Previously fixed at a single value. Now computed as:</p>
+<ul>
+<li><strong>Base growth</strong>: Blend of <code>revenueGrowth</code> (60%) and <code>earningsGrowth</code> (40%) from yfinance fundamentals</li>
+<li><strong>Bounds</strong>: Clamped to [2%, 25%] &mdash; a 2% floor reflects long-term GDP trend, 25% ceiling prevents unrealistic perpetual growth</li>
+<li><strong>Fallback</strong>: 8% if neither growth metric is available (same as the old hardcoded value)</li>
+<li><strong>Terminal growth</strong>: <code>min(3%, wacc - 2%)</code> &mdash; prevents terminal value from exceeding WACC (which would make terminal value infinite)</li>
+</ul>
+
+<h3>Why a tapered projection instead of a single-stage model?</h3>
+<p>A 2-stage DCF (high growth &rarr; terminal) produces abrupt jumps in the projected FCF. The 5-year tapered model linearly fades the initial growth rate toward the terminal rate over years 3&ndash;5, producing smoother valuations. The terminal value uses the Gordon Growth Model discounted to present value.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; Per-ticker WACC &mdash; beta and capital structure influence discount rate</li>
+<li>&check; Data-driven growth &mdash; revenue/earnings growth sets projections, not a constant</li>
+<li>&check; Bounded output &mdash; WACC clamped [6%, 18%], growth clamped [2%, 25%]</li>
+<li>&check; Smooth projection &mdash; tapered fade avoids GGM discontinuity</li>
+<li>&check; De facto backward compatible &mdash; fallback chain defaults to 8%/3% when data missing</li>
+</ul>
+
+<h2>Parallel Fan-Out Graph Topology</h2>
+
+<h3>Why parallel fan-out instead of a sequential chain?</h3>
+<p>The original Quant graph was largely sequential: <code>fetch_prices &rarr; compute_metrics &rarr; DCF/stress &rarr; format_output</code>. Price fetching and fundamentals fetching were sequential, adding ~3&ndash;5s per call. The revised graph fans out from START into 5 parallel branches:</p>
+<pre><code>START &rarr; fetch_prices &rarr; compute_base_metrics &rarr; [volatility gate] &rarr; DCF/stress
+                       &rarr; technical_analysis
+       &rarr; fetch_fundamentals &rarr; peer_comparison
+                               &rarr; analyst_positioning
+       &rarr; options_flow
+       &rarr; insider_signals</code></pre>
+<p>All paths converge at <code>format_output</code> &rarr; <code>llm_summary</code>. Since the branches are independent (prices don't depend on fundamentals, technicals don't depend on DCF), there's no reason to serialize them. <code>LangGraph</code> supports multiple outgoing edges from a node naturally &mdash; no special parallel construct needed.</p>
+
+<h3>Why not merge <code>fetch_prices</code> and <code>fetch_fundamentals</code> into one node?</h3>
+<p>They call different MCP tools with different cache profiles and error characteristics. <code>fetch_prices</code> uses <code>get_prices</code> (TTL-cached at 1 min) and can fail independently of <code>fetch_fundamentals</code> (TTL-cached at 1 hr). A single node would couple their lifetimes &mdash; if fundamentals data fails, prices are also lost, even though price-only analysis (volatility, Sharpe, technicals) is still useful.</p>
+
+<h3>Why a volatility gate instead of always computing both DCF and stress test?</h3>
+<p>DCF is meaningless for extremely volatile stocks &mdash; the discount rate uncertainty swamps the valuation. The 35% annual-vol threshold gates to stress test only, saving the ~1&ndash;2s DCF computation and avoiding a meaningless output. The <code>dcf_error</code> field is set in <code>compute_metrics_node</code> <em>before</em> the routing decision, so callers see &ldquo;DCF skipped: volatility exceeded 35%&rdquo; regardless of which path is taken.</p>
+
+<h3>Why add options_flow and insider_signals as separate branches?</h3>
+<p>These were previously not computed at all (no data source). Adding them as parallel branches from START means they run concurrently with prices/fundamentals with zero added latency (assuming no MCP bottleneck). Their data is incorporated at <code>format_output</code> through a weighted signal aggregation alongside the risk/DCF/fundamentals/technicals scores.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; 5 parallel branches &mdash; independent work streams don't block each other</li>
+<li>&check; Volatility-gated DCF &mdash; saves compute when valuation would be meaningless</li>
+<li>&check; No node coupling &mdash; price and fundamentals failures are isolated</li>
+<li>&check; Zero added latency &mdash; new branches (options, insider) run concurrently</li>
+<li>&check; All paths converge at format_output &mdash; single enrichment point</li>
+</ul>
+
+<hr>
+
+<h2>Quant Graph Fan-In Resolution: Diamond Dependency, Reducers &amp; Passthrough Keys</h2>
+
+<h3>Problem</h3>
+<p>The parallel fan-out graph had a subtle topology bug. <code>fetch_fundamentals</code> fed into three downstream nodes: <code>peer_comparison</code>, <code>analyst_positioning</code>, and a direct edge to <code>format_output</code>. This created a <strong>diamond dependency</strong> &mdash; <code>format_output</code> had two indirect predecessors via <code>peer_comparison</code>/<code>analyst_positioning</code> AND a direct edge from <code>fetch_fundamentals</code>. LangGraph scheduled <code>format_output</code> twice in the same checkpoint step when the two intermediate nodes completed concurrently. Each duplicate run wrote every state key, triggering <code>INVALID_CONCURRENT_GRAPH_UPDATE</code> at whichever key was updated first &mdash; typically <code>positioning</code> or <code>metrics</code>.</p>
+
+<h3>Solution</h3>
+<p>Three-part fix:</p>
+<ol>
+<li><strong>Remove diamond dependency</strong> (<code>agent_3_langgraph/graph.py:39</code>): Deleted <code>builder.add_edge(&quot;fetch_fundamentals&quot;, &quot;format_output&quot;)</code>. Fundamentals data flows through <code>peer_comparison</code> and <code>analyst_positioning</code> into shared state &mdash; <code>format_output</code> reads it from state, not from a direct edge. <code>format_output</code> now has exactly 5 clean predecessors and runs exactly once per invocation.</li>
+<li><strong>Add Annotated reducers for concurrent writes</strong> (<code>agent_3_langgraph/state.py:6-22</code>): Three state keys are written by multiple nodes in the same step, so they needed reducers even without the diamond:
+<ul>
+<li><code>metrics</code> &rarr; <code>_merge_dict</code> (merges dicts from <code>compute_metrics</code> and <code>format_output</code>, second wins on key collision)</li>
+<li><code>stress_test_result</code> &rarr; <code>_last_nonnull</code> (last non-null value wins &mdash; <code>stress_test_node</code> writes real data, <code>format_output</code>'s initial write is <code>None</code>)</li>
+<li><code>dcf_error</code> &rarr; <code>_last_nonnull</code></li>
+<li><code>reasoning</code> &rarr; <code>_last_str</code> (last non-empty string wins, then <code>llm_summary_node</code> overwrites)</li>
+<li><code>recommendation</code> &rarr; <code>_last_str</code> (idempotent &mdash; both runs produce same BUY/HOLD/SELL)</li>
+<li><code>monte_carlo</code> &rarr; <code>_last_nonnull</code></li>
+</ul>
+</li>
+<li><strong>Remove passthrough keys from format_output</strong> (<code>agent_3_langgraph/nodes.py</code>): <code>format_output_node</code> was returning copies of state keys (<code>positioning</code>, <code>dcf_valuation</code>, <code>correlation_matrix</code>, <code>fundamentals</code>, <code>technicals</code>, <code>peer_comparison</code>, <code>options_signals</code>, <code>insider_signals</code>) that other nodes already wrote. Even with reducers, writing every key from <code>format_output</code> is wasteful and confusing &mdash; the node should only emit what it computes: <code>recommendation</code>, <code>reasoning</code>, <code>metrics</code> (with signals/confidence), and <code>stress_test_result</code>. Full state from <code>ainvoke()</code> still carries every key via the owning nodes.</li>
+</ol>
+
+<h3>Why not use LangGraph's built-in fan-in handling?</h3>
+<p>LangGraph handles fan-in naturally &mdash; multiple predecessors can converge on a single node. The problem wasn't fan-in by itself but the <em>diamond</em>: <code>format_output</code> being reachable via two different path lengths from <code>fetch_fundamentals</code>. LangGraph triggers the node twice when its predecessors complete in different checkpoint steps (or in the same step via separate schedule entries). The reducers would have caught the symptom (<code>INVALID_CONCURRENT_GRAPH_UPDATE</code>) but the diamond removal fixes the root cause.</p>
+
+<h3>Why keep the reducers after fixing the diamond?</h3>
+<p>The reducers are still needed for the remaining concurrent writes &mdash; <code>metrics</code> is written by <code>compute_metrics</code> AND <code>format_output</code> in the same step, <code>stress_test_result</code> by <code>stress_test</code> AND <code>format_output</code>, and <code>dcf_error</code> by <code>compute_metrics</code> AND <code>dcf_valuation</code>. These are not diamond-induced duplicates but legitimate multi-writer keys. The reducers act as a safety net for any future topology changes that might introduce similar conflicts.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; Root cause fixed &mdash; diamond edge removed, <code>format_output</code> runs once</li>
+<li>&check; Reducers handle legitimate multi-writer keys</li>
+<li>&check; Passthrough keys removed &mdash; <code>format_output</code> only emits what it computes</li>
+<li>&check; Full state still accessible &mdash; owning nodes write their keys before fan-in</li>
+<li>&check; Safety net &mdash; reducers prevent regression from future topology changes</li>
+</ul>
+
+<hr>
+
+<h2>Parallel News Ingestion with SEC Filings</h2>
+
+<h3>Why fire news and SEC ingestion as concurrent background tasks?</h3>
+<p>The original RAG agent fetched SEC filings first (<code>_ensure_ingested</code>), then queried. News was fetched on-demand via a separate MCP tool call inside the query path. This meant:</p>
+<ol>
+<li>News ingestion added 1&ndash;3s latency to every query that mentioned &ldquo;news&rdquo; or &ldquo;sentiment&rdquo;</li>
+<li>News and SEC ingestion were sequential (~3s + ~8s = ~11s total cold-start)</li>
+<li>No persistent news index &mdash; news was re-fetched from MCP each time (no dedup cache)</li>
+</ol>
+
+<h3>Solution</h3>
+<p><code>query()</code> in <code>agent_2_llamaindex/executor.py:162</code> now fires both ingestions as <code>asyncio.create_task()</code> without awaiting:</p>
+<pre><code>asyncio.create_task(self._ensure_ingested(ticker))
+asyncio.create_task(self._ensure_news_ingested(ticker))
+return await self.index.query(ticker, query_text)</code></pre>
+<p>The ChromaDB query runs immediately against whatever is already indexed. If a filing or news article was ingested in a prior query, it's found. If the ticker has never been queried before, the ingestion tasks complete in the background and the current query returns results from the first ingestion that finishes (or falls back gracefully).</p>
+
+<h3>Why a separate dedup key for news?</h3>
+<p>SEC filings use <code>edgar_url</code> as the dedup key &mdash; immutable and canonical for SEC documents. News articles don't have an EDGAR URL. Using <code>news_{ticker}</code> as the daily dedup key in <code>_last_ingestion</code> ensures news is re-fetched at most once per day per ticker, regardless of how many times the ticker is queried. The same daily-dedup pattern as <code>_ensure_ingested</code> but with a different key namespace.</p>
+
+<h3>Why separate ChromaDB collections for news vs filings?</h3>
+<p>Different retrieval characteristics: news queries want recency (temporal decay matters), filing queries want relevance (semantic similarity matters). A single collection would mix the two, making it impossible to apply different reranking strategies. The <code>_classify_query_intent</code> function selects which collections to search based on query keywords, and the <code>_hybrid_score</code> blends vector (0.6), keyword (0.2), and temporal decay (0.2) differently per collection.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; Zero added latency &mdash; ingestion is fire-and-forget, query uses existing index</li>
+<li>&check; Parallel cold-start &mdash; news and filings ingest concurrently (~8s total vs ~11s)</li>
+<li>&check; Daily dedup per ticker &mdash; <code>news_{ticker}</code> key prevents redundant fetches</li>
+<li>&check; Separate collections &mdash; per-type retrieval strategies</li>
+<li>&check; Graceful degradation &mdash; query returns best available data</li>
+</ul>
+
+<h2>Multi-Collection Query Routing</h2>
+
+<h3>Why keyword-based intent classification instead of RouterQueryEngine?</h3>
+<p>LlamaIndex's <code>RouterQueryEngine</code> uses an LLM call to decide which tool/index to route to. For every RAG query, this adds ~2&ndash;5s of LLM inference time and ~500&ndash;2000 tokens, with the risk of the LLM choosing the wrong collection (e.g., routing an earnings question to general SEC filings). A keyword-based <code>_classify_query_intent()</code> in <code>index_manager.py:68</code> completes in microseconds with deterministic results.</p>
+<p>The classifier checks the query text for keyword groups:</p>
+<ul>
+<li><code>news</code>, <code>sentiment</code>, <code>headline</code>, <code>breaking</code>, etc. &rarr; include <code>&ldquo;news&rdquo;</code> collection</li>
+<li><code>earnings</code>, <code>revenue</code>, <code>guidance</code>, <code>eps</code>, <code>beat</code>, <code>miss</code> &rarr; include <code>&ldquo;earnings&rdquo;</code> collection</li>
+<li><code>analyze</code>, <code>overview</code>, <code>outlook</code>, <code>recommend</code>, <code>should I</code> &rarr; search ALL collections</li>
+<li>Default (pure financial analysis queries): search <code>&ldquo;sec_filings&rdquo;</code> only</li>
+</ul>
+
+<h3>Why score-sorted dedup instead of top-k per collection?</h3>
+<p>If each collection returns top-5 nodes and they overlap, the final set may have duplicates. The merge-dedup pipeline: collect all nodes from all selected collections &rarr; hybrid re-score each node &rarr; sort by score descending &rarr; deduplicate by content hash (first 200 chars) &rarr; truncate to top-5. This guarantees:</p>
+<ol>
+<li>The best-matching nodes win regardless of source collection</li>
+<li>No duplicate content reaches the LLM (which would waste context window)</li>
+<li>A node from a low-priority collection can outrank a weak match from the primary one</li>
+</ol>
+
+<h3>Why a 3-factor hybrid score?</h3>
+<p>A pure vector score favors semantically similar but potentially old content. Adding keyword overlap (exact term matching) ensures query terms like &ldquo;Q3 2025 revenue&rdquo; surface documents with those exact phrases. Adding temporal decay (exponential, &lambda;=0.004, year-old &approx; 0.23) favors recent news/earnings without completely excluding old filings. The weighted blend (0.6 vector + 0.2 keyword + 0.2 temporal) is tuned to balance semantic relevance with recency for financial data, where both matter.</p>
+
+<h3>Why not use LlamaIndex's built-in retriever fusion?</h3>
+<p><code>RetrieverQueryEngine</code> fusion expects all retrievers to use the same index type and similarity metric. Our collections are independent ChromaDB instances with different embedding profiles (different document types require different chunking strategies). The custom pipeline gives full control over per-collection retrieval parameters (top-k per collection, hybrid scoring weights, dedup strategy) without fighting the framework's assumptions.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; Deterministic routing &mdash; no LLM cost, no latency, no hallucinated choices</li>
+<li>&check; Microsecond classification &mdash; ~500&times; faster than RouterQueryEngine</li>
+<li>&check; Score-sorted dedup &mdash; best content wins, duplicates eliminated</li>
+<li>&check; 3-factor hybrid score &mdash; semantic + keyword + temporal = financial-grade ranking</li>
+<li>&check; Framework-agnostic &mdash; works with any vector store, not just LlamaIndex</li>
+</ul>
+
+<h2>Orchestrator Parallel Dispatch via System Prompt</h2>
+
+<h3>Why change the system prompt instead of adding code-level dispatch logic?</h3>
+<p>Two options existed for parallel agent dispatch:</p>
+<ul>
+<li><strong>Option A (system prompt)</strong>: Instruct the LLM in <code>_STATIC_PREAMBLE</code> to emit all <code>send_message</code> calls in a single assistant turn. Qwen3-30B-A3B natively supports multiple tool calls in one response &mdash; the instruction simply unlocks existing capability.</li>
+<li><strong>Option B (deterministic extraction)</strong>: A Python-side shim that extracts tickers from user input and fires all sub-agent A2A calls simultaneously, bypassing the LLM for routing. ~5h implementation, adds ticker-extraction false-negative risk.</li>
+</ul>
+<p>Option A was chosen (implemented in <code>agent_1_adk/agent.py:184-189</code>). It's zero new code, zero added latency, and has a documented escape hatch (Option B) if a future model swap breaks parallel tool calling. The <code>_STATIC_PREAMBLE</code> is KV prefix cached &mdash; adding the instruction has no inference cost.</p>
+
+<h3>Why add agent responsibility boundaries separately?</h3>
+<p>Without boundaries, the LLM sometimes routes news-related queries to the Sentiment agent (&ldquo;get news sentiment&rdquo; sounds like the Sentiment agent's job) even though RAG now owns financial news retrieval. The boundaries block in <code>_build_instruction()</code> (<code>agent.py:253-260</code>) disambiguates: &ldquo;Financial RAG Agent owns ALL document and news retrieval.&rdquo;</p>
+
+<h3>Why update step 5 to mention receiving results &ldquo;together&rdquo;?</h3>
+<p>The old step 5 said &ldquo;After all agents respond&rdquo; without specifying whether results arrive individually or together. The new wording (&ldquo;you will receive their results together in the next turn&rdquo;) aligns the LLM's expectation with the actual A2A behavior &mdash; all sub-agent responses arrive in the subsequent turn because the LLM doesn't await between <code>send_message</code> calls.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; Zero new code &mdash; pure system prompt instruction, no Python dispatch shim</li>
+<li>&check; KV-cached &mdash; static preamble keeps prefix cache warm</li>
+<li>&check; Documented escape hatch &mdash; Option B exists on paper if needed</li>
+<li>&check; Narrow boundary fix &mdash; prevents LLM misrouting news to Sentiment agent</li>
+<li>&check; Explicit parallel contract &mdash; step 5 confirms batch reception</li>
+</ul>
+
+<h2>Parallel Filing Downloads + Server-Side Truncation</h2>
+
+<h3>Why switch from sequential to parallel filing fetches?</h3>
+<p>The original <code>_ensure_ingested()</code> in <code>agent_2_llamaindex/executor.py</code> fetched filing content in a sequential loop. For a ticker with 5 new filings, this summed the per-filing latencies (~3-5s each = ~15-25s total). The revised two-phase pattern (<code>executor.py:74-107</code>):</p>
+<ol>
+<li><strong>Filter phase</strong>: Iterate filings to find un-ingested candidates (fast, no network)</li>
+<li><strong>Fetch phase</strong>: <code>asyncio.gather(*[_fetch_one(f) for f in candidates])</code> &mdash; all filing downloads run concurrently</li>
+</ol>
+<p>Filing downloads for a 5-filing ingest now complete in ~max(per-filing latency) (~3-5s). The <code>_fetch_one</code> helper isolates per-filing errors.</p>
+
+<h3>Why truncate server-side at 25k instead of client-side at 20k?</h3>
+<p>The old code truncated <code>content[:20000]</code> in the RAG agent after receiving the full response from MCP. A 10-K filing response (~80-150k chars) was fully transmitted before being truncated. Moving the truncation to <code>get_filing_content</code> in <code>mcp_servers/finsight_server.py:842</code> (<code>result["content"] = result.get("content", "")[:25000]</code>) cuts the bandwidth to &lt;25k per filing. The limit was also raised from 20k to 25k.</p>
+
+<h3>Why not parallelize filing fetches in Phase 1?</h3>
+<p>Phase 1 added the RAG news ingestion and multi-collection architecture. Parallelizing filing downloads was deferred to Phase 2 because the sequential loop was already functional &mdash; the latency impact was hidden behind the total cold-start (~11s). With Phase 2's focus on latency reduction, the parallel fetch was the highest-leverage RAG pipeline change.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; O(max) instead of O(sum) &mdash; 5-filing ingest drops from ~20s to ~4s</li>
+<li>&check; Isolated errors &mdash; per-filing failure doesn't block other filings</li>
+<li>&check; Server-side truncation &mdash; bandwidth cap, not client-side afterthought</li>
+<li>&check; Raised limit &mdash; 25k vs 20k, more content for retrieval</li>
+<li>&check; Backward compatible &mdash; ingestion pipeline downstream unchanged</li>
+</ul>
+
+<h2>Single-Flight News Cache</h2>
+
+<h3>Why refactor <code>get_news_sentiment</code> into impl + wrapper?</h3>
+<p>The original <code>get_news_sentiment</code> used manual <code>_cache_news.get(key)</code> / <code>_cache_news.set(key, result)</code> pattern. When two concurrent callers requested the same uncached ticker simultaneously, both would miss the cache and both would fetch RSS feeds &mdash; wasting one RSS round-trip (~1-2s). <code>TTLCache.get_or_fetch()</code> (<code>shared/ttl_cache.py:25</code>) was already designed for this: it uses an internal <code>asyncio.Event</code> per key so the second caller awaits the first's result instead of duplicating work.</p>
+<p>The refactor (<code>mcp_servers/finsight_server.py:1406-1551</code>):</p>
+<ol>
+<li>Extracted all fetch logic into <code>_get_news_sentiment_impl(ticker, limit)</code> &mdash; pure data fetching, no caching concern</li>
+<li>The outer <code>get_news_sentiment</code> tool now just calls <code>_cache_news.get_or_fetch(cache_key, lambda: _get_news_sentiment_impl(...))</code></li>
+</ol>
+
+<h3>Why was this deferred from Phase 1?</h3>
+<p>Phase 1's news ingestion was single-caller (only the RAG agent's background task calls <code>get_news_sentiment</code>). The single-flight pattern matters when multiple concurrent callers exist &mdash; which Phase 2 doesn't introduce directly, but the fix is zero-risk and prevents future regressions when additional consumers call the same tool.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; Single-flight &mdash; concurrent callers share one RSS fetch</li>
+<li>&check; Zero behavioral change &mdash; cache key, TTL, and response format identical</li>
+<li>&check; Pure refactor &mdash; impl extracted, wrapper delegates to get_or_fetch</li>
+<li>&check; Already-supported pattern &mdash; TTLCache.get_or_fetch existed, just unused by this tool</li>
+</ul>
+
+<h2>Fire-and-Forget RAG Ingestion</h2>
+
+<h3>Why convert <code>_ensure_ingested</code> from await to fire-and-forget?</h3>
+<p>Phase 1's <code>query()</code> used <code>await asyncio.gather(self._ensure_ingested(ticker), self._ensure_news_ingested(ticker))</code> &mdash; the query blocked until both ingestion tasks completed. This added ~11s of cold-start latency to every new ticker's first query.</p>
+<p>Phase 2 converts both to <code>asyncio.create_task()</code> (<code>executor.py:162-166</code>):</p>
+<pre><code>asyncio.create_task(self._ensure_ingested(ticker))
+asyncio.create_task(self._ensure_news_ingested(ticker))
+return await self.index.query(ticker, query_text)</code></pre>
+<p>The ChromaDB query runs immediately against whatever is already indexed. If the ticker was queried before, all data is available. If it's a new ticker, the ingestion finishes in the background and the current query returns a warming signal.</p>
+
+<h3>Why a warming signal instead of silently returning empty results?</h3>
+<p>Silent empty results are confusing &mdash; the user sees &ldquo;no data found&rdquo; and doesn't know whether the ticker genuinely has no filings or the index is still warming. The <code>_warming</code> flag in <code>index_manager.py</code> (<code>{"_warming": True, "summary": "Index is warming for {ticker}..."}</code>) makes the state explicit.</p>
+
+<h3>Why keep the per-ticker <code>asyncio.Event</code> tracking optional?</h3>
+<p>The plan mentioned optional <code>self._ingest_events</code> so a same-process second query could briefly await the first's ingestion. This wasn't implemented because:</p>
+<ol>
+<li>The warming signal already communicates the incomplete state</li>
+<li>An Event-based wait adds complexity for marginal UX gain (the background task completes in ~8s anyway)</li>
+<li>The simple approach (fire-and-forget + warming signal) is correct for both first and subsequent queries</li>
+</ol>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; Zero blocking on first query &mdash; ingestion runs in background</li>
+<li>&check; Warming signal &mdash; explicit incomplete-state communication</li>
+<li>&check; Existing data still usable &mdash; previously indexed content returns immediately</li>
+<li>&check; No complexity &mdash; no ingestion-tracking events needed</li>
+<li>&check; Graceful degradation &mdash; query returns best available data, even if partial</li>
+</ul>
+
+<hr>
+
+<h2>Sentiment Agent &rarr; Market Context Agent Rebrand</h2>
+
+<h3>Problem</h3>
+<p>Phase 1 gave the RAG agent news + filing retrieval. The Sentiment agent's news/filing fetch then became redundant &mdash; both agents fetched the same data and produced overlapping narratives. The original redesign proposal wanted to gut the Sentiment agent entirely, but the CrewAI narrative engine was already producing useful qualitative analysis. The question was: what unique analytical lane could Sentiment own that RAG and Quant didn't?</p>
+
+<h3>Solution</h3>
+<p>Rebrand &ldquo;Sentiment Intelligence Agent&rdquo; &rarr; &ldquo;Market Context Agent&rdquo; and repurpose its CrewAI narrative engine from bottom-up news analysis to top-down macro + peer positioning:</p>
+<ol>
+<li><strong>New MCP tool <code>get_macro_indicators()</code></strong> (<code>finsight_server.py:305</code>): Fetches Treasury yields (10Y/2Y), VIX, DXY, sector ETF performance &mdash; all cached 15 min. No ticker argument (macro is global).</li>
+<li><strong>New <code>shared/peer_sets.py</code></strong>: 33 hand-curated peer sets across 10+ sectors. Shared with Quant's <code>peer_comparison_node</code>.</li>
+<li><strong><code>_collect_data_parallel</code> rewritten</strong> (<code>executor.py:39-86</code>): 3-step pipeline &mdash; macro + primary financials &rarr; resolve peers &rarr; parallel peer financials + prices. Drops <code>get_news_sentiment</code> and <code>get_company_filings</code>.</li>
+<li><strong>MarketContextCrew</strong> (<code>crew.py</code>): Single agent, role &ldquo;Market Context Analyst&rdquo;. Task outputs JSON: <code>narrative</code>, <code>macro_regime</code>, <code>relative_peer_positioning</code>, <code>overall_signal</code>, <code>confidence_score</code>, <code>key_tailwinds</code>, <code>key_headwinds</code>.</li>
+<li><strong>Agent card</strong> (<code>market_context_agent.json</code>): Two skills &mdash; <code>macro_regime_analysis</code>, <code>peer_landscape_analysis</code>.</li>
+</ol>
+
+<h3>Why not keep Sentiment and RAG both fetching news?</h3>
+<p>Overlap. Both agents called <code>get_news_sentiment</code> and <code>get_company_filings</code> &mdash; the same MCP tools, the same cached data. The single-flight cache (Phase 2) already deduplicated the RSS fetches, but the orchestrator LLM still received two redundant narratives. Giving each agent a distinct data lane eliminates redundancy and makes the orchestrator's synthesis more efficient (RAG = document retrieval, Market Context = macro/peer positioning, Quant = numbers).</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; No redundant data fetches &mdash; every agent owns distinct MCP tools</li>
+<li>&check; Shared peer sets &mdash; Market Context and Quant use the same <code>peer_sets.py</code></li>
+<li>&check; Backward compatible &mdash; old agent name <code>sentiment_agent.json</code> removed; orchestrator discovers <code>market_context_agent.json</code> via <code>SubAgentClient.discover()</code></li>
+<li>&check; Langfuse trace continuity &mdash; trace name <code>market-context-agent-stream</code> replaces <code>sentiment-agent-stream</code></li>
+<li>&check; RAGAS rubrics updated &mdash; <code>macro_regime_quality</code> + <code>peer_positioning_quality</code> replace old sentiment rubrics</li>
+</ul>
+
+<hr>
+
+<h2>Dynamic Peer Discovery via Yahoo Finance API</h2>
+
+<h3>Why replace static lookup with live API call?</h3>
+<p>The original <code>shared/peer_sets.py</code> required hand-curated entries for every ticker's industry. When a ticker's industry wasn't in the map, peer comparison broke silently (<code>get_peer_tickers</code> returned <code>[]</code>). Maintaining coverage across thousands of listed stocks was impractical &mdash; only ~33 sectors had entries.</p>
+
+<h3>Solution</h3>
+<p>New MCP tool <code>get_peers(ticker)</code> (<code>mcp_servers/finsight_server.py</code>) hitting Yahoo Finance's <code>/v6/finance/recommendationsBySymbol</code> endpoint (&quot;People also watch&quot;). Returns 3-5 peer tickers for any exchange-listed stock without maintaining a static map. Results cached 24h &mdash; peer sets are stable intraday.</p>
+<p>Both Quant's <code>peer_comparison_node</code> and the Market Context agent use it. Fallback chain: MCP <code>get_peers</code> &rarr; <code>shared/peer_sets.py</code> via <code>get_peer_tickers()</code> &rarr; empty list.</p>
+
+<h3>Why keep peer_sets.py after migration?</h3>
+<p>As a fallback. The MCP server might be cold, rate-limited, or unreachable. <code>get_peer_tickers()</code> from <code>shared/peer_sets.py</code> provides a zero-latency fallback for the ~33 sectors already mapped. Future cleanup can deprecate the file when the MCP tool is proven stable in production.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; Live discovery &mdash; works for any exchange-listed ticker</li>
+<li>&check; No maintenance &mdash; Yahoo Finance crowdsources peer curation</li>
+<li>&check; 24h cache &mdash; peers are stable intraday</li>
+<li>&check; Dual fallback &mdash; MCP &rarr; peer_sets.py &rarr; empty list</li>
+<li>&check; Both agents use the same tool &mdash; no divergence</li>
+</ul>
+
+<hr>
+
+<h2>Market Context Agent &mdash; Peer Key Fixes &amp; Sector/Industry Restoration</h2>
+
+<h3>Problem</h3>
+<p>Two bugs silently degraded Market Context agent output after the peer refactor:</p>
+<ol>
+<li><strong>Wrong <code>get_financials</code> response key</strong> (<code>executor.py</code>): The code read <code>primary_fin.get(&quot;financials&quot;, {}).get(&quot;info&quot;, {})</code>, but <code>get_financials</code> MCP tool returns top-level keys directly &mdash; no <code>&quot;financials&quot;</code> wrapper. Every ticker got <code>info = {}</code>, so <code>sector</code> and <code>industry</code> were always empty, and <code>get_peer_tickers</code> returned <code>[]</code> for every ticker. Silent data loss &mdash; the agent still produced JSON, but <code>macro_regime</code> and <code>peer_landscape</code> analyses had no sector context.</li>
+<li><strong>Undefined <code>sector</code>/<code>industry</code> in return dict</strong> (<code>executor.py:73-74</code>): The <code>_collect_data_parallel</code> return dict referenced <code>sector</code> and <code>industry</code> variables that were never assigned &mdash; leftover from before the peer refactor removed the extraction code. CrewAI's <code>data.get(&quot;sector&quot;, &quot;&quot;)</code> handled the <code>NameError</code> gracefully, but the keys were always empty strings.</li>
+</ol>
+
+<h3>Solution</h3>
+<ol>
+<li><strong>Fix data extraction</strong> (<code>executor.py</code>): Changed <code>primary_fin.get(&quot;financials&quot;, {}).get(&quot;info&quot;, {})</code> to <code>primary_fin.get(&quot;info&quot;, {})</code>. Uses <code>res</code> (the full MCP response) directly for peer financials instead of the wrapper.</li>
+<li><strong>Restore sector/industry extraction</strong> (<code>executor.py</code>): Re-added <code>info = primary_fin.get(&quot;info&quot;, {}); sector = info.get(&quot;sector&quot;, &quot;&quot;); industry = info.get(&quot;industry&quot;, &quot;&quot;)</code> before the <code>get_peers</code> call. The return dict now gets populated values.</li>
+<li><strong>Expand peer sets</strong> (<code>shared/peer_sets.py</code>): Added ~30 new entries covering missing industries (Discount Stores, Grocery Stores, Consumer Defensive/Cyclical sectors). Fixed em-dash vs. hyphen mismatch &mdash; <code>_PEER_SETS</code> used &quot;Software&mdash;Infrastructure&quot; (U+2014) but yfinance returns &quot;Software - Infrastructure&quot; (hyphen+spaces). Added <code>_norm()</code> normalization function that collapses all dash variants to a single hyphen, with <code>_NORM_MAP</code> for O(1) fuzzy lookup.</li>
+</ol>
+
+<h3>Why wasn't this caught by testing?</h3>
+<p>No integration tests for the Market Context agent's data pipeline existed. The agent produced structurally valid JSON regardless &mdash; the narrative was just less informed. These bugs highlight the need for integration tests that verify non-empty <code>sector</code>/<code>industry</code>/<code>peers</code> in the CrewAI output, especially after data-source refactors.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; Non-empty sector/industry now flows to CrewAI narrative</li>
+<li>&check; Peer sets expanded to cover all major sectors</li>
+<li>&check; Em-dash/hyphen normalization prevents silent empty sets</li>
+<li>&check; Dynamic <code>get_peers</code> MCP tool works for any ticker</li>
+<li>&check; <code>peer_sets.py</code> remains as fallback for MCP failures</li>
+</ul>
+
+<h3>Peer Concurrency Cap &mdash; Why <code>asyncio.Semaphore(3)</code>?</h3>
+<p><strong>Problem</strong>: Both the Quant LangGraph and Market Context agents fetch <code>get_financials</code> for each peer ticker concurrently. With 8 peers, this fires 8 simultaneous MCP calls. The MCP server processes them via <code>asyncio.gather</code> with a shared <code>_yfinance_limiter</code> (4 req/s token bucket). While the token bucket limits the <em>rate</em>, it doesn't limit the <em>number of in-flight requests</em> the server queues.</p>
+<p>Under the old pattern, all 8 peer requests arrived at the MCP server simultaneously. The first 8 tokens were issued instantly (burst=8), but each yfinance <code>get_financials</code> call takes 1-3 seconds. The MCP client's <code>asyncio.wait_for(timeout=15)</code> wrapped each call &mdash; with 8 concurrent calls, the queue depth meant the last calls could exceed 15 seconds of wall-clock time, even though each individual yfinance call completed in &lt;3s. The timeout fired before the queue cleared.</p>
+<p><strong>Solution</strong>: <code>asyncio.Semaphore(3)</code> limits in-flight requests to 3, which is the smallest number that keeps the pipeline fed given yfinance's typical per-call latency (~1-3s). With 3 concurrent slots and 8 peers, the total wall-clock time is <code>ceil(8/3) &times; max_per_call_latency &approx; 3 &times; 3 = 9s</code> &mdash; well within the 15s timeout. Without the semaphore, 8 concurrent calls hit the rate limiter's burst of 8, all start their yfinance fetch, and the last ones timeout at ~15s.</p>
+<p>The token bucket (<code>_yfinance_limiter</code>) handles <em>rate</em> (requests per second) &mdash; it prevents Yahoo from seeing 8 requests at the same microsecond. The semaphore handles <em>concurrency</em> (in-flight requests at the same moment) &mdash; it prevents the MCP server's request queue from exceeding the timeout window. They solve complementary problems.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; 3 concurrent slots &mdash; peer financials complete within timeout window</li>
+<li>&check; Token bucket handles rate, semaphore handles concurrency &mdash; complementary</li>
+<li>&check; 4+ concurrent &rarr; no significant throughput gain (yfinance rate limiter is the bottleneck, not CPU), increased timeout risk</li>
+<li>&check; 2 concurrent &rarr; safe but slower: <code>ceil(8/2) &times; 3 = 12s</code> &mdash; still within timeout but leaves less headroom</li>
+<li>&check; Applied symmetrically in both <code>agent_3_langgraph/nodes.py</code> and <code>agent_4_crewai/executor.py</code></li>
+</ul>
+
+<hr>
+
+<h2>Quant Behavioral Signals &mdash; 8-Group Weighted Voting</h2>
+
+<h3>Problem</h3>
+<p>The Phase 1 Quant agent produced fundamentals + technicals + DCF &mdash; strong on logical analysis but blind to market psychology, insider behavior, and options flow. These signals (<code>put_call_ratio</code>, <code>insider_buying</code>, <code>short_interest</code>, <code>analyst_consensus</code>) capture what the broader market is <em>doing</em>, not just what the numbers say. The original Phase 3 plan assigned them to a redesigned Sentiment agent, but they're deterministic math on structured data &mdash; Quant's natural home.</p>
+
+<h3>Solution</h3>
+<p>Add three new graph nodes to the Quant LangGraph, each fetching data via existing or new MCP tools:</p>
+<table>
+<tr><th>Node</th><th>Data Source</th><th>Signal</th></tr>
+<tr><td><code>options_flow_node</code></td><td><code>get_options_chain</code> MCP</td><td>put/call vol ratio, OI ratio, flow classification</td></tr>
+<tr><td><code>insider_signals_node</code></td><td><code>get_company_filings</code> &rarr; Form 4 XML</td><td>net direction (90-day), CEO/CFO weighted</td></tr>
+<tr><td><code>analyst_positioning_node</code></td><td><code>get_sentiment_indicators</code> + <code>get_earnings_history</code></td><td>consensus score, upside %, short interest, squeeze risk</td></tr>
+</table>
+<p>All three fan out from <code>START</code> alongside existing nodes. <code>format_output_node</code> collects 8 signal groups with weights summing to 1.0. Confidence formula: <code>|composite| &times; (1 &minus; std(present_signals))</code>.</p>
+
+<h3>Why raw weighted sum instead of normalized?</h3>
+<p>The plan's original normalization renormalized weights to sum to 1.0 using only the signals present in a given ticker's response. This made confidence uninformative: a response with only 2 signals would normalize them to 0.50 each, producing the same composite as if all 8 were present. The fix (<code>nodes.py:228</code>) keeps the raw weighted sum &mdash; if only 2 of 8 signals are present, the composite is inherently lower, correctly reflecting reduced signal density.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; Deterministic &mdash; no LLM calls for signal computation</li>
+<li>&check; Same peer resolver (<code>shared/peer_sets.py</code>) as Market Context Agent</li>
+<li>&check; Normalized signals (-1 to +1) for uniform voting</li>
+<li>&check; 8-group coverage across fundamental, technical, behavioral, and macro dimensions</li>
+<li>&check; Confidence formula accounts for signal sparsity</li>
+</ul>
+
+<hr>
+
+<h2>Quant Behavioral Signal Refinements: Options Flow, Insider Data, Monte Carlo &amp; Schema Validator</h2>
+
+<h3>Options Flow &mdash; Why return <code>no_data</code> instead of misleading ratios?</h3>
+<p>When a ticker has zero options volume (no open positions, illiquid, or the options chain fetch returned empty), the old code computed <code>put_call_vol = 0/0 = NaN</code> and <code>oi_ratio = 0/0 = NaN</code>. These NaNs propagated through <code>_normalize_to_signal</code> as <code>0.0</code>, producing a neutral signal that looked like &quot;no unusual activity&quot; when it meant &quot;no data available.&quot;</p>
+<p><strong>Fix</strong> (<code>nodes.py:949</code>): Check total volume before computing ratios. If zero, return <code>flow_signal=&quot;no_data&quot;</code>, <code>note=&quot;No options volume &mdash; ticker may lack active options market&quot;</code>, and <code>put_call_vol_ratio=oi_ratio=0.5</code> (neutral). The <code>format_output_node</code> checks <code>flow_signal == &quot;no_data&quot;</code> and excludes it from behavioral signal aggregation rather than scoring it as neutral.</p>
+
+<h3>Insider Signals &mdash; Why replace Form 4 keyword matching with yfinance structured data?</h3>
+<p>The original <code>insider_signals_node</code> used <code>get_company_filings</code> filtered for Form 4 documents, then matched keywords (<code>&quot;P&quot;</code>/<code>&quot;A&quot;</code> for buys, <code>&quot;D&quot;</code>/<code>&quot;S&quot;</code> for sells) on filing descriptions. Many Form 4 filings have empty or inconsistent description fields &mdash; the XML content contains the actual transaction data, but the MCP tool only returns the filing metadata, not the parsed XML.</p>
+<p><strong>Fix</strong> (<code>nodes.py:997</code>): Switched to <code>yf.Ticker.insider_transactions</code> via a new <code>get_insider_transactions</code> MCP tool. Returns structured DataFrame with actual buy/sell records, dollar amounts, and executive roles. The node now computes: net direction (buys - sells / total), CEO/CFO weighted score, and net dollar volume. Since <code>get_insider_transactions</code> uses yfinance (no SEC EDGAR parsing), it's faster and more reliable than the Form 4 scraping approach.</p>
+
+<h3>Monte Carlo &mdash; Why run on low-volatility tickers?</h3>
+<p>The original graph only ran <code>_run_monte_carlo</code> on the high-volatility path (stress test branch). Low-volatility tickers went through the DCF valuation path, which ran no simulation. This meant DCF-only tickers (utilities, consumer staples) had <code>monte_carlo = None</code>, breaking downstream consumers that expected percentiles or <code>prob_profit</code>.</p>
+<p><strong>Fix</strong> (<code>nodes.py:733</code>): <code>dcf_valuation_node</code> now runs <code>_run_monte_carlo</code> on the price data it already holds. The simulation is computationally cheap (~50ms for 5,000 paths) and produces the same percentile/prob_profit/VaR output regardless of volatility route. Added <code>_last_nonnull</code> reducer for <code>monte_carlo</code> in state to handle the concurrent writer scenario.</p>
+
+<h3>Peer Comparison &mdash; Why fall back to peer_sets.py when MCP returns empty?</h3>
+<p><code>get_peers</code> MCP tool can return <code>[]</code> when Yahoo Finance's recommendations API is rate-limited, the server is cold, or the ticker has no recommendations. Without a fallback, <code>peer_comparison_node</code> returned <code>{&quot;peers&quot;: []}</code>, which <code>format_output</code> scored as neutral &mdash; but the user lost the peer context entirely.</p>
+<p><strong>Fix</strong> (<code>nodes.py:852</code>): When <code>get_peers</code> returns <code>[]</code>, fall back to <code>get_peer_tickers(ticker)</code> from <code>shared/peer_sets.py</code> (the hand-curated map). This gives the ~33 covered sectors a zero-network fallback. If both return empty, the node logs a warning and continues with an empty peer set.</p>
+
+<h3>Schema Validator &mdash; Why fix key paths?</h3>
+<p><code>score_quant_deterministic()</code> (<code>shared/runtime_eval.py:614</code>) is a zero-LLM schema validator that runs on every Quant response. It had three bugs:</p>
+<ol>
+<li>Wrong access path: <code>result[&quot;signal_scores&quot;]</code> &rarr; correct <code>result[&quot;metrics&quot;][&quot;signal_scores&quot;]</code></li>
+<li>Shortened group names: <code>&quot;dcf&quot;</code> in old signal score dict keys &rarr; <code>&quot;dcf_value&quot;</code> (actual key in <code>_SIGNAL_WEIGHTS</code>)</li>
+<li><code>conf</code> path: same deep-nesting fix</li>
+</ol>
+<p>The validator now checks all 8 signal groups present, weight sum &asymp; 1.0, MC percentiles consistent, peer fields present, recommendation + confidence invariants.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; No-data handling for zero-volume options &mdash; <code>flow_signal=&quot;no_data&quot;</code> instead of NaN</li>
+<li>&check; Structured insider transactions &mdash; yfinance DataFrame, not Form 4 keyword heuristics</li>
+<li>&check; Monte Carlo runs on both volatility paths &mdash; DCF tickers get simulation too</li>
+<li>&check; Peer fallback chain &mdash; MCP &rarr; peer_sets.py &rarr; empty</li>
+<li>&check; Schema validator actually validates &mdash; corrected key paths</li>
+</ul>
+
+<hr>
+
+<h2>Redis Two-Level Cache (L1 TTLCache + L2 Redis Write-Through)</h2>
+
+<h3>Problem</h3>
+<p>MCP tool results are cached in-process via <code>TTLCache</code> (<code>shared/ttl_cache.py:25</code>). In a multi-process deployment (e.g. Docker with 3 agent containers each calling the same MCP tools), each process maintains its own cache &mdash; the first request to each process pays the full yfinance/RSS fetch cost. A shared cache eliminates this redundancy.</p>
+
+<h3>Solution</h3>
+<p><code>shared/redis_cache.py</code> implements a two-level cache:</p>
+<ul>
+<li><strong>L1</strong>: In-process <code>TTLCache</code> (fast, no network). Hit &rarr; return immediately.</li>
+<li><strong>L2</strong>: Redis write-through. L1 miss &rarr; read from Redis &rarr; populate L1. Every L1 <code>set()</code> propagates to Redis.</li>
+</ul>
+<p>The <code>make_cache()</code> factory returns a bare <code>TTLCache</code> when <code>REDIS_URL</code> is unset (identical behavior to before), or a <code>RedisCache</code> when configured.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; Transparent drop-in &mdash; <code>make_cache()</code> returns same interface as <code>TTLCache</code></li>
+<li>&check; No migration effort &mdash; existing <code>_cache_*</code> variables accept <code>TTLCache</code> or <code>RedisCache</code></li>
+<li>&check; L1 speed for repeated calls, L2 sharing across processes</li>
+<li>&check; Write-through keeps L2 fresh automatically</li>
+<li>&check; Graceful degradation &mdash; Redis unreachable falls back to L1-only</li>
+</ul>
+
+<hr>
+
+<h2>RAGAS Eval Hardening &mdash; Circuit Breaker, SHA-256 Dedup, Burst Limiter</h2>
+
+<h3>Problem</h3>
+<p>Each RAG/Quant/Sentiment response fires 2-5 RAGAS LLM metric calls against the same Qwen3-30B model that serves live user queries. Three failure modes were observed:</p>
+<ol>
+<li><strong>Model unload storms</strong>: A single &ldquo;Model unloaded&rdquo; error triggers 3 retries per metric &times; 5 metrics = 15 concurrent load attempts.</li>
+<li><strong>Identical response re-evals</strong>: The same (input, response) pair re-scored across requests.</li>
+<li><strong>Metric timeout cascade</strong>: A single stuck metric blocks all others indefinitely.</li>
+</ol>
+
+<h3>Solution</h3>
+<p>Four hardening layers in <code>shared/runtime_eval.py</code>:</p>
+<ol>
+<li><strong>Circuit breaker</strong> (<code>_CIRCUIT_MAX_FAILURES=5</code>): 5 consecutive metric failures skips all eval for 5 min.</li>
+<li><strong>SHA-256 dedup</strong> (<code>_dedup_seen</code> TTL dict, 1h): Skips eval when the exact same query+response pair was scored within the last hour.</li>
+<li><strong>Burst limiter</strong> (<code>_burst_ok()</code>): Deque of timestamps enforces <code>EVAL_BURST_LIMIT</code> evaluations per minute.</li>
+<li><strong>Per-metric timeout</strong> (<code>_score_metric_with_timeout()</code>): Each metric wrapped in <code>asyncio.wait_for(timeout=EVAL_METRIC_TIMEOUT)</code>.</li>
+</ol>
+<p>The unified gate <code>_gate_ok()</code> combines all four.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; Circuit breaker prevents eval storm cascade</li>
+<li>&check; SHA-256 dedup eliminates redundant LLM calls for repeated responses</li>
+<li>&check; Burst limiter protects against eval batch-processing spikes</li>
+<li>&check; Per-metric timeout prevents one stuck metric from blocking others</li>
+<li>&check; All controlled via env vars (<code>EVAL_RUNTIME_DISABLED</code>, <code>EVAL_BURST_LIMIT</code>, <code>EVAL_METRIC_TIMEOUT</code>)</li>
+<li>&check; Zero-LLM <code>score_quant_deterministic()</code> validates schema without LLM calls</li>
+</ul>
+
+<hr>
+
+<h2>Date-Aware Semantic Cache</h2>
+
+<h3>Problem</h3>
+<p>The semantic cache (<code>shared/semantic_cache.py</code>) stored responses keyed by query text. A user asking &ldquo;Analyze NVDA&rdquo; on Tuesday would hit the cache from Monday's analysis &mdash; missing overnight news, price moves, or macro shifts. The cache was too effective: it served stale content across trading days.</p>
+
+<h3>Solution</h3>
+<p>Tag each cache entry with the current <code>YYYY-MM-DD</code> date on write, and filter by date on read using a ChromaDB <code>where</code> filter on the metadata <code>date</code> field. Same query on different days &rarr; no metadata match &rarr; cache miss &rarr; new analysis.</p>
+
+<h3>Why not a TTL?</h3>
+<p>A fixed TTL (e.g. 24 hours) would still serve stale data: a query at 9 AM Monday and another at 9 AM Tuesday would be 24 hours apart, but the open market only trades 6.5 hours per day. A date filter aligns with calendar boundaries and avoids edge cases around market holidays and weekends.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; Same-day repeat queries still hit cache (fast path)</li>
+<li>&check; Cross-day queries always regenerate (fresh analysis)</li>
+<li>&check; No TTL configuration &mdash; date boundary is unambiguous</li>
+<li>&check; ChromaDB <code>where</code> filter is O(1) with an index on metadata</li>
+</ul>
+
+<hr>
+
+<h2>RAG Startup Warm-Up</h2>
+
+<h3>Problem</h3>
+<p>The first RAG query after server start paid a ~3-5s cold-start tax: loading the HuggingFace <code>all-MiniLM-L6-v2</code> embedder, connecting to ChromaDB, and loading the CrossEncoder reranker all happened on first use.</p>
+
+<h3>Solution</h3>
+<p><code>_do_prewarm()</code> at <code>agent_2_llamaindex/server.py</code> runs once on Starlette startup via <code>asyncio.to_thread</code>. Three stages: embedder pre-load + dummy encode, three ChromaDB collections (sec_filings/news/earnings), CrossEncoder reranker. Each stage logs elapsed seconds.</p>
+
+<h3>Why not lazy-load as before?</h3>
+<p>Lazy-load is simple but unpredictable: the ~3-5s delay hits the first user, not the deployer. Pre-warming shifts the cost to startup time where it's visible in logs and doesn't affect user-facing latency.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; First RAG query: ~0s warm-up penalty (was ~3-5s)</li>
+<li>&check; Per-stage timing logged for cold-start budget analysis</li>
+<li>&check; Runs in thread executor &mdash; doesn't block asyncio event loop</li>
+<li>&check; Idempotent &mdash; <code>get_or_create_collection</code> is safe to call multiple times</li>
+<li>&check; Graceful if models fail &mdash; errors logged but server doesn't crash</li>
+</ul>
+
+<hr>
+
+<h2>Live Sector-Aware Scenario Shocks with Sector-Relative Ratio Scoring</h2>
+
+<h3>Problem</h3>
+<p>The stress test node ran a static scenario: fixed market decline percentage across all tickers. A 20% market decline on a low-beta utility ticker (&beta;=0.4, so -8% adjusted) vs. a high-beta tech ticker (&beta;=1.5, so -30% adjusted) produced the same stress loss narrative as a uniform -20% shock. Worse, the old formula <code>mkt_decline * beta</code> could produce absurd values &mdash; &beta;=2.5 during a 50% decline = -125% loss, which is impossible since equity can't go below -100%.</p>
+
+<h3>Solution</h3>
+<p><strong>Live market data</strong> (<code>nodes.py:660</code>): Replaced the static <code>_MKT_DECLINE_PCT = {&quot;mild&quot;: -0.10, ...}</code> with live data from the <code>get_macro_indicators</code> MCP tool &mdash; specifically the YTD return of the sector's SPDR ETF (XLK for tech, XLU for utilities, etc.) resolved via <code>_SECTOR_ETF_MAP</code>. Four scenarios:</p>
+<table>
+<tr><th>Scenario</th><th>Multiplier</th><th>Shock =</th></tr>
+<tr><td>Severe</td><td>&times;2.0</td><td><code>max(-0.95, beta &times; (sector_ytd &times; 2))</code></td></tr>
+<tr><td>Moderate</td><td>&times;1.0</td><td><code>-abs(beta &times; sector_ytd)</code></td></tr>
+<tr><td>Mild</td><td>&times;0.5</td><td><code>max(-0.10, beta &times; sector_ytd &times; 0.5)</code></td></tr>
+<tr><td>Recovery</td><td>&mdash;</td><td><code>sector_ytd</code> (no multiplication)</td></tr>
+</table>
+<p><strong>Sector-relative ratio</strong> (<code>nodes.py:688</code>): The stress result now includes <code>sector_ratio = portfolio_loss / sector_decline</code> &mdash; normalizing the loss relative to what the sector experienced. A ticker that drops 12% while its sector drops 10% gets a ratio of 1.2 (slightly worse than sector), independent of absolute decline size.</p>
+<p><strong>Lower bound</strong>: <code>max(-0.95, beta * mkt_decline)</code> prevents the impossible &lt; -100% scenario. The 95% floor is an accounting estimate &mdash; in practice, a stock losing 95% of its value is likely undergoing bankruptcy proceedings.</p>
+
+<h3>Why compute from sector YTD instead of VIX or general market indices?</h3>
+<p>VIX measures expected volatility, not realized return. S&amp;P 500 YTD is a broader market proxy but doesn't capture sector-specific dynamics &mdash; during a sector rotation, tech might be down 15% while healthcare is flat. Using the sector-specific SPDR ETF produces more relevant stress scenarios: an energy stock should be stressed against XLE's YTD performance, not SPY's.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; Live sector YTD &mdash; scenarios reflect actual market conditions, not hardcoded values</li>
+<li>&check; Sector-relative ratio &mdash; normalizes stress loss across sectors</li>
+<li>&check; Hard lower bound (&minus;95%) &mdash; prevents impossible loss values</li>
+<li>&check; Volatility gate preserved &mdash; high-vol tickers still skip stress test</li>
+<li>&check; 4 scenarios &mdash; severe through recovery give a range of outcomes</li>
+</ul>
+
+<h3>yfinance blocking calls &rarr; thread executor</h3>
+<p><strong>Problem</strong>: <code>yf.Ticker.insider_transactions</code> and <code>yf.Ticker.history(period=&quot;max&quot;)</code> are synchronous DataFrame operations that block the asyncio event loop. When the MCP server handles multiple concurrent tool calls (e.g. <code>get_financials</code> for 8 peer tickers), a blocking yfinance call stalls all in-flight coroutines &mdash; the event loop cannot switch to another task until the blocking call returns.</p>
+<p><strong>Solution (first pass)</strong>: The two worst offenders wrapped with <code>await loop.run_in_executor(None, lambda: yf.Ticker(...))</code>.</p>
+<p><strong>Followup (second pass)</strong>: After the first fix, users still saw intermittent <code>httpx.ReadError</code> mid-call on <code>get_financials</code>, <code>get_prices</code>, etc. The underlying cause was the same &mdash; other yfinance tools (<code>stock.history()</code>, <code>.financials</code>, <code>.balance_sheet</code>, <code>.cashflow</code>, <code>.info</code>, <code>.option_chain()</code>, <code>.options</code>, <code>stock.calendar</code>, <code>stock.earnings_dates</code>) were still making synchronous calls on the event loop. While individually fast (~50-200ms), under concurrent peer analysis the cumulative blocking window was large enough to stall FastMCP's SSE keepalive writes, causing the client to disconnect. Fixed by wrapping <strong>all 9 synchronous yfinance call sites</strong> in <code>run_in_executor</code>. A defence-in-depth change was also made to the MCP client: <code>httpx.ReadError</code>, <code>httpx.ConnectError</code>, and <code>httpx.NetworkError</code> were added to <code>_TRANSIENT_EXC</code> so transient SSE blips retry instead of failing immediately.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; Event loop unblocked &mdash; no coroutine starvation during yfinance data fetches</li>
+<li>&check; Thread pool managed by asyncio &mdash; no manual thread lifecycle</li>
+<li>&check; No API changes &mdash; return types, signatures, error handling identical</li>
+<li>&check; All 9 synchronous yfinance call sites wrapped (up from the original 2)</li>
+</ul>
+
+<hr>
+
+<h2>RAG Index Warming via A2A WORKING Events &mdash; From Fire-and-Forget to Await-able</h2>
+
+<h3>Problem</h3>
+<p>The RAG agent's <code>_build_response()</code> fired <code>asyncio.create_task(self._ensure_ingested(ticker))</code> and returned <code>{&quot;_warming&quot;: True, &quot;summary&quot;: &quot;Index is warming for [ticker]...&quot;}</code> immediately. The orchestrator saw a completed task with a warming placeholder &mdash; no data to synthesize. The user would then have to re-query to get the actual analysis after ingestion completed in background. Poor UX: every first query for a new ticker returned a &quot;come back later&quot; placeholder regardless of whether filing downloads were fast (5s) or slow (30s+).</p>
+<p>The root issue: A2A only reports terminal events (COMPLETED/FAILED). The RAG agent couldn't say &quot;I'm working on it, hold on&quot; &mdash; it had to return something immediately or block the A2A protocol indefinitely.</p>
+
+<h3>Solution</h3>
+<p>Two-part fix using A2A streaming's intermediate states:</p>
+<ol>
+<li><strong>RAG agent emits <code>TASK_STATE_WORKING</code> SSE events</strong> (<code>agent_2_llamaindex/executor.py:19-34</code>): Before entering ingestion, yields a <code>ServerTaskUpdateEvent</code> with <code>status: TASK_STATE_WORKING</code> and a message like <code>&quot;Ingesting SEC filings and news for [ticker]...&quot;</code>. This keeps the A2A channel open and tells the orchestrator &quot;not done yet, but making progress.&quot;</li>
+<li><strong>Orchestrator processes WORKING events</strong> (<code>SubAgentClient</code> via <code>a2a-sdk</code>): The <code>BaseClient</code>'s streaming event handler skips non-terminal events by default. Changed to accumulate WORKING events &mdash; when the streaming loop gets a <code>status_update</code> with <code>TASK_STATE_WORKING</code>, it updates a <code>_status_msg</code> on the client and continues listening. Once the terminal event arrives, the accumulated working messages are prepended to the result text, so the orchestrator LLM sees both the progress message and the final analysis.</li>
+<li><strong>Index check before ingestion</strong> (<code>_ensure_ingested</code>): Checks <code>is_filing_ingested(edgar_url)</code> before downloading &mdash; if all filings are already indexed, skips ingestion entirely and returns data from existing index. Combined with WORKING events, the path is:
+<ul>
+<li>Already indexed &rarr; immediate data return (no WORKING event)</li>
+<li>Not indexed &rarr; emit WORKING &rarr; download + ingest &rarr; emit data</li>
+<li>Timeout &rarr; orchestrator's per-agent timeout catches it</li>
+</ul>
+</li>
+</ol>
+
+<h3>Why not just increase the request timeout?</h3>
+<p>The A2A protocol is designed for near-immediate responses &mdash; the orchestrator's <code>asyncio.wait_for</code> wraps the entire <code>send_message()</code> call. Increasing the timeout would fix the symptom but not the UX: the user would still wait silently. WORKING events provide progress visibility and let the orchestrator send intermediate status back if desired (e.g. &quot;Analyzing NVDA... ingesting 10-K filings&quot;).</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; No more &quot;come back later&quot; placeholders &mdash; first queries on new tickers work end-to-end</li>
+<li>&check; WORKING events &mdash; progress visibility for long-running ingestion</li>
+<li>&check; Existing index check &mdash; already-indexed tickers skip ingestion entirely</li>
+<li>&check; Timeout preserved &mdash; orchestrator still has safety net</li>
+<li>&check; Minimal protocol change &mdash; WORKING events are part of the A2A spec</li>
+</ul>
 
 <hr>
 <p style="font-size:.85rem;color:#888"><a href="index.html">Back to docs hub</a></p>

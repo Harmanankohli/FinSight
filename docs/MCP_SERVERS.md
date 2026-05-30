@@ -6,7 +6,7 @@ Single unified MCP server (`mcp_servers/finsight_server.py`) hosting both agent 
 
 | Port | Tools | Registry |
 |---|---|---|---|
-| 8010 | `get_prices`, `get_financials`, `get_options_chain`, `get_company_filings`, `get_financial_filings`, `get_filing_content`, `validate_ticker`, `resolve_company_ticker`, `full_text_search`, `get_news_sentiment`, `get_earnings_calendar`, `execute_python` | `find_agent`, `resource://agent_cards/list`, `resource://agent_cards/{name}` |
+| 8010 | `get_prices`, `get_financials`, `get_options_chain`, `get_company_filings`, `get_financial_filings`, `get_filing_content`, `validate_ticker`, `resolve_company_ticker`, `full_text_search`, `get_news_sentiment`, `get_earnings_calendar`, `get_insider_transactions`, `get_peers`, `get_scenario_shocks`, `execute_python` | `find_agent`, `resource://agent_cards/list`, `resource://agent_cards/{name}` |
 
 No API keys required (SEC uses public API, news uses RSS feeds). Windows-compatible — `import resource` guarded by platform check.
 
@@ -24,11 +24,14 @@ Health check: `GET http://localhost:8010/health` → `{"status":"ok","agent":"mc
 
 | Cache | TTL | Notes |
 |---|---|---|
-| `get_prices` | 5 min | Key: `(ticker, period, interval)` |
-| `get_financials` | 24 h | Key: `(ticker,)` |
-| `get_news_sentiment` | 15 min | Only cached when articles found |
+| `get_prices` | 1 min | Key: `(ticker, period, interval)` |
+| `get_financials` | 1 h | Key: `(ticker,)` |
+| `get_news_sentiment` | 5 min | Only cached when articles found |
 | `get_filing_content` | Permanent (LRU-200) | Filings are immutable |
 | `_fetch_submissions` | 6 h | Shared by `get_company_filings` + `get_financial_filings` |
+| `get_peers` | 24 h | yfinance Industry/Sector peer lists |
+| `get_scenario_shocks` | 7 days | Historical crash returns per sector ETF |
+| `get_insider_transactions` | Not cached | Insider data is queried on demand |
 
 Cache hits log `"Cache hit for <tool>"` at DEBUG level. Cache misses fetch fresh data and store the result.
 
@@ -75,6 +78,14 @@ RSS feeds: Yahoo Finance, CNBC, MarketWatch, Seeking Alpha. VADER sentiment scor
 |---|---|---|
 | `get_news_sentiment` | `ticker`, `limit` (10) | Articles with sentiment scores, aggregates |
 | `get_earnings_calendar` | `ticker` | Earnings date status |
+
+### Market Data Tools
+
+| Tool | Parameters | Returns |
+|---|---|---|
+| `get_peers` | `ticker` | List of up to 8 peer tickers via yfinance Industry/Sector `top_companies`. Dynamic discovery — no static mapping needed. Cached 24h. |
+| `get_scenario_shocks` | `sector` (optional) | Historical crash returns for 4 scenarios (2008, 2020, dot-com, 2022 mild recession) using sector-specific ETFs (QQQ/XLP/XLF/etc). Cached 7 days. |
+| `get_insider_transactions` | `ticker`, `days` (90) | Structured insider buy/sell data from yfinance `Ticker.insider_transactions`. Returns `transactions` array + `summary` dict with total, buys, sells, direction, net_shares, net_value. |
 
 ### Python Runner Tool
 

@@ -186,6 +186,8 @@ Evaluation results are only useful if they're tracked over time. Pushing scores 
 
 **Why increase HTTP timeout to 180s?** Faithfulness makes multiple sequential LLM calls within a single `ascore()` — it decomposes the response into atomic claims, then verifies each against the retrieved contexts. On a 20B local model at ~20-30s per call, three claims require 60-90s total. The default 60s client timeout kills the metric mid-decomposition. 180s provides headroom for up to 6 claims with retries.
 
+**Why `max_retries=5` instead of the previous `max_retries=1`?** LM Studio periodically unloads idle models from GPU memory. When a RAGAS metric call arrives after an idle period, LM Studio reloads the model — the first request times out, succeeding on retry. With `max_retries=1`, the single retry was sometimes insufficient for model reload (~2-5s). Increasing to 5 gives the SDK enough budget to absorb reload latency at the httpx layer rather than failing instructor's structured-output calls. The `instructor.from_openai(max_retries=1)` override was removed so instructor calls inherit the client's retry count. Separate `asyncio.TimeoutError` handling prevents timeouts from appearing as bare colons in logs.
+
 **Why `sys.stdout.reconfigure(encoding='utf-8')`?** RAGAS internal log messages (from `ragas/llms/base.py`) contain Unicode characters like curly quotes (`\u2010`, `\u2011`) when formatting LLM responses. On Windows with cp1252 console encoding, these characters trigger `UnicodeEncodeError`, producing noisy "--- Logging error ---" tracebacks. Setting UTF-8 at import time in `shared/config.py` prevents this for both stdout and stderr.
 
 **Why `_push_scores` skips when trace_id is None?** With placeholder Langfuse API keys (`pk-lf-...`), `langfuse.create_score()` with no `trace_id` sends an API request missing the required trace identifier. The Langfuse cloud API rejects these with "Bad request" errors. Since eval tasks may run outside any active trace context, the early return when `trace_id is None` avoids pointless API failures.
@@ -1197,6 +1199,23 @@ Python's `atexit` runs synchronous callbacks. An async `disconnect_all()` inside
 - ✅ `atexit` hook — best-effort clean shutdown
 - ✅ −131 lines of boilerplate across 4 executor files
 
+### Why remove the fail-fast first-attempt timeout?
+
+**Original design**: The MCP client's `call_tool_by_name` used `self.timeout / 3` on the first retry attempt to fail fast (5s for a 15s timeout), then fell back to the full timeout on subsequent attempts. The rationale was: if the first attempt fails quickly, the total latency across all retries is bounded.
+
+**Problem**: yfinance HTTP requests have natural latency variance — a call that takes 4 seconds one time might take 6 seconds the next (rate limiter queue, Yahoo backend load, network jitter). Under the /3 logic, a first attempt that took 5.5s would timeout (5s threshold), triggering a retry. The retry using the full 15s would then succeed — but the total latency was 5.5s + 6s = 11.5s instead of just 6s. The fail-fast pattern *added* latency by creating false-positive timeouts on naturally variable endpoints.
+
+Additionally, the retry backoff logic (`2^attempt` exponential) was already fast — the first retry waits <1s. If the first attempt genuinely fails (not a timeout), the retry happens almost immediately. The reduced timeout only affected the "first attempt took longer than expected but would have succeeded" case, which is the common case for yfinance variability, not the failure case.
+
+**Fix**: All retry attempts now use the full configured timeout. The exponential backoff still provides fast retries for genuine failures (connection errors, 503s). The timeout only fires when a request truly hangs beyond the configured limit, not when it's merely slower than average.
+
+### Key properties
+
+- ✅ No false-positive timeouts from normal latency variance
+- ✅ Total latency per retry chain is `timeout × max_retries` worst-case (was `timeout/3 + timeout × (max_retries-1)`)
+- ✅ Exponential backoff still provides fast retries on genuine failures
+- ✅ Simplifies mental model — one timeout value, not context-dependent thresholds
+
 ## Lazy OpenTelemetry Instrumentation
 
 ### Why lazy instrumentation instead of module-level `*Instrumentor().instrument()`?
@@ -1415,3 +1434,899 @@ The `load_memory` tool returned empty results even after sessions were persisted
 2. **`_persist_to_memory`** — called directly in `agent_executor.py` after response processing (works for A2A requests)
 
 This ensures memory works regardless of invocation path.
+
+## Data-Driven DCF Assumptions
+
+### Why replace the hardcoded 8% WACC with data-driven computation?
+
+The original DCF model assumed a fixed 8% WACC for all tickers. For a high-beta tech stock (AAPL, beta=1.2), CAPM gives cost of equity ≈ 4.3% + 1.2 × 5.5% = 10.9% — 36% higher than the fixed assumption, overvaluing the stock. For a low-beta utility (DUK, beta=0.5), CAPM gives 4.3% + 0.5 × 5.5% = 7.05% — 12% lower, undervaluing it. A single WACC for all tickers systematically biases DCF outputs.
+
+### How is WACC now computed?
+
+Three-step process in `dcf_valuation_node()` (`agent_3_langgraph/nodes.py:737`):
+
+1. **Cost of equity (CAPM)**: `risk_free (4.3%) + beta × equity_premium (5.5%)`. Beta is taken from the computed metrics (yfinance 60-month), fallback to 1.0 if unavailable.
+
+2. **After-tax cost of debt**: `interest_expense / total_debt × (1 - tax_rate)`, with fallback to 4%. Total debt is `longTermDebt + shortTermDebt` from latest financials.
+
+3. **WACC**: Weighted average by market cap and total debt, clamped to [6%, 18%]. `wacc = (E/(E+D)) × coe + (D/(E+D)) × cod_at`. The clamp prevents degenerate values from extreme capital structures (e.g., a company with near-zero debt doesn't get a 2% WACC).
+
+### How is the growth rate determined?
+
+Previously fixed at a single value. Now computed as:
+- **Base growth**: Blend of `revenueGrowth` (60%) and `earningsGrowth` (40%) from yfinance fundamentals
+- **Bounds**: Clamped to [2%, 25%] — a 2% floor reflects long-term GDP trend, 25% ceiling prevents unrealistic perpetual growth
+- **Fallback**: 8% if neither growth metric is available (same as the old hardcoded value)
+- **Terminal growth**: `min(3%, wacc - 2%)` — prevents terminal value from exceeding WACC (which would make terminal value infinite)
+
+### Why a tapered projection instead of a single-stage model?
+
+A 2-stage DCF (high growth → terminal) produces abrupt jumps in the projected FCF. The 5-year tapered model linearly fades the initial growth rate toward the terminal rate over years 3–5, producing smoother valuations. The terminal value uses the Gordon Growth Model discounted to present value.
+
+### Key properties
+
+- ✅ Per-ticker WACC — beta and capital structure influence discount rate
+- ✅ Data-driven growth — revenue/earnings growth sets projections, not a constant
+- ✅ Bounded output — WACC clamped [6%, 18%], growth clamped [2%, 25%]
+- ✅ Smooth projection — tapered fade avoids GGM discontinuity
+- ✅ De facto backward compatible — fallback chain defaults to 8%/3% when data missing
+
+## Parallel Fan-Out Graph Topology
+
+### Why parallel fan-out instead of a sequential chain?
+
+The original Quant graph was largely sequential: `fetch_prices → compute_metrics → DCF/stress → format_output`. Price fetching and fundamentals fetching were sequential, adding ~3-5s per call. The revised graph fans out from START into 5 parallel branches:
+
+```
+START ──→ fetch_prices ──→ compute_base_metrics ──[volatility gate]──→ DCF/stress
+                       └──→ technical_analysis
+       └──→ fetch_fundamentals ──→ peer_comparison
+                               └──→ analyst_positioning
+       └──→ options_flow
+       └──→ insider_signals
+```
+
+All paths converge at `format_output` → `llm_summary`. Since the branches are independent (prices don't depend on fundamentals, technicals don't depend on DCF), there's no reason to serialize them. `LangGraph` supports multiple outgoing edges from a node naturally — no special parallel construct needed.
+
+### Why not merge `fetch_prices` and `fetch_fundamentals` into one node?
+
+They call different MCP tools with different cache profiles and error characteristics. `fetch_prices` uses `get_prices` (TTL-cached at 1 min) and can fail independently of `fetch_fundamentals` (TTL-cached at 1 hr). A single node would couple their lifetimes — if fundamentals data fails, prices are also lost, even though price-only analysis (volatility, Sharpe, technicals) is still useful.
+
+### Why a volatility gate instead of always computing both DCF and stress test?
+
+DCF is meaningless for extremely volatile stocks — the discount rate uncertainty swamps the valuation. The 35% annual-vol threshold gates to stress test only, saving the ~1-2s DCF computation and avoiding a meaningless output. The `dcf_error` field is set in `compute_metrics_node` *before* the routing decision, so callers see "DCF skipped: volatility exceeded 35%" regardless of which path is taken.
+
+### Why add options_flow and insider_signals as separate branches?
+
+These were previously not computed at all (no data source). Adding them as parallel branches from START means they run concurrently with prices/fundamentals with zero added latency (assuming no MCP bottleneck). Their data is incorporated at `format_output` through a weighted signal aggregation alongside the risk/DCF/fundamentals/technicals scores.
+
+### Key properties
+
+- ✅ 5 parallel branches — independent work streams don't block each other
+- ✅ Volatility-gated DCF — saves compute when valuation would be meaningless
+- ✅ No node coupling — price and fundamentals failures are isolated
+- ✅ Zero added latency — new branches (options, insider) run concurrently
+- ✅ All paths converge at format_output — single enrichment point
+
+## Quant Graph Fan-In Resolution: Diamond Dependency, Reducers & Passthrough Keys
+
+### Problem
+
+The parallel fan-out graph had a subtle topology bug. `fetch_fundamentals` fed into three downstream nodes: `peer_comparison`, `analyst_positioning`, and a direct edge to `format_output`. This created a **diamond dependency** — `format_output` had two indirect predecessors via `peer_comparison`/`analyst_positioning` AND a direct edge from `fetch_fundamentals`. LangGraph scheduled `format_output` twice in the same checkpoint step when the two intermediate nodes completed concurrently. Each duplicate run wrote every state key, triggering `INVALID_CONCURRENT_GRAPH_UPDATE` at whichever key was updated first — typically `positioning` or `metrics`.
+
+### Solution
+
+Three-part fix:
+
+**1. Remove diamond dependency** (`agent_3_langgraph/graph.py:39`): Deleted `builder.add_edge("fetch_fundamentals", "format_output")`. Fundamentals data flows through `peer_comparison` and `analyst_positioning` into shared state — `format_output` reads it from state, not from a direct edge. `format_output` now has exactly 5 clean predecessors and runs exactly once per invocation.
+
+**2. Add Annotated reducers for concurrent writes** (`agent_3_langgraph/state.py:6-22`): Three state keys are written by multiple nodes in the same step, so they needed reducers even without the diamond:
+- `metrics` → `_merge_dict` (merges dicts from `compute_metrics` and `format_output`, second wins on key collision)
+- `stress_test_result` → `_last_nonnull` (last non-null value wins — `stress_test_node` writes real data, `format_output`'s initial write is `None`)
+- `dcf_error` → `_last_nonnull`
+- `reasoning` → `_last_str` (last non-empty string wins, then `llm_summary_node` overwrites)
+- `recommendation` → `_last_str` (idempotent — both runs produce same BUY/HOLD/SELL)
+- `monte_carlo` → `_last_nonnull`
+
+**3. Remove passthrough keys from format_output** (`agent_3_langgraph/nodes.py`): `format_output_node` was returning copies of state keys (`positioning`, `dcf_valuation`, `correlation_matrix`, `fundamentals`, `technicals`, `peer_comparison`, `options_signals`, `insider_signals`) that other nodes already wrote. Even with reducers, writing every key from `format_output` is wasteful and confusing — the node should only emit what it computes: `recommendation`, `reasoning`, `metrics` (with signals/confidence), and `stress_test_result`. Full state from `ainvoke()` still carries every key via the owning nodes.
+
+### Why not use LangGraph's built-in fan-in handling?
+
+LangGraph handles fan-in naturally — multiple predecessors can converge on a single node. The problem wasn't fan-in by itself but the *diamond*: `format_output` being reachable via two different path lengths from `fetch_fundamentals`. LangGraph triggers the node twice when its predecessors complete in different checkpoint steps (or in the same step via separate schedule entries). The reducers would have caught the symptom (`INVALID_CONCURRENT_GRAPH_UPDATE`) but the diamond removal fixes the root cause.
+
+### Why keep the reducers after fixing the diamond?
+
+The reducers are still needed for the remaining concurrent writes — `metrics` is written by `compute_metrics` AND `format_output` in the same step, `stress_test_result` by `stress_test` AND `format_output`, and `dcf_error` by `compute_metrics` AND `dcf_valuation`. These are not diamond-induced duplicates but legitimate multi-writer keys. The reducers act as a safety net for any future topology changes that might introduce similar conflicts.
+
+### Key properties
+
+- ✅ Root cause fixed — diamond edge removed, `format_output` runs once
+- ✅ Reducers handle legitimate multi-writer keys
+- ✅ Passthrough keys removed — `format_output` only emits what it computes
+- ✅ Full state still accessible — owning nodes write their keys before fan-in
+- ✅ Safety net — reducers prevent regression from future topology changes
+
+## Parallel News Ingestion with SEC Filings
+
+### Why fire news and SEC ingestion as concurrent background tasks?
+
+The original RAG agent fetched SEC filings first (`_ensure_ingested`), then queried. News was fetched on-demand via a separate MCP tool call inside the query path. This meant:
+1. News ingestion added 1-3s latency to every query that mentioned "news" or "sentiment"
+2. News and SEC ingestion were sequential (~3s + ~8s = ~11s total cold-start)
+3. No persistent news index — news was re-fetched from MCP each time (no dedup cache)
+
+### Solution
+
+`query()` in `agent_2_llamaindex/executor.py:162` now fires both ingestions as `asyncio.create_task()` without awaiting:
+```python
+asyncio.create_task(self._ensure_ingested(ticker))
+asyncio.create_task(self._ensure_news_ingested(ticker))
+return await self.index.query(ticker, query_text)
+```
+
+The ChromaDB query runs immediately against whatever is already indexed. If a filing or news article was ingested in a prior query, it's found. If the ticker has never been queried before, the ingestion tasks complete in the background and the current query returns results from the first ingestion that finishes (or falls back gracefully).
+
+### Why a separate dedup key for news?
+
+SEC filings use `edgar_url` as the dedup key — immutable and canonical for SEC documents. News articles don't have an EDGAR URL. Using `news_{ticker}` as the daily dedup key in `_last_ingestion` ensures news is re-fetched at most once per day per ticker, regardless of how many times the ticker is queried. The same daily-dedup pattern as `_ensure_ingested` but with a different key namespace.
+
+### Why separate ChromaDB collections for news vs filings?
+
+Different retrieval characteristics: news queries want recency (temporal decay matters), filing queries want relevance (semantic similarity matters). A single collection would mix the two, making it impossible to apply different reranking strategies. The `_classify_query_intent` function selects which collections to search based on query keywords, and the `_hybrid_score` blends vector (0.6), keyword (0.2), and temporal decay (0.2) differently per collection.
+
+### Key properties
+
+- ✅ Zero added latency — ingestion is fire-and-forget, query uses existing index
+- ✅ Parallel cold-start — news and filings ingest concurrently (~8s total vs ~11s)
+- ✅ Daily dedup per ticker — `news_{ticker}` key prevents redundant fetches
+- ✅ Separate collections — per-type retrieval strategies
+- ✅ Graceful degradation — query returns best available data
+
+## Multi-Collection Query Routing
+
+### Why keyword-based intent classification instead of RouterQueryEngine?
+
+LlamaIndex's `RouterQueryEngine` uses an LLM call to decide which tool/index to route to. For every RAG query, this adds ~2-5s of LLM inference time and ~500-2000 tokens, with the risk of the LLM choosing the wrong collection (e.g., routing an earnings question to general SEC filings). A keyword-based `_classify_query_intent()` in `index_manager.py:68` completes in microseconds with deterministic results.
+
+The classifier checks the query text for keyword groups:
+- `news`, `sentiment`, `headline`, `breaking`, etc. → include `"news"` collection
+- `earnings`, `revenue`, `guidance`, `eps`, `beat`, `miss` → include `"earnings"` collection
+- `analyze`, `overview`, `outlook`, `recommend`, `should I` → search ALL collections
+- Default (pure financial analysis queries): search `"sec_filings"` only
+
+### Why score-sorted dedup instead of top-k per collection?
+
+If each collection returns top-5 nodes and they overlap, the final set may have duplicates. The merge-dedup pipeline: collect all nodes from all selected collections → hybrid re-score each node → sort by score descending → deduplicate by content hash (first 200 chars) → truncate to top-5. This guarantees:
+1. The best-matching nodes win regardless of source collection
+2. No duplicate content reaches the LLM (which would waste context window)
+3. A node from a low-priority collection can outrank a weak match from the primary one
+
+### Why a 3-factor hybrid score?
+
+A pure vector score favors semantically similar but potentially old content. Adding keyword overlap (exact term matching) ensures query terms like "Q3 2025 revenue" surface documents with those exact phrases. Adding temporal decay (exponential, λ=0.004, year-old ≈ 0.23) favors recent news/earnings without completely excluding old filings. The weighted blend (0.6 vector + 0.2 keyword + 0.2 temporal) is tuned to balance semantic relevance with recency for financial data, where both matter.
+
+### Why not use LlamaIndex's built-in retriever fusion?
+
+`RetrieverQueryEngine` fusion expects all retrievers to use the same index type and similarity metric. Our collections are independent ChromaDB instances with different embedding profiles (different document types require different chunking strategies). The custom pipeline gives full control over per-collection retrieval parameters (top-k per collection, hybrid scoring weights, dedup strategy) without fighting the framework's assumptions.
+
+### Key properties
+
+- ✅ Deterministic routing — no LLM cost, no latency, no hallucinated choices
+- ✅ Microsecond classification — ~500x faster than RouterQueryEngine
+- ✅ Score-sorted dedup — best content wins, duplicates eliminated
+- ✅ 3-factor hybrid score — semantic + keyword + temporal = financial-grade ranking
+- ✅ Framework-agnostic — works with any vector store, not just LlamaIndex
+
+## Orchestrator Parallel Dispatch via System Prompt
+
+### Why change the system prompt instead of adding code-level dispatch logic?
+
+Two options existed for parallel agent dispatch:
+- **Option A (system prompt)**: Instruct the LLM in `_STATIC_PREAMBLE` to emit all `send_message` calls in a single assistant turn. Qwen3-30B-A3B natively supports multiple tool calls in one response — the instruction simply unlocks existing capability.
+- **Option B (deterministic extraction)**: A Python-side shim that extracts tickers from user input and fires all sub-agent A2A calls simultaneously, bypassing the LLM for routing. ~5h implementation, adds ticker-extraction false-negative risk.
+
+Option A was chosen (implemented in `agent_1_adk/agent.py:184-189`). It's zero new code, zero added latency, and has a documented escape hatch (Option B) if a future model swap breaks parallel tool calling. The `_STATIC_PREAMBLE` is KV prefix cached — adding the instruction has no inference cost.
+
+### Why add agent responsibility boundaries separately?
+
+Without boundaries, the LLM sometimes routes news-related queries to the Sentiment agent ("get news sentiment" sounds like the Sentiment agent's job) even though RAG now owns financial news retrieval. The boundaries block in `_build_instruction()` (`agent.py:253-260`) disambiguates: "Financial RAG Agent owns ALL document and news retrieval." This is a narrow fix — it doesn't refactor any agent — just clarifies the prompt to reduce misrouting.
+
+### Why update step 5 to mention receiving results "together"?
+
+The old step 5 said "After all agents respond" without specifying whether results arrive individually or together. The new wording ("you will receive their results together in the next turn") aligns the LLM's expectation with the actual A2A behavior — all sub-agent responses arrive in the subsequent turn because the LLM doesn't await between `send_message` calls. This prevents the model from trying to process partial results prematurely.
+
+### Key properties
+
+- ✅ Zero new code — pure system prompt instruction, no Python dispatch shim
+- ✅ KV-cached — static preamble keeps prefix cache warm
+- ✅ Documented escape hatch — Option B exists on paper if needed
+- ✅ Narrow boundary fix — prevents LLM misrouting news to Sentiment agent
+- ✅ Explicit parallel contract — step 5 confirms batch reception
+
+## Parallel Filing Downloads + Server-Side Truncation
+
+### Why switch from sequential to parallel filing fetches?
+
+The original `_ensure_ingested()` in `agent_2_llamaindex/executor.py` fetched filing content in a sequential loop: for each filing, call `get_filing_content`, parse, append. For a ticker with 5 new filings, this summed the per-filing latencies (~3-5s each = ~15-25s total). The revised two-phase pattern (`executor.py:74-107`):
+1. **Filter phase**: Iterate filings to find un-ingested candidates (fast, no network)
+2. **Fetch phase**: `asyncio.gather(*[_fetch_one(f) for f in candidates])` — all filing downloads run concurrently
+
+Filing downloads for a 5-filing ingest now complete in ~max(per-filing latency) (~3-5s). The `_fetch_one` helper isolates per-filing errors — one failed filing doesn't block the others.
+
+### Why truncate server-side at 25k instead of client-side at 20k?
+
+The old code truncated `content[:20000]` in the RAG agent after receiving the full response from MCP. A 10-K filing response (~80-150k chars) was fully transmitted over the loopback before being truncated. Moving the truncation to `get_filing_content` in `mcp_servers/finsight_server.py:842` (`result["content"] = result.get("content", "")[:25000]`) cuts the bandwidth to <25k per filing — the RAG agent never receives the full text. The limit was also raised from 20k to 25k (MCP server overhead is negligible, more content is better for retrieval).
+
+### Why not parallelize filing fetches in Phase 1?
+
+Phase 1 added the RAG news ingestion and multi-collection architecture. Parallelizing filing downloads was deferred to Phase 2 because the sequential loop was already functional — the latency impact was hidden behind the total cold-start (~11s). With Phase 2's focus on latency reduction, the parallel fetch was the highest-leverage change in the RAG pipeline.
+
+### Key properties
+
+- ✅ O(max) instead of O(sum) — 5-filing ingest drops from ~20s to ~4s
+- ✅ Isolated errors — per-filing failure doesn't block other filings
+- ✅ Server-side truncation — bandwidth cap, not client-side afterthought
+- ✅ Raised limit — 25k vs 20k, more content for retrieval
+- ✅ Backward compatible — ingestion pipeline downstream unchanged
+
+## Single-Flight News Cache
+
+### Why refactor `get_news_sentiment` into impl + wrapper?
+
+The original `get_news_sentiment` used manual `_cache_news.get(key)` / `_cache_news.set(key, result)` pattern. When two concurrent callers (e.g., RAG agent + dashboard) requested the same uncached ticker simultaneously, both would miss the cache, both would fetch RSS feeds, and both would set the cache — wasting one RSS round-trip (~1-2s). The `TTLCache.get_or_fetch()` method (`shared/ttl_cache.py:25`) was already designed for this: it uses an internal `asyncio.Event` per key so the second caller awaits the first's result instead of duplicating work.
+
+The refactor (`mcp_servers/finsight_server.py:1406-1551`):
+1. Extracted all fetch logic into `_get_news_sentiment_impl(ticker, limit)` — pure data fetching, no caching concern
+2. The outer `get_news_sentiment` tool now just calls `_cache_news.get_or_fetch(cache_key, lambda: _get_news_sentiment_impl(...))`
+
+### Why was this deferred from Phase 1?
+
+Phase 1's news ingestion was single-caller (only the RAG agent's background task calls `get_news_sentiment`). The single-flight pattern matters when multiple concurrent callers exist — which Phase 2 doesn't introduce directly, but the fix is zero-risk (pure refactor) and prevents future regressions when additional consumers (dashboard, sentiment agent's parallel data collection) call the same tool.
+
+### Key properties
+
+- ✅ Single-flight — concurrent callers share one RSS fetch
+- ✅ Zero behavioral change — cache key, TTL, and response format identical
+- ✅ Pure refactor — impl extracted, wrapper delegates to get_or_fetch
+- ✅ Already-supported pattern — TTLCache.get_or_fetch existed, just unused by this tool
+
+## Fire-and-Forget RAG Ingestion
+
+### Why convert `_ensure_ingested` from await to fire-and-forget?
+
+Phase 1's `query()` used `await asyncio.gather(self._ensure_ingested(ticker), self._ensure_news_ingested(ticker))` — the query blocked until both ingestion tasks completed. This added ~8s (filings) + ~3s (news) = ~11s of cold-start latency to every new ticker's first query. The query result could only use data indexed from a previous run.
+
+Phase 2 converts both to `asyncio.create_task()` (`executor.py:162-166`):
+```python
+asyncio.create_task(self._ensure_ingested(ticker))
+asyncio.create_task(self._ensure_news_ingested(ticker))
+return await self.index.query(ticker, query_text)
+```
+
+The ChromaDB query runs immediately against whatever is already indexed. If the ticker was queried before, all data is available. If it's a new ticker, the ingestion finishes in the background and the current query returns a warming signal.
+
+### Why a warming signal instead of silently returning empty results?
+
+Silent empty results are confusing — the user sees "no data found" and doesn't know whether the ticker genuinely has no filings or the index is still warming. The `_warming` flag in `index_manager.py` (`{"_warming": True, "summary": "Index is warming for {ticker}..."}`) makes the state explicit. The orchestrator LLM can use this signal to tell the user "analysis in progress, results will improve."
+
+### Why keep the per-ticker `asyncio.Event` tracking optional?
+
+The plan mentioned optional `self._ingest_events: dict[str, asyncio.Event]` so a same-process second query could briefly await the first's ingestion. This wasn't implemented because:
+1. The warming signal already communicates the incomplete state
+2. An Event-based wait adds complexity for marginal UX gain (the background task completes in ~8s anyway)
+3. The simple approach (fire-and-forget + warming signal) is correct for both first and subsequent queries
+
+### Key properties
+
+- ✅ Zero blocking on first query — ingestion runs in background
+- ✅ Warming signal — explicit incomplete-state communication
+- ✅ Existing data still usable — previously indexed content returns immediately
+- ✅ No complexity — no ingestion-tracking events needed
+- ✅ Graceful degradation — query returns best available data, even if partial
+
+## Sentiment Agent → Market Context Agent Rebrand
+
+### Problem
+
+Phase 1 gave the RAG agent news + filing retrieval. The Sentiment agent's news/filing fetch then became redundant — both agents fetched the same data and produced overlapping narratives. The original redesign proposal wanted to gut the Sentiment agent entirely, but the CrewAI narrative engine was already producing useful qualitative analysis. The question was: what unique analytical lane could Sentiment own that RAG and Quant didn't?
+
+### Solution
+
+Rebrand "Sentiment Intelligence Agent" → "Market Context Agent" and repurpose its CrewAI narrative engine from bottom-up news analysis to top-down macro + peer positioning:
+
+1. **New MCP tool `get_macro_indicators()`** (`finsight_server.py:305`): Fetches Treasury yields (10Y/2Y), VIX, DXY, sector ETF performance — all cached 15 min. No ticker argument (macro is global).
+
+2. **New `shared/peer_sets.py`**: 33 hand-curated peer sets across 10+ sectors. Shared with Quant's `peer_comparison_node` (§8.5.5 in the plan). The resolver returns up to 5 peers, excluding the ticker itself.
+
+3. **`_collect_data_parallel` rewritten** (`executor.py:39-86`): 3-step pipeline — macro + primary financials → resolve peers → parallel peer financials + prices. Drops `get_news_sentiment` and `get_company_filings` entirely.
+
+4. **MarketContextCrew** (`crew.py`): Single agent, role "Market Context Analyst". Task outputs JSON: `narrative`, `macro_regime`, `relative_peer_positioning`, `overall_signal`, `confidence_score` (0-1), `key_tailwinds`, `key_headwinds`.
+
+5. **Agent card** (`market_context_agent.json`): Two skills — `macro_regime_analysis`, `peer_landscape_analysis`.
+
+### Why not keep Sentiment and RAG both fetching news?
+
+Overlap. Both agents called `get_news_sentiment` and `get_company_filings` — the same MCP tools, the same cached data. The single-flight cache (Phase 2) already deduplicated the RSS fetches, but the orchestrator LLM still received two redundant narratives. Giving each agent a distinct data lane eliminates redundancy and makes the orchestrator's synthesis more efficient (RAG = document retrieval, Market Context = macro/peer positioning, Quant = numbers).
+
+### Key properties
+
+- ✅ No redundant data fetches — every agent owns distinct MCP tools
+- ✅ Shared peer sets — Market Context and Quant use the same `peer_sets.py`
+- ✅ Backward compatible — old agent name `sentiment_agent.json` removed; orchestrator discovers `market_context_agent.json` via `SubAgentClient.discover()`
+- ✅ Langfuse trace continuity — trace name `market-context-agent-stream` replaces `sentiment-agent-stream`
+- ✅ RAGAS rubrics updated — `macro_regime_quality` + `peer_positioning_quality` replace old sentiment rubrics
+
+## Dynamic Peer Discovery via yfinance Industry/Sector Classes
+
+### How peer discovery evolved
+
+Peer discovery went through three iterations:
+
+**Phase 3 (v1.31) — Static `peer_sets.py`**: Hand-curated map with ~33 entries. Required maintenance, had gaps, and broke silently when a ticker's industry wasn't in the map.
+
+**Phase 4 (v1.32) — Yahoo Finance HTTP API**: New MCP tool `get_peers` hitting `/v6/finance/recommendationsBySymbol`. Returned engagement-optimized recommendations, not necessarily true industry peers. Required explicit `User-Agent` headers and had reliability issues with mid-cap/international tickers. Fallback chain: MCP → peer_sets.py → empty.
+
+**Phase 5 (v1.34) — yfinance Industry/Sector classes**: Rewrote `get_peers` to use `yfinance.Industry(slug).top_companies` and `Sector(slug).top_companies`. Returns market-cap-weighted DataFrame of companies in the same classification — deterministic, no scraping, no cookies, no rate limits. `_industry_to_slug()` converts yfinance strings to URL slugs. Falls through industry → sector → empty.
+
+### Why the third rewrite?
+
+The Yahoo Finance HTTP recommendations API had three fundamental problems:
+1. **Engagement-optimized**, not fundamental-similarity — "People also watch" returns tickers that Yahoo's algorithms think a user might click, not tickers that share industry/valuation characteristics
+2. **Rate-limit fragility** — the HTTP endpoint returned 429 errors under moderate load, requiring the user-agent cat-and-mouse game
+3. **No ticker coverage** — international and mid-cap tickers often returned empty, while large-caps like AAPL returned oddly specific recommendations
+
+The yfinance `Industry`/`Sector` API solves all three: it's a deterministic data source (same classification every call), doesn't hit external HTTP endpoints (uses yfinance's cached data), and covers any ticker that yfinance knows about.
+
+### Why remove the peer_sets.py fallback?
+
+With the yfinance Industry/Sector approach, the static peer_sets.py became redundant — the MCP tool covers any yfinance ticker without gaps. Keeping a fallback to an incomplete static map risks returning wrong peers silently. A clean "Peer discovery unavailable" message when the MCP server is down is better than silently falling back to potentially stale static data.
+
+### Why keep peer_sets.py at all?
+
+`shared/peer_sets.py` now serves as: (1) the sector→ETF mapping for `get_scenario_shocks` (via `_SECTOR_ETF`), (2) documentation of expected peer groupings, (3) a reference for the yfinance Industry/Sector slug mapping. It's no longer called at runtime for peer discovery.
+
+### Key properties
+
+- ✅ Deterministic — same ticker always returns same peers
+- ✅ No HTTP scraping — uses yfinance's cached Industry/Sector data
+- ✅ No rate limits — no external HTTP calls for peer resolution
+- ✅ Comprehensive coverage — any yfinance ticker works
+- ✅ Clean failure mode — "unavailable" message instead of wrong peers
+- ✅ peer_sets.py retained for ETF mapping and documentation
+
+## Market Context Agent — Peer Key Fixes & Sector/Industry Restoration
+
+### Problem
+
+Two bugs silently degraded Market Context agent output after the peer refactor:
+
+1. **Wrong `get_financials` response key** (`executor.py`): The code read `primary_fin.get("financials", {}).get("info", {})`, but `get_financials` MCP tool returns top-level keys directly — no `"financials"` wrapper. Every ticker got `info = {}`, so `sector` and `industry` were always empty, and `get_peer_tickers` returned `[]` for every ticker. This was a silent data loss — the agent still produced JSON, but `macro_regime` and `peer_landscape` analyses had no sector context.
+
+2. **Undefined `sector`/`industry` in return dict** (`executor.py:73-74`): The `_collect_data_parallel` return dict referenced `sector` and `industry` variables that were never assigned — leftover from before the peer refactor removed the extraction code. CrewAI's `data.get("sector", "")` handled the `NameError` gracefully, but the keys were always empty strings.
+
+### Solution
+
+1. **Fix data extraction** (`executor.py`): Changed `primary_fin.get("financials", {}).get("info", {})` to `primary_fin.get("info", {})`. Also uses `res` (the full MCP response) directly for peer financials instead of the wrapper.
+
+2. **Restore sector/industry extraction** (`executor.py`): Re-added `info = primary_fin.get("info", {}); sector = info.get("sector", ""); industry = info.get("industry", "")` before the `get_peers` call. The return dict now gets populated values.
+
+3. **Expand peer sets** (`shared/peer_sets.py`): Added ~30 new entries covering missing industries (Discount Stores, Grocery Stores, Consumer Defensive/Cyclical sectors). Fixed em-dash vs hyphen mismatch — `_PEER_SETS` used "Software—Infrastructure" (U+2014) but yfinance returns "Software - Infrastructure" (hyphen+spaces). Added `_norm()` normalization function that collapses all dash variants to a single hyphen, with `_NORM_MAP` for O(1) fuzzy lookup.
+
+### Why wasn't this caught by testing?
+
+No integration tests for the Market Context agent's data pipeline existed. The agent produced structurally valid JSON regardless — the narrative was just less informed. These bugs highlight the need for integration tests that verify non-empty `sector`/`industry`/`peers` in the CrewAI output, especially after data-source refactors.
+
+### Key properties
+
+- ✅ Non-empty sector/industry now flows to CrewAI narrative
+- ✅ Peer sets expanded to cover all major sectors
+- ✅ Em-dash/hyphen normalization prevents silent empty sets
+- ✅ Dynamic `get_peers` MCP tool works for any ticker
+- ✅ `peer_sets.py` remains as fallback for MCP failures
+
+## Peer Concurrency Cap — Why `asyncio.Semaphore(3)` for Peer Financials
+
+### Problem
+
+Both the Quant LangGraph and Market Context agents fetch `get_financials` for each peer ticker concurrently. When a ticker has 8 peers, this fires 8 simultaneous MCP calls. The MCP server processes them via `asyncio.gather` with a shared `_yfinance_limiter` (4 req/s token bucket). While the token bucket limits the *rate*, it doesn't limit the *number of in-flight requests* the server queues.
+
+Under the old pattern, all 8 peer requests arrived at the MCP server simultaneously. The first 8 tokens were issued instantly (burst=8), but each yfinance `get_financials` call takes 1-3 seconds. The MCP client's `asyncio.wait_for(timeout=15)` wrapped each call — with 8 concurrent calls, the queue depth meant the last calls could exceed 15 seconds of wall-clock time, even though each individual yfinance call completed in <3s. The timeout fired before the queue cleared.
+
+### Why not increase the MCP timeout instead?
+
+The MCP timeout is already 15s (reduced from 30s in v1.31 for faster failure detection). Increasing it again would just mask the queue buildup issue — deeper queues would still timeout at any arbitrary threshold. The root cause is concurrency, not timeout duration.
+
+### Why a Semaphore specifically?
+
+`asyncio.Semaphore(3)` limits in-flight requests to 3, which is the smallest number that keeps the pipeline fed given yfinance's typical per-call latency (~1-3s). With 3 concurrent slots and 8 peers, the total wall-clock time is `ceil(8/3) × max_per_call_latency ≈ 3 × 3 = 9s` — well within the 15s timeout. Without the semaphore, 8 concurrent calls hit the rate limiter's burst of 8, all start their yfinance fetch, and the last ones timeout at ~15s.
+
+The token bucket (`_yfinance_limiter`) handles *rate* (requests per second) — it prevents Yahoo from seeing 8 requests at the same microsecond. The semaphore handles *concurrency* (in-flight requests at the same moment) — it prevents the MCP server's request queue from exceeding the timeout window. They solve complementary problems.
+
+### Why cap at 3 specifically?
+
+3 is the "knee" in the latency/throughput curve:
+- 1 concurrent → serial: 8 × 3s = 24s total, exceeds timeout
+- 2 concurrent → ceil(8/2) × 3s = 12s total, within timeout
+- 3 concurrent → ceil(8/3) × 3s = 9s total, comfortable margin
+- 4+ concurrent → no significant throughput gain (yfinance rate limiter is the bottleneck, not CPU), increased timeout risk
+
+3 gives comfortable headroom for the slowest peer (3s) while keeping total wall-clock time under 15s with margin.
+
+### Key properties
+
+- ✅ Limits in-flight peer requests — no queue buildup at MCP server
+- ✅ Complements the token bucket (rate vs concurrency)
+- ✅ Cap at 3 — optimal latency/throughput knee
+- ✅ Applied in both Quant (`nodes.py`) and Market Context (`executor.py`) agents
+
+## Quant Behavioral Signals — 8-Group Weighted Voting
+
+### Problem
+
+The Phase 1 Quant agent produced fundamentals + technicals + DCF — strong on logical analysis but blind to market psychology, insider behavior, and options flow. These signals (`put_call_ratio`, `insider_buying`, `short_interest`, `analyst_consensus`) capture what the broader market is *doing*, not just what the numbers say. The original Phase 3 plan assigned them to a redesigned Sentiment agent, but they're deterministic math on structured data — Quant's natural home.
+
+### Solution
+
+Add three new graph nodes to the Quant LangGraph, each fetching data via existing or new MCP tools and computing normalized signals (-1 to +1):
+
+| Node | Data Source | Signal |
+|---|---|---|
+| `options_flow_node` (`nodes.py:900`) | `get_options_chain` MCP | put/call vol ratio, OI ratio, flow classification |
+| `insider_signals_node` (`nodes.py:921`) | `get_company_filings` → Form 4 XML | net direction (90-day), CEO/CFO weighted |
+| `analyst_positioning_node` (`nodes.py:979`) | `get_sentiment_indicators` (new) + `get_earnings_history` (new) | consensus score, upside %, short interest, squeeze risk |
+
+All three fan out from `START` alongside the existing nodes. `format_output_node` collects all 8 signal groups (technical, fundamental, narrative, options, insider, positioning, macro, risk) with weights summing to 1.0:
+
+```python
+_SIGNAL_WEIGHTS = {
+    "technical":    0.15,
+    "fundamental":  0.15,
+    "narrative":    0.10,
+    "options":      0.12,
+    "insider":      0.10,
+    "positioning":  0.11,
+    "macro":        0.12,
+    "risk":         0.15,
+}
+```
+
+Confidence formula (§8.6.2): `|composite| × (1 − std(present_signals))`
+
+### Why raw weighted sum instead of normalized?
+
+The plan's original `normalize_weights = {k: v / sum_present for k, v in _SIGNAL_WEIGHTS.items()}` renormalized weights to sum to 1.0 using only the signals present in a given ticker's response. This made confidence uninformative: a response with only 2 signals (e.g. technical + fundamental, sum=0.30) would normalize them to 0.50 each, producing the same composite as if all 8 were present. The fix (`nodes.py:228`) keeps the raw weighted sum — if only 2 of 8 signals are present, the composite is inherently lower (0.30 × signal values), which correctly reflects the reduced signal density.
+
+### Key properties
+
+- ✅ Deterministic — no LLM calls for signal computation
+- ✅ Same peer resolver (`shared/peer_sets.py`) as Market Context Agent
+- ✅ Normalized signals (-1 to +1) for uniform voting
+- ✅ 8-group coverage across fundamental, technical, behavioral, and macro dimensions
+- ✅ Confidence formula accounts for signal sparsity
+
+## Quant Behavioral Signal Refinements: Options Flow, Insider Data, Monte Carlo & Schema Validator
+
+### Options Flow — Why return `no_data` instead of misleading ratios?
+
+When a ticker has zero options volume (no open positions, illiquid, or the options chain fetch returned empty), the old code computed `put_call_vol = 0/0 = NaN` and `oi_ratio = 0/0 = NaN`. These NaNs propagated through `_normalize_to_signal` as `0.0`, producing a neutral signal that looked like "no unusual activity" when it should mean "no data available."
+
+**Fix** (`nodes.py:949`): Check total volume before computing ratios. If zero, return `flow_signal="no_data"`, `note="No options volume — ticker may lack active options market"`, and `put_call_vol_ratio=oi_ratio=0.5` (neutral). The `format_output_node` checks `flow_signal == "no_data"` and excludes it from behavioral signal aggregation rather than scoring it as neutral.
+
+### Insider Signals — Why replace Form 4 keyword matching with yfinance structured MCP tool?
+
+The original `insider_signals_node` used `get_company_filings` filtered for Form 4 documents, then matched keywords (`"P"`/`"A"` for buys, `"D"`/`"S"` for sells) on filing descriptions. Many Form 4 filings have empty or inconsistent description fields — the XML content contains the actual transaction data, but the MCP tool only returns the filing metadata, not the parsed XML.
+
+**Phase 5 fix** (`mcp_servers/finsight_server.py`, `nodes.py:1022`): New `get_insider_transactions(ticker, days=90)` MCP tool using `yf.Ticker.insider_transactions` — returns structured buy/sell data with share counts and dollar values, not Form 4 keyword heuristics. The tool classifies each transaction row by its `Transaction` column ("Sale", "Buy", "Option Exercise") with buy/sell/other labels, then computes `summary` with `total`, `buys`, `sells`, `direction`, `net_shares`, `net_value`.
+
+The node now reads `summary.buys`, `summary.sells`, `summary.direction` directly from the structured response. This is faster (no SEC EDGAR parsing), more reliable (structured yfinance data feed), and more informative (includes net share/value amounts). The MCP abstraction ensures `_yfinance_limiter` rate-limiting is applied and the result can be cached for any consumer.
+
+### Monte Carlo — Why run on low-volatility tickers?
+
+The original graph only ran `_run_monte_carlo` on the high-volatility path (stress test branch). Low-volatility tickers went through the DCF valuation path, which ran no simulation. This meant DCF-only tickers (utilities, consumer staples) had `monte_carlo = None`, breaking downstream consumers that expected percentiles or `prob_profit`.
+
+**Fix** (`nodes.py:733`): `dcf_valuation_node` now runs `_run_monte_carlo` on the price data it already holds. The simulation is computationally cheap (~50ms for 5,000 paths) and produces the same percentile/prob_profit/VaR output regardless of volatility route. Added `_last_nonnull` reducer for `monte_carlo` in state to handle the concurrent writer scenario.
+
+### Peer Comparison — Why remove the peer_sets.py fallback?
+
+The v1.33 `peer_comparison_node` had a fallback chain: `get_peers` MCP → `shared/peer_sets.py` → empty. In v1.34 (Phase 5), the fallback was removed because the MCP tool now uses yfinance `Industry`/`Sector` classes instead of the Yahoo Finance HTTP recommendations API — it's more reliable, covers any ticker that yfinance knows about, and doesn't suffer from rate-limit issues that plagued the HTTP-based approach. The `shared/peer_sets.py` static map is inherently incomplete (80+ entries but still misses many sectors) and a silent fallback to a potentially wrong peer set is worse than a clean "Peer discovery unavailable" note.
+
+**Fix** (`nodes.py:881`): Removed the `peer_sets.py` fallback call. When `get_peers` returns `[]`, the node returns a clean message: `"Peer discovery unavailable for {ticker} — get_peers returned no results. Restart MCP server if recently deployed."` This gives operators a clear signal that something is wrong with the MCP server, rather than silently falling back to potentially stale static data.
+
+### Schema Validator — Why fix key paths?
+
+`score_quant_deterministic()` (`shared/runtime_eval.py:614`) is a zero-LLM schema validator that runs on every Quant response. It had three bugs:
+1. Wrong access path: `result["signal_scores"]` → correct `result["metrics"]["signal_scores"]`
+2. Shortened group names: `"dcf"` in old signal score dict keys → `"dcf_value"` (actual key in `_SIGNAL_WEIGHTS`)
+3. `conf` path: same deep-nesting fix
+
+These made the validator always return `False` for well-formed responses — it was checking the wrong dict paths. The validator is now accurate: it checks all 8 signal groups present, weight sum ≈ 1.0, MC percentiles consistent, peer fields present, recommendation + confidence invariants.
+
+### Key properties
+
+- ✅ No-data handling for zero-volume options — `flow_signal="no_data"` instead of NaN
+- ✅ Structured insider transactions — yfinance DataFrame via MCP tool, not Form 4 keyword heuristics
+- ✅ Monte Carlo runs on both volatility paths — DCF tickers get simulation too
+- ✅ MCP peer discovery uses yfinance Industry/Sector classes — no static fallback needed
+- ✅ Schema validator actually validates — corrected key paths and nesting
+
+## Redis Two-Level Cache (L1 TTLCache + L2 Redis Write-Through)
+
+### Problem
+
+MCP tool results are cached in-process via `TTLCache` (`shared/ttl_cache.py:25`). In a multi-process deployment (e.g. Docker with 3 agent containers each calling the same MCP tools), each process maintains its own cache — the first request to each process pays the full yfinance/RSS fetch cost. A shared cache eliminates this redundancy.
+
+### Solution
+
+`shared/redis_cache.py` implements a two-level cache:
+
+- **L1**: In-process `TTLCache` (fast, no network). Hit → return immediately.
+- **L2**: Redis write-through. L1 miss → read from Redis → populate L1. Every L1 `set()` propagates to Redis.
+
+```python
+def make_cache(ttl_seconds: int = 300, name: str = "") -> TTLCache | RedisCache:
+    if REDIS_URL:
+        return RedisCache(ttl_seconds=ttl_seconds, name=name)
+    return TTLCache(ttl_seconds=ttl_seconds)
+```
+
+All existing `TTLCache(...)` instantiations in `finsight_server.py` remain valid — `make_cache()` returns a `TTLCache` when `REDIS_URL` is unset, identical behavior to before. When `REDIS_URL` is configured, the returned `RedisCache` adds shared persistence transparently.
+
+### Why not Redis-only?
+
+Latency and complexity. An in-process L1 is ~1µs (dict lookup) vs ~1ms (Redis round-trip). The L1 covers the common case (repeated tool calls within the same request), while L2 handles cross-process sharing. The write-through pattern ensures L2 is always fresh without a separate invalidation mechanism.
+
+### Key properties
+
+- ✅ Transparent drop-in — `make_cache()` returns same interface as `TTLCache`
+- ✅ No migration effort — existing `_cache_*` variables accept `TTLCache` or `RedisCache`
+- ✅ L1 speed for repeated calls, L2 sharing across processes
+- ✅ Write-through keeps L2 fresh automatically
+- ✅ Graceful degradation — Redis unreachable falls back to L1-only
+
+## RAGAS Eval Hardening — Circuit Breaker, SHA-256 Dedup, Burst Limiter
+
+### Problem
+
+Each RAG/Quant/Sentiment response fires 2-5 RAGAS LLM metric calls against the same Qwen3-30B model that serves live user queries. Three failure modes were observed (`logs/sentiment.log`, `logs/rag_agent.log`):
+
+1. **Model unload storms**: A single "Model unloaded" error triggers 3 retries per metric × 5 metrics = 15 concurrent load attempts, overwhelming LM Studio and slowing the next user query.
+2. **Identical response re-evals**: When the orchestrator issues the same query in back-to-back requests (e.g. cache miss then cache hit), every metric re-scores the identical (input, response) pair.
+3. **Metric timeout cascade**: A single stuck metric (e.g. Faithfulness with 3000-token context) blocks all other metrics indefinitely.
+
+### Solution
+
+Four hardening layers in `shared/runtime_eval.py`:
+
+1. **Circuit breaker** (`_CIRCUIT_MAX_FAILURES=5`): After 5 consecutive metric failures, all eval is skipped for 5 min. Per-metric `_last_failure` tracking for granular reset.
+
+2. **SHA-256 dedup** (`_dedup_seen` TTL dict, 1h): `sha256(f"{input}|{response}")` key — skips eval when the exact same query+response pair was scored within the last hour.
+
+3. **Burst limiter** (`_burst_ok()`): Deque of timestamps enforces `EVAL_BURST_LIMIT` evaluations per minute per process. Oldest timestamps evicted on overflow.
+
+4. **Per-metric timeout** (`_score_metric_with_timeout()`): Each RAGAS metric wrapped in `asyncio.wait_for(timeout=EVAL_METRIC_TIMEOUT, default=90)`. Timeout raises `CancelledError`, sibling metrics continue.
+
+The unified gate `_gate_ok()` combines all four: `EVAL_RUNTIME_DISABLED → False` | circuit tripped → `False` | burst exceeded → `False` | dedup hit → `False` | else → `True`.
+
+### Why four layers instead of one?
+
+Each addresses a distinct failure mode. The circuit breaker handles sustained failures (model offline). The burst limiter handles transient spikes (batch processing). Dedup handles redundant work (identical responses). Timeouts handle individual metric issues (overly long contexts). Removing any one layer still leaves exposure.
+
+### Key properties
+
+- ✅ Circuit breaker prevents eval storm cascade
+- ✅ SHA-256 dedup eliminates redundant LLM calls for repeated responses
+- ✅ Burst limiter protects against eval batch-processing spikes
+- ✅ Per-metric timeout prevents one stuck metric from blocking others
+- ✅ All controlled via env vars (`EVAL_RUNTIME_DISABLED`, `EVAL_BURST_LIMIT`, `EVAL_METRIC_TIMEOUT`)
+- ✅ Zero-LSM `score_quant_deterministic()` validates schema without LLM calls
+
+## Date-Aware Semantic Cache
+
+### Problem
+
+The semantic cache (`shared/semantic_cache.py`) stores responses keyed by query text. A user asking "Analyze NVDA" on Tuesday would hit the cache from Monday's analysis — missing overnight news, price moves, or macro shifts. The cache was too effective: it served stale content across trading days.
+
+### Solution
+
+Tag each cache entry with the current `YYYY-MM-DD` date on write, and filter by date on read:
+
+```python
+# shared/semantic_cache.py — set()
+today = date.today().isoformat()  # YYYY-MM-DD
+self._collection.add(
+    ids=[entry_id],
+    embeddings=[embedding],
+    metadatas=[{"date": today, "response": ...}],
+    documents=[query],
+)
+
+# get()
+results = self._collection.query(
+    query_embeddings=[embedding],
+    n_results=1,
+    where={"date": today},  # only today's entries
+)
+```
+
+A ChromaDB `where` filter on the metadata `date` field ensures only entries from the current date match. Same query on different days → no metadata match → cache miss → new analysis generated and stored.
+
+### Why not a TTL?
+
+A fixed TTL (e.g. 24 hours) would still serve stale data: a query at 9 AM Monday and another at 9 AM Tuesday would be 24 hours apart, but in practice the open market only trades 6.5 hours per day. A date filter is simpler: it aligns with calendar boundaries and avoids edge cases around market holidays and weekends.
+
+### Key properties
+
+- ✅ Same-day repeat queries still hit cache (fast path)
+- ✅ Cross-day queries always regenerate (fresh analysis)
+- ✅ No TTL configuration — date boundary is unambiguous
+- ✅ ChromaDB `where` filter is O(1) with an index on metadata
+
+## RAG Startup Warm-Up
+
+### Problem
+
+The first RAG query after server start paid a ~3-5s cold-start tax: loading the HuggingFace `all-MiniLM-L6-v2` embedder, connecting to ChromaDB, and loading the CrossEncoder reranker all happened on first use. This made the first query of a session or after a restart noticeably slower than subsequent ones.
+
+### Solution
+
+`_do_prewarm()` at `agent_2_llamaindex/server.py` runs once on Starlette startup via `asyncio.to_thread`:
+
+```python
+async def _do_prewarm():
+    t0 = time.monotonic()
+    # 1. Embedder
+    embedder = HuggingFaceEmbedding(model_name=EMBED_MODEL)
+    embedder._model  # triggers actual model load
+    _ = embedder.get_text_embedding("warmup")
+    logger.info("Embedder loaded in %.2fs", time.monotonic() - t0)
+
+    # 2. ChromaDB collections
+    for coll in ("sec_filings", "news", "earnings"):
+        index._chroma.get_or_create_collection(coll)
+    logger.info("ChromaDB collections ready in %.2fs", ...)
+
+    # 3. CrossEncoder (lazy-loaded in HybridSearchPipeline)
+    from .hybrid_search import HybridSearchPipeline
+    hp = HybridSearchPipeline()
+    hp._get_reranker()  # triggers model load
+    logger.info("Reranker loaded in %.2fs", ...)
+```
+
+Each stage logs elapsed seconds so the cold-start budget is visible in server logs. The warm-up runs concurrently with the first A2A request (Starlette startup fires before the server accepts requests), so the first user query typically finds all models already loaded.
+
+### Why not lazy-load as before?
+
+Lazy-load is simple but unpredictable: the ~3-5s delay hits the first user, not the deployer. Pre-warming shifts the cost to startup time where it's visible in logs and doesn't affect user-facing latency. The trade-off is ~5s longer container startup, which is acceptable for a long-running server process.
+
+### Key properties
+
+- ✅ First RAG query: ~0s warm-up penalty (was ~3-5s)
+- ✅ Per-stage timing logged for cold-start budget analysis
+- ✅ Runs in thread executor — doesn't block the asyncio event loop
+- ✅ Idempotent — ChromaDB `get_or_create_collection` is safe to call multiple times
+- ✅ Graceful if models fail — warm-up errors are logged but don't crash the server
+
+## Live Sector-Aware Scenario Shocks via MCP get_scenario_shocks
+
+### Problem
+
+The stress test node originally used hardcoded S&P 500 crash percentages in `_SECTOR_ETF_MAP` with the `get_macro_indicators` YTD approach. This had three issues: (1) YTD performance is a single-year snapshot, not a crash scenario — a mild bear market could be -10% YTD while the historical crash templates (2008: -37%, 2020: -34%) are far more severe; (2) the sector ETF YTD was a single point estimate with no scenario diversity; (3) the formula `mkt_decline * beta` on a single YTD value couldn't differentiate between orderly drawdowns and crash scenarios.
+
+### Solution
+
+**MCP tool `get_scenario_shocks(sector)`** (`mcp_servers/finsight_server.py`): Computes historical crash returns from live price data using sector-specific ETFs resolved via `_SECTOR_ETF` mapping:
+
+| Sector | ETF | Scenario Windows |
+|---|---|---|
+| Technology | QQQ | 2008 crash, 2020 COVID, dot-com, 2022 bear |
+| Consumer Defensive | XLP | same windows, different returns |
+| Energy | XLE | same windows, different returns |
+| (14 sectors mapped) | | |
+
+Each scenario window is a (`start_date`, `end_date`) tuple. The tool fetches the sector ETF's full price history, slices the window, and computes `return = price_end / price_start - 1`. Falls back to `^GSPC` (S&P 500) when the sector ETF lacks history for a given window (e.g. XLRE doesn't cover 2008). Falls back to hardcoded `_SHOCK_FALLBACKS` when price history is unavailable entirely.
+
+**Four historical scenarios** with actual peak-to-trough returns:
+
+| Scenario | Window | S&P Fallback | Purpose |
+|---|---|---|---|
+| `market_crash_2008` | 2007-10-09 → 2009-03-09 | -56.5% | Global financial crisis |
+| `covid_crash_2020` | 2020-02-19 → 2020-03-23 | -34.0% | Pandemic panic |
+| `dot_com_bubble` | 2000-03-24 → 2002-10-09 | -49.1% | Tech bust |
+| `mild_recession` | 2022-01-03 → 2022-10-12 | -25.4% | Recent bear market |
+
+**Beta-adjusted**: Stress test applies `max(-0.95, scenario_return * beta)` to each scenario's sector-specific return — so a high-beta tech stock gets a larger stress hit than a low-beta utility, both relative to their sector's actual historical crash experience.
+
+### Why historical crash windows instead of YTD or Monte Carlo scenarios?
+
+Historical crash windows capture real market dynamics (serial correlation, volatility clustering, sector rotation) that synthetic scenarios miss. A 2008-style crash on a defensive sector (XLP: -36%) looks very different from the same crash on tech (QQQ: -43%) — using the actual historical returns preserves these sector-specific characteristics. The 4 windows cover a range of severity and market regimes (credit crisis, pandemic shock, tech bust, recession).
+
+### Why sector-specific ETFs instead of just S&P 500?
+
+A 2008 crash on financials (XLF: -60%) was far more severe than on healthcare (XLV: -25%). Using S&P 500 returns (-37%) for every sector would overstate stress on defensive stocks and understate it on cyclical stocks. The sector ETF approach produces stress scenarios that are calibrated to what actually happened to similar companies during each crisis.
+
+### Why 7-day cache?
+
+Crash windows don't change — they're historical time ranges. Once computed, a sector's crash returns are valid until the next data revision. The 7-day cache avoids re-fetching price history on every Quant request while auto-refreshing weekly (in case of yfinance data corrections).
+
+### Key properties
+
+- ✅ 4 historical crash scenarios — actual peak-to-trough returns per sector
+- ✅ 14 sector ETFs mapped — sector-specific stress calibration
+- ✅ Fallback chain — sector ETF → S&P 500 → hardcoded fallback
+- ✅ Beta-adjusted — ticker's own volatility amplifies or dampens sector shock
+- ✅ Hard floor at -95% — prevents impossible loss values
+- ✅ 7-day cached — weekly refresh of crash returns
+- ✅ Visible `index_used` — logged for traceability
+
+## Sector-Relative Fundamental Scoring
+
+### Problem
+
+The original `_score_fundamental_value()` and `_score_fundamental_quality()` used absolute universal thresholds: PE < 12 → good, ROE > 25% → excellent. These thresholds were arbitrary and sector-blind — a PE of 20 might be cheap for a tech stock but expensive for a utility. The same ROE of 15% would score "moderate" on the absolute scale, but might be the sector median for banks and quite strong for retail.
+
+### Solution
+
+**`_relative_score(value, median, higher_is_better)`** (`agent_3_langgraph/nodes.py`): Scores a metric relative to its sector median ratio. Returns in [-1, 1]:
+
+```
+For higher_is_better (ROE, margin):
+  ratio > 2.0× median → +1.0
+  ratio > 1.5× median → +0.6
+  ratio > 1.1× median → +0.2
+  ratio > 0.7× median → -0.1
+  ratio > 0.4× median → -0.4
+  else → -0.7
+
+For lower_is_better (PE, EV/EBITDA, D/E):
+  ratio < 0.5× median → +1.0 (much cheaper)
+  ratio < 0.75× median → +0.6
+  ratio < 0.95× median → +0.2
+  ratio < 1.2× median → -0.1
+  ratio < 1.6× median → -0.4
+  else → -0.7
+```
+
+**Sector medians computed in `peer_comparison_node`** (`nodes.py:919-935`): After ranking all peer tickers on each fundamental metric, the node computes the median value per metric across all peers. These medians are passed to `format_output_node` via `peer_comparison.medians`.
+
+**Fallback**: When no peer medians are available (no peers found, or all peers lack a given metric), `_score_fundamental_value` and `_score_fundamental_quality` fall back to the original absolute thresholds — no regression for tickers without peer coverage.
+
+### Why relative scoring instead of industry-standard thresholds?
+
+Industry-standard thresholds (e.g. "PE < 15 is cheap") are broad heuristics that work across many sectors but miss sector-specific pricing. A biotech stock with PE = 30 might be at the 90th percentile for its sector (very expensive) while a consumer staple with PE = 30 might be at the median (fairly valued). Relative scoring captures the sector-specific context that absolute thresholds miss, without requiring separate threshold sets per sector.
+
+### Why median instead of mean?
+
+Median is robust to outliers — one peer with an extreme PE (e.g. a startup with PE = 300) would skew the mean but barely affect the median. For peer sets of 3-8 tickers, a single outlier can dominate the mean. Median gives a stable reference point that reflects the typical peer's valuation.
+
+### Why D/E added to peer comparison?
+
+Debt-to-equity varies enormously by sector — utilities and banks carry high leverage by design, while tech companies often have near-zero debt. Adding D/E to the peer comparison enables the relative scoring to capture whether a ticker is over- or under-leveraged relative to its sector, which is a more informative signal than an absolute "D/E > 80 is bad" threshold.
+
+### Key properties
+
+- ✅ Scores relative to sector median — PE, EV/EBITDA, ROE, OpMargin, D/E
+- ✅ Higher-is-better and lower-is-better logic separately handled
+- ✅ Absolute fallback when no peers available — no regression
+- ✅ Median computed from peer_comparison_node — no separate data fetch
+- ✅ D/E added to peer comparison for leverage context
+
+## Dynamic Peer Discovery via yfinance Industry/Sector Classes
+
+### Why replace Yahoo Finance HTTP API with yfinance Industry/Sector?
+
+The original `get_peers` tool used Yahoo Finance's `/v6/finance/recommendationsBySymbol` HTTP endpoint ("People also watch"). This HTTP API had several problems: (1) required explicit `User-Agent` headers that changed periodically, (2) occasionally returned empty or stale recommendations for mid-cap and international tickers, (3) returned "recommended" tickers that were not always true industry peers (Yahoo's algorithm optimizes for user engagement, not fundamental similarity).
+
+**New approach** (`mcp_servers/finsight_server.py`): Uses yfinance's built-in `Industry(slug).top_companies` and `Sector(slug).top_companies` methods. These return market-cap-weighted DataFrames of companies in the same industry/sector classification. The mapping is deterministic — same ticker always returns the same peers (modulo yfinance data updates).
+
+`_industry_to_slug(name)` converts yfinance industry/sector strings (e.g. "Semiconductor Equipment & Materials") to URL slugs (`semiconductor-equipment-materials`) for the yfinance API. Falls through from industry to sector when the industry slug returns no data.
+
+### Why remove the curated peer_sets.py fallback from the quant agent?
+
+The original Phase 3 fallback chain was: MCP `get_peers` → `shared/peer_sets.py` → empty list. In Phase 5, the curated fallback was removed from `peer_comparison_node` because both agents now call the same MCP tool, and the `peer_sets.py` static map is inherently incomplete (only covers ~80 industry/sector strings). The MCP tool using yfinance Industry/Sector classes is more comprehensive (covers any ticker that yfinance knows about) and doesn't need a static fallback. MCP server cold-start or rate-limit failures produce a clean "Peer discovery unavailable" note instead of silently falling back to a potentially wrong static peer set.
+
+### Why keep peer_sets.py at all?
+
+`shared/peer_sets.py` is still used by the `_SECTOR_ETF` mapping in `get_scenario_shocks` (which maps sector strings to ETFs) and serves as documentation of expected peer groupings. It's no longer referenced by `peer_comparison_node` or `MarketContextAgent` for runtime peer discovery.
+
+### Key properties
+
+- ✅ Deterministic peers — yfinance Industry/Sector classification, not engagement-optimized recommendations
+- ✅ No HTTP scraping — uses yfinance's built-in yfin.Industry/Sector API
+- ✅ Slug normalization — handles any yfinance industry string
+- ✅ Falls through industry → sector → empty
+- ✅ peer_sets.py retained for ETF mapping and documentation
+
+## Structured Insider Transactions via MCP get_insider_transactions
+
+### Why replace Form 4 keyword matching with yfinance structured data?
+
+The original `insider_signals_node` called `get_company_filings(ticker, form_types="4", limit=15)` and keyword-matched filing descriptions for buy/sell signals. This was unreliable: (1) Form 4 filing titles are inconsistent — some say "Statement of changes in beneficial ownership of securities" (uninformative), others say "Sale - 10000 shares" (informative); (2) the filing description field in the SEC EDGAR response is truncated or empty for many filings; (3) keyword matching on "purchase" vs "sale" misses nuanced transactions like option exercises, grants, and gifts.
+
+**New `get_insider_transactions` MCP tool** (`mcp_servers/finsight_server.py`): Uses yfinance `Ticker.insider_transactions` which returns a structured DataFrame directly from Yahoo Finance's insider data feed. Each row has: `Insider`, `Position` (CEO/CFO/COO), `Transaction` ("Sale", "Buy", "Option Exercise"), `Shares`, `Value`, `Start Date`. The tool:
+1. Fetches the DataFrame
+2. Filters to the lookback window (default 90 days)
+3. Classifies each row as buy, sell, or other based on the `Transaction` column
+4. Computes `net_shares` and `net_value` (sum of buys minus sum of sells)
+5. Emits a `direction` summary (net_buy/net_sell/neutral)
+
+The node reads the structured summary directly — no parsing, no keyword heuristics.
+
+### Why not use the existing `yf.Ticker.insider_transactions` directly in the node?
+
+The Quant agent doesn't import `yfinance` — all data access goes through the MCP layer. Keepinsider data behind the MCP tool ensures the rate limiter (`_yfinance_limiter`) protects Yahoo from excessive calls, and the result is cached/structured for any consumer (not just the Quant node). The MCP abstraction is consistent with how all other data sources are accessed.
+
+### Key properties
+
+- ✅ Structured buy/sell data — no Form 4 keyword heuristics
+- ✅ Net shares and net dollar values — quantitative signal, not just direction
+- ✅ 90-day lookback — configurable via `days` parameter
+- ✅ MCP rate-limited — protects Yahoo Finance API
+- ✅ Cache-friendly — calls are idempotent for same ticker+window
+
+### Why move `yf.Ticker()` calls to `loop.run_in_executor()`?
+
+**Problem**: `yf.Ticker.insider_transactions` and `yf.Ticker.history(period="max")` are synchronous DataFrame operations that block the asyncio event loop. When the MCP server handles multiple concurrent tool calls (e.g. `get_financials` for 8 peer tickers), a blocking yfinance call stalls all in-flight coroutines — the event loop cannot switch to another task until the blocking call returns.
+
+`get_insider_transactions` was a single DataFrame property access (~200ms), tolerable in isolation. But `_get_scenario_shocks_uncached` calls `history(period="max")` which fetches 25+ years of daily OHLCV data — this can take 2-5 seconds for a single ETF. When called during peer analysis (which already has 8 concurrent `get_financials` calls in-flight), the blocking history fetch starves the financials requests, causing them to exceed their `asyncio.wait_for` timeout.
+
+**Solution (first pass)**: The two worst offenders wrapped with `await loop.run_in_executor(None, lambda: yf.Ticker(...))`.
+
+**Followup (second pass)**: After the first fix, users still saw intermittent `httpx.ReadError` mid-call on `get_financials`, `get_prices`, etc. The underlying cause was the same — other yfinance tools (`stock.history()`, `.financials`, `.balance_sheet`, `.cashflow`, `.info`, `.option_chain()`, `.options`, `stock.calendar`, `stock.earnings_dates`) were still making synchronous calls on the event loop. While individually fast (~50-200ms), under concurrent peer analysis the cumulative blocking window was large enough to stall FastMCP's SSE keepalive writes, causing the client to disconnect. Fixed by wrapping **all 9 synchronous yfinance call sites** in `run_in_executor`. A defence-in-depth change was also made to the MCP client: `httpx.ReadError`, `httpx.ConnectError`, and `httpx.NetworkError` were added to `_TRANSIENT_EXC` so transient SSE blips retry instead of failing immediately.
+
+### Key properties
+
+- ✅ Event loop unblocked — no coroutine starvation during yfinance data fetches
+- ✅ Thread-safe — `asyncio.get_event_loop()` runs the executor on the same loop
+- ✅ Zero API change — tool signatures and return types identical
+- ✅ All 9 synchronous yfinance call sites wrapped (up from the original 2)
+
+## Peer Sets — Expanded with Normalised Key Matching
+
+### Why expand from 33 to 80+ entries?
+
+The original 33 entries covered only broad categories ("Technology", "Healthcare", "Financials"). When the Market Context agent looked up "Banks—Regional" (with em-dash), it didn't match "Banks - Regional" (with hyphens) — the match failed silently. The expanded version covers all major industries with their exact yfinance strings, plus alternative dash variants. Each sector also gets a canonical "Sector"-level entry as catch-all.
+
+### Why the `_norm()` normalisation function?
+
+Yahoo Finance's industry/sector strings use inconsistent punctuation: semiconductor—equipment vs semiconductor - equipment vs semiconductor– equipment. The `_norm()` function collapses all dash variants (em dash U+2014, en dash U+2013, hyphen U+002D with optional surrounding spaces) to a single hyphen, then lowercase and strips. `_NORM_MAP` pre-computes all normalized forms at module load for O(1) lookup. Without this, every em-dash/hyphen mismatch silently returned an empty peer set.
+
+### Key properties
+
+- ✅ 80+ entries across all major sectors and industries
+- ✅ Em-dash/hyphen normalization — fuzzy key matching
+- ✅ O(1) lookup via pre-built `_NORM_MAP`
+- ✅ Lookup order: exact industry → normalized industry → exact sector → normalized sector
+- ✅ Self-excluding — ticker never appears in its own peer set
+
+## RAG Index Warming via A2A WORKING Events — From Fire-and-Forget to Await-able
+
+### Problem
+
+The RAG agent's `_build_response()` fired `asyncio.create_task(self._ensure_ingested(ticker))` and returned `{"_warming": True, "summary": "Index is warming for [ticker]..."}` immediately. The orchestrator saw a completed task with a warming placeholder — no data to synthesize. The user would then have to re-query to get the actual analysis after ingestion completed in the background. This was a poor UX: every first query for a new ticker returned a "come back later" placeholder regardless of whether filing downloads were fast (5s) or slow (30s+).
+
+The root issue: A2A only reports terminal events (COMPLETED/FAILED). The RAG agent couldn't say "I'm working on it, hold on" — it had to return something immediately or block the A2A protocol indefinitely.
+
+### Solution
+
+**Two-part fix** using A2A streaming's intermediate states:
+
+1. **RAG agent emits `TASK_STATE_WORKING` SSE events** (`agent_2_llamaindex/executor.py:19-34`): Before entering ingestion, the RAG agent yields a `ServerTaskUpdateEvent` with `status: TASK_STATE_WORKING` and a message like `"Ingesting SEC filings and news for [ticker]..."`. This keeps the A2A channel open and tells the orchestrator "not done yet, but making progress."
+
+2. **Orchestrator processes WORKING events** (`SubAgentClient` via `a2a-sdk`): The `BaseClient`'s streaming event handler skips non-terminal events by default. Changed to accumulate WORKING events — when the streaming loop gets a `status_update` with `TASK_STATE_WORKING`, it updates a `_status_msg` on the client and continues listening. Once the terminal event arrives, the accumulated working messages are prepended to the result text, so the orchestrator LLM sees both the progress message and the final analysis.
+
+3. **Index check before ingestion** (`_ensure_ingested`): The function now checks `is_filing_ingested(edgar_url)` before downloading — if all filings are already indexed, it skips ingestion entirely and the agent returns data from the existing index. Combined with the WORKING events, the path is:
+   - Already indexed → immediate data return (no WORKING event)
+   - Not indexed → emit WORKING → download + ingest → emit data
+   - Timeout → orchestrator's per-agent timeout catches it
+
+### Why not just increase the request timeout?
+
+The A2A protocol is designed for near-immediate responses — the orchestrator's `asyncio.wait_for` wraps the entire `send_message()` call. Increasing the timeout would fix the symptom but not the UX: the user would still wait silently. WORKING events provide progress visibility and let the orchestrator send intermediate status back if desired (e.g. "Analyzing NVDA... ingesting 10-K filings").
+
+### Key properties
+
+- ✅ No more "come back later" placeholders — first queries on new tickers work end-to-end
+- ✅ WORKING events — progress visibility for long-running ingestion
+- ✅ Existing index check — already-indexed tickers skip ingestion entirely
+- ✅ Timeout preserved — orchestrator still has safety net
+- ✅ Minimal protocol change — WORKING events are part of the A2A spec

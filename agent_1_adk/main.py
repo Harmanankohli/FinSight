@@ -60,7 +60,7 @@ agent_card = AgentCard(
         AgentSkill(
             id="investment_research",
             name="Investment Research",
-            description="Answer investment queries with a complete research brief including RAG, quant, and sentiment analysis",
+            description="Answer investment queries with a complete research brief including RAG, quant, and market context analysis",
             tags=["investment", "stock research", "portfolio"],
             examples=[
                 "Should I invest in NVDA given my current portfolio?",

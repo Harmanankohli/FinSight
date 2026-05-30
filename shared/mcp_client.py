@@ -209,6 +209,31 @@ class MCPClient:
         except Exception as e:
             logger.warning("Failed to discover tools on '%s': %s", server_name, e)
 
+    # Transient errors worth retrying; all others fail immediately.
+    # httpx.ReadError / httpx.ConnectError cover MCP SSE connection resets
+    # that happen when the MCP server is briefly overloaded — they should
+    # be retried like any other transient network error.
+    try:
+        import httpx as _httpx
+        _TRANSIENT_EXC = (
+            asyncio.TimeoutError,
+            ConnectionError,
+            asyncio.IncompleteReadError,
+            EOFError,
+            OSError,
+            _httpx.ReadError,
+            _httpx.ConnectError,
+            _httpx.NetworkError,
+        )
+    except ImportError:
+        _TRANSIENT_EXC = (
+            asyncio.TimeoutError,
+            ConnectionError,
+            asyncio.IncompleteReadError,
+            EOFError,
+            OSError,
+        )
+
     # Routes to a specific named server. Used when the caller knows which
     # server hosts the tool (e.g. multi-server orchestration layers).
     async def call_tool(
@@ -222,19 +247,31 @@ class MCPClient:
             raise MCPClientError(f"Not connected to MCP server: {server_name}")
 
         for attempt in range(self.max_retries):
+            t = self.timeout
             try:
                 result = await asyncio.wait_for(
                     session.call_tool(tool_name, arguments or {}),
-                    timeout=self.timeout,
+                    timeout=t,
                 )
                 return result
-            except Exception as e:
-                logger.warning(
-                    "MCP call attempt %d/%d failed on %s/%s: %s",
-                    attempt + 1, self.max_retries, server_name, tool_name, e,
-                )
+            except MCPClient._TRANSIENT_EXC as e:
                 if attempt < self.max_retries - 1:
-                    await asyncio.sleep(2 ** attempt)
+                    wait = 2 ** attempt
+                    logger.warning(
+                        "MCP call attempt %d/%d transient error on %s/%s: %s — retrying in %ds",
+                        attempt + 1, self.max_retries, server_name, tool_name, e, wait,
+                    )
+                    await asyncio.sleep(wait)
+                else:
+                    raise MCPClientError(
+                        f"Tool call '{server_name}/{tool_name}' failed after {self.max_retries} attempts: {e}"
+                    )
+            except MCPClientError:
+                raise
+            except Exception as e:
+                # Non-transient (bad args, server error, etc.) — fail immediately
+                logger.warning("MCP call non-transient error on %s/%s: %s", server_name, tool_name, e)
+                raise
         raise MCPClientError(
             f"Tool call '{server_name}/{tool_name}' failed after {self.max_retries} attempts"
         )

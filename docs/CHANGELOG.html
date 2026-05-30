@@ -31,10 +31,180 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <body>
 <div class="container">
 <div class="header-nav">
-<a href="index.html">Home</a><a href="../README.html">Overview</a><a href="ARCHITECTURE.html">Architecture</a><a href="AGENTS.html">Agents</a><a href="MCP_SERVERS.html">MCP</a><a href="DESIGN_DECISIONS.html">Decisions</a><a href="DEMO.html">Demo</a><a href="CHANGELOG.html">Changelog</a><a href="TESTS.html">Tests</a>
+<a href="index.html">Home</a><a href="../README.html">Overview</a><a href="ARCHITECTURE.html">Architecture</a><a href="AGENTS.html">Agents</a><a href="MCP_SERVERS.html">MCP</a><a href="DESIGN_DECISIONS.html">Decisions</a><a href="CHANGELOG.html">Changelog</a><a href="TESTS.html">Tests</a>
 </div>
 
 <h1>Changelog</h1>
+
+<h2>v1.35 &mdash; Async Event-Loop Fixes: yfinance Executor, Peer Concurrency Cap, Redis Auto-Start</h2>
+
+<h3 class="version">MCP Server &mdash; yfinance Blocking Calls Moved to Thread Executor</h3>
+<ul>
+<li><strong><code>get_insider_transactions</code> converted to async</strong> (<code>mcp_servers/finsight_server.py</code>): <code>yf.Ticker(ticker).insider_transactions</code> (synchronous DataFrame fetch) now runs via <code>loop.run_in_executor()</code> instead of blocking the asyncio event loop. Prevents concurrent tool calls from stalling while insider data is fetched.</li>
+<li><strong><code>_get_scenario_shocks_uncached</code> converted to async</strong> (<code>mcp_servers/finsight_server.py</code>): <code>yf.Ticker(sym).history(period="max")</code> (25+ years of price data) now runs via <code>loop.run_in_executor()</code>. Prevents long-running history fetches from starving concurrent MCP requests.</li>
+<li><strong>7 additional yfinance tools wrapped in <code>run_in_executor</code></strong> (<code>mcp_servers/finsight_server.py</code>): Followup to the two above &mdash; <code>_get_prices_uncached</code> (<code>stock.history()</code>), <code>_get_financials_uncached</code> (<code>.financials</code>/<code>.balance_sheet</code>/<code>.cashflow</code>/<code>.info</code>), <code>_get_macro_impl</code> (both macro/sector <code>history()</code> loops), <code>get_options_chain</code> (<code>option_chain()</code> and <code>.options</code>), <code>get_earnings_calendar</code> (<code>stock.calendar</code>), <code>get_sentiment_indicators</code> (<code>stock.info</code>), and <code>get_earnings_history</code> (<code>stock.earnings_dates</code>) all moved off the event loop. Together with the first two, every synchronous yfinance call in the server now runs via thread executor. Fixes <code>httpx.ReadError</code> SSE keepalive failures mid-call.</li>
+</ul>
+
+<h3 class="version">Quant &amp; Market Context &mdash; Peer Concurrency Cap</h3>
+<ul>
+<li><strong><code>asyncio.Semaphore(3)</code> in peer financials fetch</strong> (<code>agent_3_langgraph/nodes.py</code>, <code>agent_4_crewai/executor.py</code>): Both agents limit concurrent <code>get_financials</code> calls for peer tickers to 3 at a time. Prevents yfinance rate-limiter queue buildup from exceeding per-attempt timeouts.</li>
+</ul>
+
+<h3 class="version">MCP Client &mdash; Timeout Simplification</h3>
+<ul>
+<li><strong>Removed fail-fast first-attempt timeout</strong> (<code>shared/mcp_client.py</code>): Previous logic used <code>self.timeout / 3</code> on first retry attempt (5s for a 15s timeout). Caused false-positive timeouts during normal yfinance slowness. All attempts now use the full configured timeout.</li>
+</ul>
+
+<h3 class="version">Infrastructure &mdash; Redis Auto-Start</h3>
+<ul>
+<li><strong>Redis auto-detection</strong> (<code>run_adk_web.bat</code>): Reads <code>REDIS_URL</code> from <code>.env</code> &mdash; when set and <code>redis-server</code> is in PATH, auto-starts Redis before launching agent services. Logs clear message when <code>redis-server</code> is missing (suggests <code>winget install Redis.Redis</code>). Falls back to in-process TTLCache.</li>
+<li><strong>Redis cleanup</strong> (<code>stop_servers.bat</code>): Kills <code>redis-server.exe</code> when <code>REDIS_URL</code> is configured. Uses <code>taskkill</code> + WMI-based process termination. Terminal cleanup filter updated to match <code>redis-server</code> command lines.</li>
+</ul>
+
+<h3 class="version">MCP Client &mdash; Transient Error Expansion</h3>
+<ul>
+<li><strong>httpx network errors added to retryable set</strong> (<code>shared/mcp_client.py</code>): <code>httpx.ReadError</code>, <code>httpx.ConnectError</code>, and <code>httpx.NetworkError</code> added to <code>_TRANSIENT_EXC</code> tuple. These errors surface when the MCP server&rsquo;s SSE connection resets due to event-loop blocking (see yfinance executor fixes). Previously, a brief SSE blip during a yfinance call would fail the entire MCP request immediately. Now they retry like any other transient network error. Import guarded with <code>try/except ImportError</code> so <code>httpx</code> is not a hard dependency.</li>
+</ul>
+
+<h3 class="version">RAGAS Eval &mdash; Retry Tuning &amp; Timeout Logging</h3>
+<ul>
+<li><strong>AsyncOpenAI <code>max_retries=5</code></strong> (<code>shared/runtime_eval.py</code>): Increased from 1 to 5 so LM Studio idle-unload retries are absorbed at the httpx/SDK layer rather than failing instructor structured-output calls outright. The previous <code>max_retries=1</code> caused spurious failures when LM Studio briefly unloaded the model between requests.</li>
+<li><strong>Removed instructor <code>max_retries=1</code> override</strong>: <code>instructor.from_openai()</code> now falls back to the client&rsquo;s retry count (5), so instructor calls get the same retry budget as raw client calls.</li>
+<li><strong><code>asyncio.TimeoutError</code> caught separately</strong> (<code>_run_metrics</code>): Now logged with a dedicated warning message including the <code>EVAL_METRIC_TIMEOUT</code> value instead of appearing as a bare colon in the generic <code>BaseException</code> handler.</li>
+<li><strong>Empty exception messages logged as type name</strong>: When <code>str(exc)</code> is empty (common for <code>TimeoutError</code> and <code>CancelledError</code>), logs <code>type(exc).__name__</code> instead of a bare colon.</li>
+</ul>
+
+<h2>v1.32 &mdash; Phase 4 Final Items: Date-Aware Semantic Cache + RAG Startup Warm-Up</h2>
+
+<h3 class="version">Semantic Cache &mdash; Date-Scoped Keys</h3>
+<ul>
+<li><strong><code>SemanticCache.set()</code> tags entries with today's <code>YYYY-MM-DD</code></strong> (<code>shared/semantic_cache.py</code>): On every cache write, the current date is embedded in stored metadata.</li>
+<li><strong><code>SemanticCache.get()</code> filters by date</strong>: ChromaDB <code>where</code> filter matches only today's entries. Same query on different days &rarr; cache miss &rarr; fresh analysis.</li>
+</ul>
+
+<h3 class="version">RAG Agent &mdash; Startup Warm-Up</h3>
+<ul>
+<li><strong><code>_do_prewarm()</code> at <code>agent_2_llamaindex/server.py</code></strong>: Runs once on Starlette startup via <code>asyncio.to_thread</code>. Pre-loads HuggingFace embedder, three ChromaDB collections, and CrossEncoder reranker.</li>
+<li><strong>Per-stage timing logged</strong>: Each phase logs elapsed seconds for cold-start budget visibility.</li>
+<li><strong>Effect</strong>: First RAG query no longer pays ~3-5s model-load tax.</li>
+</ul>
+
+<h2>v1.33 &mdash; Quant Graph Fixes: Concurrent Update Resolution &amp; Fan-In Reducers</h2>
+
+<h3 class="version">Quant Graph &mdash; Fan-In Passthrough Key Removal</h3>
+<ul>
+<li><strong>Fixed <code>INVALID_CONCURRENT_GRAPH_UPDATE</code> at <code>positioning</code> key</strong> (<code>agent_3_langgraph/nodes.py</code>): <code>format_output_node</code> was returning passthrough copies of state keys (<code>positioning</code>, <code>dcf_valuation</code>, <code>correlation_matrix</code>, <code>fundamentals</code>) that other nodes already wrote in the same checkpoint step. LangGraph's fan-in saw conflicting writes, triggering the error.</li>
+<li><strong>Fix</strong>: Removed all passthrough keys from <code>format_output_node</code>'s return dict. It now only emits what it actually computes: <code>recommendation</code>, <code>reasoning</code>, <code>metrics</code> (with signals/confidence), and <code>stress_test_result</code>. Full state from <code>ainvoke()</code> still carries every key via the owning nodes, so <code>graph.run()</code> reads are unaffected.</li>
+</ul>
+
+<h2>v1.31 &mdash; Phase 3/4: Market Context Rebrand, Quant Behavioral Signals, Redis Cache, Eval Hardening</h2>
+
+<h3 class="version">Market Context Agent &mdash; Sentiment Rebrand + Macro/Peer Inputs</h3>
+<ul>
+<li><strong>Agent renamed</strong> (<code>agent_4_crewai/executor.py:13-21</code>): <code>SentimentAgent</code> &rarr; <code>MarketContextAgent</code>, <code>SentimentIntelligenceCrew</code> &rarr; <code>MarketContextCrew</code> (<code>crew.py:16</code>). Langfuse trace name: <code>market-context-agent-stream</code>. Agent card path: <code>agent_cards/market_context_agent.json</code>.</li>
+<li><strong>New MCP tool</strong> <code>get_macro_indicators()</code> (<code>mcp_servers/finsight_server.py:305</code>): Fetches 10Y/2Y Treasury yields, VIX, DXY, yield-curve regime, sector ETF (XLK/XLE/XLF/&hellip;) 1mo performance. Cached 15 min via <code>_cache_macro</code>.</li>
+<li><strong>New <code>shared/peer_sets.py</code></strong>: Hand-curated peer map for 10+ sectors. 33 entries. Shared between Market Context and Quant.</li>
+<li><strong><code>_collect_data_parallel</code> rewritten</strong> (<code>executor.py:39-86</code>): 3-step pipeline: macro + primary financials &rarr; resolve peers &rarr; parallel peer financials + prices. No longer fetches <code>get_news_sentiment</code> or <code>get_company_filings</code>.</li>
+<li><strong>MarketContextCrew rewritten</strong> (<code>crew.py</code>): Single-agent crew, role &ldquo;Market Context Analyst&rdquo;. Task expected_output: JSON with <code>narrative</code>, <code>macro_regime</code>, <code>relative_peer_positioning</code>, <code>overall_signal</code>, <code>confidence_score</code>, <code>key_tailwinds</code>, <code>key_headwinds</code>.</li>
+<li><strong><code>_extract_context_contexts</code></strong> (<code>executor.py:196</code>): Replaces <code>_extract_sentiment_contexts</code> &mdash; builds RAGAS context strings from macro + peer data.</li>
+<li><strong>Agent card</strong> (<code>agent_cards/market_context_agent.json</code>): Two skills: <code>macro_regime_analysis</code>, <code>peer_landscape_analysis</code>. Version 2.0.0.</li>
+</ul>
+
+<h3 class="version">Quant Agent &mdash; Behavioral Signals + Monte Carlo + Peer Comparison</h3>
+<ul>
+<li><strong><code>options_flow_node</code></strong> (<code>agent_3_langgraph/nodes.py:900</code>): Put/call volume ratio, OI ratio, flow signal.</li>
+<li><strong><code>insider_signals_node</code></strong> (<code>nodes.py:921</code>): Form 4 filing count (90-day), net direction, CEO/CFO weighting.</li>
+<li><strong><code>analyst_positioning_node</code></strong> (<code>nodes.py:979</code>): Consensus score, upside %, short interest, squeeze risk.</li>
+<li><strong>Monte Carlo</strong> (<code>nodes.py:42</code>): GBM, 10k paths, 60-day horizon. p10-p90, prob of profit, MC VaR(95).</li>
+<li><strong><code>peer_comparison_node</code></strong> (<code>nodes.py:801</code>): Ranks vs peers on PE, EV/EBITDA, RevGrowth, OpMargin, ROE.</li>
+<li><strong>Stress test beta-adjusted</strong> (<code>nodes.py:169</code>): <code>beta_adj_decline = mkt_decline &times; beta</code>.</li>
+<li><strong>8-group weighted voting</strong> (<code>nodes.py:107-117</code>, <code>_weighted_vote</code> at <code>nodes.py:228</code>): <code>_SIGNAL_WEIGHTS</code> sums to 1.0 across 8 groups. Confidence = <code>|composite| &times; (1 &minus; std(present_signals))</code>. Raw weighted sum (not normalized).</li>
+<li><strong><code>QuantAnalysisState</code> expanded</strong> (<code>state.py:27-31</code>): <code>monte_carlo</code>, <code>peer_comparison</code>, <code>options_signals</code>, <code>insider_signals</code>, <code>positioning</code> fields.</li>
+<li><strong>Agent card</strong> (<code>agent_cards/quant_agent.json</code>): Three new skills: <code>options_flow_analysis</code>, <code>insider_transaction_analysis</code>, <code>positioning_signals</code>.</li>
+</ul>
+
+<h3 class="version">MCP Server &mdash; DuckDuckGo Fallback, Sentiment Indicators, Earnings History</h3>
+<ul>
+<li><strong>DuckDuckGo 4th-tier fallback</strong> (<code>mcp_servers/finsight_server.py:1248</code>): <code>_fetch_ddg_news()</code> when Yahoo Finance + RSS return zero articles.</li>
+<li><strong>New <code>get_sentiment_indicators()</code></strong> (<code>finsight_server.py:1628</code>): Short interest %, analyst consensus, institutional ownership %.</li>
+<li><strong>New <code>get_earnings_history()</code></strong> (<code>finsight_server.py:1684</code>): Last N EPS estimates vs actuals, beat rate, avg surprise %.</li>
+</ul>
+
+<h3 class="version">Infrastructure &mdash; Redis Cache + MCP Client</h3>
+<ul>
+<li><strong><code>shared/redis_cache.py</code></strong> (new): L1 in-process TTLCache + L2 Redis write-through. <code>make_cache()</code> factory returns <code>RedisCache</code> when <code>REDIS_URL</code> is set.</li>
+<li><strong>Fail-fast MCP retries</strong> (<code>shared/mcp_client.py:51-56</code>): <code>_is_retryable_error()</code> &mdash; 404s, &ldquo;not found&rdquo; skip backoff. Timeout 30s &rarr; 15s.</li>
+<li><strong><code>shared/config.py</code></strong>: <code>LLM_SUMMARY_MODEL</code>, <code>REDIS_URL</code>, <code>A2A_TIMEOUT_MARKET_CONTEXT</code>, <code>EVAL_BURST_LIMIT</code>, <code>EVAL_METRIC_TIMEOUT</code>, <code>RAGAS_LLM_MODEL</code>.</li>
+</ul>
+
+<h3 class="version">Runtime Evaluation &mdash; Circuit Breaker, Dedup, Burst Limiter</h3>
+<ul>
+<li><strong>Circuit breaker</strong> (<code>shared/runtime_eval.py</code>): <code>_CIRCUIT_MAX_FAILURES=5</code> &mdash; 5 consecutive metric failures skips eval for 5 min.</li>
+<li><strong>SHA-256 dedup</strong>: 1h TTL, identical (input, response) pairs skip eval.</li>
+<li><strong>Burst limiter</strong>: <code>_burst_ok()</code> enforces <code>EVAL_BURST_LIMIT</code>/min.</li>
+<li><strong>Per-metric timeout</strong>: <code>_score_metric_with_timeout()</code> wraps each metric in <code>asyncio.wait_for</code> (default 90s).</li>
+<li><strong><code>_gate_ok()</code></strong>: Unified pre-eval gate &mdash; kill-switch, circuit, burst, dedup.</li>
+<li><strong><code>score_quant_deterministic()</code></strong>: Zero-LLM schema validator for 8 signal groups.</li>
+<li><strong>Metric catalog cleanup</strong>: <code>AnswerRelevancy</code> kept on orchestrator only. <code>score_sentiment_response</code>: removed <code>catalyst_identification</code> + <code>insider_signal_discussion</code>, added <code>macro_regime_quality</code> + <code>peer_positioning_quality</code>.</li>
+<li><strong>Offline evaluation</strong> (<code>tests/evaluation/</code>): <code>golden_set.jsonl</code> (5 examples) + <code>run_offline_eval.py</code>.</li>
+</ul>
+
+<h3 class="version">Test Suite</h3>
+<ul>
+<li><strong><code>tests/integration/test_behavioral_signals_e2e.py</code></strong> (5 E2E tests): Options, insider, positioning, peer comparison, Monte Carlo.</li>
+<li><strong><code>tests/unit/test_runtime_eval_gates.py</code></strong>: Circuit breaker, SHA-256 dedup, burst, kill switch, gate, deterministic.</li>
+<li><strong><code>tests/unit/test_parallel_dispatch.py</code></strong>: Concurrent gather, timeout map, key isolation.</li>
+<li><strong><code>tests/unit/test_quant_graph_nodes.py</code></strong>: Fixed stale field <code>decline_pct</code> &rarr; <code>beta_adj_decline_pct</code>.</li>
+</ul>
+
+<h3 class="version">Docs Consolidation</h3>
+<ul>
+<li><strong>Removed stale docs</strong>: <code>possible_improvements/IMPLEMENTATION_PLAN.md/.html</code>, <code>LOGGING.md/.html</code>, <code>TEST_PLAN.md/.html</code>, <code>AGUI_FRONTEND_PLAN.html</code>, <code>ARCHITECTURE.md/.html</code>, <code>improvements.html</code>.</li>
+<li><strong>Sentiment &rarr; Market Context rename</strong> propagated across <code>AGENTS.md/.html</code>, <code>ARCHITECTURE.md/.html</code>, <code>DEMO.md/.html</code>.</li>
+</ul>
+
+<h2>v1.30 &mdash; Phase 2: Parallel Agent Dispatch, Parallel Filing Downloads, Single-Flight Cache</h2>
+
+<h3 class="version">Orchestrator &mdash; Parallel Dispatch via System Prompt</h3>
+<ul>
+<li><strong><code>_STATIC_PREAMBLE</code> step 2 updated</strong> (<code>agent_1_adk/agent.py:184-189</code>): Now explicitly instructs the LLM to emit ALL <code>send_message</code> calls in a SINGLE assistant response for parallel execution: &ldquo;you MUST emit ALL <code>send_message</code> calls in a SINGLE assistant response so they execute in PARALLEL.&rdquo;</li>
+<li><strong>Step 5 updated</strong>: &ldquo;After ALL agents have responded (you will receive their results together in the next turn)&rdquo; &mdash; makes the parallel contract explicit.</li>
+<li><strong>Agent responsibility boundaries</strong> (<code>agent.py:253-260</code>): <code>_build_instruction()</code> appends a responsibility block clarifying RAG Agent owns ALL document and news retrieval; Market Context Agent provides macro regime and peer narrative; Quant Agent owns numeric risk, fundamentals, technicals, DCF, and behavioral signals.</li>
+</ul>
+
+<h3 class="version">RAG Agent &mdash; Parallel Filing Downloads</h3>
+<ul>
+<li><strong><code>_ensure_ingested()</code> filing fetch converted to <code>asyncio.gather</code></strong> (<code>agent_2_llamaindex/executor.py:74-107</code>): Per-filing sequential loop replaced with two-phase pattern: filter candidates &rarr; <code>asyncio.gather(*[_fetch_one(f) for f in candidates])</code>. Filing downloads for a 5-filing ingest now complete in ~max(per-filing) latency (~3-5s) instead of sum (~15-25s).</li>
+<li><strong><code>get_filing_content</code> server-side truncation</strong> (<code>mcp_servers/finsight_server.py:842</code>): Content truncated at 25,000 chars on the MCP server instead of 20,000 on the client &mdash; reduces bandwidth on large 10-K fetches.</li>
+<li><strong><code>query()</code> fire-and-forget ingestion</strong> (<code>executor.py:162-166</code>): <code>_ensure_ingested</code> and <code>_ensure_news_ingested</code> converted from <code>await asyncio.gather(...)</code> to <code>asyncio.create_task()</code>. Query returns immediately from whatever ChromaDB content is indexed. First-query partial-data warning via <code>_warming</code> flag.</li>
+<li><strong><code>index_manager.py</code> warming signal</strong>: When <code>index.query()</code> finds zero matching documents, returns <code>{"_warming": True, "summary": "Index is warming for {ticker}..."}</code>.</li>
+</ul>
+
+<h3 class="version">MCP Server &mdash; Single-Flight News Cache</h3>
+<ul>
+<li><strong><code>get_news_sentiment</code> refactored</strong> (<code>mcp_servers/finsight_server.py:1406-1551</code>): Core fetch logic extracted into <code>_get_news_sentiment_impl()</code>. Outer tool wrapper delegates to <code>_cache_news.get_or_fetch()</code> &mdash; two concurrent callers for the same uncached ticker share one RSS round-trip instead of both fetching independently.</li>
+</ul>
+
+<h2>v1.29 &mdash; Phase 1: RAG News Ingestion, Quant Fundamentals/Technicals, Data-Driven DCF</h2>
+
+<h3 class="version">RAG Agent &mdash; News &amp; Earnings Ingestion</h3>
+<ul>
+<li><strong><code>_ensure_news_ingested()</code> added</strong> (<code>agent_2_llamaindex/executor.py</code>): Fetches <code>get_news_sentiment</code> (15 articles) and ingests into ChromaDB <code>news</code> collection via <code>DocumentIngestionPipeline.ingest_news_article()</code>. Separate daily dedup key (<code>news_{ticker}</code>) so news and SEC filing ingestion run independently.</li>
+<li><strong><code>query()</code> parallel ingest</strong>: <code>asyncio.gather</code> for filings + news ingestion &mdash; both paths run concurrently.</li>
+<li><strong>Multi-collection query routing</strong> (<code>agent_2_llamaindex/index_manager.py</code>): New <code>_classify_query_intent()</code> routes across <code>sec_filings</code>/<code>news</code>/<code>earnings</code> collections based on keywords; broad analytical queries hit all three. Deduplicates by text hash, synthesizes via LlamaIndex response synthesizer. Returns warming signal when index is empty.</li>
+<li><strong>Agent card</strong> (<code>agent_cards/rag_agent.json</code>): Added <code>financial_news_retrieval</code> skill with news/sentiment/market tags.</li>
+</ul>
+
+<h3 class="version">Quant Agent &mdash; Fundamentals, Technicals, Data-Driven DCF</h3>
+<ul>
+<li><strong><code>fundamental_analysis_node</code></strong> (<code>agent_3_langgraph/nodes.py</code>): Fetches <code>get_financials</code>, extracts 25+ ratios (PE, PB, EV/EBITDA, ROE, ROA, margins, D/E, growth) + derived signals (pct from 52w high/low, golden cross, net debt). Sets <code>_financials_raw</code> for DCF reuse.</li>
+<li><strong><code>technical_analysis_node</code></strong>: SMA 20/50/200, EMA 12/26, MACD + crossover, RSI(14), Bollinger bands, momentum 20d/60d, support/resistance, trend classification (strong_uptrend &rarr; downtrend).</li>
+<li><strong><code>dcf_valuation_node</code> &mdash; data-driven assumptions</strong>: WACC via CAPM + after-tax cost-of-debt (weighted by capital structure). Growth rate blended from <code>revenueGrowth</code>/<code>earningsGrowth</code> (bounded 2&ndash;25%). Tapered 5-year projection fading to terminal. Reuses <code>_financials_raw</code> when available.</li>
+<li><strong><code>format_output_node</code> &mdash; expanded voting</strong>: Adds fundamental signals (<code>low_pe</code>, <code>strong_roe</code>) and technical signals (<code>bullish_trend</code>, <code>oversold_rsi</code>) to signal voting. Reasoning surfaces DCF WACC/growth percentages.</li>
+<li><strong><code>llm_summary_node</code> &mdash; enriched prompt</strong>: 3-4 sentence summary including fundamentals + technicals; <code>max_tokens</code> 256&rarr;384.</li>
+<li><strong>Graph topology &mdash; parallel fan-out</strong>: <code>START</code> &rarr; <code>fetch_prices</code> &#x2225; <code>fetch_fundamentals</code>; <code>fetch_prices</code> &rarr; <code>compute_base_metrics</code> &#x2225; <code>technical_analysis</code>; fan-in at <code>portfolio_correlation</code> + <code>format_output</code>.</li>
+<li><strong>State</strong> (<code>agent_3_langgraph/state.py</code>): Added <code>fundamentals</code>, <code>technicals</code>, <code>_financials_raw</code> fields.</li>
+</ul>
 
 <h2>v1.28 &mdash; Full Synthesis in save_brief + Cache-Hit on Company Names + RAG Latency Cut</h2>
 

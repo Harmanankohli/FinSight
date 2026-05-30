@@ -4,9 +4,9 @@ An autonomous multi-agent system that answers investment queries like *"Should I
 
 ## Key Features
 
-- **Multi-framework orchestration**: Google ADK orchestrator delegates to LlamaIndex (RAG), LangGraph (Quant), and CrewAI (Sentiment) agents
+- **Multi-framework orchestration**: Google ADK orchestrator delegates to LlamaIndex (RAG), LangGraph (Quant), and CrewAI (Market Context) agents
 - **A2A protocol**: Standard-compliant agent discovery and streaming communication via JSON-RPC over HTTP
-- **Multi-tier caching**: TTL-based tool-result cache in the MCP server (5 min prices, 24 h financials, 15 min news, permanent filings), LangChain SQLiteCache for LLM responses, and semantic cache using ChromaDB cosine similarity
+- **Multi-tier caching**: TTL-based tool-result cache in the MCP server (1 min prices, 1 h financials, 5 min news, permanent filings, 24h peers, 7d scenario shocks), LangChain SQLiteCache for LLM responses, and semantic cache using ChromaDB cosine similarity
 - **Input/output guardrails**: Off-topic filter, pre-flight ticker validation, empty-response guard, and BUY/HOLD/SELL signal enforcement with auto-retry
 - **Persistent memory layer**: SQLite-backed session storage, cross-session memory search, ticker brief history, portfolio persistence, and recommendation tracking with live price snapshots
 - **Incremental RAG ingestion**: Tracks ingested filing URLs in SQLite — restarts never re-ingest already-indexed documents
@@ -16,7 +16,7 @@ An autonomous multi-agent system that answers investment queries like *"Should I
 - **Distributed tracing**: Langfuse traces span all four agent processes in a single trace tree via text-based context propagation, with automatic filtering of noisy A2A internal spans
 - **Health monitoring**: `/health` endpoints on all five services with docker-compose healthcheck integration
 - **Local LLM inference**: All agents use LM Studio (OpenAI-compatible API) — no cloud dependencies
-- **MCP data tools**: Unified server providing SEC filings, price data, financials, news sentiment, and more
+- **MCP data tools**: Unified server providing SEC filings, price data, financials, news sentiment, insider transactions, peer discovery, scenario shocks, and more
 
 ## Architecture
 
@@ -31,7 +31,7 @@ An autonomous multi-agent system that answers investment queries like *"Should I
                        ▼
 ┌──────────────────────────────────────────────────────────────┐
 │  Agent Pool                                                   │
-│  RAG (:8002)    Quant (:8003)    Sentiment (:8004)           │
+│  RAG (:8002)    Quant (:8003)    Market Context (:8004)      │
 │  (LlamaIndex)   (LangGraph)      (CrewAI)                    │
 └────────┬────────────┬────────────────┬───────────────────────┘
          │            │                │
@@ -50,6 +50,9 @@ An autonomous multi-agent system that answers investment queries like *"Should I
 │                        │  full_text_search,            │   │
 │                        │  get_news_sentiment,          │   │
 │                        │  get_earnings_calendar,       │   │
+│                        │  get_insider_transactions,    │   │
+│                        │  get_peers,                   │   │
+│                        │  get_scenario_shocks,         │   │
 │                        │  execute_python, ...          │   │
 │                        └─────────────────────────────────┘   │
 └──────────────────────────────────────────────────────────────┘
@@ -69,7 +72,7 @@ All A2A communication uses `A2ACardResolver` for standard discovery and `ClientF
 | Guardrails | Regex off-topic filter + MCP ticker pre-check (input), signal check + retry (output) |
 | RAG | LlamaIndex + ChromaDB (local) + HuggingFace embeddings, incremental ingestion |
 | Quant | LangChain + LangGraph (state machine, MCP data) + LangChain SQLiteCache |
-| Sentiment | CrewAI (parallel data collection + synthesis) |
+| Market Context | CrewAI (macro regime + peer landscape synthesis) |
 | MCP Server | FastMCP (agent registry + data tools + TTL caching) |
 | Evaluation | RAGAS offline pipeline + runtime per-query eval (per-metric streaming, client caching, 180s timeout) + custom financial rubrics |
 | LLM | LM Studio (local, OpenAI-compatible) |
@@ -127,14 +130,14 @@ uv run python -m uvicorn agent_2_llamaindex.server:app --host 0.0.0.0 --port 800
 # Terminal 3: Quant Agent
 uv run python -m uvicorn agent_3_langgraph.server:app --host 0.0.0.0 --port 8003
 
-# Terminal 4: Sentiment Agent
+# Terminal 4: Market Context Agent
 uv run python -m uvicorn agent_4_crewai.server:app --host 0.0.0.0 --port 8004
 
 # Terminal 5: ADK Web UI
 uv run adk web --port 8080 --session_service_uri sqlite://./db/finsight_memory.db --memory_service_uri finsight:// agents
 ```
 
-**Startup order:** LM Studio → MCP Server → RAG → Quant → Sentiment → ADK Web UI
+**Startup order:** LM Studio → MCP Server → RAG → Quant → Market Context → ADK Web UI
 
 Open http://127.0.0.1:8080 in your browser.
 
@@ -170,10 +173,10 @@ stop_servers.bat
 │   ├── nodes.py              # Nodes + LM Studio LLM summary
 │   └── state.py              # QuantAnalysisState schema
 │
-├── agent_4_crewai/           # Sentiment Agent
-│   ├── server.py             # GenericAgentExecutor(SentimentAgent)
-│   ├── executor.py           # SentimentAgent extends BaseAgent with stream()
-│   ├── crew.py               # 1-agent CrewAI (analysis → narrative)
+├── agent_4_crewai/           # Market Context Agent (formerly Sentiment)
+│   ├── server.py             # GenericAgentExecutor(MarketContextAgent)
+│   ├── executor.py           # MarketContextAgent extends BaseAgent with stream()
+│   ├── crew.py               # MarketContextCrew (macro regime + peer landscape)
 │   └── mcp_tools.py          # DynamicMCPTool with Pydantic args_schema
 │
 ├── agents/finsight_agent/    # ADK Web-compatible agent entrypoint
@@ -184,7 +187,7 @@ stop_servers.bat
 │   ├── orchestrator_agent.json
 │   ├── rag_agent.json
 │   ├── quant_agent.json
-│   └── sentiment_agent.json
+│   └── market_context_agent.json
 │
 ├── mcp_servers/              # Unified MCP Server
 │   ├── finsight_server.py    # Registry + all data tools (port 8010)
@@ -248,7 +251,7 @@ Key environment variables in `.env`:
 
 ## Testing
 
-**~148 test cases** across 11 test files — see [TESTS.md](docs/TESTS.md) for details.
+**~160 parametrized test cases** across 15 test files — see [TESTS.md](docs/TESTS.md) for details.
 
 ## License
 

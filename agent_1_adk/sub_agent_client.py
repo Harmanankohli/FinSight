@@ -32,7 +32,7 @@ _TERMINAL_STATES = {
     TaskState.TASK_STATE_INPUT_REQUIRED,
 }
 
-from shared.config import AGENT_SEED_URLS, A2A_TIMEOUT, A2A_TIMEOUT_RAG, A2A_TIMEOUT_QUANT, A2A_TIMEOUT_SENTIMENT
+from shared.config import AGENT_SEED_URLS, A2A_TIMEOUT, A2A_TIMEOUT_RAG, A2A_TIMEOUT_QUANT, A2A_TIMEOUT_MARKET_CONTEXT
 from shared.logging_config import logged
 from shared.observability import get_langfuse_client
 from shared.trace_context import inject_trace_context, current_trace_id
@@ -232,7 +232,7 @@ class SubAgentClient:
         _TIMEOUT_MAP = {
             "rag": A2A_TIMEOUT_RAG,
             "quant": A2A_TIMEOUT_QUANT,
-            "sentiment": A2A_TIMEOUT_SENTIMENT,
+            "market context": A2A_TIMEOUT_MARKET_CONTEXT,
         }
         agent_lower = agent_name.lower()
         timeout = next(

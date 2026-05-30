@@ -59,59 +59,133 @@ class RAGAgent(BaseAgent):
                         continue
                     if isinstance(data, dict):
                         filings = data.get("filings", [])
-                        new_filings = []
+
+                        # Filter to un-ingested filings first
+                        candidates = []
                         for filing in filings:
                             edgar_url = filing.get("edgar_url")
-                            ix_url = filing.get("ix_url")
-                            # Skip filings already ingested (persistent dedup across restarts)
-                            if edgar_url and await is_filing_ingested(edgar_url):
+                            if not edgar_url:
+                                continue
+                            if await is_filing_ingested(edgar_url):
                                 logger.debug("Skipping already-ingested filing: %s", edgar_url[:80])
                                 continue
-                            if edgar_url:
-                                try:
-                                    content_result = await mcp.call_tool_by_name(
-                                        "get_filing_content",
-                                        {"edgar_url": edgar_url, "ix_url": ix_url},
-                                    )
-                                    if hasattr(content_result, "content"):
-                                        content_text = ""
-                                        for citem in content_result.content:
-                                            cres = citem.text if hasattr(citem, "text") else str(citem)
-                                            try:
-                                                cdata = json.loads(cres)
-                                                content_text = cdata.get("content", "")
-                                                break
-                                            except (json.JSONDecodeError, TypeError):
-                                                continue
-                                    else:
-                                        content_text = ""
-                                except Exception as ce:
-                                    logger.warning("Failed to fetch filing content for %s: %s", edgar_url, ce)
-                                    content_text = ""
-                            else:
-                                content_text = ""
-                            filing["content"] = content_text
-                            new_filings.append(filing)
-                        if new_filings:
-                            self._ingestion.ingest_sec_filings_batch(ticker, new_filings)
-                            for filing in new_filings:
-                                if filing.get("edgar_url"):
-                                    await mark_filing_ingested(filing["edgar_url"], ticker)
-                            logger.info("Ingested %d new filing(s) for %s", len(new_filings), ticker)
+                            candidates.append(filing)
+
+                        # Fetch filing content in parallel
+                        async def _fetch_one(f: dict) -> tuple[dict, str]:
+                            edgar_url = f.get("edgar_url", "")
+                            ix_url = f.get("ix_url")
+                            try:
+                                cr = await mcp.call_tool_by_name(
+                                    "get_filing_content",
+                                    {"edgar_url": edgar_url, "ix_url": ix_url},
+                                )
+                                if hasattr(cr, "content"):
+                                    for ci in cr.content:
+                                        txt = ci.text if hasattr(ci, "text") else str(ci)
+                                        try:
+                                            return f, json.loads(txt).get("content", "")
+                                        except (json.JSONDecodeError, TypeError):
+                                            continue
+                            except Exception as ce:
+                                logger.warning("Filing fetch failed for %s: %s", edgar_url[:80], ce)
+                            return f, ""
+
+                        if candidates:
+                            pairs = await asyncio.gather(*[_fetch_one(f) for f in candidates])
+                            new_filings = []
+                            for f, content in pairs:
+                                f["content"] = content
+                                new_filings.append(f)
+                            if new_filings:
+                                self._ingestion.ingest_sec_filings_batch(ticker, new_filings)
+                                for filing in new_filings:
+                                    if filing.get("edgar_url"):
+                                        await mark_filing_ingested(filing["edgar_url"], ticker)
+                                logger.info("Ingested %d new filing(s) for %s", len(new_filings), ticker)
                         else:
                             logger.info("0 new filings to ingest for %s", ticker)
             self._last_ingestion[ticker] = today
         except Exception as e:
             logger.warning("Auto-ingest failed for %s: %s", ticker, e)
 
+    async def _ensure_news_ingested(self, ticker: str) -> None:
+        """Fetches recent news via MCP and ingests articles into the 'news' ChromaDB collection."""
+        today = datetime.now(timezone.utc).date()
+        news_key = f"news_{ticker}"
+        if self._last_ingestion.get(news_key) == today:
+            return
+        try:
+            mcp = await get_shared_mcp()
+        except Exception as e:
+            logger.warning("MCP connect failed for news ingestion: %s", e)
+            return
+        if self._ingestion is None:
+            self._ingestion = DocumentIngestionPipeline(self.index)
+        try:
+            result = await mcp.call_tool_by_name(
+                "get_news_sentiment", {"ticker": ticker, "limit": 15}
+            )
+            ingested = 0
+            if hasattr(result, "content"):
+                for item in result.content:
+                    raw = item.text if hasattr(item, "text") else str(item)
+                    if not raw or not raw.strip():
+                        continue
+                    try:
+                        data = json.loads(raw) if isinstance(raw, str) else raw
+                    except json.JSONDecodeError:
+                        continue
+                    articles = []
+                    if isinstance(data, dict):
+                        articles = data.get("articles", data.get("news", []))
+                    elif isinstance(data, list):
+                        articles = data
+                    for article in articles:
+                        if not isinstance(article, dict):
+                            continue
+                        sentiment = article.get("sentiment", 0)
+                        summary = article.get("summary", "") or f"sentiment={sentiment:+.2f}" if sentiment else ""
+                        self._ingestion.ingest_news_article(ticker, {
+                            "title": article.get("title", ""),
+                            "summary": summary,
+                            "url": article.get("link", article.get("url", "")),
+                            "published_at": article.get("published", article.get("published_at", "")),
+                        })
+                        ingested += 1
+            if ingested > 0:
+                logger.info("Ingested %d news articles for %s", ingested, ticker)
+            self._last_ingestion[news_key] = today
+        except Exception as e:
+            logger.warning("News ingestion failed for %s: %s", ticker, e)
+
     async def query(self, ticker: str, query_text: str) -> dict:
-        # Main entry point: auto-ingest today's filings then query ChromaDB via LlamaIndex
+        """Await ingestion (if needed) then query. Used by direct callers."""
         await self._ensure_ingested(ticker)
+        await self._ensure_news_ingested(ticker)
         return await self.index.query(ticker, query_text)
 
     async def stream(
         self, query: str, context_id: str, task_id: str
     ) -> AsyncIterable[dict]:
+        # Emit WORKING status events while awaiting ingestion so the A2A
+        # client keeps the connection open rather than receiving a hollow
+        # "index warming" placeholder. The orchestrator's SubAgentClient
+        # already skips WORKING events and waits for the terminal state.
+        ticker = extract_ticker(query)
+        if ticker:
+            today_ingested = self._last_ingestion.get(ticker)
+            from datetime import datetime, timezone
+            today = datetime.now(timezone.utc).date()
+            if today_ingested != today:
+                yield {
+                    "is_task_complete": False,
+                    "require_user_input": False,
+                    "content": f"Fetching {ticker} documents and news...",
+                }
+                await self._ensure_ingested(ticker)
+                await self._ensure_news_ingested(ticker)
+
         yield await self._build_response(query)
 
     @logged()

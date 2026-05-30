@@ -45,6 +45,23 @@
                 "Summarize MSFT's latest earnings call",
                 "What was NVDA's forward guidance?"
             ]
+        },
+        {
+            "id": "financial_news_retrieval",
+            "name": "Financial News Retrieval",
+            "description": "Retrieves and analyzes recent financial news articles with sentiment context for impact assessment on stock prices",
+            "tags": [
+                "news",
+                "sentiment",
+                "market",
+                "headlines",
+                "events"
+            ],
+            "examples": [
+                "What recent news is impacting NVDA stock?",
+                "Are there any negative headlines about AAPL this week?",
+                "What market events are affecting MSFT?"
+            ]
         }
     ]
 }

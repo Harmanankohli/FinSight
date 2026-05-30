@@ -106,7 +106,8 @@ def init_instrumentation(agent_type: str) -> None:
             LangChainInstrumentor().instrument()
         except ImportError:
             pass
-    elif agent_type == "sentiment":
+    elif agent_type in ("market_context", "sentiment"):
+        # "sentiment" retained as a back-compat key for the renamed Market Context agent
         from openinference.instrumentation.crewai import CrewAIInstrumentor
         from opentelemetry.instrumentation.starlette import StarletteInstrumentor
         CrewAIInstrumentor().instrument(skip_dep_check=True)
