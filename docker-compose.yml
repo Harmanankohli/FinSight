@@ -7,11 +7,24 @@ services:
       - AGENT_LANGGRAPH_URL=http://agent-langgraph:8003
       - AGENT_CREWAI_URL=http://agent-crewai:8004
       - MCP_SERVER_URL=http://finsight-mcp:8010/sse
+      - SEMANTIC_CACHE_ENABLED=false
+    volumes:
+      - finsight_memory:/data
     depends_on:
-      - agent-llamaindex
-      - agent-langgraph
-      - agent-crewai
-      - finsight-mcp
+      agent-llamaindex:
+        condition: service_healthy
+      agent-langgraph:
+        condition: service_healthy
+      agent-crewai:
+        condition: service_healthy
+      finsight-mcp:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
 
   agent-llamaindex:
     build: ./agent_2_llamaindex
@@ -22,7 +35,14 @@ services:
     volumes:
       - chroma_data:/data/chroma
     depends_on:
-      - finsight-mcp
+      finsight-mcp:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   agent-langgraph:
     build: ./agent_3_langgraph
@@ -30,7 +50,14 @@ services:
     environment:
       - MCP_SERVER_URL=http://finsight-mcp:8010/sse
     depends_on:
-      - finsight-mcp
+      finsight-mcp:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
 
   agent-crewai:
     build: ./agent_4_crewai
@@ -38,11 +65,24 @@ services:
     environment:
       - MCP_SERVER_URL=http://finsight-mcp:8010/sse
     depends_on:
-      - finsight-mcp
+      finsight-mcp:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8004/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
 
   finsight-mcp:
     build: ./mcp_servers
     ports: ["8010:8010"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8010/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
 
   redis:
     image: redis:7-alpine
@@ -50,3 +90,4 @@ services:
 
 volumes:
   chroma_data:
+  finsight_memory:

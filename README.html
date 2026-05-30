@@ -43,18 +43,24 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 
 <h2>Key Features</h2>
 <ul>
-<li><strong>Multi-framework orchestration</strong>: Google ADK orchestrator delegates to LlamaIndex (RAG), LangGraph (Quant), and CrewAI (Sentiment) agents</li>
+<li><strong>Multi-framework orchestration</strong>: Google ADK orchestrator delegates to LlamaIndex (RAG), LangGraph (Quant), and CrewAI (Market Context) agents</li>
 <li><strong>A2A protocol</strong>: Standard-compliant agent discovery and streaming communication via JSON-RPC over HTTP</li>
-<li><strong>Persistent memory layer</strong>: SQLite-backed session storage, cross-session memory search, ticker brief history, portfolio persistence, and recommendation tracking</li>
+<li><strong>Multi-tier caching</strong>: TTL-based tool-result cache in the MCP server (1 min prices, 1 h financials, 5 min news, permanent filings, 24h peers, 7d scenario shocks), LangChain SQLiteCache for LLM responses, and semantic cache using ChromaDB cosine similarity</li>
+<li><strong>Input/output guardrails</strong>: Off-topic filter, pre-flight ticker validation, empty-response guard, and BUY/HOLD/SELL signal enforcement with auto-retry</li>
+<li><strong>Persistent memory layer</strong>: SQLite-backed session storage, cross-session memory search, ticker brief history, portfolio persistence, and recommendation tracking with live price snapshots</li>
+<li><strong>Incremental RAG ingestion</strong>: Tracks ingested filing URLs in SQLite &mdash; restarts never re-ingest already-indexed documents</li>
+<li><strong>RAGAS evaluation pipeline</strong>: Offline batch evaluation (Faithfulness, ResponseRelevancy, ContextPrecision, ContextRecall, ToolCallAccuracy, AgentGoalAccuracy) + runtime per-query eval with per-metric streaming, client caching, and 180s LLM timeout</li>
+<li><strong>Debuggable runtime eval</strong>: Entry/exit logs on every scoring function, per-metric streaming via <code>asyncio.wait(FIRST_COMPLETED)</code>, <code>sys.stdout.reconfigure(encoding='utf-8')</code> to prevent UnicodeEncodeError, and early-return fallbacks on missing contexts</li>
 <li><strong>Portfolio correlation analysis</strong>: When you explicitly mention portfolio holdings (e.g. &ldquo;My portfolio holds AAPL, MSFT&rdquo;), the quant agent computes cross-stock correlation matrices alongside the primary analysis</li>
-<li><strong>Distributed tracing</strong>: Langfuse traces span all four agent processes in a single trace tree via text-based context propagation</li>
+<li><strong>Distributed tracing</strong>: Langfuse traces span all four agent processes in a single trace tree via text-based context propagation, with automatic filtering of noisy A2A internal spans</li>
+<li><strong>Health monitoring</strong>: <code>/health</code> endpoints on all five services with docker-compose healthcheck integration</li>
 <li><strong>Local LLM inference</strong>: All agents use LM Studio (OpenAI-compatible API) &mdash; no cloud dependencies</li>
-<li><strong>MCP data tools</strong>: Unified server providing SEC filings, price data, financials, news sentiment, and more</li>
+<li><strong>MCP data tools</strong>: Unified server providing SEC filings, price data, financials, news sentiment, insider transactions, peer discovery, scenario shocks, and more</li>
 </ul>
 
 <h2>Architecture</h2>
 <pre>┌──────────────────────────────────────────────────────────────┐
-│              ADK Web UI (port 8001)                           │
+│              ADK Web UI (port 8080)                           │
 │           Orchestrator (ADK LlmAgent)                        │
 │         Discovers agents &rarr; LLM routes via send_message       │
 │         Single tool: send_message(name, task)                │
@@ -63,15 +69,30 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
                        &darr;
 ┌──────────────────────────────────────────────────────────────┐
 │  Agent Pool                                                   │
-│  RAG (:8002)    Quant (:8003)    Sentiment (:8004)           │
+│  RAG (:8002)    Quant (:8003)    Market Context (:8004)      │
 │  (LlamaIndex)   (LangGraph)      (CrewAI)                    │
 └────────┬────────────┬────────────────┬───────────────────────┘
          │            │                │
          &darr;            &darr;                &darr;
 ┌──────────────────────────────────────────────────────────────┐
 │          Unified finsight-mcp Server (port 8010)              │
-│  Data Sources: get_prices, get_financials, get_company_filings│
-│  get_news_sentiment, get_earnings_calendar, execute_python... │
+│  ┌─────────────────┐  ┌─────────────────────────────────┐   │
+│  │ Agent Registry  │  │  Data Sources                 │   │
+│  │ find_agent()    │  │  get_prices, get_financials,  │   │
+│  │ resource://cards│  │  get_options_chain,           │   │
+│  └─────────────────┘  │  get_company_filings,         │   │
+│                        │  get_financial_filings,       │   │
+│                        │  get_filing_content,          │   │
+│                        │  validate_ticker,             │   │
+│                        │  resolve_company_ticker,      │   │
+│                        │  full_text_search,            │   │
+│                        │  get_news_sentiment,          │   │
+│                        │  get_earnings_calendar,       │   │
+│                        │  get_insider_transactions,    │   │
+│                        │  get_peers,                   │   │
+│                        │  get_scenario_shocks,         │   │
+│                        │  execute_python, ...          │   │
+│                        └─────────────────────────────────┘   │
 └──────────────────────────────────────────────────────────────┘</pre>
 
 <p>All A2A communication uses <code>A2ACardResolver</code> for standard discovery and <code>ClientFactory</code> for transport. Streaming events are handled correctly: intermediate <code>WORKING</code>/<code>SUBMITTED</code> events are skipped, only actual results (<code>artifact_update</code> data or terminal <code>COMPLETED</code> status) are returned.</p>
@@ -82,16 +103,20 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <tr><td>Agent Communication</td><td>Google A2A Protocol (JSON-RPC over HTTP, streaming)</td></tr>
 <tr><td>Orchestrator</td><td>Google ADK <code>LlmAgent</code> with <code>send_message</code> tool</td></tr>
 <tr><td>Sub-agent Executor</td><td><code>GenericAgentExecutor</code> + <code>BaseAgent</code> pattern</td></tr>
-<tr><td>Memory Layer</td><td>SQLite (<code>aiosqlite</code>)</td></tr>
-<tr><td>RAG</td><td>LlamaIndex + ChromaDB (local) + HuggingFace embeddings</td></tr>
-<tr><td>Quant</td><td>LangChain + LangGraph (state machine, MCP data)</td></tr>
-<tr><td>Sentiment</td><td>CrewAI (parallel data collection + synthesis)</td></tr>
-<tr><td>MCP Server</td><td>FastMCP (agent registry + data tools)</td></tr>
+<tr><td>Memory Layer</td><td>SQLite (<code>aiosqlite</code>) &mdash; sessions, ticker briefs, portfolio, performance, ingested filings</td></tr>
+<tr><td>Caching</td><td><code>_TTLCache</code> (MCP tools), LangChain <code>SQLiteCache</code> (LLM), ChromaDB semantic cache</td></tr>
+<tr><td>Guardrails</td><td>Regex off-topic filter + MCP ticker pre-check (input), signal check + retry (output)</td></tr>
+<tr><td>RAG</td><td>LlamaIndex + ChromaDB (local) + HuggingFace embeddings, incremental ingestion</td></tr>
+<tr><td>Quant</td><td>LangChain + LangGraph (state machine, MCP data) + LangChain SQLiteCache</td></tr>
+<tr><td>Market Context</td><td>CrewAI (macro regime + peer landscape synthesis)</td></tr>
+<tr><td>MCP Server</td><td>FastMCP (agent registry + data tools + TTL caching)</td></tr>
+<tr><td>Evaluation</td><td>RAGAS offline pipeline + runtime per-query eval (per-metric streaming, client caching, 180s timeout) + custom financial rubrics</td></tr>
 <tr><td>LLM</td><td>LM Studio (local, OpenAI-compatible)</td></tr>
 <tr><td>Embeddings</td><td>sentence-transformers (all-MiniLM-L6-v2, local)</td></tr>
 <tr><td>Reranker</td><td>cross-encoder/ms-marco-MiniLM-L-6-v2</td></tr>
 <tr><td>Vector Store</td><td>ChromaDB (local, persisted)</td></tr>
 <tr><td>Agent Discovery</td><td><code>A2ACardResolver</code> via <code>AGENT_SEED_URLS</code></td></tr>
+<tr><td>Observability</td><td>Langfuse + LangChainInstrumentor + sub-agent latency spans</td></tr>
 </table>
 
 <h2>Quick Start</h2>
@@ -130,15 +155,17 @@ uv run python -m uvicorn agent_2_llamaindex.server:app --host 0.0.0.0 --port 800
 # Terminal 3: Quant Agent
 uv run python -m uvicorn agent_3_langgraph.server:app --host 0.0.0.0 --port 8003
 
-# Terminal 4: Sentiment Agent
+# Terminal 4: Market Context Agent
 uv run python -m uvicorn agent_4_crewai.server:app --host 0.0.0.0 --port 8004
 
 # Terminal 5: ADK Web UI
-.venv\Scripts\activate && adk web --port 8001 agents</pre>
+uv run adk web --port 8080 --session_service_uri sqlite://./db/finsight_memory.db --memory_service_uri finsight:// agents</pre>
 
-<p><strong>Startup order:</strong> LM Studio &rarr; MCP Server &rarr; RAG &rarr; Quant &rarr; Sentiment &rarr; ADK Web UI</p>
+<p><strong>Startup order:</strong> LM Studio &rarr; MCP Server &rarr; RAG &rarr; Quant &rarr; Market Context &rarr; ADK Web UI</p>
 
-<p>Open <a href="http://127.0.0.1:8001">http://127.0.0.1:8001</a> in your browser.</p>
+<blockquote>The orchestrator's standalone A2A server (<code>agent_1_adk/main.py</code> on <code>:8001</code>) is no longer started by <code>run_adk_web.bat</code>. The orchestrator runs inside <code>adk web</code>. Start it manually with <code>uv run python -m agent_1_adk.main</code> if you need to expose the A2A JSON-RPC endpoint to external A2A clients.</blockquote>
+
+<p>Open <a href="http://127.0.0.1:8080">http://127.0.0.1:8080</a> in your browser.</p>
 
 <h3>Stop All Services</h3>
 <pre>stop_servers.bat</pre>
@@ -148,8 +175,13 @@ uv run python -m uvicorn agent_4_crewai.server:app --host 0.0.0.0 --port 8004
 <tr><th>Variable</th><th>Default</th><th>Description</th></tr>
 <tr><td><code>ADK_MODEL</code></td><td><code>openai/qwen/qwen3-30b-a3b-2507</code></td><td>LLM model for the orchestrator</td></tr>
 <tr><td><code>AGENT_SEED_URLS</code></td><td><code>http://localhost:8002,http://localhost:8003,http://localhost:8004</code></td><td>A2A agent discovery URLs</td></tr>
-<tr><td><code>A2A_TIMEOUT</code></td><td><code>300.0</code></td><td>Timeout for A2A communication (seconds)</td></tr>
-<tr><td><code>LLM_BASE_URL</code></td><td><code>http://localhost:1234/v1</code></td><td>LM Studio endpoint</td></tr>
+<tr><td><code>A2A_TIMEOUT</code></td><td><code>680.0</code></td><td>Timeout for A2A communication (seconds)</td></tr>
+<tr><td><code>LLM_BASE_URL</code></td><td><code>http://localhost:1234/v1</code></td><td>LM Studio OpenAI-compatible endpoint</td></tr>
+<tr><td><code>LLM_API_KEY</code></td><td><code>lmstudio</code></td><td>API key for LLM provider (LM Studio dummy value; replace for OpenAI/Anthropic)</td></tr>
+<tr><td><code>SEC_USER_AGENT</code></td><td><code>FinSight Research (dev-mode-set-SEC_USER_AGENT)</code></td><td>SEC EDGAR User-Agent header (format: <code>Your Name (your-email@example.com)</code>)</td></tr>
+<tr><td><code>SEMANTIC_CACHE_ENABLED</code></td><td><code>false</code></td><td>Enable ChromaDB semantic cache for repeated investment queries</td></tr>
+<tr><td><code>EVAL_TRACE_ENABLED</code></td><td><code>True</code></td><td>Master switch for sidecar RAGAS evals. Set to <code>False</code> to disable all per-agent runtime scoring with no code changes</td></tr>
+<tr><td><code>MCP_SERVER_URL</code></td><td><code>http://localhost:8010/sse</code></td><td>Unified MCP server SSE endpoint</td></tr>
 </table>
 
 <h2>Documentation</h2>
@@ -165,8 +197,7 @@ uv run python -m uvicorn agent_4_crewai.server:app --host 0.0.0.0 --port 8004
 </table>
 
 <h2>Testing</h2>
-<pre>uv run pytest -v</pre>
-<p>64 tests covering: A2A discovery, agent card validation, orchestrator tools, sub-agent executors, LangGraph state graphs, RAG pipelines, CrewAI integration, distributed trace propagation, portfolio holdings extraction, and persistent memory layer.</p>
+<p><strong>~160 parametrized test cases</strong> across 15 test files &mdash; see <a href="docs/TESTS.html">TESTS.html</a> for details.</p>
 
 <hr>
 <p style="font-size:.85rem;color:#888">Apache 2.0 License</p>

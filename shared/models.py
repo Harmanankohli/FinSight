@@ -1,8 +1,19 @@
+"""Pydantic data models for the multi-agent investment pipeline.
+
+Each model represents data flowing between agents/stages:
+  QueryContext       → orchestrator input (user request)
+  RAGInsights        → RAG agent → orchestrator
+  QuantMetrics       → quant agent → orchestrator
+  SentimentIntelligence → sentiment agent → orchestrator
+  InvestmentBrief    → orchestrator → final output (user)
+"""
+
 from pydantic import BaseModel
 from datetime import datetime
 from typing import Optional
 
 
+# ── QueryContext: raw user request that enters the orchestrator ──
 class QueryContext(BaseModel):
     ticker: str
     user_query: str
@@ -13,6 +24,7 @@ class QueryContext(BaseModel):
     timestamp: datetime
 
 
+# ── RAGInsights: structured filing / earnings insight from RAG agent ──
 class RAGInsights(BaseModel):
     ticker: str
     revenue_growth_yoy: float
@@ -23,6 +35,7 @@ class RAGInsights(BaseModel):
     confidence_score: float
 
 
+# ── QuantMetrics: computed financial risk/valuation from quant agent ──
 class QuantMetrics(BaseModel):
     ticker: str
     sharpe_ratio: float
@@ -36,6 +49,7 @@ class QuantMetrics(BaseModel):
     quant_confidence: float
 
 
+# ── SentimentIntelligence: market sentiment from sentiment agent ──
 class SentimentIntelligence(BaseModel):
     ticker: str
     social_sentiment_score: float
@@ -49,6 +63,7 @@ class SentimentIntelligence(BaseModel):
     key_catalysts: list[str]
 
 
+# ── InvestmentBrief: final aggregation → output to user ──
 class InvestmentBrief(BaseModel):
     ticker: str
     generated_at: datetime

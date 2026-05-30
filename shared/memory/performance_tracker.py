@@ -9,13 +9,15 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
-from shared.memory.store import DB_PATH, get_db
+from shared.config import IST
+from shared.memory.store import DB_PATH, get_db, write_lock
 
 
 class PerformanceTracker:
     def __init__(self, db_path: Path = DB_PATH):
         self._db_path = db_path
 
+    # Persists recommendation with async price snapshot. Falls back to yfinance fetch via executor if no price supplied.
     async def record_recommendation(
         self,
         ticker: str,
@@ -24,10 +26,19 @@ class PerformanceTracker:
         confidence: float,
         price: Optional[float] = None,
     ) -> str:
-        """Record a new recommendation with optional price snapshot."""
+        """Record a new recommendation with a live price snapshot.
+
+        If price is not supplied, fetches from yfinance asynchronously so
+        realized_return can be computed at evaluation time.
+        """
+        if price is None:
+            import asyncio as _asyncio
+            loop = _asyncio.get_event_loop()
+            price = await loop.run_in_executor(None, self._fetch_current_price, ticker)
+
         record_id = str(uuid.uuid4())
-        conn = await get_db(self._db_path)
-        try:
+        async with write_lock():
+            conn = await get_db(self._db_path)
             await conn.execute(
                 """INSERT INTO recommendation_records
                    (id, ticker, user_id, recommendation, confidence,
@@ -40,29 +51,25 @@ class PerformanceTracker:
                     recommendation.upper(),
                     confidence,
                     price,
-                    datetime.utcnow().isoformat(),
+                    datetime.now(IST).isoformat(),
                 ),
             )
             await conn.commit()
-        finally:
-            await conn.close()
         return record_id
 
+    # Batch-evaluates all unevaluated recommendations by fetching current prices and computing realized_return for each.
     async def evaluate_all(self) -> list[dict]:
         """Compare all unevaluated recommendations to current prices.
 
         Fetches current price via yfinance, calculates realized_return.
         """
         conn = await get_db(self._db_path)
-        try:
-            cursor = await conn.execute(
-                """SELECT id, ticker, recommendation, price_at_rec
-                   FROM recommendation_records
-                   WHERE evaluated_at IS NULL AND price_at_rec IS NOT NULL"""
-            )
-            rows = await cursor.fetchall()
-        finally:
-            await conn.close()
+        cursor = await conn.execute(
+            """SELECT id, ticker, recommendation, price_at_rec
+               FROM recommendation_records
+               WHERE evaluated_at IS NULL AND price_at_rec IS NOT NULL"""
+        )
+        rows = await cursor.fetchall()
 
         results = []
         for row in rows:
@@ -72,10 +79,10 @@ class PerformanceTracker:
                 continue
 
             realized_return = (current_price - price_at_rec) / price_at_rec
-            now = datetime.utcnow().isoformat()
+            now = datetime.now(IST).isoformat()
 
-            conn = await get_db(self._db_path)
-            try:
+            async with write_lock():
+                conn = await get_db(self._db_path)
                 await conn.execute(
                     """UPDATE recommendation_records
                        SET evaluated_at = ?, realized_return = ?
@@ -83,8 +90,6 @@ class PerformanceTracker:
                     (now, realized_return, record_id),
                 )
                 await conn.commit()
-            finally:
-                await conn.close()
 
             results.append({
                 "id": record_id,
@@ -97,6 +102,7 @@ class PerformanceTracker:
 
         return results
 
+    # Computes win rate per recommendation type. BUY correct if price rose (ret > 0), SELL correct if price fell (ret < 0). HOLD always counted as correct.
     async def get_accuracy_stats(
         self, user_id: Optional[str] = None
     ) -> dict:
@@ -107,25 +113,22 @@ class PerformanceTracker:
         HOLD correctness is not evaluated.
         """
         conn = await get_db(self._db_path)
-        try:
-            if user_id:
-                cursor = await conn.execute(
-                    """SELECT recommendation, realized_return
-                       FROM recommendation_records
-                       WHERE user_id = ? AND evaluated_at IS NOT NULL
-                       AND realized_return IS NOT NULL""",
-                    (user_id,),
-                )
-            else:
-                cursor = await conn.execute(
-                    """SELECT recommendation, realized_return
-                       FROM recommendation_records
-                       WHERE evaluated_at IS NOT NULL
-                       AND realized_return IS NOT NULL"""
-                )
-            rows = await cursor.fetchall()
-        finally:
-            await conn.close()
+        if user_id:
+            cursor = await conn.execute(
+                """SELECT recommendation, realized_return
+                   FROM recommendation_records
+                   WHERE user_id = ? AND evaluated_at IS NOT NULL
+                   AND realized_return IS NOT NULL""",
+                (user_id,),
+            )
+        else:
+            cursor = await conn.execute(
+                """SELECT recommendation, realized_return
+                   FROM recommendation_records
+                   WHERE evaluated_at IS NOT NULL
+                   AND realized_return IS NOT NULL"""
+            )
+        rows = await cursor.fetchall()
 
         stats: dict[str, dict] = {}
         for rec, ret in rows:
@@ -157,43 +160,40 @@ class PerformanceTracker:
     ) -> list[dict]:
         """Get recommendations for a ticker in the last N days."""
         conn = await get_db(self._db_path)
-        try:
-            cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
-            if user_id:
-                cursor = await conn.execute(
-                    """SELECT id, ticker, user_id, recommendation, confidence,
-                              price_at_rec, created_at, evaluated_at, realized_return
-                       FROM recommendation_records
-                       WHERE ticker = ? AND user_id = ? AND created_at >= ?
-                       ORDER BY created_at DESC""",
-                    (ticker.upper(), user_id, cutoff),
-                )
-            else:
-                cursor = await conn.execute(
-                    """SELECT id, ticker, user_id, recommendation, confidence,
-                              price_at_rec, created_at, evaluated_at, realized_return
-                       FROM recommendation_records
-                       WHERE ticker = ? AND created_at >= ?
-                       ORDER BY created_at DESC""",
-                    (ticker.upper(), cutoff),
-                )
-            rows = await cursor.fetchall()
-            return [
-                {
-                    "id": r[0],
-                    "ticker": r[1],
-                    "user_id": r[2],
-                    "recommendation": r[3],
-                    "confidence": r[4],
-                    "price_at_rec": r[5],
-                    "created_at": r[6],
-                    "evaluated_at": r[7],
-                    "realized_return": r[8],
-                }
-                for r in rows
-            ]
-        finally:
-            await conn.close()
+        cutoff = (datetime.now(IST) - timedelta(days=days)).isoformat()
+        if user_id:
+            cursor = await conn.execute(
+                """SELECT id, ticker, user_id, recommendation, confidence,
+                          price_at_rec, created_at, evaluated_at, realized_return
+                   FROM recommendation_records
+                   WHERE ticker = ? AND user_id = ? AND created_at >= ?
+                   ORDER BY created_at DESC""",
+                (ticker.upper(), user_id, cutoff),
+            )
+        else:
+            cursor = await conn.execute(
+                """SELECT id, ticker, user_id, recommendation, confidence,
+                          price_at_rec, created_at, evaluated_at, realized_return
+                   FROM recommendation_records
+                   WHERE ticker = ? AND created_at >= ?
+                   ORDER BY created_at DESC""",
+                (ticker.upper(), cutoff),
+            )
+        rows = await cursor.fetchall()
+        return [
+            {
+                "id": r[0],
+                "ticker": r[1],
+                "user_id": r[2],
+                "recommendation": r[3],
+                "confidence": r[4],
+                "price_at_rec": r[5],
+                "created_at": r[6],
+                "evaluated_at": r[7],
+                "realized_return": r[8],
+            }
+            for r in rows
+        ]
 
     @staticmethod
     def _fetch_current_price(ticker: str) -> Optional[float]:

@@ -9,7 +9,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from shared.memory.store import DB_PATH, get_db
+from shared.config import IST
+from shared.memory.store import DB_PATH, get_db, write_lock
 from shared.models import QueryContext
 
 
@@ -20,25 +21,23 @@ class PortfolioStore:
     async def get_profile(self, user_id: str) -> Optional[dict]:
         """Get a user's profile including holdings, risk profile, and horizon."""
         conn = await get_db(self._db_path)
-        try:
-            cursor = await conn.execute(
-                """SELECT user_id, risk_profile, holdings, horizon, updated_at
-                   FROM user_profiles WHERE user_id = ?""",
-                (user_id,),
-            )
-            row = await cursor.fetchone()
-            if not row:
-                return None
-            return {
-                "user_id": row[0],
-                "risk_profile": row[1],
-                "holdings": json.loads(row[2]),
-                "horizon": row[3],
-                "updated_at": row[4],
-            }
-        finally:
-            await conn.close()
+        cursor = await conn.execute(
+            """SELECT user_id, risk_profile, holdings, horizon, updated_at
+               FROM user_profiles WHERE user_id = ?""",
+            (user_id,),
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "user_id": row[0],
+            "risk_profile": row[1],
+            "holdings": json.loads(row[2]),
+            "horizon": row[3],
+            "updated_at": row[4],
+        }
 
+    # Called on each query. Merges new holdings with existing ones (union), updates risk/horizon only when non-empty.
     async def upsert_from_context(self, ctx: QueryContext) -> None:
         """Auto-capture portfolio from QueryContext on each query.
 
@@ -46,17 +45,18 @@ class PortfolioStore:
         and horizon if they are non-empty and different from current.
         """
         conn = await get_db(self._db_path)
-        try:
-            existing = await conn.execute(
-                """SELECT holdings, risk_profile, horizon FROM user_profiles
-                   WHERE user_id = ?""",
-                (ctx.session_id,),
-            )
-            row = await existing.fetchone()
+        existing = await conn.execute(
+            """SELECT holdings, risk_profile, horizon FROM user_profiles
+               WHERE user_id = ?""",
+            (ctx.session_id,),
+        )
+        row = await existing.fetchone()
 
-            now = datetime.utcnow().isoformat()
-            new_holdings = list(set(ctx.portfolio_holdings))
+        now = datetime.now(IST).isoformat()
+        new_holdings = list(set(ctx.portfolio_holdings))
 
+        async with write_lock():
+            conn = await get_db(self._db_path)
             if row:
                 existing_holdings = json.loads(row[0])
                 merged = list(set(existing_holdings + new_holdings))
@@ -78,9 +78,8 @@ class PortfolioStore:
                     (ctx.session_id, risk, json.dumps(new_holdings), horizon, now),
                 )
             await conn.commit()
-        finally:
-            await conn.close()
 
+    # Simple read — returns the user's current holdings list from their profile.
     async def get_holdings(self, user_id: str) -> list[str]:
         """Get a user's current portfolio holdings."""
         profile = await self.get_profile(user_id)
@@ -88,11 +87,12 @@ class PortfolioStore:
             return profile["holdings"]
         return []
 
+    # Simple write — replaces holdings outright via upsert (INSERT ... ON CONFLICT DO UPDATE).
     async def update_holdings(self, user_id: str, holdings: list[str]) -> None:
         """Explicitly set a user's portfolio holdings."""
-        conn = await get_db(self._db_path)
-        try:
-            now = datetime.utcnow().isoformat()
+        now = datetime.now(IST).isoformat()
+        async with write_lock():
+            conn = await get_db(self._db_path)
             await conn.execute(
                 """INSERT INTO user_profiles (user_id, holdings, updated_at)
                    VALUES (?, ?, ?)
@@ -107,5 +107,3 @@ class PortfolioStore:
                 ),
             )
             await conn.commit()
-        finally:
-            await conn.close()

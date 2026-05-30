@@ -3,6 +3,8 @@ import re
 
 _STOCK_TICKER_RE = re.compile(r"^[A-Z]{1,5}(\.[A-Z]{1,2})?$")
 
+# Common financial/tech acronyms that look like tickers but aren't; prevents
+# false-positive extraction from queries mentioning "SEC", "EPS", "AI", etc.
 _FINANCIAL_STOP_WORDS: frozenset[str] = frozenset({
     "SEC", "EPS", "CEO", "CFO", "CTO", "COO", "CIO", "ROI", "ROE", "ROA",
     "NYSE", "NASDAQ", "INC", "LLC", "LTD", "CORP", "GAAP", "EBIT", "EBITDA",
@@ -19,6 +21,8 @@ def _is_financial_stop_word(word: str) -> bool:
     return word.upper() in _FINANCIAL_STOP_WORDS
 
 
+# Low-information words stripped before passing text to ticker-resolution tools,
+# reducing ambiguity in the NLP-based company→ticker lookup.
 _QUERY_NOISE_WORDS: frozenset[str] = frozenset({
     "analyze", "research", "analyze", "get", "find", "show", "tell", "give",
     "me", "about", "for", "the", "a", "an", "of", "in", "on", "at", "to",
@@ -43,16 +47,26 @@ def clean_query_for_resolution(text: str) -> str:
     return " ".join(cleaned)
 
 
+# Priority order: (1) parenthesised tickers "buy NVDA (NVDA)",
+# (2) preposition-adjacent "buy NVDA" or "invest in NVDA",
+# (3) $ prefix as explicit signal, (4) isolated uppercase words.
 def extract_ticker(query: str) -> str:
-    m = re.search(r"\(([A-Z]{1,5})\)", query)
-    if m:
+    # All-uppercase parens = ticker symbol e.g. "Visa (V)" or "buy (NVDA)".
+    m = re.search(r"\(([A-Z]{1,5}(?:\.[A-Z]{1,2})?)\)", query)
+    if m and not _is_financial_stop_word(m.group(1)):
         return m.group(1)
 
-    m = re.search(r"(?:for|of|about|buy|sell|invest|in)\s+\$?([A-Z]{1,5})\b", query, re.IGNORECASE)
-    if m and m.group(1).isupper():
+    # Mixed-case parens = company name e.g. "V (Visa)" — the pre-paren word is
+    # the ticker. Handles single-char tickers (V, Y) that no other pattern catches.
+    m = re.search(r"\b([A-Z]{1,5})\s+\([A-Za-z][a-z]", query)
+    if m and not _is_financial_stop_word(m.group(1)):
         return m.group(1)
 
-    m = re.search(r"\$([A-Z]{1,2})\b", query)
+    m = re.search(r"(?:for|of|about|buy|sell|invest|in)\s+\$?([A-Z]{1,5}(?:\.[A-Z]{1,2})?)\b", query, re.IGNORECASE)
+    if m and re.fullmatch(r"[A-Z]{1,5}(?:\.[A-Z]{1,2})?", m.group(1)):
+        return m.group(1)
+
+    m = re.search(r"\$([A-Z]{1,5}(?:\.[A-Z]{1,2})?)\b", query)
     if m:
         return m.group(1)
 
@@ -60,7 +74,7 @@ def extract_ticker(query: str) -> str:
     if matches:
         return matches[0]
 
-    matches = [w for w in re.findall(r"\b([A-Z]{2})\b", query) if not _is_financial_stop_word(w)]
+    matches = [w for w in re.findall(r"\b([A-Z]{1,2})\b", query) if not _is_financial_stop_word(w)]
     if matches:
         return matches[-1]
 
@@ -75,6 +89,8 @@ _HOLDINGS_PATTERNS = [
 ]
 
 
+# Delegates to the MCP server's SEC-sourced database for authoritative ticker
+# validation. The server queries EDGAR to confirm existence and return canonical form.
 async def validate_ticker_via_mcp(mcp, ticker: str) -> tuple[bool, str, str]:
     """Call MCP validate_ticker. Returns (valid, canonical_ticker, company_name_or_error). Raises on MCP failure."""
     result = await mcp.call_tool_by_name("validate_ticker", {"ticker": ticker})
@@ -90,6 +106,8 @@ async def validate_ticker_via_mcp(mcp, ticker: str) -> tuple[bool, str, str]:
     return False, ticker, "Ticker not found in SEC database"
 
 
+# Delegates company-name→ticker resolution to the MCP server, which queries
+# SEC EDGAR. Strips noise words first to improve NLP accuracy server-side.
 async def resolve_ticker_via_mcp(mcp, query: str, exclude_ticker: str = "") -> tuple[str, str]:
     """Call MCP resolve_company_ticker. Returns (ticker, company_name). Raises on MCP failure."""
     cleaned = clean_query_for_resolution(query)
@@ -108,6 +126,39 @@ async def resolve_ticker_via_mcp(mcp, query: str, exclude_ticker: str = "") -> t
             except Exception:
                 continue
     return "", ""
+
+
+async def validate_ticker(ticker: str) -> tuple[bool, str, str]:
+    """Module-level wrapper: validates ticker via shared MCP singleton.
+
+    Returns (valid, canonical_ticker, company_or_error).
+    On MCP failure, optimistically returns (True, ticker, "") so callers degrade gracefully.
+    """
+    if not ticker:
+        return False, "", "Could not identify a stock ticker from the query. Try using parentheses (AAPL) or $ prefix ($V)."
+    try:
+        from shared.mcp_client import get_shared_mcp
+        mcp = await get_shared_mcp()
+        return await validate_ticker_via_mcp(mcp, ticker)
+    except Exception as e:
+        import logging as _logging
+        _logging.getLogger(__name__).warning("MCP ticker validation failed, proceeding with regex guess: %s", e)
+        return True, ticker, ""
+
+
+async def resolve_ticker(query: str, exclude: str = "") -> tuple[str, str]:
+    """Module-level wrapper: resolves company name → ticker via shared MCP singleton.
+
+    Returns (ticker, company_name). Returns ("", "") on failure.
+    """
+    try:
+        from shared.mcp_client import get_shared_mcp
+        mcp = await get_shared_mcp()
+        return await resolve_ticker_via_mcp(mcp, query, exclude)
+    except Exception as e:
+        import logging as _logging
+        _logging.getLogger(__name__).warning("MCP ticker resolution failed: %s", e)
+        return "", ""
 
 
 def extract_holdings(query: str, exclude_ticker: str = "") -> list[str]:

@@ -26,7 +26,8 @@ from google.genai import types
 from rank_bm25 import BM25Okapi
 from sentence_transformers import SentenceTransformer, util
 
-from shared.memory.store import DB_PATH, get_db
+from shared.config import IST
+from shared.memory.store import DB_PATH, get_db, write_lock
 
 logger = logging.getLogger(__name__)
 
@@ -40,16 +41,18 @@ class SQLiteMemoryService(BaseMemoryService):
         self._db_path = db_path
         self._model: Optional[SentenceTransformer] = None
 
+    # Lazy-loads SentenceTransformer on first search to avoid heavy import cost at service initialization.
     def _get_model(self) -> SentenceTransformer:
         """Lazy-load the embedding model."""
         if self._model is None:
             self._model = SentenceTransformer(EMBEDDING_MODEL)
         return self._model
 
+    # Called after a session completes. Extracts all events and persists as searchable memory entries.
     async def add_session_to_memory(self, session: Session) -> None:
         """Store all events from a session as memory entries."""
-        conn = await get_db(self._db_path)
-        try:
+        async with write_lock():
+            conn = await get_db(self._db_path)
             for event in session.events:
                 content_text = self._extract_text(event)
                 if not content_text:
@@ -73,12 +76,10 @@ class SQLiteMemoryService(BaseMemoryService):
                         content_json,
                         metadata_json,
                         content_text,
-                        datetime.utcnow().isoformat(),
+                        datetime.now(IST).isoformat(),
                     ),
                 )
             await conn.commit()
-        finally:
-            await conn.close()
 
     async def add_events_to_memory(
         self,
@@ -103,8 +104,8 @@ class SQLiteMemoryService(BaseMemoryService):
             session_id = session_id or custom_metadata.get("session_id")
             app_name = app_name or custom_metadata.get("app_name")
 
-        conn = await get_db(self._db_path)
-        try:
+        async with write_lock():
+            conn = await get_db(self._db_path)
             for event in events:
                 content_text = self._extract_text(event)
                 if not content_text:
@@ -129,13 +130,12 @@ class SQLiteMemoryService(BaseMemoryService):
                         content_json,
                         metadata_json,
                         content_text,
-                        datetime.utcnow().isoformat(),
+                        datetime.now(IST).isoformat(),
                     ),
                 )
             await conn.commit()
-        finally:
-            await conn.close()
 
+    # Hybrid retrieval pipeline: BM25 keyword matching + embedding similarity fused via RRF (Reciprocal Rank Fusion). Returns top-10 ranked memories.
     async def search_memory(
         self,
         *,
@@ -145,84 +145,82 @@ class SQLiteMemoryService(BaseMemoryService):
     ) -> SearchMemoryResponse:
         """Search stored memories using hybrid BM25 + embedding similarity."""
         conn = await get_db(self._db_path)
-        try:
-            cursor = await conn.execute(
-                """SELECT id, content_json, metadata_json, search_text, created_at
-                   FROM memory_entries
-                   WHERE user_id = ?
-                   ORDER BY created_at DESC""",
-                (user_id,),
+        cursor = await conn.execute(
+            """SELECT id, content_json, metadata_json, search_text, created_at
+               FROM memory_entries
+               WHERE user_id = ?
+               ORDER BY created_at DESC""",
+            (user_id,),
+        )
+        rows = await cursor.fetchall()
+
+        if not rows:
+            return SearchMemoryResponse(memories=[])
+
+        # Parse entries
+        parsed = []
+        for row in rows:
+            entry_id, content_json, metadata_json, search_text, created_at = row
+            try:
+                content_dict = json.loads(content_json)
+                metadata = json.loads(metadata_json)
+            except json.JSONDecodeError:
+                continue
+
+            # Filter by app_name
+            if metadata.get("app_name") != app_name:
+                continue
+
+            parts = []
+            for part_dict in content_dict.get("parts", []):
+                if "text" in part_dict:
+                    parts.append(types.Part(text=part_dict["text"]))
+
+            if not parts:
+                continue
+
+            content = types.Content(
+                role=content_dict.get("role", "user"),
+                parts=parts,
             )
-            rows = await cursor.fetchall()
 
-            if not rows:
-                return SearchMemoryResponse(memories=[])
+            entry = MemoryEntry(
+                content=content,
+                custom_metadata=metadata,
+                id=entry_id,
+                author=metadata.get("author"),
+                timestamp=created_at,
+            )
 
-            # Parse entries
-            parsed = []
-            for row in rows:
-                entry_id, content_json, metadata_json, search_text, created_at = row
-                try:
-                    content_dict = json.loads(content_json)
-                    metadata = json.loads(metadata_json)
-                except json.JSONDecodeError:
-                    continue
+            parsed.append({
+                "entry": entry,
+                "search_text": search_text or self._content_to_text(content),
+            })
 
-                # Filter by app_name
-                if metadata.get("app_name") != app_name:
-                    continue
+        if not parsed:
+            return SearchMemoryResponse(memories=[])
 
-                parts = []
-                for part_dict in content_dict.get("parts", []):
-                    if "text" in part_dict:
-                        parts.append(types.Part(text=part_dict["text"]))
+        # BM25 scoring
+        bm25_scores = self._bm25_score(query, parsed)
 
-                if not parts:
-                    continue
+        # Embedding scoring
+        emb_scores = self._embedding_score(query, parsed)
 
-                content = types.Content(
-                    role=content_dict.get("role", "user"),
-                    parts=parts,
-                )
+        # Fuse with RRF
+        fused = self._rrf_fuse(bm25_scores, emb_scores)
 
-                entry = MemoryEntry(
-                    content=content,
-                    custom_metadata=metadata,
-                    id=entry_id,
-                    author=metadata.get("author"),
-                    timestamp=created_at,
-                )
+        # Sort by fused score descending
+        ranked = sorted(fused.items(), key=lambda x: x[1], reverse=True)
 
-                parsed.append({
-                    "entry": entry,
-                    "search_text": search_text or self._content_to_text(content),
-                })
+        id_to_entry = {p["entry"].id: p["entry"] for p in parsed}
+        memories = []
+        for entry_id, _score in ranked[:10]:
+            if entry_id in id_to_entry:
+                memories.append(id_to_entry[entry_id])
 
-            if not parsed:
-                return SearchMemoryResponse(memories=[])
+        return SearchMemoryResponse(memories=memories)
 
-            # BM25 scoring
-            bm25_scores = self._bm25_score(query, parsed)
-
-            # Embedding scoring
-            emb_scores = self._embedding_score(query, parsed)
-
-            # Fuse with RRF
-            fused = self._rrf_fuse(bm25_scores, emb_scores)
-
-            # Sort by fused score descending
-            ranked = sorted(fused.items(), key=lambda x: x[1], reverse=True)
-
-            id_to_entry = {p["entry"].id: p["entry"] for p in parsed}
-            memories = []
-            for entry_id, _score in ranked[:10]:
-                if entry_id in id_to_entry:
-                    memories.append(id_to_entry[entry_id])
-
-            return SearchMemoryResponse(memories=memories)
-        finally:
-            await conn.close()
-
+    # Tokenizes query and corpus, scores entries with BM25Okapi (term-frequency × inverse document frequency).
     @staticmethod
     def _bm25_score(query: str, parsed: list[dict]) -> dict[str, float]:
         """Compute BM25 scores for all entries against the query."""
@@ -236,6 +234,7 @@ class SQLiteMemoryService(BaseMemoryService):
 
         return {p["entry"].id: float(s) for p, s in zip(parsed, scores)}
 
+    # Encodes query and all entry texts with sentence-transformers, computes pairwise cosine similarity.
     def _embedding_score(self, query: str, parsed: list[dict]) -> dict[str, float]:
         """Compute cosine similarity between query embedding and entry embeddings."""
         try:
@@ -249,6 +248,7 @@ class SQLiteMemoryService(BaseMemoryService):
             logger.debug("Embedding search failed, using BM25 only", exc_info=True)
             return {}
 
+    # Reciprocal Rank Fusion: combined_score = 1/(k+rank_bm25) + 1/(k+rank_emb). Default k=60 dampens high-rank dominance.
     @staticmethod
     def _rrf_fuse(
         bm25: dict[str, float],

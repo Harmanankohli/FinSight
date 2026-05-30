@@ -12,33 +12,35 @@ from starlette.applications import Starlette
 
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
-from a2a.server.tasks import InMemoryTaskStore
+from shared.a2a_store import SQLiteTaskStore
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
 
 from shared.logging_config import setup_file_logging
-from shared.observability import init_langfuse, shutdown_langfuse
+from shared.observability import init_langfuse, init_instrumentation, shutdown_langfuse
 
-setup_file_logging("sentiment")
-init_langfuse(service_name="sentiment_agent")
+setup_file_logging("market_context")
+init_langfuse(service_name="market_context_agent")
 atexit.register(shutdown_langfuse)
-from openinference.instrumentation.crewai import CrewAIInstrumentor
+init_instrumentation("market_context")
 
-CrewAIInstrumentor().instrument(skip_dep_check=True)
-from opentelemetry.instrumentation.starlette import StarletteInstrumentor
-
-StarletteInstrumentor().instrument()
+from starlette.responses import JSONResponse
+from starlette.routing import Route
 
 from shared.generic_executor import GenericAgentExecutor
-from .executor import SentimentAgent
+from .executor import MarketContextAgent
 
 logger = logging.getLogger(__name__)
+
+
+async def health(request):
+    return JSONResponse({"status": "ok", "agent": "market_context"})
 
 host = os.environ.get("HOST", "localhost")
 
 agent_card = AgentCard(
-    name="Sentiment Intelligence Agent",
-    description="Synthesizes financial news sentiment, SEC insider trading signals, and investment narratives using CrewAI",
-    version="1.0.0",
+    name="Market Context Agent",
+    description="Provides macro regime analysis (yield curve, VIX, DXY, sector rotation) and competitive peer landscape positioning using CrewAI",
+    version="2.0.0",
     capabilities=AgentCapabilities(streaming=True),
     supported_interfaces=[
         AgentInterface(
@@ -49,27 +51,37 @@ agent_card = AgentCard(
     default_output_modes=["text", "application/json"],
     skills=[
         AgentSkill(
-            id="sentiment_analysis",
-            name="Sentiment & Narrative Intelligence",
-            description="Analyze financial news sentiment, SEC filings for insider context, produce investment narrative with key risks and catalysts",
-            tags=["sentiment", "news", "insider trading", "narrative", "market sentiment"],
+            id="macro_regime_analysis",
+            name="Macro Regime Analysis",
+            description="Assess current macro environment (yield curve regime, VIX volatility, DXY dollar strength, sector ETF rotation) and determine if it favours or penalises the target stock",
+            tags=["macro", "yield curve", "VIX", "DXY", "sector rotation", "regime"],
             examples=[
-                "What is the market sentiment for NVDA?",
-                "Analyze insider trading activity for AAPL",
+                "What is the macro environment for NVDA?",
+                "Does the current rate regime favour AAPL?",
             ],
-        )
+        ),
+        AgentSkill(
+            id="peer_landscape_analysis",
+            name="Competitive Peer Landscape",
+            description="Compare target stock against sector peers on growth, margins, and valuation to identify relative positioning headwinds and tailwinds",
+            tags=["peers", "competitive", "valuation", "margins", "growth", "sector"],
+            examples=[
+                "How does MSFT compare to its software peers?",
+                "Is TSLA expensive relative to auto sector peers?",
+            ],
+        ),
     ],
 )
 
 request_handler = DefaultRequestHandler(
-    agent_executor=GenericAgentExecutor(SentimentAgent()),
-    task_store=InMemoryTaskStore(),
+    agent_executor=GenericAgentExecutor(MarketContextAgent()),
+    task_store=SQLiteTaskStore(),
     agent_card=agent_card,
 )
 
-routes = []
-routes.extend(create_agent_card_routes(agent_card))
-routes.extend(create_jsonrpc_routes(request_handler, "/a2a"))
+routes = [Route("/health", health)]  # Liveness check
+routes.extend(create_agent_card_routes(agent_card))  # A2A agent card discovery
+routes.extend(create_jsonrpc_routes(request_handler, "/a2a"))  # JSON-RPC task endpoints
 
 app = Starlette(routes=routes, debug=True)
 

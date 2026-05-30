@@ -11,25 +11,26 @@ import click
 import uvicorn
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
-from a2a.server.tasks import InMemoryTaskStore
+from shared.a2a_store import SQLiteTaskStore
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
 from google.adk.runners import Runner
 from google.adk.sessions import DatabaseSessionService
 from starlette.applications import Starlette
+from starlette.responses import JSONResponse
+from starlette.routing import Route
 
 from shared.memory import SQLiteMemoryService, init_db
-from shared.observability import init_langfuse, shutdown_langfuse
+from shared.observability import init_langfuse, init_instrumentation, shutdown_langfuse
 
 init_langfuse(service_name="orchestrator")
 atexit.register(shutdown_langfuse)
-from openinference.instrumentation.google_adk import GoogleADKInstrumentor
-
-GoogleADKInstrumentor().instrument()
+init_instrumentation("orchestrator")
 
 from shared.config import ADK_MODEL
 
 from .agent import root_agent
 from .agent_executor import FinSightAgentExecutor
+from .agui_endpoint import make_agui_endpoint
 
 from shared.logging_config import setup_file_logging
 setup_file_logging("orchestrator")
@@ -59,7 +60,7 @@ agent_card = AgentCard(
         AgentSkill(
             id="investment_research",
             name="Investment Research",
-            description="Answer investment queries with a complete research brief including RAG, quant, and sentiment analysis",
+            description="Answer investment queries with a complete research brief including RAG, quant, and market context analysis",
             tags=["investment", "stock research", "portfolio"],
             examples=[
                 "Should I invest in NVDA given my current portfolio?",
@@ -69,13 +70,15 @@ agent_card = AgentCard(
     ],
 )
 
-task_store = InMemoryTaskStore()
+task_store = SQLiteTaskStore()
 
+# session_service: persists conversation turns; memory_service: enables semantic recall (load_memory tool)
 session_service = DatabaseSessionService(
-    db_url="sqlite+aiosqlite:///./finsight_memory.db"
+    db_url="sqlite+aiosqlite:///./db/adk_sessions.db"
 )
 memory_service = SQLiteMemoryService()
 
+# ADK Runner: ties agent, session persistence, and memory service together for execution
 runner = Runner(
     app_name=root_agent.name,
     agent=root_agent,
@@ -89,7 +92,13 @@ request_handler = DefaultRequestHandler(
     agent_card=agent_card,
 )
 
-routes = []
+async def health(request):
+    return JSONResponse({"status": "ok", "agent": "orchestrator"})
+
+
+# Three route groups: health check, AG-UI (RAGAS evaluation), and A2A protocol (sub-agent clients)
+routes = [Route("/health", health)]
+routes.append(Route("/agentic_chat", make_agui_endpoint(runner), methods=["POST"]))
 routes.extend(create_agent_card_routes(agent_card))
 routes.extend(create_jsonrpc_routes(request_handler, "/a2a"))
 
@@ -97,11 +106,18 @@ app = Starlette(routes=routes, debug=True)
 
 
 async def start_server(host: str, port: int) -> None:
-    from shared.memory.store import get_db
-    conn = await get_db()
-    await init_db(conn)
-    await conn.close()
+    # Initialize SQLite tables before accepting connections
+    from shared.memory.store import get_db, prune_old_records
+    await get_db()
     logger.info("Memory layer initialized with persistent SQLite storage")
+
+    # Best-effort pruning on startup — keeps DB from growing unbounded over months.
+    try:
+        deleted = await prune_old_records()
+        if any(deleted.values()):
+            logger.info("Pruned old memory records: %s", deleted)
+    except Exception:
+        logger.warning("Memory pruning failed (non-fatal)", exc_info=True)
 
     config = uvicorn.Config(app, host=host, port=port, log_level="info")
     server = uvicorn.Server(config)

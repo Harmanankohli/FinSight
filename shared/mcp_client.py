@@ -1,4 +1,5 @@
 import asyncio
+import atexit
 import json
 import logging
 from dataclasses import dataclass
@@ -10,7 +11,48 @@ from mcp.client.sse import sse_client
 
 logger = logging.getLogger(__name__)
 
+# ── Process-wide singleton ────────────────────────────────────────────────────
+_global_client: "MCPClient | None" = None
+_client_lock = asyncio.Lock()
 
+
+async def get_shared_mcp() -> "MCPClient":
+    """Return the process-wide singleton MCPClient, connecting on first call.
+
+    Uses double-checked locking so concurrent first callers collapse into one
+    connect_all() instead of each paying the SSE handshake cost.
+    """
+    global _global_client
+    if _global_client is not None and _global_client._connected:
+        return _global_client
+    async with _client_lock:
+        if _global_client is None or not _global_client._connected:
+            from shared.config import MCP_SERVER_URL, MCP_TIMEOUT
+            _global_client = MCPClient(
+                configs=[MCPServerConfig(name="finsight-mcp", url=MCP_SERVER_URL)],
+                timeout=MCP_TIMEOUT,
+            )
+            await _global_client.connect_all()
+    return _global_client
+
+
+def _shutdown_mcp_sync() -> None:
+    """Best-effort MCP disconnect at process exit."""
+    if _global_client is None or not _global_client._connected:
+        return
+    try:
+        loop = asyncio.new_event_loop()
+        loop.run_until_complete(_global_client.disconnect_all())
+        loop.close()
+    except Exception:
+        pass
+
+atexit.register(_shutdown_mcp_sync)
+
+
+# Normalises MCP tool responses—which arrive as complex objects with
+# content.text, raw data structs, or JSON strings—into a uniform dict/list/str.
+# Without this, every call site would need its own format sniffing.
 def parse_mcp_result(result: Any) -> dict | list | str:
     """Parse MCP tool call result into a consistent Python object.
 
@@ -91,6 +133,9 @@ class MCPServerConfig:
     tools: list[str] | None = None
 
 
+# Multi-server MCP bridge: maintains a session pool keyed by server name and a
+# global tool→server registry so callers can route by tool name without caring
+# which server hosts it. Servers are loaded from YAML or passed programmatically.
 class MCPClient:
     def __init__(
         self,
@@ -105,6 +150,7 @@ class MCPClient:
         self._cleanup_ctxs: dict[str, Any] = {}
         self._tool_registry: dict[str, str] = {}
         self._tool_definitions: dict[str, Any] = {}
+        self._connected = False
 
         if config_path:
             self._load_config(config_path)
@@ -119,7 +165,11 @@ class MCPClient:
     async def connect_all(self) -> None:
         for server in self.servers:
             await self._connect_server(server)
+        self._connected = True
 
+    # Retries SSE connection with exponential backoff (2^attempt sec). Each
+    # attempt creates a fresh transport session from scratch—stale state from
+    # the prior failure is discarded.
     async def _connect_server(self, server: MCPServerConfig) -> None:
         for attempt in range(self.max_retries):
             try:
@@ -145,6 +195,8 @@ class MCPClient:
             f"Failed to connect to MCP server '{server.name}' after {self.max_retries} attempts"
         )
 
+    # Queries the server for its available tools and populates the lookup
+    # registry so call_tool_by_name can route a tool name to its host server.
     async def _discover_tools(self, server_name: str, session: ClientSession) -> None:
         try:
             result = await session.list_tools()
@@ -157,6 +209,33 @@ class MCPClient:
         except Exception as e:
             logger.warning("Failed to discover tools on '%s': %s", server_name, e)
 
+    # Transient errors worth retrying; all others fail immediately.
+    # httpx.ReadError / httpx.ConnectError cover MCP SSE connection resets
+    # that happen when the MCP server is briefly overloaded — they should
+    # be retried like any other transient network error.
+    try:
+        import httpx as _httpx
+        _TRANSIENT_EXC = (
+            asyncio.TimeoutError,
+            ConnectionError,
+            asyncio.IncompleteReadError,
+            EOFError,
+            OSError,
+            _httpx.ReadError,
+            _httpx.ConnectError,
+            _httpx.NetworkError,
+        )
+    except ImportError:
+        _TRANSIENT_EXC = (
+            asyncio.TimeoutError,
+            ConnectionError,
+            asyncio.IncompleteReadError,
+            EOFError,
+            OSError,
+        )
+
+    # Routes to a specific named server. Used when the caller knows which
+    # server hosts the tool (e.g. multi-server orchestration layers).
     async def call_tool(
         self,
         server_name: str,
@@ -168,35 +247,60 @@ class MCPClient:
             raise MCPClientError(f"Not connected to MCP server: {server_name}")
 
         for attempt in range(self.max_retries):
+            t = self.timeout
             try:
                 result = await asyncio.wait_for(
                     session.call_tool(tool_name, arguments or {}),
-                    timeout=self.timeout,
+                    timeout=t,
                 )
                 return result
-            except Exception as e:
-                logger.warning(
-                    "MCP call attempt %d/%d failed on %s/%s: %s",
-                    attempt + 1, self.max_retries, server_name, tool_name, e,
-                )
+            except MCPClient._TRANSIENT_EXC as e:
                 if attempt < self.max_retries - 1:
-                    await asyncio.sleep(2 ** attempt)
+                    wait = 2 ** attempt
+                    logger.warning(
+                        "MCP call attempt %d/%d transient error on %s/%s: %s — retrying in %ds",
+                        attempt + 1, self.max_retries, server_name, tool_name, e, wait,
+                    )
+                    await asyncio.sleep(wait)
+                else:
+                    raise MCPClientError(
+                        f"Tool call '{server_name}/{tool_name}' failed after {self.max_retries} attempts: {e}"
+                    )
+            except MCPClientError:
+                raise
+            except Exception as e:
+                # Non-transient (bad args, server error, etc.) — fail immediately
+                logger.warning("MCP call non-transient error on %s/%s: %s", server_name, tool_name, e)
+                raise
         raise MCPClientError(
             f"Tool call '{server_name}/{tool_name}' failed after {self.max_retries} attempts"
         )
 
+    # Looks up the host server in the tool registry, then delegates to
+    # call_tool. On connection errors, marks disconnected, reconnects once,
+    # and retries. This is the primary entry point for agents that only know
+    # what they need, not where it lives.
     async def call_tool_by_name(
         self,
         tool_name: str,
         arguments: dict[str, Any] | None = None,
     ) -> Any:
-        server_name = self._tool_registry.get(tool_name)
-        if not server_name:
-            available = ", ".join(sorted(self._tool_registry))
-            raise MCPClientError(
-                f"Tool '{tool_name}' not found. Available tools: {available}"
-            )
-        return await self.call_tool(server_name, tool_name, arguments)
+        _RECONNECT_EXC = (ConnectionError, asyncio.IncompleteReadError, EOFError)
+        for attempt in range(2):
+            server_name = self._tool_registry.get(tool_name)
+            if not server_name:
+                available = ", ".join(sorted(self._tool_registry))
+                raise MCPClientError(
+                    f"Tool '{tool_name}' not found. Available tools: {available}"
+                )
+            try:
+                return await self.call_tool(server_name, tool_name, arguments)
+            except _RECONNECT_EXC as exc:
+                if attempt == 1:
+                    raise
+                logger.warning("MCP connection lost (%s); reconnecting…", exc)
+                self._connected = False
+                await self.connect_all()
 
     async def list_tools(self, server_name: str | None = None) -> list[Any]:
         if server_name:
@@ -264,6 +368,9 @@ class MCPClient:
             self.servers.append(MCPServerConfig(name=name, url=url))
         await self.connect_all()
 
+    # Cleans up sessions first, then transports, then in-memory state.
+    # Order matters: closing the session while its transport is still live
+    # causes protocol errors, so transport is torn down last.
     async def disconnect_all(self) -> None:
         for name in list(self._sessions):
             try:
@@ -278,3 +385,4 @@ class MCPClient:
         self._cleanup_ctxs.clear()
         self._tool_registry.clear()
         self._tool_definitions.clear()
+        self._connected = False

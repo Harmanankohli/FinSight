@@ -6,6 +6,8 @@ dist/
 .venv/
 venv/
 *.egg
+.claude
+.git
 
 # Environment
 .env
@@ -19,14 +21,14 @@ venv/
 logs/
 *.log
 
-# Vector store data
-chroma_db/
+# ADK session state
 .adk/
 
-# Memory database
+# Memory / cache databases
+db/
+.langchain_cache.db
+chroma_db/
 finsight_memory.db
-finsight_memory.db-wal
-finsight_memory.db-shm
 
 # OS
 .DS_Store
@@ -41,6 +43,11 @@ tools/
 # Docs
 AGENTS.md
 AGENTS.html
-Claude.md
+CLAUDE.md
 graphify-out
 .opencode
+.claude/
+.mcp.json
+
+# Evaluation artifacts
+tests/evaluation/eval_results/

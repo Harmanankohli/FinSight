@@ -31,10 +31,639 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <body>
 <div class="container">
 <div class="header-nav">
-<a href="index.html">Home</a><a href="../README.html">Overview</a><a href="ARCHITECTURE.html">Architecture</a><a href="AGENTS.html">Agents</a><a href="MCP_SERVERS.html">MCP</a><a href="DESIGN_DECISIONS.html">Decisions</a><a href="DEMO.html">Demo</a><a href="CHANGELOG.html">Changelog</a><a href="TESTS.html">Tests</a>
+<a href="index.html">Home</a><a href="../README.html">Overview</a><a href="ARCHITECTURE.html">Architecture</a><a href="AGENTS.html">Agents</a><a href="MCP_SERVERS.html">MCP</a><a href="DESIGN_DECISIONS.html">Decisions</a><a href="CHANGELOG.html">Changelog</a><a href="TESTS.html">Tests</a>
 </div>
 
 <h1>Changelog</h1>
+
+<h2>v1.35 &mdash; Async Event-Loop Fixes: yfinance Executor, Peer Concurrency Cap, Redis Auto-Start</h2>
+
+<h3 class="version">MCP Server &mdash; yfinance Blocking Calls Moved to Thread Executor</h3>
+<ul>
+<li><strong><code>get_insider_transactions</code> converted to async</strong> (<code>mcp_servers/finsight_server.py</code>): <code>yf.Ticker(ticker).insider_transactions</code> (synchronous DataFrame fetch) now runs via <code>loop.run_in_executor()</code> instead of blocking the asyncio event loop. Prevents concurrent tool calls from stalling while insider data is fetched.</li>
+<li><strong><code>_get_scenario_shocks_uncached</code> converted to async</strong> (<code>mcp_servers/finsight_server.py</code>): <code>yf.Ticker(sym).history(period="max")</code> (25+ years of price data) now runs via <code>loop.run_in_executor()</code>. Prevents long-running history fetches from starving concurrent MCP requests.</li>
+<li><strong>7 additional yfinance tools wrapped in <code>run_in_executor</code></strong> (<code>mcp_servers/finsight_server.py</code>): Followup to the two above &mdash; <code>_get_prices_uncached</code> (<code>stock.history()</code>), <code>_get_financials_uncached</code> (<code>.financials</code>/<code>.balance_sheet</code>/<code>.cashflow</code>/<code>.info</code>), <code>_get_macro_impl</code> (both macro/sector <code>history()</code> loops), <code>get_options_chain</code> (<code>option_chain()</code> and <code>.options</code>), <code>get_earnings_calendar</code> (<code>stock.calendar</code>), <code>get_sentiment_indicators</code> (<code>stock.info</code>), and <code>get_earnings_history</code> (<code>stock.earnings_dates</code>) all moved off the event loop. Together with the first two, every synchronous yfinance call in the server now runs via thread executor. Fixes <code>httpx.ReadError</code> SSE keepalive failures mid-call.</li>
+</ul>
+
+<h3 class="version">Quant &amp; Market Context &mdash; Peer Concurrency Cap</h3>
+<ul>
+<li><strong><code>asyncio.Semaphore(3)</code> in peer financials fetch</strong> (<code>agent_3_langgraph/nodes.py</code>, <code>agent_4_crewai/executor.py</code>): Both agents limit concurrent <code>get_financials</code> calls for peer tickers to 3 at a time. Prevents yfinance rate-limiter queue buildup from exceeding per-attempt timeouts.</li>
+</ul>
+
+<h3 class="version">MCP Client &mdash; Timeout Simplification</h3>
+<ul>
+<li><strong>Removed fail-fast first-attempt timeout</strong> (<code>shared/mcp_client.py</code>): Previous logic used <code>self.timeout / 3</code> on first retry attempt (5s for a 15s timeout). Caused false-positive timeouts during normal yfinance slowness. All attempts now use the full configured timeout.</li>
+</ul>
+
+<h3 class="version">Infrastructure &mdash; Redis Auto-Start</h3>
+<ul>
+<li><strong>Redis auto-detection</strong> (<code>run_adk_web.bat</code>): Reads <code>REDIS_URL</code> from <code>.env</code> &mdash; when set and <code>redis-server</code> is in PATH, auto-starts Redis before launching agent services. Logs clear message when <code>redis-server</code> is missing (suggests <code>winget install Redis.Redis</code>). Falls back to in-process TTLCache.</li>
+<li><strong>Redis cleanup</strong> (<code>stop_servers.bat</code>): Kills <code>redis-server.exe</code> when <code>REDIS_URL</code> is configured. Uses <code>taskkill</code> + WMI-based process termination. Terminal cleanup filter updated to match <code>redis-server</code> command lines.</li>
+</ul>
+
+<h3 class="version">MCP Client &mdash; Transient Error Expansion</h3>
+<ul>
+<li><strong>httpx network errors added to retryable set</strong> (<code>shared/mcp_client.py</code>): <code>httpx.ReadError</code>, <code>httpx.ConnectError</code>, and <code>httpx.NetworkError</code> added to <code>_TRANSIENT_EXC</code> tuple. These errors surface when the MCP server&rsquo;s SSE connection resets due to event-loop blocking (see yfinance executor fixes). Previously, a brief SSE blip during a yfinance call would fail the entire MCP request immediately. Now they retry like any other transient network error. Import guarded with <code>try/except ImportError</code> so <code>httpx</code> is not a hard dependency.</li>
+</ul>
+
+<h3 class="version">RAGAS Eval &mdash; Retry Tuning &amp; Timeout Logging</h3>
+<ul>
+<li><strong>AsyncOpenAI <code>max_retries=5</code></strong> (<code>shared/runtime_eval.py</code>): Increased from 1 to 5 so LM Studio idle-unload retries are absorbed at the httpx/SDK layer rather than failing instructor structured-output calls outright. The previous <code>max_retries=1</code> caused spurious failures when LM Studio briefly unloaded the model between requests.</li>
+<li><strong>Removed instructor <code>max_retries=1</code> override</strong>: <code>instructor.from_openai()</code> now falls back to the client&rsquo;s retry count (5), so instructor calls get the same retry budget as raw client calls.</li>
+<li><strong><code>asyncio.TimeoutError</code> caught separately</strong> (<code>_run_metrics</code>): Now logged with a dedicated warning message including the <code>EVAL_METRIC_TIMEOUT</code> value instead of appearing as a bare colon in the generic <code>BaseException</code> handler.</li>
+<li><strong>Empty exception messages logged as type name</strong>: When <code>str(exc)</code> is empty (common for <code>TimeoutError</code> and <code>CancelledError</code>), logs <code>type(exc).__name__</code> instead of a bare colon.</li>
+</ul>
+
+<h2>v1.32 &mdash; Phase 4 Final Items: Date-Aware Semantic Cache + RAG Startup Warm-Up</h2>
+
+<h3 class="version">Semantic Cache &mdash; Date-Scoped Keys</h3>
+<ul>
+<li><strong><code>SemanticCache.set()</code> tags entries with today's <code>YYYY-MM-DD</code></strong> (<code>shared/semantic_cache.py</code>): On every cache write, the current date is embedded in stored metadata.</li>
+<li><strong><code>SemanticCache.get()</code> filters by date</strong>: ChromaDB <code>where</code> filter matches only today's entries. Same query on different days &rarr; cache miss &rarr; fresh analysis.</li>
+</ul>
+
+<h3 class="version">RAG Agent &mdash; Startup Warm-Up</h3>
+<ul>
+<li><strong><code>_do_prewarm()</code> at <code>agent_2_llamaindex/server.py</code></strong>: Runs once on Starlette startup via <code>asyncio.to_thread</code>. Pre-loads HuggingFace embedder, three ChromaDB collections, and CrossEncoder reranker.</li>
+<li><strong>Per-stage timing logged</strong>: Each phase logs elapsed seconds for cold-start budget visibility.</li>
+<li><strong>Effect</strong>: First RAG query no longer pays ~3-5s model-load tax.</li>
+</ul>
+
+<h2>v1.33 &mdash; Quant Graph Fixes: Concurrent Update Resolution &amp; Fan-In Reducers</h2>
+
+<h3 class="version">Quant Graph &mdash; Fan-In Passthrough Key Removal</h3>
+<ul>
+<li><strong>Fixed <code>INVALID_CONCURRENT_GRAPH_UPDATE</code> at <code>positioning</code> key</strong> (<code>agent_3_langgraph/nodes.py</code>): <code>format_output_node</code> was returning passthrough copies of state keys (<code>positioning</code>, <code>dcf_valuation</code>, <code>correlation_matrix</code>, <code>fundamentals</code>) that other nodes already wrote in the same checkpoint step. LangGraph's fan-in saw conflicting writes, triggering the error.</li>
+<li><strong>Fix</strong>: Removed all passthrough keys from <code>format_output_node</code>'s return dict. It now only emits what it actually computes: <code>recommendation</code>, <code>reasoning</code>, <code>metrics</code> (with signals/confidence), and <code>stress_test_result</code>. Full state from <code>ainvoke()</code> still carries every key via the owning nodes, so <code>graph.run()</code> reads are unaffected.</li>
+</ul>
+
+<h2>v1.31 &mdash; Phase 3/4: Market Context Rebrand, Quant Behavioral Signals, Redis Cache, Eval Hardening</h2>
+
+<h3 class="version">Market Context Agent &mdash; Sentiment Rebrand + Macro/Peer Inputs</h3>
+<ul>
+<li><strong>Agent renamed</strong> (<code>agent_4_crewai/executor.py:13-21</code>): <code>SentimentAgent</code> &rarr; <code>MarketContextAgent</code>, <code>SentimentIntelligenceCrew</code> &rarr; <code>MarketContextCrew</code> (<code>crew.py:16</code>). Langfuse trace name: <code>market-context-agent-stream</code>. Agent card path: <code>agent_cards/market_context_agent.json</code>.</li>
+<li><strong>New MCP tool</strong> <code>get_macro_indicators()</code> (<code>mcp_servers/finsight_server.py:305</code>): Fetches 10Y/2Y Treasury yields, VIX, DXY, yield-curve regime, sector ETF (XLK/XLE/XLF/&hellip;) 1mo performance. Cached 15 min via <code>_cache_macro</code>.</li>
+<li><strong>New <code>shared/peer_sets.py</code></strong>: Hand-curated peer map for 10+ sectors. 33 entries. Shared between Market Context and Quant.</li>
+<li><strong><code>_collect_data_parallel</code> rewritten</strong> (<code>executor.py:39-86</code>): 3-step pipeline: macro + primary financials &rarr; resolve peers &rarr; parallel peer financials + prices. No longer fetches <code>get_news_sentiment</code> or <code>get_company_filings</code>.</li>
+<li><strong>MarketContextCrew rewritten</strong> (<code>crew.py</code>): Single-agent crew, role &ldquo;Market Context Analyst&rdquo;. Task expected_output: JSON with <code>narrative</code>, <code>macro_regime</code>, <code>relative_peer_positioning</code>, <code>overall_signal</code>, <code>confidence_score</code>, <code>key_tailwinds</code>, <code>key_headwinds</code>.</li>
+<li><strong><code>_extract_context_contexts</code></strong> (<code>executor.py:196</code>): Replaces <code>_extract_sentiment_contexts</code> &mdash; builds RAGAS context strings from macro + peer data.</li>
+<li><strong>Agent card</strong> (<code>agent_cards/market_context_agent.json</code>): Two skills: <code>macro_regime_analysis</code>, <code>peer_landscape_analysis</code>. Version 2.0.0.</li>
+</ul>
+
+<h3 class="version">Quant Agent &mdash; Behavioral Signals + Monte Carlo + Peer Comparison</h3>
+<ul>
+<li><strong><code>options_flow_node</code></strong> (<code>agent_3_langgraph/nodes.py:900</code>): Put/call volume ratio, OI ratio, flow signal.</li>
+<li><strong><code>insider_signals_node</code></strong> (<code>nodes.py:921</code>): Form 4 filing count (90-day), net direction, CEO/CFO weighting.</li>
+<li><strong><code>analyst_positioning_node</code></strong> (<code>nodes.py:979</code>): Consensus score, upside %, short interest, squeeze risk.</li>
+<li><strong>Monte Carlo</strong> (<code>nodes.py:42</code>): GBM, 10k paths, 60-day horizon. p10-p90, prob of profit, MC VaR(95).</li>
+<li><strong><code>peer_comparison_node</code></strong> (<code>nodes.py:801</code>): Ranks vs peers on PE, EV/EBITDA, RevGrowth, OpMargin, ROE.</li>
+<li><strong>Stress test beta-adjusted</strong> (<code>nodes.py:169</code>): <code>beta_adj_decline = mkt_decline &times; beta</code>.</li>
+<li><strong>8-group weighted voting</strong> (<code>nodes.py:107-117</code>, <code>_weighted_vote</code> at <code>nodes.py:228</code>): <code>_SIGNAL_WEIGHTS</code> sums to 1.0 across 8 groups. Confidence = <code>|composite| &times; (1 &minus; std(present_signals))</code>. Raw weighted sum (not normalized).</li>
+<li><strong><code>QuantAnalysisState</code> expanded</strong> (<code>state.py:27-31</code>): <code>monte_carlo</code>, <code>peer_comparison</code>, <code>options_signals</code>, <code>insider_signals</code>, <code>positioning</code> fields.</li>
+<li><strong>Agent card</strong> (<code>agent_cards/quant_agent.json</code>): Three new skills: <code>options_flow_analysis</code>, <code>insider_transaction_analysis</code>, <code>positioning_signals</code>.</li>
+</ul>
+
+<h3 class="version">MCP Server &mdash; DuckDuckGo Fallback, Sentiment Indicators, Earnings History</h3>
+<ul>
+<li><strong>DuckDuckGo 4th-tier fallback</strong> (<code>mcp_servers/finsight_server.py:1248</code>): <code>_fetch_ddg_news()</code> when Yahoo Finance + RSS return zero articles.</li>
+<li><strong>New <code>get_sentiment_indicators()</code></strong> (<code>finsight_server.py:1628</code>): Short interest %, analyst consensus, institutional ownership %.</li>
+<li><strong>New <code>get_earnings_history()</code></strong> (<code>finsight_server.py:1684</code>): Last N EPS estimates vs actuals, beat rate, avg surprise %.</li>
+</ul>
+
+<h3 class="version">Infrastructure &mdash; Redis Cache + MCP Client</h3>
+<ul>
+<li><strong><code>shared/redis_cache.py</code></strong> (new): L1 in-process TTLCache + L2 Redis write-through. <code>make_cache()</code> factory returns <code>RedisCache</code> when <code>REDIS_URL</code> is set.</li>
+<li><strong>Fail-fast MCP retries</strong> (<code>shared/mcp_client.py:51-56</code>): <code>_is_retryable_error()</code> &mdash; 404s, &ldquo;not found&rdquo; skip backoff. Timeout 30s &rarr; 15s.</li>
+<li><strong><code>shared/config.py</code></strong>: <code>LLM_SUMMARY_MODEL</code>, <code>REDIS_URL</code>, <code>A2A_TIMEOUT_MARKET_CONTEXT</code>, <code>EVAL_BURST_LIMIT</code>, <code>EVAL_METRIC_TIMEOUT</code>, <code>RAGAS_LLM_MODEL</code>.</li>
+</ul>
+
+<h3 class="version">Runtime Evaluation &mdash; Circuit Breaker, Dedup, Burst Limiter</h3>
+<ul>
+<li><strong>Circuit breaker</strong> (<code>shared/runtime_eval.py</code>): <code>_CIRCUIT_MAX_FAILURES=5</code> &mdash; 5 consecutive metric failures skips eval for 5 min.</li>
+<li><strong>SHA-256 dedup</strong>: 1h TTL, identical (input, response) pairs skip eval.</li>
+<li><strong>Burst limiter</strong>: <code>_burst_ok()</code> enforces <code>EVAL_BURST_LIMIT</code>/min.</li>
+<li><strong>Per-metric timeout</strong>: <code>_score_metric_with_timeout()</code> wraps each metric in <code>asyncio.wait_for</code> (default 90s).</li>
+<li><strong><code>_gate_ok()</code></strong>: Unified pre-eval gate &mdash; kill-switch, circuit, burst, dedup.</li>
+<li><strong><code>score_quant_deterministic()</code></strong>: Zero-LLM schema validator for 8 signal groups.</li>
+<li><strong>Metric catalog cleanup</strong>: <code>AnswerRelevancy</code> kept on orchestrator only. <code>score_sentiment_response</code>: removed <code>catalyst_identification</code> + <code>insider_signal_discussion</code>, added <code>macro_regime_quality</code> + <code>peer_positioning_quality</code>.</li>
+<li><strong>Offline evaluation</strong> (<code>tests/evaluation/</code>): <code>golden_set.jsonl</code> (5 examples) + <code>run_offline_eval.py</code>.</li>
+</ul>
+
+<h3 class="version">Test Suite</h3>
+<ul>
+<li><strong><code>tests/integration/test_behavioral_signals_e2e.py</code></strong> (5 E2E tests): Options, insider, positioning, peer comparison, Monte Carlo.</li>
+<li><strong><code>tests/unit/test_runtime_eval_gates.py</code></strong>: Circuit breaker, SHA-256 dedup, burst, kill switch, gate, deterministic.</li>
+<li><strong><code>tests/unit/test_parallel_dispatch.py</code></strong>: Concurrent gather, timeout map, key isolation.</li>
+<li><strong><code>tests/unit/test_quant_graph_nodes.py</code></strong>: Fixed stale field <code>decline_pct</code> &rarr; <code>beta_adj_decline_pct</code>.</li>
+</ul>
+
+<h3 class="version">Docs Consolidation</h3>
+<ul>
+<li><strong>Removed stale docs</strong>: <code>possible_improvements/IMPLEMENTATION_PLAN.md/.html</code>, <code>LOGGING.md/.html</code>, <code>TEST_PLAN.md/.html</code>, <code>AGUI_FRONTEND_PLAN.html</code>, <code>ARCHITECTURE.md/.html</code>, <code>improvements.html</code>.</li>
+<li><strong>Sentiment &rarr; Market Context rename</strong> propagated across <code>AGENTS.md/.html</code>, <code>ARCHITECTURE.md/.html</code>, <code>DEMO.md/.html</code>.</li>
+</ul>
+
+<h2>v1.30 &mdash; Phase 2: Parallel Agent Dispatch, Parallel Filing Downloads, Single-Flight Cache</h2>
+
+<h3 class="version">Orchestrator &mdash; Parallel Dispatch via System Prompt</h3>
+<ul>
+<li><strong><code>_STATIC_PREAMBLE</code> step 2 updated</strong> (<code>agent_1_adk/agent.py:184-189</code>): Now explicitly instructs the LLM to emit ALL <code>send_message</code> calls in a SINGLE assistant response for parallel execution: &ldquo;you MUST emit ALL <code>send_message</code> calls in a SINGLE assistant response so they execute in PARALLEL.&rdquo;</li>
+<li><strong>Step 5 updated</strong>: &ldquo;After ALL agents have responded (you will receive their results together in the next turn)&rdquo; &mdash; makes the parallel contract explicit.</li>
+<li><strong>Agent responsibility boundaries</strong> (<code>agent.py:253-260</code>): <code>_build_instruction()</code> appends a responsibility block clarifying RAG Agent owns ALL document and news retrieval; Market Context Agent provides macro regime and peer narrative; Quant Agent owns numeric risk, fundamentals, technicals, DCF, and behavioral signals.</li>
+</ul>
+
+<h3 class="version">RAG Agent &mdash; Parallel Filing Downloads</h3>
+<ul>
+<li><strong><code>_ensure_ingested()</code> filing fetch converted to <code>asyncio.gather</code></strong> (<code>agent_2_llamaindex/executor.py:74-107</code>): Per-filing sequential loop replaced with two-phase pattern: filter candidates &rarr; <code>asyncio.gather(*[_fetch_one(f) for f in candidates])</code>. Filing downloads for a 5-filing ingest now complete in ~max(per-filing) latency (~3-5s) instead of sum (~15-25s).</li>
+<li><strong><code>get_filing_content</code> server-side truncation</strong> (<code>mcp_servers/finsight_server.py:842</code>): Content truncated at 25,000 chars on the MCP server instead of 20,000 on the client &mdash; reduces bandwidth on large 10-K fetches.</li>
+<li><strong><code>query()</code> fire-and-forget ingestion</strong> (<code>executor.py:162-166</code>): <code>_ensure_ingested</code> and <code>_ensure_news_ingested</code> converted from <code>await asyncio.gather(...)</code> to <code>asyncio.create_task()</code>. Query returns immediately from whatever ChromaDB content is indexed. First-query partial-data warning via <code>_warming</code> flag.</li>
+<li><strong><code>index_manager.py</code> warming signal</strong>: When <code>index.query()</code> finds zero matching documents, returns <code>{"_warming": True, "summary": "Index is warming for {ticker}..."}</code>.</li>
+</ul>
+
+<h3 class="version">MCP Server &mdash; Single-Flight News Cache</h3>
+<ul>
+<li><strong><code>get_news_sentiment</code> refactored</strong> (<code>mcp_servers/finsight_server.py:1406-1551</code>): Core fetch logic extracted into <code>_get_news_sentiment_impl()</code>. Outer tool wrapper delegates to <code>_cache_news.get_or_fetch()</code> &mdash; two concurrent callers for the same uncached ticker share one RSS round-trip instead of both fetching independently.</li>
+</ul>
+
+<h2>v1.29 &mdash; Phase 1: RAG News Ingestion, Quant Fundamentals/Technicals, Data-Driven DCF</h2>
+
+<h3 class="version">RAG Agent &mdash; News &amp; Earnings Ingestion</h3>
+<ul>
+<li><strong><code>_ensure_news_ingested()</code> added</strong> (<code>agent_2_llamaindex/executor.py</code>): Fetches <code>get_news_sentiment</code> (15 articles) and ingests into ChromaDB <code>news</code> collection via <code>DocumentIngestionPipeline.ingest_news_article()</code>. Separate daily dedup key (<code>news_{ticker}</code>) so news and SEC filing ingestion run independently.</li>
+<li><strong><code>query()</code> parallel ingest</strong>: <code>asyncio.gather</code> for filings + news ingestion &mdash; both paths run concurrently.</li>
+<li><strong>Multi-collection query routing</strong> (<code>agent_2_llamaindex/index_manager.py</code>): New <code>_classify_query_intent()</code> routes across <code>sec_filings</code>/<code>news</code>/<code>earnings</code> collections based on keywords; broad analytical queries hit all three. Deduplicates by text hash, synthesizes via LlamaIndex response synthesizer. Returns warming signal when index is empty.</li>
+<li><strong>Agent card</strong> (<code>agent_cards/rag_agent.json</code>): Added <code>financial_news_retrieval</code> skill with news/sentiment/market tags.</li>
+</ul>
+
+<h3 class="version">Quant Agent &mdash; Fundamentals, Technicals, Data-Driven DCF</h3>
+<ul>
+<li><strong><code>fundamental_analysis_node</code></strong> (<code>agent_3_langgraph/nodes.py</code>): Fetches <code>get_financials</code>, extracts 25+ ratios (PE, PB, EV/EBITDA, ROE, ROA, margins, D/E, growth) + derived signals (pct from 52w high/low, golden cross, net debt). Sets <code>_financials_raw</code> for DCF reuse.</li>
+<li><strong><code>technical_analysis_node</code></strong>: SMA 20/50/200, EMA 12/26, MACD + crossover, RSI(14), Bollinger bands, momentum 20d/60d, support/resistance, trend classification (strong_uptrend &rarr; downtrend).</li>
+<li><strong><code>dcf_valuation_node</code> &mdash; data-driven assumptions</strong>: WACC via CAPM + after-tax cost-of-debt (weighted by capital structure). Growth rate blended from <code>revenueGrowth</code>/<code>earningsGrowth</code> (bounded 2&ndash;25%). Tapered 5-year projection fading to terminal. Reuses <code>_financials_raw</code> when available.</li>
+<li><strong><code>format_output_node</code> &mdash; expanded voting</strong>: Adds fundamental signals (<code>low_pe</code>, <code>strong_roe</code>) and technical signals (<code>bullish_trend</code>, <code>oversold_rsi</code>) to signal voting. Reasoning surfaces DCF WACC/growth percentages.</li>
+<li><strong><code>llm_summary_node</code> &mdash; enriched prompt</strong>: 3-4 sentence summary including fundamentals + technicals; <code>max_tokens</code> 256&rarr;384.</li>
+<li><strong>Graph topology &mdash; parallel fan-out</strong>: <code>START</code> &rarr; <code>fetch_prices</code> &#x2225; <code>fetch_fundamentals</code>; <code>fetch_prices</code> &rarr; <code>compute_base_metrics</code> &#x2225; <code>technical_analysis</code>; fan-in at <code>portfolio_correlation</code> + <code>format_output</code>.</li>
+<li><strong>State</strong> (<code>agent_3_langgraph/state.py</code>): Added <code>fundamentals</code>, <code>technicals</code>, <code>_financials_raw</code> fields.</li>
+</ul>
+
+<h2>v1.28 &mdash; Full Synthesis in save_brief + Cache-Hit on Company Names + RAG Latency Cut</h2>
+
+<h3 class="version">Full Synthesis Persistence</h3>
+<ul>
+<li><strong><code>save_brief</code> now stores full analysis</strong> (<code>agent_1_adk/agent.py</code>): New <code>_synthesis_text_from_context()</code> reads the longest LLM-generated text from <code>session.events</code> on the first write. Both ADK-web and A2A paths persist the complete BUY/HOLD/SELL analysis instead of the short rationale. Falls back to rationale only when no model output exists in the turn.</li>
+<li><strong><code>update_response_text</code> removed from <code>_persist_memory_callback</code></strong> (<code>agents/finsight_agent/agent.py</code>): The post-turn overwrite was unreliable (response-text extraction depended on event ordering) and blind to the A2A executor path (which doesn't fire <code>after_agent_callback</code>). Synthesis is now captured at <code>save_brief</code> time, which all paths call.</li>
+<li><strong>New test</strong>: <code>tests/unit/memory/test_save_brief_persists_synthesis.py</code> (2 test cases) &mdash; covers both the synthesis-wins case and the rationale-fallback case.</li>
+</ul>
+
+<h3 class="version">Ticker-Resolution Cache Fix</h3>
+<ul>
+<li><strong>_memory_cache_callback falls back to MCP resolve</strong> (<code>agents/finsight_agent/agent.py</code>): When the regex-extracted token misses in DB (e.g. user types &ldquo;VISA&rdquo; but the brief is stored under canonical &ldquo;V&rdquo;), the before-agent callback runs <code>resolve_company_ticker</code> and retries the cache lookup. Closes the asymmetry where <code>save_brief</code> dedup hit but the cache lookup missed.</li>
+</ul>
+
+<h3 class="version">RAG Latency Reduction (~5x)</h3>
+<ul>
+<li><strong><code>response_mode=&quot;compact&quot;</code> with <code>similarity_top_k=3</code></strong> (<code>agent_2_llamaindex/index_manager.py</code>): All three RAG query engines (SEC filings, financial filings, earnings) switched from default mode (N sequential <code>refine</code> calls) to <code>compact</code> &mdash; a single LLM call instead of one per retrieved chunk. <code>similarity_top_k</code> reduced from 5 to 3. Total LLM calls per RAG query: 1 (was up to 5).</li>
+</ul>
+
+<h3 class="version">Configuration Changes</h3>
+<ul>
+<li><strong>A2A timeouts bumped</strong> (<code>shared/config.py</code>): <code>A2A_TIMEOUT</code> 180&rarr;680s, <code>A2A_TIMEOUT_RAG</code> 60&rarr;600s, <code>A2A_TIMEOUT_QUANT</code> 90&rarr;600s, <code>A2A_TIMEOUT_SENTIMENT</code> 45&rarr;600s &mdash; tolerates slow local LLM inference without spurious timeouts.</li>
+<li><strong>Default model updated</strong> (<code>shared/config.py</code>): <code>LLM_MODEL</code> &rarr; <code>qwen/qwen3-30b-a3b-2507</code>, <code>ADK_MODEL</code> &rarr; <code>openai/qwen/qwen3-30b-a3b-2507</code>. Both already reflected in <code>.env.example</code>; default now matches.</li>
+<li><strong><code>.env.example</code> cleaned</strong> (<code>shared/config.py</code>): Removed unused <code>GOOGLE_API_KEY</code>.</li>
+</ul>
+
+<h2>v1.27 &mdash; Security Sandbox Hardening + 60 AST-Gate Tests</h2>
+
+<h3 class="version">Sandbox Extraction &amp; Hardening</h3>
+<ul>
+<li><strong><code>shared/sandbox.py</code> (new, 263 lines)</strong>: Extracted the three-layer Python sandbox from <code>mcp_servers/finsight_server.py</code> into a dedicated shared module. <code>run_sandbox(code, timeout)</code> provides the same signature that <code>execute_python</code> called inline before.</li>
+<li><strong>Expanded import blocklist</strong>: Added 20 new restricted modules: <code>shlex</code>, <code>concurrent</code>, <code>ssl</code>, <code>http</code>, <code>urllib</code>, <code>requests</code>, <code>ftplib</code>, <code>poplib</code>, <code>smtplib</code>, <code>telnetlib</code>, <code>xmlrpc</code>, <code>socketserver</code>, <code>pathlib</code>, <code>io</code>, <code>glob</code>, <code>fnmatch</code>, <code>tempfile</code>, <code>zipfile</code>, <code>tarfile</code>, <code>gzip</code>, <code>bz2</code>, <code>lzma</code>, <code>base64</code>, <code>codecs</code> &mdash; covering filesystem, network, and encoding-based escape vectors.</li>
+<li><strong>Windows-safe <code>resource</code></strong>: Moved inside function with try/except instead of module-level <code>sys.platform</code> guard.</li>
+<li><strong><code>finsight_server.py</code></strong>: &minus;230 lines replaced with <code>from shared.sandbox import run_sandbox</code> + single delegation call.</li>
+</ul>
+
+<h3 class="version">Security Test Suite</h3>
+<ul>
+<li><strong><code>tests/security/test_sandbox.py</code></strong> (~60 test cases): 45+ parametrized negative cases covering every restricted module, builtin, dunder attribute, getattr-dunder, and subscript-dunder pattern. 13 positive cases verifying safe code is not blocked. Integration tests (marked <code>integration</code>) spawn the actual subprocess to verify runtime enforcement, timeout handling, and import blocking.</li>
+</ul>
+
+<h2>v1.26 &mdash; Pragmatic Test Suite (88 Unit Tests)</h2>
+
+<h3 class="version">New Test Suite</h3>
+<ul>
+<li><strong>88 unit tests added</strong> across 10 test files, covering all core primitives &mdash; models, quant graph nodes, ticker utilities, TTL cache, rate limiter, trace context, memory store, and ticker memory.</li>
+<li><strong><code>tests/conftest.py</code> (new)</strong>: Shared fixtures: <code>_clean_env</code> (autouse) monkeypatches <code>LLM_API_KEY</code>, <code>LLM_BASE_URL</code>, <code>LANGFUSE_*</code> for test isolation. <code>memory_db</code> fixture provides per-test isolated SQLite database by resetting the module-level connection singleton.</li>
+<li><strong><code>tests/unit/test_models.py</code></strong> (10 tests): <code>QueryContext</code>, <code>RAGInsights</code>, <code>QuantMetrics</code>, <code>SentimentIntelligence</code>, <code>InvestmentBrief</code> &mdash; construction, serialization round-trip (<code>model_dump</code> &rarr; <code>model_validate</code>), optional fields, multiple recommendations.</li>
+<li><strong><code>tests/unit/test_quant_graph_nodes.py</code></strong> (18 tests): All three LangGraph nodes tested directly with synthetic log-normal price data from <code>numpy.random.default_rng</code>. Covers Sharpe/VaR/max-drawdown correctness, high/low volatility branching, stress-test CVaR &le; VaR invariant, empty-price edge cases, BUY/HOLD/SELL signal logic.</li>
+<li><strong><code>tests/unit/test_ticker_utils.py</code></strong> (11 tests): Parametrized <code>is_valid_ticker_format</code>, <code>extract_ticker</code> with stop-word blocklist, <code>extract_holdings</code> with comma/and/colon syntax, <code>clean_query_for_resolution</code>.</li>
+<li><strong><code>tests/unit/test_ttl_cache.py</code></strong> (9 tests): Cache miss/hit/expiry, single-flight dedup (N concurrent callers share one fetch), LRU eviction at <code>max_entries</code>, exception propagation.</li>
+<li><strong><code>tests/unit/test_rate_limiter.py</code></strong> (4 tests): Burst consumption speed, rate enforcement after burst, token refill over time, burst=1 bucket timing.</li>
+<li><strong><code>tests/unit/test_trace_context.py</code></strong> (8 tests): Inject/extract round-trip, missing prefix returns None, separator in task text, double injection, <code>current_trace_id</code> contextvar.</li>
+<li><strong><code>tests/unit/memory/test_memory_store.py</code></strong> (5 tests): Table creation, idempotent <code>init_db</code>, schema version, WAL journal mode, required indexes.</li>
+<li><strong><code>tests/unit/memory/test_ticker_memory.py</code></strong> (7 tests): Store/get_latest, case-insensitive ticker lookup, history retrieval, flip detection (<code>has_changed</code>), minimal store path.</li>
+<li><strong><code>tests/integration/test_mcp_server_smoke.py</code></strong> (4 tests, marked <code>integration</code> + <code>external</code>): HTTP reachability of MCP server (port 8010) and agent card endpoints (ports 8002&ndash;8004).</li>
+</ul>
+
+<h3 class="version">Configuration</h3>
+<ul>
+<li><strong><code>pyproject.toml</code></strong>: Added <code>asyncio_default_fixture_loop_scope = "function"</code>, custom pytest markers <code>integration</code> and <code>external</code>.</li>
+</ul>
+
+<h2>v1.25 &mdash; Env Var Hardening &amp; SQLite Connection Singleton</h2>
+
+<h3 class="version">Configuration: Env Vars for Secrets</h3>
+<ul>
+<li><strong><code>SEC_USER_AGENT</code> env var</strong> (<code>shared/config.py</code>): Replaces hardcoded <code>&quot;FinSight Research (contact@finsight.com)&quot;</code> in <code>_SEC_HEADERS</code>. Defaults to a <code>&quot;dev-mode-set-SEC_USER_AGENT&quot;</code> placeholder with a startup warning when unset. Set <code>SEC_USER_AGENT=Your Name (your-email@example.com)</code> in <code>.env</code> for production.</li>
+<li><strong><code>LLM_API_KEY</code> env var</strong> (<code>shared/config.py</code>): Replaces <code>api_key=&quot;lmstudio&quot;</code> hardcoded in 3 agent files. Defaults to <code>&quot;lmstudio&quot;</code> for backward compatibility with LM Studio. Enables switching to OpenAI/Anthropic by changing <code>.env</code> only.</li>
+<li><strong>Agent files updated</strong>: <code>agent_2_llamaindex/index_manager.py</code>, <code>agent_3_langgraph/nodes.py</code>, <code>agent_4_crewai/crew.py</code> &mdash; import and use <code>LLM_API_KEY</code> from config.</li>
+<li><strong>MCP server updated</strong> (<code>mcp_servers/finsight_server.py</code>): Imports <code>SEC_USER_AGENT</code> from config for the SEC EDGAR <code>_SEC_HEADERS</code>.</li>
+<li><strong><code>.env.example</code> updated</strong>: Documents both <code>LLM_API_KEY</code> and <code>SEC_USER_AGENT</code> with usage comments.</li>
+</ul>
+
+<h3 class="version">SQLite Long-Lived Connection Singleton</h3>
+<ul>
+<li><strong>Singleton connection</strong> (<code>shared/memory/store.py</code>): <code>get_db()</code> now returns a module-level <code>_db_conn</code> singleton instead of opening a new connection per call. Double-checked locking via <code>_init_lock</code> prevents race conditions on first access.</li>
+<li><strong>Write lock</strong> (<code>shared/memory/store.py</code>): New <code>write_lock()</code> returns a module-level <code>asyncio.Lock</code>. All writers wrapped with <code>async with write_lock()</code>.</li>
+<li><strong>Reader cleanup</strong>: All <code>try/finally + await conn.close()</code> removed from read paths.</li>
+<li><strong>WAL + busy_timeout</strong>: Set once at singleton init, not on every <code>get_db()</code> call.</li>
+<li><strong><code>close_db()</code> added</strong>: Process-shutdown cleanup function.</li>
+<li><strong>Files changed</strong>: <code>shared/memory/store.py</code>, <code>shared/memory/ticker_memory.py</code>, <code>shared/memory/portfolio_store.py</code>, <code>shared/memory/performance_tracker.py</code>, <code>shared/memory/memory_service.py</code> &mdash; 284 insertions, 304 deletions.</li>
+</ul>
+
+<h3 class="version">Token-Bucket Rate Limiter</h3>
+<ul>
+<li><strong><code>shared/rate_limiter.py</code> (new)</strong>: <code>TokenBucket</code> class using <code>asyncio.Lock</code> + <code>time.monotonic()</code> with configurable rate and burst. Loop-based acquire waits exactly the deficit time instead of recursing.</li>
+<li><strong>SEC limiter</strong> (<code>_sec_limiter</code>): 8 req/s, burst 10 &mdash; applied to 5 HTTP call sites in <code>_EdgarClient</code>. SEC's published limit is 10 req/s; 8/s leaves headroom.</li>
+<li><strong>yfinance limiter</strong> (<code>_yfinance_limiter</code>): 4 req/s, burst 8 &mdash; applied to <code>get_prices</code>, <code>get_financials</code>, <code>get_options_chain</code>, <code>get_earnings_calendar</code>.</li>
+<li><strong>RSS limiter</strong> (<code>_rss_limiter</code>): 2 req/s, burst 4 &mdash; applied to <code>_fetch_rss</code> and <code>_fetch_yf_news</code>.</li>
+</ul>
+
+<h3 class="version">TTL Cache with Single-Flight Dedup</h3>
+<ul>
+<li><strong><code>shared/ttl_cache.py</code> (new)</strong>: Async <code>TTLCache</code> class replacing the old threaded <code>_TTLCache</code>. Supports <code>get_or_fetch()</code> with single-flight dedup &mdash; N concurrent callers for the same key share one in-flight fetch. Also exposes <code>get()</code>/<code>set()</code> for conditional caching.</li>
+<li><strong>Single-flight dedup</strong>: Double-checked locking pattern &mdash; re-checks cache after acquiring lock to avoid redundant fetches. Pending fetches tracked as <code>asyncio.Future</code> in <code>_inflight</code> dict.</li>
+<li><strong>TTL updates</strong>: Prices 5 min &rarr; 1 min, financials 24 h &rarr; 1 hr, news 15 min &rarr; 5 min.</li>
+<li><strong>Extracted uncached helpers</strong>: <code>_get_prices_uncached</code> and <code>_get_financials_uncached</code> separate network logic from cache wrapping.</li>
+<li><strong>Filing/submission caches</strong>: Permanent LRU-200 and 6h respectively &mdash; now backed by <code>TTLCache</code>.</li>
+</ul>
+
+<h3 class="version">Structured JSON Logging</h3>
+<ul>
+<li><strong><code>JsonFormatter</code> added</strong> (<code>shared/logging_config.py</code>): File handler writes one JSON object per line (<code>ts</code>, <code>level</code>, <code>service</code>, <code>logger</code>, <code>message</code> + optional extras). Exception tracebacks serialized as <code>exc</code> key.</li>
+<li><strong>StreamHandler kept plaintext</strong>: Terminal output remains readable &mdash; only the file handler uses JSON.</li>
+<li><strong>Backward compatible</strong>: <code>setup_file_logging(service_name)</code> signature unchanged &mdash; all existing callers automatically get JSON file logs.</li>
+</ul>
+
+<h3 class="version">Per-Service Log Levels via Env</h3>
+<ul>
+<li><strong>Env-based log level resolution</strong> (<code>shared/logging_config.py</code>): <code>setup_file_logging(service_name, level=None)</code> reads <code>LOG_LEVEL_&lt;SERVICE&gt;</code>, falls back to <code>LOG_LEVEL</code>, then defaults to <code>INFO</code>. Explicit <code>level=</code> still overrides env.</li>
+<li><strong><code>.env.example</code> updated</strong>: Documents <code>LOG_LEVEL</code> and per-service override examples.</li>
+</ul>
+
+<h3 class="version">Log Sanitization Filter</h3>
+<ul>
+<li><strong><code>SanitizeFilter</code> added</strong> (<code>shared/logging_config.py</code>): <code>logging.Filter</code> subclass with compiled regex patterns that scrub <code>api_key=</code> values, <code>sk-</code>/<code>pk-</code> tokens, <code>Bearer</code> authorization headers, and Langfuse secret keys before the log line reaches any handler.</li>
+<li><strong>Attached to both handlers</strong>: StreamHandler (terminal) and RotatingFileHandler (file) both get the filter — secrets never written to disk or console.</li>
+<li><strong>Args scrubbing</strong>: The <code>filter()</code> method also iterates <code>record.args</code> to catch formatted strings where secret values appear in <code>%s</code> placeholders.</li>
+</ul>
+
+<h3 class="version">SQLiteTaskStore Replacing InMemoryTaskStore</h3>
+<ul>
+<li><strong><code>shared/a2a_store.py</code> (new, 102 lines)</strong>: <code>SQLiteTaskStore</code> implementing the A2A <code>TaskStore</code> protocol. Wraps <code>InMemoryTaskStore</code> for fast in-process ops and adds SQLite write-through via the <code>a2a_tasks</code> table. Cold-start loads all rows into in-memory store — tasks survive restarts.</li>
+<li><strong>Double-checked lazy load</strong>: <code>_ensure_loaded()</code> uses <code>asyncio.Lock</code> to populate from SQLite exactly once on first access.</li>
+<li><strong>4 entry points updated</strong>: All agent servers — <code>InMemoryTaskStore()</code> replaced with <code>SQLiteTaskStore()</code>.</li>
+<li><strong>Schema migration</strong>: <code>shared/memory/store.py</code> adds <code>a2a_tasks</code> table, bumps <code>SCHEMA_VERSION</code> to 3.</li>
+</ul>
+
+<h3 class="version">Memory Pruning / Retention Policy</h3>
+<ul>
+<li><strong><code>prune_old_records()</code> added</strong> (<code>shared/memory/store.py</code>): Deletes rows older than <code>MEMORY_RETENTION_DAYS</code> (default 90) from <code>ticker_briefs</code>, <code>recommendation_records</code>, and <code>memory_entries</code>. Uses existing <code>write_lock()</code>.</li>
+<li><strong>Startup pruning</strong> (<code>agent_1_adk/main.py</code>): Called on orchestrator startup — best-effort, wrapped in <code>try/except</code>. Logs deleted counts. No <code>VACUUM</code> to avoid blocking startup.</li>
+<li><strong><code>.env.example</code> updated</strong>: Documents <code>MEMORY_RETENTION_DAYS=90</code>.</li>
+</ul>
+
+<h3 class="version">MCP Client Singleton with Auto-Reconnect</h3>
+<ul>
+<li><strong><code>get_shared_mcp()</code> added</strong> (<code>shared/mcp_client.py</code>): Process-wide <code>MCPClient</code> singleton with double-checked async lock. Connects on first call; eliminates ~100&ndash;500ms SSE handshake overhead per request.</li>
+<li><strong>Auto-reconnect</strong>: On <code>ConnectionError</code>/<code>EOFError</code>/<code>asyncio.IncompleteReadError</code>, marks <code>_connected = False</code>, reconnects once, retries. Prevents permanent MCP death on transient blips.</li>
+<li><strong>atexit shutdown hook</strong>: Best-effort synchronous disconnect at process exit via temporary event loop.</li>
+<li><strong>4 executors simplified</strong>: &minus;131 lines across <code>agent_1_adk/agent_executor.py</code>, <code>agent_2_llamaindex/executor.py</code>, <code>agent_3_langgraph/executor.py</code>, <code>agent_4_crewai/executor.py</code> &mdash; removed per-request connect/disconnect lifecycle.</li>
+</ul>
+
+<h3 class="version">Lazy OpenTelemetry Instrumentation</h3>
+<ul>
+<li><strong><code>init_instrumentation()</code> added</strong> (<code>shared/observability.py</code>): Wraps all <code>*Instrumentor().instrument()</code> calls. Each server calls it once at startup. Set-based guard prevents double-instrumentation.</li>
+<li><strong>Deferred imports</strong>: All OTel imports moved inside <code>init_instrumentation()</code> — importing server modules in pytest no longer triggers OTel side-effects.</li>
+<li><strong>5 entry points updated</strong>: <code>agent_1_adk/main.py</code>, <code>agent_1_adk/sub_agent_client.py</code>, <code>agent_2_llamaindex/server.py</code>, <code>agent_3_langgraph/server.py</code>, <code>agent_4_crewai/server.py</code>, <code>agents/finsight_agent/__init__.py</code> &mdash; replaced module-level instrument() calls with <code>init_instrumentation()</code>.</li>
+</ul>
+
+<h3 class="version">Correlation-ID Propagation via ContextVar</h3>
+<ul>
+<li><strong><code>current_trace_id</code> / <code>current_session_id</code> ContextVars</strong> (<code>shared/trace_context.py</code>): Carry active trace/session IDs across async boundaries without explicit parameter passing.</li>
+<li><strong><code>extract_trace_ids()</code> sets ContextVar</strong>: After parsing trace prefix, automatically sets <code>current_trace_id</code> &mdash; subsequent log lines carry the ID without manual <code>extra=</code>.</li>
+<li><strong>JsonFormatter falls back to ContextVar</strong>: Checks <code>record.trace_id</code> first, then <code>current_trace_id.get()</code>. Same for <code>session_id</code>.</li>
+<li><strong>generic_executor</strong>: Sets both ContextVars from inbound task before executing.</li>
+<li><strong>sub_agent_client</strong>: Sets <code>current_trace_id</code> before injecting trace into outbound tasks.</li>
+<li><strong>MCP tool log lines</strong>: Hot-path tools emit <code>logger.info("Tool called", extra={"tool": "...", "ticker": "..."})</code> &mdash; trace_id added automatically from ContextVar.</li>
+</ul>
+
+<h3 class="version">Deduplicate Ticker Validation across Executors</h3>
+<ul>
+<li><strong><code>validate_ticker()</code> and <code>resolve_ticker()</code> added</strong> (<code>shared/ticker_utils.py</code>): Module-level wrappers using <code>get_shared_mcp()</code> singleton. Replace copy-pasted <code>_validate_ticker</code>/<code>_resolve_ticker</code> across all 4 executors.</li>
+<li><strong>~80 lines removed</strong>: All private ticker validation methods deleted from <code>agent_1_adk/agent_executor.py</code>, <code>agent_2_llamaindex/executor.py</code>, <code>agent_3_langgraph/executor.py</code>, <code>agent_4_crewai/executor.py</code>.</li>
+<li><strong>ADK executor inline MCP block replaced</strong>: Input guardrail now uses <code>validate_ticker()</code> from the shared singleton &mdash; no more temporary MCP client creation.</li>
+</ul>
+
+<h3 class="version">Unified <code>@logged</code> Timing Decorator</h3>
+<ul>
+<li><strong><code>logged()</code> decorator added</strong> (<code>shared/logging_config.py</code>): Emits <code>Enter</code> / <code>Exit</code> / <code>Fail</code> with <code>latency_ms</code> as structured JSON field. Uses <code>time.monotonic()</code> and <code>fn.__qualname__</code>.</li>
+<li><strong>Applied to 3 sub-agent <code>_build_response()</code></strong> (<code>agent_2_llamaindex/executor.py</code>, <code>agent_3_langgraph/executor.py</code>, <code>agent_4_crewai/executor.py</code>).</li>
+<li><strong>Applied to <code>SubAgentClient.send_message()</code></strong> — captures outbound A2A latency.</li>
+<li><strong>Applied to 4 MCP tool handlers</strong> (<code>finsight_server.py</code>): <code>get_prices</code>, <code>get_financials</code>, <code>get_company_filings</code>, <code>get_news_sentiment</code>.</li>
+<li><strong>Value</strong>: <code>grep "Exit" logs/*.log</code> shows per-call latencies across every service layer.</li>
+</ul>
+
+<h3 class="version">Cancellation Support + Per-Agent Timeouts</h3>
+<ul>
+<li><strong>GenericAgentExecutor.cancel() implemented</strong> (<code>shared/generic_executor.py</code>): Stores <code>asyncio.current_task()</code>, emits <code>TASK_STATE_CANCELED</code> on <code>CancelledError</code>. Replaces <code>NotImplementedError</code>.</li>
+<li><strong>FinSightAgentExecutor.cancel() implemented</strong> (<code>agent_1_adk/agent_executor.py</code>): Same pattern.</li>
+<li><strong>Per-agent timeouts</strong> (<code>sub_agent_client.py</code>): <code>asyncio.wait_for()</code> with per-agent timeouts (RAG=60s, Quant=90s, Sentiment=45s) &mdash; returns clean JSON error on timeout instead of crashing.</li>
+<li><strong>New config vars</strong>: <code>A2A_TIMEOUT_RAG</code>, <code>A2A_TIMEOUT_QUANT</code>, <code>A2A_TIMEOUT_SENTIMENT</code>.</li>
+<li><strong>Eval-trace in <code>finally</code></strong>: Traces captured even on timeout.</li>
+</ul>
+
+<h2>v1.24 &mdash; Before-Agent Cache Callback, IST Timezone &amp; Stale Test Cleanup</h2>
+
+<h3 class="version">Before-Agent Cache Callback (<code>_memory_cache_callback</code>)</h3>
+<ul>
+<li><strong>Two-tier same-day cache</strong> (<code>agents/finsight_agent/agent.py</code>): New <code>_memory_cache_callback</code> registered as <code>root_agent.before_agent_callback</code> &mdash; fires before the LLM runs, extracts the user&rsquo;s ticker, queries <code>TickerMemory.get_latest()</code>, and returns today&rsquo;s cached brief (<code>types.Content</code>) directly if available. Short-circuits the LLM entirely, saving 30&ndash;60s per repeat same-day query.</li>
+<li><strong>Strict prompt directive</strong> (<code>agent_1_adk/agent.py</code>): <code>[TODAY]</code> tag changed from <em>&ldquo;you MAY return it directly&rdquo;</em> to <strong>&ldquo;you MUST return it directly&rdquo;</strong> &mdash; reduces LLM variance on same-day cache hits.</li>
+<li><strong>Executor-level cache</strong> (<code>agent_1_adk/agent_executor.py</code>): <code>_get_today_cached_text()</code> provides a parallel short-circuit for the A2A executor path, checking before <code>RUNNER.run_async()</code> is called.</li>
+</ul>
+
+<h3 class="version">Response Text Overwrite for Cache Quality</h3>
+<ul>
+<li><strong><code>update_response_text()</code> added</strong> (<code>shared/memory/ticker_memory.py</code>): Overwrites <code>brief_json.response_text</code> on an existing record after the agent turn completes. The <code>save_brief</code> tool&rsquo;s rationale is a short LLM-written summary; after the full synthesis finishes, the real analysis text replaces it &mdash; so the same-day cache returns the rich analysis, not the abbreviated rationale.</li>
+<li><strong>Integration in <code>_persist_memory_callback</code></strong> (<code>agents/finsight_agent/agent.py</code>): After memory persist, extracts the response text and calls <code>tm.update_response_text()</code>.</li>
+</ul>
+
+<h3 class="version">IST Timezone Standardization</h3>
+<ul>
+<li><strong><code>IST</code> constant added</strong> (<code>shared/config.py</code>): <code>IST = timezone(timedelta(hours=5, minutes=30))</code>. All <code>datetime.now()</code> calls across the system converted to use <code>IST</code> explicitly &mdash; agent timestamps, memory timestamps, analysis_date comparisons. Previously mixed between UTC and local machine time, causing same-day cache mismatches on non-IST systems.</li>
+<li><strong>Files changed</strong>: <code>shared/config.py</code>, <code>shared/memory/memory_service.py</code>, <code>shared/memory/performance_tracker.py</code>, <code>shared/memory/portfolio_store.py</code>, <code>shared/memory/store.py</code>, <code>shared/memory/ticker_memory.py</code>, <code>agent_1_adk/agent.py</code>, <code>agent_1_adk/agent_executor.py</code>.</li>
+</ul>
+
+<h3 class="version">Programmatic Dedup in save_brief &amp; _store_memory</h3>
+<ul>
+<li><strong><code>save_brief</code> dedup</strong> (<code>agent_1_adk/agent.py</code>): Checks if today&rsquo;s brief already exists for the ticker before inserting. Returns early with a confirmation message instead of creating a duplicate row.</li>
+<li><strong><code>_store_memory</code> dedup</strong> (<code>agent_1_adk/agent_executor.py</code>): Same check at the executor level &mdash; if <code>save_brief</code> already stored today&rsquo;s brief, <code>_store_memory</code> skips its own insert. Creates two-layer defense against duplicate records.</li>
+</ul>
+
+<h3 class="version">Ticker Extraction: Dotted &amp; Single-Char Tickers</h3>
+<ul>
+<li><strong>Dotted tickers supported</strong> (<code>shared/ticker_utils.py</code>): Patterns now match <code>[A-Z]{1,5}(?:\.[A-Z]{1,2})?</code> &mdash; handles Berkshire Hathaway (<code>BRK.A</code>, <code>BRK.B</code>) and other class-share tickers.</li>
+<li><strong>Single-char tickers</strong>: Pattern 5 changed from <code>[A-Z]{2}</code> to <code>[A-Z]{1,2}</code>, enabling detection of tickers like <code>V</code> (Visa) and <code>Y</code> (Alleghany). New mixed-case parens pattern detects <code>V (Visa)</code> &rarr; <code>V</code>.</li>
+<li><strong><code>$</code> prefix widened</strong>: Pattern 3 (dollar prefix) now matches <code>[A-Z]{1,5}</code> instead of just <code>[A-Z]{1,2}</code>.</li>
+</ul>
+
+<h3 class="version">_build_response Extracted from stream()</h3>
+<ul>
+<li><strong>All three sub-agents refactored</strong> (<code>agent_2_llamaindex/executor.py</code>, <code>agent_3_langgraph/executor.py</code>, <code>agent_4_crewai/executor.py</code>): The core response logic moved from inside <code>stream()</code> to a new <code>_build_response(query) &rarr; dict</code> method. <code>stream()</code> is now a thin wrapper: <code>yield await self._build_response(query)</code> in a <code>try/finally</code> block (ensuring <code>_disconnect()</code> runs). This makes the response-building logic independently testable and callable.</li>
+</ul>
+
+<h3 class="version">DB Path Consolidation</h3>
+<ul>
+<li><strong>Session DB separated</strong> (<code>agent_1_adk/main.py</code>): ADK session store moved from <code>db/finsight_memory.db</code> to <code>db/adk_sessions.db</code> &mdash; separates conversational session data from ticker briefs and memory, preventing one schema migration from affecting the other.</li>
+<li><strong>User-id-agnostic cache queries</strong>: <code>_get_today_cached_text()</code> and <code>_build_memory_context()</code> now query <code>TickerMemory.get_latest(ticker, user_id=None)</code> to avoid cache misses across different user_id values (a2a_user, user, eval_user).</li>
+</ul>
+
+<h3 class="version">Stale Test Removal</h3>
+<ul>
+<li><strong>17 test files removed</strong>: All <code>tests/*.py</code> files and <code>tests/evaluation/</code> suite deleted &mdash; these were unmaintained fixtures from earlier architecture iterations that no longer matched the current codebase. Offline RAGAS evaluation pipeline, stale rubric tests, and outdated memory/integration tests all removed.</li>
+<li><strong>Test count: 0</strong> &mdash; no automated test suite remains. Testing is performed manually via the ADK Web UI.</li>
+</ul>
+
+<h2>v1.23 &mdash; Same-Day Memory Cache, analysis_date Column &amp; Unified db/ Folder</h2>
+
+<h3 class="version">Same-Day Recommendation Cache</h3>
+<ul>
+<li><strong>Date-aware memory injection</strong> (<code>agent_1_adk/agent_executor.py</code>): <code>_build_memory_context()</code> now compares the stored brief&rsquo;s <code>analysis_date</code> against today&rsquo;s date. Context is tagged <code>[TODAY]</code> when the brief is from today (LLM may return it directly without calling agents) or <code>[STALE]</code> when from a prior day (LLM must call all agents for fresh analysis).</li>
+<li><strong>Duplicate write prevention</strong>: <code>_process_response()</code> skips the <code>_store_memory()</code> background task when <code>[TODAY]</code> is present in the injected user message, preventing identical records accumulating on repeated same-day queries.</li>
+<li><strong>Agent instruction updated</strong> (<code>agent_1_adk/agent.py</code>): Both <code>_STATIC_PREAMBLE</code> and <code>_STATIC_PREAMBLE_FALLBACK</code> include a <em>MEMORY CONTEXT RULES</em> block instructing the LLM on how to handle each tag.</li>
+</ul>
+
+<h3 class="version">analysis_date Column</h3>
+<ul>
+<li><strong>New <code>analysis_date TEXT</code> column</strong> (<code>shared/memory/ticker_memory.py</code>, <code>shared/memory/store.py</code>): Added to <code>ticker_briefs</code> via an idempotent <code>ALTER TABLE</code> migration in <code>init_db()</code>. Both <code>store_brief()</code> and <code>store_minimal()</code> now write <code>date.today().isoformat()</code> into this column on every insert.</li>
+<li><strong>Read path updated</strong>: <code>get_latest()</code> and <code>get_history()</code> select and return <code>analysis_date</code> as <code>row[9]</code>. Sort order changed to <code>ORDER BY COALESCE(analysis_date, created_at) DESC</code> &mdash; uses the explicit date where available, falls back to <code>created_at</code> for legacy rows.</li>
+</ul>
+
+<h3 class="version">Unified db/ Folder</h3>
+<ul>
+<li><strong>All databases consolidated under <code>db/</code></strong>: <code>shared/memory/store.py</code> <code>DB_PATH</code> changed from project root to <code>db/finsight_memory.db</code>. Session DB URL in <code>agent_1_adk/main.py</code> updated to <code>sqlite+aiosqlite:///./db/finsight_memory.db</code>. LangChain cache in <code>agent_3_langgraph/nodes.py</code> moved to <code>db/.langchain_cache.db</code>. ChromaDB default in <code>shared/config.py</code> (<code>CHROMA_DIR</code>) moved to <code>./db/chroma_db</code>.</li>
+<li><strong><code>.gitignore</code> simplified</strong>: All scattered per-file DB ignore entries replaced with a single <code>db/</code> rule. Removed duplicate <code>chroma_db/</code> entry and stale repeated lines.</li>
+<li>The <code>db/</code> directory is auto-created on first run via <code>path.parent.mkdir(parents=True, exist_ok=True)</code> in <code>get_db()</code>.</li>
+</ul>
+
+<h2>v1.22 &mdash; ADK 2.x, Eval Toggle, Memory Pollution Fix &amp; Score Namespacing</h2>
+
+<h3 class="version">Google ADK 2.x Upgrade</h3>
+<ul>
+<li><strong><code>google-adk</code> bumped to <code>&gt;=2.0,&lt;3.0</code></strong> (<code>pyproject.toml</code>): installed <code>2.1.0</code>. No code changes required &mdash; all public API surfaces (<code>LlmAgent</code>, <code>Runner</code>, <code>DatabaseSessionService</code>, <code>BaseMemoryService</code>, <code>google.adk.tools.{google_search, load_memory}</code>, <code>google.adk.cli.service_registry.get_service_registry</code>) verified stable. Custom <code>SQLiteMemoryService</code> still satisfies the 2.x <code>BaseMemoryService</code> signatures. Project's <code>BaseAgent</code> in <code>shared/base_agent.py</code> is unaffected (Pydantic class, not ADK's <code>BaseAgent</code>).</li>
+</ul>
+
+<h3 class="version"><code>EVAL_TRACE_ENABLED</code> Feature Flag</h3>
+<ul>
+<li><strong><code>EVAL_ENABLED</code> constant added</strong> (<code>shared/config.py</code>): reads <code>EVAL_TRACE_ENABLED</code> from <code>.env</code> (default <code>True</code>). Single source of truth for whether sidecar RAGAS evals fire.</li>
+<li><strong>All <code>asyncio.create_task(_eval_*)</code> calls gated</strong>: every agent now checks <code>if EVAL_ENABLED:</code> before scheduling its eval task. Sites: <code>agent_1_adk/agent_executor.py</code>, <code>agents/finsight_agent/agent.py</code> (orchestrator), <code>agent_2_llamaindex/executor.py</code> (RAG), <code>agent_3_langgraph/executor.py</code> (quant), <code>agent_4_crewai/executor.py</code> (sentiment). Set <code>EVAL_TRACE_ENABLED=False</code> in <code>.env</code> to disable all sidecar evals with no code changes.</li>
+</ul>
+
+<h3 class="version">Orchestrator Eval Moved to <code>after_agent_callback</code></h3>
+<ul>
+<li><strong>Problem</strong>: when running via <code>adk web</code>, the orchestrator goes through ADK's built-in runner &mdash; <code>FinSightAgentExecutor</code> is never invoked. The eval call in <code>agent_executor.py</code> only fired for A2A clients hitting <code>agent_1_adk/main.py</code>. With the orchestrator A2A server removed from the bat file, evals stopped firing entirely.</li>
+<li><strong>Fix</strong> (<code>agents/finsight_agent/agent.py</code>): added orchestrator eval scheduling into the existing <code>_persist_memory_callback</code>. After memory persist, extracts user query + final agent text from <code>session.events</code>, pulls current Langfuse <code>trace_id</code>, and fires <code>asyncio.create_task(_eval_score_response(...))</code>. Works for both <code>adk web</code> and any other ADK runner path.</li>
+</ul>
+
+<h3 class="version">Memory Persist + Eval Gated on <code>save_brief</code></h3>
+<ul>
+<li><strong>Problem</strong>: <code>_persist_memory_callback</code> fired on every agent turn &mdash; including pure recall turns where the user asked "what were my last recommendations?". That conversational exchange was being indexed into long-term memory and evaluated, polluting future memory searches and inflating eval volume.</li>
+<li><strong>Fix</strong> (<code>agents/finsight_agent/agent.py</code>): added <code>_is_analysis_turn()</code> which walks back to the most recent user message and checks whether <code>save_brief</code> was called after it. If not, both memory persist and eval are skipped. Logs <code>"Skipping persist + eval &mdash; turn did not call save_brief"</code> for visibility.</li>
+<li>Behaviour: "Analyze AAPL" &rarr; <code>save_brief</code> called &rarr; persists + evals. "What were my last recommendations?" &rarr; only <code>load_memory</code> &rarr; skipped. "Show me last NVDA brief, then analyze TSLA" &rarr; <code>save_brief</code> called for TSLA &rarr; persists.</li>
+</ul>
+
+<h3 class="version">Langfuse Score Namespacing by Agent</h3>
+<ul>
+<li><strong><code>_push_scores</code> now prefixes scores by agent</strong> (<code>shared/runtime_eval.py</code>): <code>ragas/{name}</code> &rarr; <code>ragas/{agent}/{name}</code> (e.g. <code>ragas/orchestrator/AnswerRelevancy</code>, <code>ragas/rag/Faithfulness</code>). The previous flat namespace made it impossible to distinguish "the orchestrator's AnswerRelevancy" from "RAG's AnswerRelevancy" in Langfuse.</li>
+<li><strong><code>comment="agent=&lt;name&gt;"</code> added</strong> to each <code>lf.create_score()</code> call for an additional structured tag.</li>
+</ul>
+
+<h3 class="version"><code>RubricsScoreWithoutReference</code> Import Fix</h3>
+<ul>
+<li><strong>Problem</strong>: <code>score_response()</code> orchestrator eval imported <code>RubricsScoreWithoutReference</code> from <code>ragas.metrics.collections</code> &mdash; that class does not exist in ragas 0.4.x. The import failed and the entire orchestrator eval bailed out with <code>[orchestrator] Skipping eval: ragas import failed</code>.</li>
+<li><strong>Fix</strong> (<code>shared/runtime_eval.py</code>): <code>recommendation_clarity</code> metric now uses <code>DomainSpecificRubrics</code> (the actual reference-free rubric class in 0.4.x). Same scoring rubric, working import.</li>
+</ul>
+
+<h3 class="version">Removed Duplicate Batch-Eval Runner</h3>
+<ul>
+<li><strong>Deleted from <code>shared/runtime_eval.py</code></strong>: <code>_invoke_agent()</code>, <code>_run_batch_eval()</code>, <code>_BATCH_EVAL_CASES</code>, and the <code>if __name__ == "__main__":</code> block. <code>_invoke_agent</code> spun up its own <code>Runner</code> + <code>InMemorySessionService</code> to invoke the orchestrator &mdash; duplicating exactly what <code>FinSightAgentExecutor</code> and <code>after_agent_callback</code> already do for live traffic. The live executor has the response in hand; no second runner needed.</li>
+<li>Batch evaluation with ground-truth references still lives in <code>tests/evaluation/run_orchestrator_eval.py</code>.</li>
+</ul>
+
+<h3 class="version">Bat-File Cleanup</h3>
+<ul>
+<li><strong>Orchestrator A2A server removed from <code>run_adk_web.bat</code></strong>: <code>agent_1_adk/main.py</code> is no longer started. The orchestrator runs through <code>adk web</code> on port <code>8080</code>. The A2A endpoint at <code>:8001</code> is no longer exposed by default; bring it back manually with <code>uv run python -m agent_1_adk.main</code> if needed for A2A clients.</li>
+<li><code>stop_servers.bat</code> already kills the port; PowerShell terminal-close command targets all <code>uv run</code> and <code>lms server</code> windows reliably.</li>
+</ul>
+
+<h2>v1.20 &mdash; Runtime RAGAS Evaluation &amp; Offline HF Model Loading</h2>
+
+<h3 class="version">Runtime RAGAS Evaluation</h3>
+<ul>
+<li><strong><code>shared/runtime_eval.py</code> (new)</strong>: Fire-and-forget RAGAS scoring for all four agents as background tasks. Uses <code>ragas</code> metrics without requiring ground-truth references &mdash; scores are computed at runtime using the LLM itself as the judge.</li>
+<li><strong>Orchestrator scoring</strong> (<code>agent_1_adk/agent_executor.py</code>): After response processing, fires <code>asyncio.create_task(_eval_score_response(...))</code>. Metrics: <code>ResponseRelevancy</code>, <code>citation_quality</code> (AspectCritic), <code>risk_disclosure</code> (AspectCritic), <code>recommendation_clarity</code> (RubricsScoreWithoutReference), <code>response_completeness</code> (AspectCritic).</li>
+<li><strong>RAG agent scoring</strong> (<code>agent_2_llamaindex/executor.py</code>): After query response, fires <code>asyncio.create_task(_eval_rag_response(...))</code>. Metrics: <code>Faithfulness</code>, <code>ResponseRelevancy</code>, <code>LLMContextPrecisionWithoutReference</code>. Requires <code>context_texts</code> from ChromaDB source nodes.</li>
+<li><strong>Quant agent scoring</strong> (<code>agent_3_langgraph/executor.py</code>): After analysis, fires <code>asyncio.create_task(_eval_quant_response(...))</code>. Metrics: <code>FactualCorrectness</code> (uses computed metrics as reference &mdash; catches hallucinated numbers), <code>ResponseRelevancy</code>.</li>
+<li><strong>Sentiment agent scoring</strong> (<code>agent_4_crewai/executor.py</code>): After narrative, fires <code>asyncio.create_task(_eval_sentiment_response(...))</code>. Metrics: <code>ResponseRelevancy</code>, <code>catalyst_identification</code> (AspectCritic), <code>insider_signal_discussion</code> (AspectCritic), <code>Faithfulness</code> (when news/filing contexts available).</li>
+<li><strong>Score push to Langfuse</strong>: All scores pushed to Langfuse <code>create_score()</code> per-trace, linked by <code>trace_id</code> when available. Enables regression tracking across model/prompt changes.</li>
+<li><strong>LM Studio compatibility patched</strong>: RAGAS defaults to <code>instructor.Mode.JSON</code> which sends <code>response_format.type="json_object"</code> &mdash; LM Studio only supports <code>"json_schema"</code> or <code>"text"</code>. Patched with <code>instructor.Mode.JSON_SCHEMA</code> in <code>_setup_ragas_clients()</code>. HuggingFace embeddings wrapped via custom <code>_STEmbeddings</code> (RAGAS 0.4.x <code>BaseRagasEmbedding</code>) to avoid broken pydantic integration.</li>
+<li><strong>Eval trace directory updated</strong> (<code>agent_1_adk/sub_agent_client.py</code>): Changed from <code>eval_traces/</code> to <code>tests/evaluation/eval_results/orchestrator_traces/</code> to align with test suite layout.</li>
+</ul>
+
+<h3 class="version">CrewAI Simplification</h3>
+<ul>
+<li><strong>Sentiment crew reduced from 2 agents to 1</strong> (<code>agent_4_crewai/crew.py</code>): Removed separate Synthesis Agent &mdash; the Analysis Agent now produces the full narrative directly. <code>build_crew()</code> simplified from a 2-agent <code>Crew</code> with <code>sequential</code> process to a single-agent <code>Crew</code>. Reduces LLM calls per sentiment query from 2 to 1.</li>
+</ul>
+
+<h3 class="version">Offline HuggingFace Model Loading</h3>
+<ul>
+<li><strong><code>HF_HUB_OFFLINE=1</code> default</strong> (<code>shared/config.py</code>): Set at import time before any HuggingFace code runs. Prevents network calls to <code>huggingface.co</code> when loading <code>sentence-transformers</code> or <code>all-MiniLM-L6-v2</code> &mdash; models are expected to be cached locally from a prior online run. Set <code>HF_HUB_OFFLINE=0</code> in <code>.env</code> to re-enable download checks.</li>
+</ul>
+
+<h3 class="version">Index Manager Cleanup</h3>
+<ul>
+<li><strong>Duplicated query methods removed</strong> (<code>agent_2_llamaindex/index_manager.py</code>): <code>query_sec_filings()</code> and <code>query_earnings()</code> were dead code &mdash; the RAG agent only calls <code>query()</code> (which routes via <code>RouterQueryEngine</code> with fallback). Removed both methods along with <code>query_earnings</code> index collection setup.</li>
+</ul>
+
+<h3 class="version">Configuration</h3>
+<ul>
+<li><strong><code>A2A_TIMEOUT</code> default reduced</strong> (<code>shared/config.py</code>): Changed from <code>300.0</code> to <code>180.0</code> &mdash; 5 minutes was excessive for local LLM inference; 3 minutes provides sufficient margin while failing faster on genuinely stuck agents.</li>
+</ul>
+
+<h2>v1.21 &mdash; Runtime RAGAS Robustness &amp; Debuggability</h2>
+
+<h3 class="version">RAGAS Client Caching</h3>
+<ul>
+<li><strong><code>_setup_ragas_clients()</code> now caches</strong> (<code>shared/runtime_eval.py</code>): Module-level <code>_ragas_clients</code> tuple stores <code>(InstructorLLM, _STEmbeddings)</code> after first call. Subsequent calls return cached clients instead of reloading <code>SentenceTransformer(all-MiniLM-L6-v2)</code> (~1-2s, ~80MB) on every agent response. Eliminates 4&times; model reload per query.</li>
+</ul>
+
+<h3 class="version">Per-Metric Streaming</h3>
+<ul>
+<li><strong><code>_run_metrics</code> switched to <code>asyncio.wait(FIRST_COMPLETED)</code></strong> (<code>shared/runtime_eval.py</code>): Replaced <code>asyncio.gather</code> (waits for all metrics). Each metric is now logged and pushed to Langfuse the moment its <code>ascore</code> finishes. Fast metrics (AnswerRelevancy, DomainSpecificRubrics ~3-5s) appear immediately instead of waiting for slow metrics (Faithfulness ~180s timeout).</li>
+</ul>
+
+<h3 class="version">Error Handling</h3>
+<ul>
+<li><strong><code>BaseException</code> instead of <code>Exception</code></strong> in <code>_run_metrics</code> result loop: <code>CancelledError</code> inherits from <code>BaseException</code>, not <code>Exception</code> &mdash; the old <code>isinstance(result, Exception)</code> check missed cancelled tasks, fell through to <code>round(float(result), 4)</code>, crashed with <code>TypeError</code>, and silently killed the entire eval via <code>create_task</code> fire-and-forget. Fixed by checking <code>isinstance(result, BaseException)</code>.</li>
+<li><strong><code>float()</code> conversion guarded</strong> with <code>try/except (TypeError, ValueError)</code> &mdash; any unexpected result types are logged instead of crashing.</li>
+<li><strong><code>_score_metric</code> try/except</strong> added: wraps <code>metric.ascore()</code> and logs full traceback with <code>exc_info=True</code> when a metric fails internally.</li>
+<li><strong>All scoring functions wrapped in try/except</strong>: Orchestrator and Sentiment eval bodies catch unexpected exceptions and log them with full traceback instead of silently disappearing.</li>
+</ul>
+
+<h3 class="version">Debuggability</h3>
+<ul>
+<li><strong>Entry logs added</strong>: Each scoring function logs <code>[agent] Eval entered (response_len=..., trace=...)</code> at INFO level on entry, confirming the function was reached.</li>
+<li><strong>Early-return warnings</strong>: Silent <code>return</code> on short responses or import failures now logs <code>[agent] Skipping eval: ...</code> with reason.</li>
+<li><strong>Fallback logs promoted</strong>: <code>logger.debug("[agent] No RAGAS scores computed")</code> &rarr; <code>logger.info</code> &mdash; visible at default log level.</li>
+</ul>
+
+<h3 class="version">Timeout &amp; Encoding Fixes</h3>
+<ul>
+<li><strong>HTTP timeout 60s &rarr; 180s</strong> (<code>shared/runtime_eval.py</code>): <code>AsyncOpenAI(timeout=180)</code> &mdash; Faithfulness makes multiple sequential LLM calls (decompose claims &rarr; verify each), each taking ~20-30s on the 20B model. The old 60s timeout failed on the second call.</li>
+<li><strong>UTF-8 stdout/stderr</strong> (<code>shared/config.py</code>): <code>sys.stdout.reconfigure(encoding='utf-8')</code> prevents <code>UnicodeEncodeError</code> when RAGAS log messages containing curly quotes or em-dashes hit Windows cp1252 console.</li>
+</ul>
+
+<h3 class="version">Langfuse Push Cleanup</h3>
+<ul>
+<li><strong><code>_push_scores</code> skips when <code>trace_id</code> is None</strong> (<code>shared/runtime_eval.py</code>): With placeholder Langfuse API keys (<code>pk-lf-...</code>), <code>create_score()</code> with no <code>trace_id</code> resulted in &ldquo;Bad request&rdquo; API errors. Now returns early when <code>trace_id is None</code>.</li>
+</ul>
+
+<h3 class="version">Sentiment Narrative Key Fallback</h3>
+<ul>
+<li><strong><code>narrative</code> key fallback</strong> (<code>agent_4_crewai/executor.py</code>): CrewAI LLM may return JSON with <code>investment_narrative</code> or <code>analysis</code> instead of <code>narrative</code>. The eval now tries <code>narrative</code> &rarr; <code>investment_narrative</code> &rarr; <code>analysis</code> &rarr; full JSON dump before giving up.</li>
+</ul>
+
+<h3 class="version">Gitignore</h3>
+<ul>
+<li><strong><code>tests/evaluation/eval_results/</code> added to <code>.gitignore</code></strong>: Runtime-generated trace JSON artifacts excluded from version control.</li>
+</ul>
+
+<h2>v1.19 &mdash; MCP Connection Cleanup &amp; Server Script Fixes</h2>
+
+<h3 class="version">MCP Connection Cleanup</h3>
+<ul>
+<li><strong><code>_disconnect()</code> added to all sub-agent executors</strong> (<code>agent_2_llamaindex/executor.py</code>, <code>agent_3_langgraph/executor.py</code>, <code>agent_4_crewai/executor.py</code>): New <code>async def _disconnect()</code> method calls <code>mcp.disconnect_all()</code> in a <code>try/finally</code> block, ensuring MCP sockets close gracefully after each analysis stream completes. Prevents <code>ConnectionResetError: [WinError 10054]</code> on Windows caused by lingering async sockets.</li>
+<li><strong>Orchestrator temporary MCP cleanup</strong> (<code>agent_1_adk/agent_executor.py</code>): Pre-flight ticker validation's temporary MCP connection now wrapped in <code>try/finally</code> with <code>await _mcp.disconnect_all()</code> in the <code>finally</code> block.</li>
+<li><strong>All four agents disconnect MCP after stream</strong>: Quant, RAG, Sentiment agents call <code>await self._disconnect()</code> in their <code>finally</code> blocks. Orchestrator cleans up the ticker-validation MCP client after use.</li>
+</ul>
+
+<h3 class="version">Server Script Fixes</h3>
+<ul>
+<li><strong><code>run_adk_web.bat</code></strong>: Changed <code>cmd /c</code> to <code>cmd /k</code> for all server start commands &mdash; terminal windows stay open if a server crashes, allowing error inspection.</li>
+<li><strong><code>stop_servers.bat</code></strong>: Rewrote window-closing logic. Switched from unreliable <code>taskkill /fi "WINDOWTITLE eq"</code> to PowerShell <code>Get-Process cmd | Where-Object { $_.MainWindowTitle -like 'FinSight*' } | Stop-Process -Force</code>, which reliably closes terminal windows by title.</li>
+</ul>
+
+<h3 class="version">Bug Fixes</h3>
+<ul>
+<li><strong>Date placeholder removed from ADK prompt</strong> (<code>agent_1_adk/agent.py</code>): Removed <code>{date}</code> template variable from the orchestrator system prompt &mdash; the date was not being populated, leaving a raw <code>{date}</code> string visible in the LLM context.</li>
+</ul>
+
+<h2>v1.18 &mdash; Caching, Guardrails, Evaluation &amp; Observability</h2>
+
+<h3 class="version">Caching</h3>
+<ul>
+<li><strong>TTL tool-result cache in MCP server</strong> (<code>mcp_servers/finsight_server.py</code>): <code>_TTLCache</code> class using <code>OrderedDict</code> + <code>time.monotonic()</code>. Cache instances per tool: <code>get_prices</code> (5 min), <code>get_financials</code> (24 h), <code>get_news_sentiment</code> (15 min), <code>get_filing_content</code> (permanent LRU-200), <code>_fetch_submissions</code> (6 h). No new dependencies.</li>
+<li><strong>LangChain SQLiteCache</strong> (<code>agent_3_langgraph/nodes.py</code>): <code>SQLiteCache(database_path=".langchain_cache.db")</code> wraps the quant agent's LLM summary call &mdash; identical ticker+metrics inputs reuse the cached LLM response. Requires <code>langchain-community&gt;=0.3.0</code>.</li>
+<li><strong>KV cache prefix optimization</strong> (<code>agent_1_adk/agent.py</code>, <code>agent_4_crewai/crew.py</code>): Static PROCEDURE block extracted to module-level <code>_STATIC_PREAMBLE</code> constant. <code>_build_instruction()</code> now only appends today's date and the dynamic agent list, keeping the large static prefix stable across requests for LM Studio KV-cache reuse. Backstory strings for CrewAI agents moved to module-level constants.</li>
+<li><strong>Semantic cache</strong> (<code>shared/semantic_cache.py</code>): ChromaDB + <code>all-MiniLM-L6-v2</code> cosine similarity cache (threshold 0.95, TTL 1 h). Wired into <code>agent_1_adk/agent_executor.py</code>: cache checked before <code>runner.run_async</code>, hit returns immediately; successful responses stored. Controlled by <code>SEMANTIC_CACHE_ENABLED=true</code> env var (off by default).</li>
+</ul>
+
+<h3 class="version">Guardrails</h3>
+<ul>
+<li><strong>Input guardrails</strong> (<code>agent_1_adk/agent_executor.py</code>): Off-topic regex filter (<code>_NON_INVESTMENT_RE</code>) rejects weather/recipe/entertainment queries with a canned message in &lt; 100 ms. Pre-flight ticker validation calls MCP <code>validate_ticker</code> before spawning sub-agents &mdash; invalid tickers rejected in &lt; 2 s with no sub-agent cost.</li>
+<li><strong>Output guardrails</strong> (<code>agent_1_adk/agent_executor.py</code>): Empty/short response (&lt; 50 chars) marked <code>TASK_STATE_FAILED</code>. Missing BUY/HOLD/SELL signal on a stock analysis query logs a Langfuse warning with <code>missing_signal: true</code> metadata.</li>
+<li><strong>Double-<code>else</code> syntax bug fixed</strong> (<code>agent_1_adk/agent_executor.py</code>): Two <code>else</code> clauses for the same <code>if final_event:</code> block collapsed into one, fixing a <code>SyntaxError</code> that prevented the service from starting.</li>
+</ul>
+
+<h3 class="version">RAG &amp; Memory</h3>
+<ul>
+<li><strong>Incremental RAG ingestion</strong> (<code>shared/memory/store.py</code>, <code>agent_2_llamaindex/executor.py</code>): New <code>ingested_filings</code> table tracks already-indexed SEC filing URLs. <code>_ensure_ingested()</code> skips URLs already in the table; marks new ones after successful batch ingest. Persists across restarts &mdash; immutable historical filings are never re-ingested.</li>
+<li><strong>Embedding model pre-warm</strong> (<code>agent_2_llamaindex/server.py</code>): <code>FinancialIndexManager</code> instantiated in a thread executor via <code>on_startup</code> hook, eliminating first-query latency caused by lazy model download.</li>
+<li><strong>Live price capture in PerformanceTracker</strong> (<code>shared/memory/performance_tracker.py</code>): <code>record_recommendation()</code> now auto-fetches current price via <code>yfinance</code> in a thread executor when <code>price=None</code>. Enables accurate <code>realized_return</code> calculation in <code>evaluate_all()</code>.</li>
+<li><strong>Automated past-recommendation evaluation</strong> (<code>agent_1_adk/agent.py</code>): <code>save_brief()</code> now fires <code>asyncio.create_task(_evaluate_past_recommendations(ticker))</code> in background &mdash; <code>PerformanceTracker.evaluate_all()</code> runs without blocking the response.</li>
+<li><strong>SQLite schema v2</strong> (<code>shared/memory/store.py</code>): <code>ingested_filings</code> table added with <code>idx_ingested_ticker</code> index. <code>SCHEMA_VERSION</code> bumped to 2 for clean migration.</li>
+</ul>
+
+<h3 class="version">Evaluation</h3>
+<ul>
+<li><strong>RAGAS evaluation pipeline</strong> (<code>tests/evaluation/</code>): <code>run_rag_eval.py</code> measures Faithfulness, ResponseRelevancy, ContextPrecision, ContextRecall, NoiseSensitivity. <code>run_orchestrator_eval.py</code> measures ToolCallAccuracy and AgentGoalAccuracy via eval traces written by sub-agent client. <code>financial_rubrics.py</code> provides custom <code>AspectCritic</code> metrics: citation quality, risk disclosure, recommendation clarity. <code>push_scores.py</code> pushes all scores to Langfuse per-trace.</li>
+<li><strong>Eval trace capture</strong> (<code>agent_1_adk/sub_agent_client.py</code>): When <code>EVAL_TRACE_ENABLED=true</code>, each sub-agent call appends <code>{agent_name, task_sent, response, latency_ms}</code> to a JSON file in <code>tests/evaluation/eval_results/orchestrator_traces/</code>.</li>
+<li><strong>Curated RAG dataset</strong> (<code>tests/evaluation/rag_dataset.json</code>): 10 Q&amp;A pairs for NVDA, AAPL, MSFT, JPM with reference contexts from real SEC filings.</li>
+</ul>
+
+<h3 class="version">Observability</h3>
+<ul>
+<li><strong>LangGraph / LangChain instrumentation</strong> (<code>agent_3_langgraph/server.py</code>): <code>LangChainInstrumentor().instrument()</code> added &mdash; quant agent LLM calls now appear in Langfuse traces. Requires <code>openinference-instrumentation-langchain&gt;=0.1.0</code>.</li>
+<li><strong>Sub-agent latency tracking</strong> (<code>agent_1_adk/sub_agent_client.py</code>): <code>send_message()</code> now records wall-clock latency per sub-agent call and emits a Langfuse span with <code>latency_ms</code> and agent name metadata.</li>
+<li><strong>Config validation</strong> (<code>shared/config.py</code>): <code>validate()</code> function checks required env vars (<code>MCP_SERVER_URL</code>) and warns on placeholder Langfuse keys. Called at startup in each server entry point.</li>
+</ul>
+
+<h3 class="version">Deployment</h3>
+<ul>
+<li><strong>Health endpoints</strong> (<code>agent_1_adk/main.py</code>, <code>agent_2_llamaindex/server.py</code>, <code>agent_3_langgraph/server.py</code>, <code>agent_4_crewai/server.py</code>, <code>mcp_servers/finsight_server.py</code>): All five services expose <code>GET /health &rarr; {"status":"ok","agent":"..."}</code>. MCP server mounts health alongside the SSE app via a Starlette wrapper.</li>
+<li><strong>docker-compose hardening</strong> (<code>docker-compose.yml</code>): All services gain <code>healthcheck</code> blocks. <code>depends_on</code> updated to <code>condition: service_healthy</code>. <code>finsight_memory</code> named volume added for the orchestrator DB. <code>SEMANTIC_CACHE_ENABLED=false</code> added to <code>agent-adk</code> env.</li>
+<li><strong>Orchestrator Dockerfile</strong> (<code>agent_1_adk/Dockerfile</code>): New container image following <code>agent_3_langgraph/Dockerfile</code> pattern &mdash; Python 3.12-slim, copies <code>agent_1_adk/</code> + <code>shared/</code>, exposes port 8001.</li>
+<li><strong><code>langchain-community&gt;=0.3.0</code></strong> and <strong><code>openinference-instrumentation-langchain&gt;=0.1.0</code></strong> added to <code>pyproject.toml</code> deps. <strong><code>ragas&gt;=0.2.0</code></strong> added to <code>[project.optional-dependencies] dev</code>.</li>
+</ul>
 
 <h2>v1.17 &mdash; Centralized File Logging</h2>
 <ul>

@@ -30,6 +30,7 @@ class DocumentIngestionPipeline:
     def ingest_sec_filing(
         self, ticker: str, filing: dict
     ) -> int:
+        # Inserts into the "sec_filings" ChromaDB collection (10-K, 10-Q, 8-K documents)
         form = filing.get("form", "UNKNOWN")
         description = filing.get("description", "")
         url = filing.get("edgar_url", "")
@@ -45,6 +46,7 @@ class DocumentIngestionPipeline:
     def ingest_earnings_transcript(
         self, ticker: str, transcript: dict
     ) -> int:
+        # Inserts into the "earnings" collection (earnings call transcripts)
         text = transcript.get("text", "")
         date = transcript.get("date", "")
         quarter = transcript.get("quarter", "")
@@ -58,6 +60,7 @@ class DocumentIngestionPipeline:
     def ingest_news_article(
         self, ticker: str, article: dict
     ) -> int:
+        # Inserts into the "news" collection (financial news articles with sentiment)
         title = article.get("title", "")
         summary = article.get("summary", "")
         url = article.get("url", "")
@@ -69,6 +72,7 @@ class DocumentIngestionPipeline:
     def ingest_analyst_report(
         self, ticker: str, report: dict
     ) -> int:
+        # Inserts into the "analyst_reports" collection (sell-side analyst research)
         title = report.get("title", "")
         content = report.get("content", "")
         analyst = report.get("analyst", "unknown")
@@ -94,6 +98,7 @@ class DocumentIngestionPipeline:
         news: list[dict] | None = None,
         analyst_reports: list[dict] | None = None,
     ) -> dict[str, int]:
+        # Bulk ingestion router: dispatches each data source to its dedicated collection
         counts: dict[str, int] = {}
         if sec_filings:
             counts["sec_filings"] = self.ingest_sec_filings_batch(ticker, sec_filings)

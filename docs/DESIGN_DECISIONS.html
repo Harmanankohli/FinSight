@@ -33,10 +33,213 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <body>
 <div class="container">
 <div class="header-nav">
-<a href="index.html">Home</a><a href="../README.html">Overview</a><a href="ARCHITECTURE.html">Architecture</a><a href="AGENTS.html">Agents</a><a href="MCP_SERVERS.html">MCP</a><a href="DESIGN_DECISIONS.html">Decisions</a><a href="DEMO.html">Demo</a><a href="CHANGELOG.html">Changelog</a><a href="TESTS.html">Tests</a>
+<a href="index.html">Home</a><a href="../README.html">Overview</a><a href="ARCHITECTURE.html">Architecture</a><a href="AGENTS.html">Agents</a><a href="MCP_SERVERS.html">MCP</a><a href="DESIGN_DECISIONS.html">Decisions</a><a href="CHANGELOG.html">Changelog</a><a href="TESTS.html">Tests</a>
 </div>
 
 <h1>Design Decisions</h1>
+
+<h2>Caching Strategy</h2>
+
+<h3>Why <code>_TTLCache</code> with <code>OrderedDict</code> instead of a library?</h3>
+<p><code>functools.lru_cache</code> is synchronous and doesn't support TTL. <code>cachetools</code> and <code>aiocache</code> would be new dependencies. <code>OrderedDict</code> + <code>time.monotonic()</code> gives LRU eviction, TTL expiry, and thread-safety with a <code>threading.Lock</code> in ~30 lines. Zero new package imports.</p>
+
+<p><strong>Why per-tool instances instead of a single global cache?</strong> Different tools have different freshness requirements. Prices change every minute, financials change quarterly, SEC filings never change. Separate instances with distinct TTLs make policy explicit and easy to adjust.</p>
+
+<p><strong>Why <code>_fetch_submissions</code> cached instead of the outer tools?</strong> <code>get_company_filings</code> and <code>get_financial_filings</code> both call <code>_fetch_submissions(cik)</code> internally. Caching at the shared method benefits both callers &mdash; caching at the outer tool level would duplicate the cache or require coordination.</p>
+
+<p><strong>Why permanent cache for <code>get_filing_content</code>?</strong> SEC EDGAR documents are immutable once filed. A document at <code>https://www.sec.gov/Archives/...</code> never changes. LRU-200 keeps the 200 most recently accessed filings in memory indefinitely &mdash; safe and maximally efficient.</p>
+
+<h3>Why LangChain SQLiteCache for LLM responses?</h3>
+<p>The quant agent's <code>llm_summary_node</code> is the only LangChain LLM call in the graph. Given the same ticker + computed metrics (prices, Sharpe, VaR, DCF), the LLM should produce an equivalent summary. <code>SQLiteCache</code> is built into <code>langchain-community</code> with zero configuration beyond a <code>set_llm_cache()</code> call at module level. It uses the full prompt as the cache key, so it only fires on exact repeats &mdash; no risk of stale summaries on changed market data.</p>
+
+<h3>Why ChromaDB for the semantic cache instead of Redis?</h3>
+<p>ChromaDB is already running in the same process for RAG. <code>all-MiniLM-L6-v2</code> is already loaded. Adding Redis would require a new container and a new driver. The semantic cache uses a separate Chroma collection (<code>finsight_semantic_cache</code>) so it doesn't pollute the RAG indexes.</p>
+
+<p><strong>Threshold 0.95</strong>: Investment queries are precise (&ldquo;analyze NVDA for long-term hold&rdquo; &ne; &ldquo;analyze AAPL for long-term hold&rdquo;). A threshold below 0.95 risks incorrect cache hits between different tickers. 0.95 is high enough to match paraphrase variants of the same question while rejecting cross-ticker confusion.</p>
+
+<p><strong>Why opt-in (<code>SEMANTIC_CACHE_ENABLED=false</code>)?</strong> The semantic cache is stateful &mdash; a cached stale recommendation from yesterday might mislead a user. Off by default so developers consciously enable it in environments where TTL staleness is acceptable.</p>
+
+<h2>Before-Agent Callback for Same-Day Memory Cache</h2>
+
+<h3>Why a <code>before_agent_callback</code> instead of extending the code-level gate?</h3>
+<p>The v1.23 same-day cache relied on the LLM honoring <code>[TODAY]</code> tags in the injected memory context &mdash; but the LLM was inconsistent. Sometimes it re-ran agents anyway (wasting 30&ndash;60s). Making <code>[TODAY]</code> a hard <strong>&ldquo;MUST return directly&rdquo;</strong> helped but did not eliminate the variance.</p>
+<p><code>before_agent_callback</code> is an ADK extension point that fires <em>before</em> the LLM is invoked. Returning a <code>types.Content</code> response from this callback tells the ADK runner to use that as the agent response and skip the LLM entirely. This gives a deterministic same-day cache with zero LLM variance &mdash; the LLM is never asked to make a decision about whether to re-run.</p>
+<p>The callback checks for a valid <code>response_text</code> in the cached brief (populated by the <code>update_response_text</code> overwrite, see below). If only a recommendation exists without analysis text, it falls through to let the LLM run.</p>
+<p><strong>Why two cache paths (callback + executor-level)?</strong> The <code>before_agent_callback</code> only fires when the orchestrator runs through ADK&rsquo;s built-in runner (<code>adk web</code> path). A2A requests hitting <code>agent_1_adk/main.py</code> directly bypass ADK callbacks, so the executor-level <code>_get_today_cached_text()</code> provides the same short-circuit for that path.</p>
+
+<h3>Why the full synthesis is stored directly in <code>save_brief</code> instead of a post-turn overwrite?</h3>
+<p>The original approach used <code>_persist_memory_callback</code> to overwrite the brief&rsquo;s <code>response_text</code> after the turn completed. This had two problems: (1) the overwrite was unreliable &mdash; it depended on extracting the right response text from session events after the LLM finished, and (2) it was blind to the A2A executor path, which doesn&rsquo;t fire <code>after_agent_callback</code>.</p>
+<p>The fix moves the synthesis capture into <code>save_brief</code> itself. A new helper <code>_synthesis_text_from_context</code> reads the longest LLM-generated text from <code>session.events</code> at the time <code>save_brief</code> is called. Since <code>save_brief</code> is invoked <em>during</em> the LLM turn (after the tool response but before the turn ends), the session events already contain the model&rsquo;s full synthesized output. If no model text exists (edge case), it falls back to the rationale. The post-turn <code>update_response_text</code> overwrite was removed entirely. Both ADK-web and A2A paths now persist the full analysis because both call <code>save_brief</code>.</p>
+
+<h3>Why programmatic dedup at <code>save_brief</code> and <code>_store_memory</code>?</h3>
+<p>Two duplicate-prevention layers:</p>
+<ul>
+<li><strong><code>save_brief</code> (agent.py)</strong>: Checks if today&rsquo;s brief already exists for the ticker before inserting. The <code>analysis_date</code> column makes this a single SQL lookup &mdash; no equality comparison on timestamps needed.</li>
+<li><strong><code>_store_memory</code> (agent_executor.py)</strong>: Same check at the executor level, guarding against the case where <code>save_brief</code> was called but the brief was stored under a different <code>user_id</code> (the A2A executor and ADK callback use different user_id values).</li>
+</ul>
+<p>Together they prevent identical rows accumulating on repeated same-day queries, which was the root cause of the original duplicate record bug.</p>
+
+<h2>Ticker Extraction: Dotted &amp; Single-Char Tickers</h2>
+
+<h3>Why support dotted tickers?</h3>
+<p>Berkshire Hathaway (<code>BRK.A</code>, <code>BRK.B</code>) has a dot in its ticker symbol. The previous regex limited matches to <code>[A-Z]{1,5}</code> which excluded the dot entirely. When a user typed <code>BRK.A</code>, the pattern matched <code>BRK</code> (which is not a valid standalone ticker) and validation failed. The fix was to extend the regex to <code>[A-Z]{1,5}(?:\.[A-Z]{1,2})?</code> in all patterns, matching the optional dot suffix.</p>
+
+<h3>Why support single-char tickers?</h3>
+<p>Visa (<code>V</code>) and Alleghany (<code>Y</code>) are single-character NYSE tickers. Pattern 5 (<code>\b([A-Z]{2})\b</code>) excluded them. Changed to <code>\b([A-Z]{1,2})\b</code>. The new mixed-case parens pattern (<code>\b([A-Z]{1,5})\s+\([A-Za-z][a-z]</code>) specifically handles &ldquo;V (Visa)&rdquo; format, which was the only way these single-char tickers appeared in user input.</p>
+
+<h3>Why extract <code>_build_response</code> from <code>stream()</code>?</h3>
+<p>All three sub-agent executors had the same pattern: a try/finally block wrapping Langfuse observability inside <code>stream()</code>. Extracting <code>_build_response(query) &rarr; dict</code> isolates the response-building logic from the async generator boilerplate. Benefits:</p>
+<ul>
+<li><strong>Testability</strong>: <code>_build_response()</code> is a plain async function returning a dict &mdash; no generator machinery, no yield semantics. Unit tests can call it directly.</li>
+<li><strong>Clarity</strong>: <code>stream()</code> is now two lines: <code>yield await self._build_response(query)</code> in try, <code>_disconnect()</code> in finally. The actual logic is in one place instead of mixed with yield statements.</li>
+<li><strong>Consistency</strong>: All three agents use the same pattern, making cross-agent debugging easier.</li>
+</ul>
+
+<h2>IST Timezone Standardization</h2>
+
+<h3>Why IST instead of UTC?</h3>
+<p>The system is operated from India (IST, UTC+5:30). Before the fix, timestamps were a mix of:</p>
+<ul>
+<li><code>datetime.now()</code> &mdash; used the server&rsquo;s local time (IST on the development machine, UTC in Docker)</li>
+<li><code>datetime.utcnow()</code> &mdash; explicit UTC in some memory modules</li>
+<li><code>datetime.now(IST)</code> &mdash; explicitly IST in the agent executor</li>
+</ul>
+<p>The mix caused the same-day cache to fail on non-IST machines: a brief created at <code>2026-05-26T06:30:00Z</code> (UTC) was analyzed as <code>analysis_date=2026-05-26</code> (correct), but <code>datetime.now()</code> on an IST machine returned <code>2026-05-26 12:00:00</code> (noon IST, still same day) &mdash; same day, fine. But on a UTC machine, <code>datetime.now()</code> returns <code>2026-05-26T12:00:00Z</code> &mdash; also fine during the day. The bug manifested at the day boundary: a brief created at <code>2026-05-26T23:30:00Z</code> (next day IST: 05:00 AM) would have <code>analysis_date=2026-05-26</code>, but <code>datetime.now()</code> in UTC would return <code>2026-05-26T23:30:00Z</code> still, appearing to be same day. The boundary was inconsistent.</p>
+<p>Centralizing on <code>IST = timezone(timedelta(hours=5, minutes=30))</code> and using <code>datetime.now(IST)</code> everywhere makes the day boundary unambiguous: the analysis date and &ldquo;today&rdquo; comparison always use the same timezone.</p>
+
+<h2>Stale Test Removal</h2>
+
+<h3>Why delete all tests instead of fixing them?</h3>
+<p>The 17 test files were written during the initial architecture iterations (v1.0&ndash;v1.15) when the codebase was rapidly evolving. By v1.24, most tests referenced:</p>
+<ul>
+<li>Classes and functions that were renamed or removed</li>
+<li>Mock patterns that no longer matched current dependency injection</li>
+<li>Offline evaluation fixtures that diverged from the live runtime behavior</li>
+<li>A2A communication patterns from the v1&ndash;v4 orchestrator architecture that were completely replaced</li>
+</ul>
+<p>Fixing them would require a full rewrite against the current codebase &mdash; essentially writing new tests from scratch while also removing all the old ones. Deleting the stale fixtures was the honest option rather than maintaining dead test code that would confuse future readers.</p>
+
+<p><strong>Update (v1.26/v1.27)</strong>: ~148 tests now covering models, quant graph nodes, ticker utilities, TTL cache, rate limiter, trace context, memory store, and the security sandbox (60 AST-gate tests). See <a href="TESTS.html">TESTS.html</a> for details.</p>
+
+<h2>Same-Day Memory Cache &amp; analysis_date Column</h2>
+
+<h3>Why check the date before re-running agents?</h3>
+<p>Market data (prices, news sentiment) changes daily. A recommendation from yesterday may be wrong today. However, re-running all three sub-agents for every query on the same stock within the same day wastes 30&ndash;60 seconds of LLM inference and MCP calls when the underlying data has not changed since the last run. The same-day cache gives users instant responses for repeat queries while guaranteeing a fresh agent run the next day.</p>
+
+<h3>Why a separate <code>analysis_date</code> column instead of parsing <code>created_at</code>?</h3>
+<p><code>created_at</code> stores a full UTC ISO-8601 timestamp (<code>2024-01-15T14:32:00</code>). Comparing it to today requires string slicing and timezone handling that is fragile across platforms and SQLite versions. <code>analysis_date</code> is a plain <code>TEXT</code> column storing <code>YYYY-MM-DD</code> &mdash; an equality check against <code>date.today().isoformat()</code> is unambiguous and requires no parsing. Added as a nullable column via <code>ALTER TABLE</code> migration so old rows fall back to <code>created_at</code> via <code>COALESCE(analysis_date, created_at)</code>.</p>
+
+<h3>Why tag with [TODAY] / [STALE] in the injected context instead of a code-level gate?</h3>
+<p>A code-level gate (returning early before calling the LLM) would be faster, but it removes the LLM&rsquo;s ability to reason about context &mdash; a user asking a follow-up question about the same ticker on the same day may warrant a different answer even with the same recommendation. Tagging lets the LLM decide: <code>[TODAY]</code> says &ldquo;you may use this directly&rdquo;; <code>[STALE]</code> says &ldquo;call agents, treat this as background only.&rdquo; The instruction is reinforced in both the injected user message and the system preamble (<code>_STATIC_PREAMBLE</code>) for reliability.</p>
+
+<h3>Why skip <code>_store_memory()</code> on [TODAY] responses?</h3>
+<p>Every call to <code>_store_memory()</code> inserts a new row into <code>ticker_briefs</code>. Without the guard, a stock queried ten times in a day produces ten identical rows, inflating the DB and returning redundant context on the next query. Since same-day responses are served from an already-stored brief, re-storing is pure duplication. The guard checks for <code>"[TODAY"</code> in the augmented <code>user_input</code> string &mdash; one string check, no extra DB query.</p>
+
+<h2>Unified db/ Folder</h2>
+
+<h3>Why consolidate all databases under db/ instead of keeping them at the project root?</h3>
+<p>Three separate DB files (<code>finsight_memory.db</code>, <code>.langchain_cache.db</code>, <code>chroma_db/</code>) were scattered at the project root, requiring three separate <code>.gitignore</code> entries and making it easy to miss one. A single <code>db/</code> folder with one ignore rule (<code>db/</code>) is easier to reason about, simpler to back up or wipe, and keeps the project root clean. The folder is created automatically on first run &mdash; no setup step required.</p>
+
+<h2>Guardrails</h2>
+
+<h3>Why a regex off-topic filter instead of an LLM classifier?</h3>
+<p>An LLM classifier takes 2&ndash;5 seconds and consumes tokens. The regex fires in microseconds and costs nothing. The set of clearly off-topic domains (weather, recipes, sports, entertainment) is small and stable &mdash; regex is the right tool. Off-topic queries that slip through the regex are still handled gracefully by the orchestrator LLM.</p>
+
+<h3>Why ticker pre-validation before spawning sub-agents?</h3>
+<p>Without pre-validation, an invalid ticker causes all three sub-agents to fail after 30&ndash;60 seconds each (~90&ndash;180 seconds total wasted time). MCP <code>validate_ticker</code> uses the cached SEC ticker map &mdash; it completes in &lt; 100 ms and costs nothing. Failing fast with a clean error message is far better UX than three confusing simultaneous failures.</p>
+
+<h3>Why not retry on missing BUY/HOLD/SELL signal?</h3>
+<p>The plan originally suggested retrying once with a reminder appended. After evaluation, a retry doubles latency (60+ seconds) for a marginal improvement &mdash; the LLM that omitted the signal is likely to omit it again without fundamentally different context. Instead, the missing signal is logged as a Langfuse warning so the pattern can be analyzed and the prompt improved. The user gets the response immediately rather than waiting for a retry that may not help.</p>
+
+<h2>Incremental RAG Ingestion</h2>
+
+<h3>Problem</h3>
+<p>The RAG agent's <code>_ensure_ingested()</code> used an in-memory <code>self._last_ingestion[ticker]</code> guard keyed by date. This prevented re-ingest within a single server run on the same day, but after a restart all filings were re-ingested from scratch. For a company with 20 historical 10-K/10-Q filings, this meant 20 <code>get_filing_content</code> MCP calls + 20 ChromaDB insertions on every cold start &mdash; taking 30&ndash;60 seconds before the first query could be answered.</p>
+
+<h3>Solution</h3>
+<p><code>ingested_filings</code> table in SQLite with <code>edgar_url</code> as primary key (SEC EDGAR URLs are canonical and immutable). Before fetching any filing, <code>_ensure_ingested()</code> calls <code>is_filing_ingested(url)</code> &mdash; a single indexed SQLite lookup. After successful batch ingest, <code>mark_filing_ingested(url, ticker)</code> records the URL. On the next startup, all previously indexed filings are skipped immediately.</p>
+
+<p><strong>Why not store content hash instead of URL?</strong> The URL is the canonical identity for an SEC filing. Content could theoretically be truncated differently on different runs (network errors, timeouts), making a hash unreliable. The URL is deterministic and guaranteed unique by SEC.</p>
+
+<h2>Health Endpoints</h2>
+
+<h3>Why add health endpoints now?</h3>
+<p>Docker-compose <code>depends_on</code> with <code>condition: service_healthy</code> requires a healthcheck command. Without health endpoints, docker-compose would start the orchestrator before the MCP server is actually serving requests, causing startup failures. The <code>/health</code> route is 5 lines of code per service and enables proper container orchestration.</p>
+
+<h3>Why not use the existing A2A <code>/.well-known/agent-card.json</code> as the health signal?</h3>
+<p>Agent card resolution involves async agent discovery and sub-agent connection &mdash; it's not safe to call during startup. A dedicated <code>/health</code> route returns immediately regardless of initialization state, which is the correct semantics for a liveness probe.</p>
+
+<h2>RAGAS Evaluation Pipeline</h2>
+
+<h3>Why RAGAS over a custom evaluation framework?</h3>
+<p>RAGAS provides well-established metrics (Faithfulness, ResponseRelevancy, ContextPrecision, ContextRecall) that are accepted in the research community and have known baselines. Writing equivalent metrics from scratch would require significant prompt engineering and validation. RAGAS also integrates with LLM judges, making it suitable for evaluating subjective quality of financial analysis.</p>
+
+<h3>Why custom <code>AspectCritic</code> metrics in addition to RAGAS core?</h3>
+<p>RAGAS core metrics evaluate retrieval quality and factual consistency &mdash; they don't capture financial domain requirements. A response can be factually grounded but still fail to cite specific filing dates, omit risk disclosures, or give an ambiguous BUY/HOLD/SELL signal. The three custom rubrics (<code>citation_quality</code>, <code>risk_disclosure</code>, <code>recommendation_clarity</code>) evaluate the domain-specific outputs that matter most in an investment research context.</p>
+
+<h3>Why push scores to Langfuse?</h3>
+<p>Evaluation results are only useful if they're tracked over time. Pushing scores to Langfuse per-trace links quality metrics to specific queries and model versions, enabling regression detection when the prompt or model changes. The <code>push_scores.py</code> script is intentionally decoupled from the evaluation runners so scores can be re-pushed without re-running evaluation.</p>
+
+<h3>Runtime vs Offline Evaluation</h3>
+
+<p><strong>Why score at runtime instead of only in batch tests?</strong> Batch evaluation (RAGAS offline pipeline) runs on a fixed dataset and catches regressions before deployment. Runtime evaluation catches real-world drift &mdash; production queries produce different patterns than curated test sets. Together they cover both pre-deployment quality gates and live monitoring.</p>
+
+<p><strong>Why fire-and-forget (<code>asyncio.create_task</code>) instead of synchronous?</strong> RAGAS metric computation calls the LLM 1&ndash;5 times per agent response. Waiting synchronously would add 10&ndash;30 seconds to response time. Fire-and-forget background tasks complete in parallel with the A2A response being returned to the orchestrator, adding zero latency to the user-facing path.</p>
+
+<p><strong>Why <code>asyncio.wait(FIRST_COMPLETED)</code> instead of <code>asyncio.gather</code>?</strong> <code>asyncio.gather</code> waits for all metrics to complete before returning any results. Fast metrics (AnswerRelevancy, DomainSpecificRubrics ~3&ndash;5s) sat idle while Faithfulness ran its multi-call LLM decomposition (~180s timeout). <code>asyncio.wait(FIRST_COMPLETED)</code> logs and pushes each metric score to Langfuse the moment its <code>ascore()</code> finishes, so slow metrics don't delay fast ones.</p>
+
+<p><strong>Why module-level client caching?</strong> <code>_setup_ragas_clients()</code> creates an <code>InstructorLLM</code> (patched OpenAI client) and <code>_STEmbeddings</code> (loading <code>SentenceTransformer(all-MiniLM-L6-v2)</code> ~80MB, ~1&ndash;2s). Without caching, every agent's eval reloads the embedding model &mdash; 4 redundant loads per query. Module-level <code>_ragas_clients</code> tuple caches after first call; subsequent calls return the cached instance. The import and model-load cost is paid once per server lifetime.</p>
+
+<p><strong>Why <code>BaseException</code> guard in <code>_run_metrics</code>?</strong> Python's <code>CancelledError</code> inherits from <code>BaseException</code>, not <code>Exception</code>. <code>asyncio.gather(return_exceptions=True)</code> catches <code>CancelledError</code> as a result value, but <code>isinstance(result, Exception)</code> returns <code>False</code> for it. The fallthrough code <code>round(float(result), 4)</code> crashes with <code>TypeError</code>, killing the entire eval task silently via <code>create_task</code> fire-and-forget. Checking <code>isinstance(result, BaseException)</code> catches both regular exceptions and <code>CancelledError</code>.</p>
+
+<p><strong>Why increase HTTP timeout to 180s?</strong> Faithfulness makes multiple sequential LLM calls within a single <code>ascore()</code> &mdash; it decomposes the response into atomic claims, then verifies each against the retrieved contexts. On a 20B local model at ~20&ndash;30s per call, three claims require 60&ndash;90s total. The default 60s client timeout kills the metric mid-decomposition. 180s provides headroom for up to 6 claims with retries.</p>
+
+<p><strong>Why <code>max_retries=5</code> instead of the previous <code>max_retries=1</code>?</strong> LM Studio periodically unloads idle models from GPU memory. When a RAGAS metric call arrives after an idle period, LM Studio reloads the model &mdash; the first request times out, succeeding on retry. With <code>max_retries=1</code>, the single retry was sometimes insufficient for model reload (~2-5s). Increasing to 5 gives the SDK enough budget to absorb reload latency at the httpx layer rather than failing instructor&rsquo;s structured-output calls. The <code>instructor.from_openai(max_retries=1)</code> override was removed so instructor calls inherit the client&rsquo;s retry count. Separate <code>asyncio.TimeoutError</code> handling prevents timeouts from appearing as bare colons in logs.</p>
+
+<p><strong>Why <code>sys.stdout.reconfigure(encoding='utf-8')</code>?</strong> RAGAS internal log messages (from <code>ragas/llms/base.py</code>) contain Unicode characters like curly quotes (<code>\u2010</code>, <code>\u2011</code>) when formatting LLM responses. On Windows with cp1252 console encoding, these characters trigger <code>UnicodeEncodeError</code>, producing noisy &ldquo;--- Logging error ---&rdquo; tracebacks. Setting UTF-8 at import time in <code>shared/config.py</code> prevents this for both stdout and stderr.</p>
+
+<p><strong>Why <code>_push_scores</code> skips when trace_id is None?</strong> With placeholder Langfuse API keys (<code>pk-lf-...</code>), <code>langfuse.create_score()</code> with no <code>trace_id</code> sends an API request missing the required trace identifier. The Langfuse cloud API rejects these with &ldquo;Bad request&rdquo; errors. Since eval tasks may run outside any active trace context, the early return when <code>trace_id is None</code> avoids pointless API failures.</p>
+
+<p><strong>Why custom <code>_STEmbeddings</code> instead of RAGAS's <code>HuggingfaceEmbeddings</code>?</strong> RAGAS 0.4.x's <code>HuggingfaceEmbeddings</code> is a Pydantic dataclass that fails to serialize correctly when passed to RAGAS internal <code>aembed_text</code> calls. The custom wrapper uses <code>BaseRagasEmbedding</code> directly with <code>SentenceTransformer.encode()</code>, bypassing the broken Pydantic path entirely.</p>
+
+<p><strong>Why <code>JSON_SCHEMA</code> mode instead of <code>JSON</code> mode for instructor?</strong> RAGAS defaults to <code>instructor.Mode.JSON</code> which sends <code>response_format.type="json_object"</code> in the API request. LM Studio only supports <code>"json_schema"</code> and <code>"text"</code> response format types. Patching to <code>JSON_SCHEMA</code> enables structured output without a custom LM Studio fork.</p>
+
+<h3>Why gate every eval call behind a single <code>EVAL_TRACE_ENABLED</code> flag?</h3>
+<p>Sidecar RAGAS evaluation adds 5&ndash;180 seconds of background LLM work per query (per agent) on the local LM Studio judge. During fast iteration on prompts or sub-agent behaviour, this background load slows the judge model down for the next user query, and burns context on metrics that aren't being inspected. Wrapping each <code>asyncio.create_task(_eval_*)</code> site in <code>if EVAL_ENABLED:</code> lets the user kill all sidecar scoring from <code>.env</code> without removing code. <code>EVAL_ENABLED</code> reads the same <code>EVAL_TRACE_ENABLED</code> env var that already controls orchestrator trace JSON dumps &mdash; one switch, two effects, both about "extra eval load". Default stays <code>True</code> so production observability is on by default.</p>
+
+<h3>Why move the orchestrator eval into <code>after_agent_callback</code>?</h3>
+<p>When <code>adk web</code> is the entry point, the orchestrator goes through ADK's built-in runner &mdash; <code>FinSightAgentExecutor.execute()</code> is never called. The eval call originally placed in <code>agent_executor.py</code> only fired when an A2A client hit <code>agent_1_adk/main.py</code> directly. Once <code>run_adk_web.bat</code> stopped starting the standalone orchestrator A2A server (redundant with <code>adk web</code>), evals stopped firing entirely.</p>
+<p><code>after_agent_callback</code> is the only ADK extension point guaranteed to fire on every agent turn regardless of runner. Wiring eval scheduling into the existing <code>_persist_memory_callback</code> keeps both side-effects in one place: callback &rarr; check turn type &rarr; persist memory &rarr; fire eval. The trace_id is read from the active Langfuse span at callback time, so traces from <code>adk web</code> are still linked.</p>
+
+<h3>Why gate memory persist + eval on whether <code>save_brief</code> was called this turn?</h3>
+<p><code>_persist_memory_callback</code> fires on every ADK turn, including pure recall turns where the user asks "what were my last recommendations?" and the agent only invokes <code>load_memory</code>. The old behaviour persisted the entire session &mdash; including the conversational recall query and the agent's response &mdash; into long-term memory. Subsequent <code>load_memory</code> calls would then surface those recall exchanges alongside actual analyses, polluting search results and drifting the agent toward conversational rather than analytical responses.</p>
+<p><code>_is_analysis_turn(events)</code> walks back to the most recent user message and checks for a <code>save_brief</code> tool call in the agent's response &mdash; <code>save_brief</code> is the explicit signal that a fresh recommendation was produced. If absent, persist + eval both skip. This is preferable to time-based heuristics (last N turns) or content-based heuristics (response length, keyword matching) because it relies on a deterministic signal that the orchestrator emits as a real act, not on inference about what the turn <em>meant</em>.</p>
+
+<h3>Why namespace Langfuse scores by agent (<code>ragas/{agent}/{metric}</code>)?</h3>
+<p>The previous <code>ragas/{metric}</code> naming flattened all four agents into one dimension. <code>ragas/AnswerRelevancy</code> could be the orchestrator's synthesis score, the RAG agent's filing-answer score, the quant agent's metric-summary score, or the sentiment agent's narrative score &mdash; Langfuse had no way to tell them apart in dashboards or aggregations. Adding the agent prefix surfaces the source in every existing Langfuse view (score breakdowns, trends, filters) without requiring custom metadata processing. The redundant <code>comment="agent=&lt;name&gt;"</code> tag gives a second filter dimension if anyone wants to query by comment instead of name prefix.</p>
+
+<h3>Why not introduce a separate batch-eval runner (<code>_invoke_agent</code>)?</h3>
+<p>The earlier shape of <code>runtime_eval.py</code> included an <code>if __name__ == "__main__":</code> block with <code>_invoke_agent()</code> that spun up its own <code>Runner</code> + <code>InMemorySessionService</code> to invoke the orchestrator for a fixed set of test cases. This duplicated exactly what <code>FinSightAgentExecutor</code> and <code>after_agent_callback</code> already do for live traffic &mdash; running the agent, collecting events, extracting the response. The live executor <em>already has the response in hand</em> when it fires the sidecar eval; a second runner adds nothing except a second source of truth that can drift from the first.</p>
+<p>Removed: <code>_invoke_agent()</code>, <code>_run_batch_eval()</code>, <code>_BATCH_EVAL_CASES</code>, and the <code>__main__</code> block. Batch evaluation with ground-truth references (a genuinely different concern &mdash; it needs reference tool calls and reference answers) still lives in <code>tests/evaluation/run_orchestrator_eval.py</code>.</p>
+
+<h2>Google ADK 2.x Upgrade</h2>
+
+<h3>Why upgrade now?</h3>
+<p>ADK 1.x is in maintenance mode. 2.x is the active development line. The 2.0 breaking-change inventory (event schema additions, <code>BaseAgent</code> extending <code>BaseNode</code>, automatic exception catching for retries) is small and easy to audit against the current codebase. Putting off the upgrade only widens the diff that needs to be reviewed later.</p>
+
+<h3>Code changes required: zero</h3>
+<p>All 2.0 breaking changes were checked against the codebase before upgrading:</p>
+<table>
+<tr><th>2.0 breaking change</th><th>Affects FinSight?</th></tr>
+<tr><td>Event schema adds <code>node_info</code> + <code>output</code> fields</td><td>No &mdash; <code>SQLiteMemoryService._event_to_dict</code> only reads <code>author</code> and <code>content.parts</code>, doesn't validate full schema</td></tr>
+<tr><td><code>BaseAgent</code> extends <code>BaseNode</code>; no more <code>_run_async_impl</code> overrides</td><td>No &mdash; we use <code>LlmAgent</code> directly; <code>shared/base_agent.py</code> is a separate Pydantic class, not ADK's <code>BaseAgent</code></td></tr>
+<tr><td>No manual <code>enqueue_event()</code> on ADK events</td><td>No &mdash; <code>enqueue_event()</code> calls in <code>shared/generic_executor.py</code> are on A2A's <code>EventQueue</code>, not ADK</td></tr>
+<tr><td>No broad <code>try/except BaseException</code></td><td>No &mdash; the three matches are in <code>shared/mcp_client.py</code> and <code>shared/runtime_eval.py</code>, both outside the ADK execution path</td></tr>
+</table>
+<p>Smoke-tested at upgrade time: all imports from <code>google.adk.agents</code>, <code>google.adk.tools</code>, <code>google.adk.runners</code>, <code>google.adk.sessions</code>, <code>google.adk.events</code>, <code>google.adk.memory</code>, <code>google.adk.cli.service_registry</code> resolve. <code>SQLiteMemoryService</code> still satisfies the 2.x <code>BaseMemoryService</code> interface (signatures match). <code>agent_1_adk.agent.root_agent</code> loads and registers all four tools. <code>after_agent_callback</code> still fires.</p>
+
+<h3>Why pin <code>&gt;=2.0,&lt;3.0</code> instead of an exact version?</h3>
+<p>We track 2.x patches and minor updates automatically (bug fixes, new features) while excluding the next major bump (which will have its own breaking-change audit). Same pattern as other major-version-pinned deps in this project.</p>
 
 <h2>Why Four Different Agent Frameworks?</h2>
 <table>
@@ -51,37 +254,61 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <p>We use the official Google A2A SDK (<code>a2a-sdk&gt;=1.0.0</code>) for inter-agent communication.</p>
 
 <h3>A2A API Reference vs Installed SDK</h3>
+<p>The A2A SDK has evolved significantly. The official A2A samples (Google, GitHub) reference APIs that may not match the installed version:</p>
 <table>
 <tr><th>Component</th><th>GitHub Samples</th><th>Installed SDK</th></tr>
 <tr><td>Client</td><td><code>A2AClient(httpx, card, url)</code></td><td><code>ClientFactory(config).create(card)</code></td></tr>
-<tr><td>Card resolution</td><td><code>A2ACardResolver(client, url)</code></td><td><code>A2ACardResolver(client, url)</code></td></tr>
+<tr><td>Card resolution</td><td><code>A2ACardResolver(client, url)</code></td><td><code>A2ACardResolver(client, url)</code> (same)</td></tr>
 <tr><td>Well-known path</td><td><code>/.well-known/agent.json</code></td><td><code>/.well-known/agent-card.json</code></td></tr>
-<tr><td>Server app</td><td><code>A2AStarletteApplication</code></td><td>Starlette + routes</td></tr>
+<tr><td>Server app</td><td><code>A2AStarletteApplication</code></td><td>Starlette + <code>create_agent_card_routes</code> + <code>create_jsonrpc_routes</code></td></tr>
 <tr><td>AgentCard type</td><td>Pydantic model</td><td>Protobuf message</td></tr>
 </table>
+<p>This project targets the <strong>installed SDK's</strong> API (<code>a2a-sdk</code> from PyPI), not the GitHub sample code.</p>
 
 <h3>Key Lessons</h3>
 <ol>
 <li><code>messageId</code> is required on every A2A Message</li>
 <li><code>agentInterface</code> must match: <code>ClientFactory</code> requires <code>supported_interfaces</code> with <code>protocol_binding="JSONRPC"</code></li>
 <li>Timeout propagation: Both <code>ClientConfig</code> + <code>httpx.AsyncClient</code> AND <code>ClientCallContext</code> must be configured</li>
-<li>Response format: Sub-agents return <code>data</code> (structured) not <code>text</code> &mdash; extract via <code>get_data_parts()</code></li>
-<li>Streaming events: Intermediate <code>SUBMITTED</code>/<code>WORKING</code> status updates must be skipped</li>
-<li><code>Data &gt; text</code>: Sub-agents emit <code>Part(data=Value(struct_value=s))</code> for structured responses</li>
+<li>Response format: Sub-agents return <code>data</code> (structured) not <code>text</code> &mdash; extract via <code>get_data_parts()</code> from <code>a2a.helpers</code></li>
+<li>Streaming events: The streaming <code>BaseClient.send_message()</code> yields <code>StreamResponse</code> events. Intermediate <code>SUBMITTED</code>/<code>WORKING</code> status updates must be skipped &mdash; only process <code>artifact_update</code> events and terminal <code>COMPLETED</code>/<code>FAILED</code> states</li>
+<li><code>Data &gt; text</code>: Sub-agents using <code>GenericAgentExecutor</code> emit <code>Part(data=Value(struct_value=s))</code> for structured responses. <code>get_stream_response_text()</code> misses these &mdash; use <code>get_data_parts()</code> on artifact parts directly</li>
 </ol>
 
 <h3>How Our A2A Pattern Compares</h3>
 <table>
-<tr><th>Aspect</th><th>Google Samples</th><th>bhancockio</th><th>theailanguage</th><th>FinSight</th></tr>
-<tr><td>Client creation</td><td><code>ClientFactory</code></td><td><code>A2AClient(httpx, card, url)</code></td><td>Custom httpx POST</td><td><code>ClientFactory</code></td></tr>
-<tr><td>Streaming</td><td>Events</td><td>Single response</td><td>Single task</td><td>Streaming, correct routing</td></tr>
+<tr><th>Aspect</th><th>Google Samples</th><th>bhancockio/agent2agent</th><th>theailanguage/a2a_samples</th><th>FinSight</th></tr>
+<tr><td>Client creation</td><td><code>ClientFactory</code></td><td><code>A2AClient(httpx, card, url)</code></td><td>Custom <code>A2AClient</code> (httpx POST)</td><td><code>ClientFactory</code> (SDK current)</td></tr>
+<tr><td>Streaming</td><td>Streaming (events)</td><td>Non-streaming (single response)</td><td>Non-streaming (single task)</td><td>Streaming with correct event routing</td></tr>
 <tr><td>Host tools</td><td><code>send_message(name, msg)</code></td><td><code>send_message(name, task)</code></td><td><code>delegate_task(name, msg)</code></td><td><code>send_message(name, task)</code></td></tr>
-<tr><td>list_agents tool</td><td>Some have it</td><td>No</td><td>Yes</td><td>Removed &mdash; in prompt</td></tr>
-<tr><td>Sub-agent response</td><td>Parts + artifacts</td><td>Parts from JSON</td><td>Task history text</td><td>Data parts then text fallback</td></tr>
-<tr><td>Discovery background</td><td><code>loop.create_task()</code></td><td><code>asyncio.run()</code></td><td>Not async</td><td>Both paths</td></tr>
+<tr><td>list_agents tool</td><td>Some have it (unused)</td><td>No</td><td>Yes</td><td>Removed &mdash; agents in prompt</td></tr>
+<tr><td>Sub-agent response</td><td>Parts + artifacts</td><td>Parts from JSON</td><td>Task history text</td><td>Data parts then text then fallback</td></tr>
+<tr><td>Discovery background</td><td><code>loop.create_task()</code></td><td><code>asyncio.run()</code> at module</td><td>Not async</td><td>Both paths (loop/run)</td></tr>
 </table>
 
 <h2>Orchestrator Evolution</h2>
+
+<h3>v1 &mdash; REST Gateway + Planner</h3>
+<p>Raw Starlette REST API (<code>gateway.py</code>) with regex-based <code>planner.py</code>, custom <code>A2AClient</code>, and <code>report_generator.py</code>. Three overlapping orchestrator files.</p>
+<p><strong>Problems</strong>: Duplicated logic, no A2A-native protocol handling, manual HTTP endpoints.</p>
+
+<h3>v2 &mdash; Dynamic Per-skill ADK Tools</h3>
+<p>ADK <code>LlmAgent</code> with one tool per agent skill, generated dynamically at module import. MCP + seed URL discovery.</p>
+<p><strong>Problem</strong>: Module-level <code>asyncio.run(create_agent())</code> fails when ADK Web UI imports the module.</p>
+
+<h3>v3 &mdash; Thread-based Async Initialization</h3>
+<p>Wrapped <code>asyncio.run()</code> in a thread to bypass the running event loop restriction.</p>
+<p><strong>Problem</strong>: httpx <code>RuntimeError: Event loop is closed</code> &mdash; connections created in thread's loop, used from main loop.</p>
+
+<h3>v4 &mdash; Sync Discovery + Lazy Async A2A</h3>
+<p>Sync <code>httpx.Client</code> for startup discovery (no event loop needed). A2A clients lazily via <code>create_client()</code> on first tool call.</p>
+<p><strong>Problem</strong>: Sync HTTP for discovery was non-standard, didn't use <code>A2ACardResolver</code>. Each sub-agent was one ADK tool &mdash; LLM couldn't call them in parallel anyway.</p>
+
+<h3>v5 &mdash; A2A Sample Pattern (current)</h3>
+<p>Background async <code>A2ACardResolver</code> discovery (standard well-known endpoint). <code>ClientFactory</code> for transport. Single <code>send_message</code> tool (LLM routes by name). Correct streaming event handling. No pre-fetch.</p>
+<p><strong>Key insight</strong>: Match the pattern of ALL reference projects &mdash; one <code>send_message</code> tool, LLM routes sequentially, no <code>list_remote_agents</code> (agents are in prompt already).</p>
+
+<h3>Evolution Summary</h3>
 <table>
 <tr><th>Version</th><th>Approach</th><th>Problem</th></tr>
 <tr><td>v1</td><td>REST Gateway + Planner</td><td>Duplicated logic, no A2A-native protocol</td></tr>
@@ -91,37 +318,51 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <tr><td>v5 (current)</td><td>A2A Sample Pattern</td><td>Single <code>send_message</code> tool, background discovery</td></tr>
 </table>
 
+<h2>Background Async Discovery</h2>
+<p>The ADK Web UI imports the agent module synchronously. Using <code>asyncio.run()</code> at module level fails if a loop is already running. Using threads caused httpx event loop conflicts.</p>
+<p><strong>Solution</strong>: Detect running loop at import time:</p>
+<ul>
+<li>Loop running &rarr; <code>loop.create_task(discover_background())</code></li>
+<li>No loop &rarr; <code>asyncio.run(discover_background())</code></li>
+</ul>
+
 <h2>Problems Encountered</h2>
 
 <h3>1. <code>asyncio.run()</code> and Running Event Loops</h3>
-<p>Module-level <code>asyncio.run()</code> fails when ADK Web UI imports the module. Check for an existing loop first: use <code>loop.create_task()</code> if running, <code>asyncio.run()</code> otherwise.</p>
+<p><strong>Problem</strong>: Module-level <code>asyncio.run()</code> fails when ADK Web UI imports the module (already has a running event loop).</p>
+<p><strong>Final solution</strong>: Check for an existing loop first. If one is running, use <code>loop.create_task()</code> for background discovery. Otherwise, use <code>asyncio.run()</code>.</p>
 
 <h3>2. httpx Event Loop Conflicts from Threaded Init</h3>
-<p><code>httpx.AsyncClient</code> is never created in a thread or at module level.</p>
+<p>See v3 above. <code>httpx.AsyncClient</code> is never created in a thread or at module level.</p>
 
 <h3>3. httpx.Timeout Constructor Ambiguity</h3>
-<p><code>httpx.Timeout(read=300.0, connect=10.0)</code> fails. Use <code>httpx.Timeout(300.0)</code>.</p>
+<p><code>httpx.Timeout(read=300.0, connect=10.0)</code> fails &mdash; must pass all four or a single value. Use <code>httpx.Timeout(300.0)</code>.</p>
 
 <h3>4. Sub-agent Responses in <code>data</code> Format Not Extracted</h3>
-<p><code>get_stream_response_text()</code> only returns text. Sub-agents return structured <code>data</code> parts. Check <code>get_data_parts(artifact.parts)</code> first.</p>
+<p><strong>Problem</strong>: <code>get_stream_response_text()</code> only returns text. Sub-agents return structured <code>data</code> parts. Our code got empty results.</p>
+<p><strong>Fix</strong>: Check <code>get_data_parts(artifact.parts)</code> first, then fall back to <code>get_artifact_text(artifact)</code>.</p>
 
 <h3>5. Streaming Event Handling &mdash; Early Return on WORKING</h3>
-<p>Route events by type: skip <code>SUBMITTED</code>/<code>WORKING</code>, only process <code>artifact_update</code> and terminal events.</p>
+<p><strong>Problem</strong>: <code>get_stream_response_text()</code> extracts text from ANY event including <code>WORKING</code> status messages. The LLM got &ldquo;Running Financial RAG Agent...&rdquo; as the &ldquo;result&rdquo; and called <code>send_message</code> again in an infinite loop.</p>
+<p><strong>Fix</strong>: Route events by type: skip <code>SUBMITTED</code>/<code>WORKING</code> status updates, only process <code>artifact_update</code> (data or text), terminal <code>status_update</code>, and terminal <code>task</code> events.</p>
 
 <h3>6. Non-terminal Task Events Returned as Result</h3>
-<p>Check <code>task.status.state not in _TERMINAL_STATES</code> before processing task events.</p>
+<p><strong>Problem</strong>: The first streaming event is <code>task { state: SUBMITTED }</code>. Without checking terminal state, this was returned as <code>{"id": "xxx", "state": 1}</code>, confusing the LLM.</p>
+<p><strong>Fix</strong>: Check <code>task.status.state not in _TERMINAL_STATES</code> before processing a task event.</p>
 
 <h3>7. Local LLMs Don't Support Parallel Function Calling</h3>
-<p>Single <code>send_message</code> tool. Qwen model supports parallel calls; others are sequential.</p>
+<p><strong>Problem</strong>: The LLM instruction says &ldquo;call ALL agents simultaneously&rdquo; but no local or low-end model supports parallel tool calling.</p>
+<p><strong>Initial solution</strong>: Use a single <code>send_message</code> tool. The LLM called agents sequentially.</p>
+<p><strong>Resolution with qwen</strong>: The <code>qwen3-30b-a3b-2507</code> model supports parallel function calling, calling <code>send_message</code> for multiple agents simultaneously. The single <code>send_message</code> tool pattern is retained &mdash; agents marked as requiring sequential execution will be serialized by the LLM.</p>
 
 <h3>8. MCP Resource URI Type Mismatch</h3>
-<p>Convert <code>AnyUrl</code> to string with <code>str(uri)</code>.</p>
+<p><code>'AnyUrl' object has no attribute 'startswith'</code> &mdash; convert <code>AnyUrl</code> to string with <code>str(uri)</code>.</p>
 
 <h3>9. ClientConfig Has No <code>timeout</code> Parameter</h3>
 <p>Pass pre-configured <code>httpx.AsyncClient(timeout=httpx.Timeout(300))</code> via <code>ClientConfig(httpx_client=http)</code>.</p>
 
 <h3>10. LLM Tool Name Hallucination</h3>
-<p>Single <code>send_message</code> tool eliminates wrong tool names.</p>
+<p>Small local models generated wrong tool names. Fixed by: single <code>send_message</code> tool (no name to get wrong).</p>
 
 <h3>11. Agent Name Validation Error</h3>
 <p><code>LlmAgent(name="FinSight Orchestrator")</code> &mdash; spaces not allowed. Use <code>name="orchestrator"</code>.</p>
@@ -130,124 +371,1461 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <p><code>discover()</code> retries each URL 3 times with 5-second delay.</p>
 
 <h3>13. MCP Registry Discovery Not Ported</h3>
-<p>Pending future work.</p>
+<p>MCP resource-based agent card discovery is pending future work.</p>
 
 <h3>14. Windows ConnectionResetError Noise</h3>
-<p><code>asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())</code> on Windows.</p>
+<p><code>ConnectionResetError: [WinError 10054]</code> on Windows after successful A2A calls. Caused by ProactorEventLoop shutting down sockets already closed by the remote side.</p>
+<p><strong>Fix</strong>: <code>asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())</code> on Windows.</p>
+<p><strong>v1.19 complement</strong>: All sub-agent executors now call <code>await self._disconnect()</code> &rarr; <code>mcp.disconnect_all()</code> in a <code>finally</code> block after each stream. This prevents lingering MCP sockets from triggering the error regardless of event loop policy.</p>
 
 <h3>15. AgentCard Protobuf &mdash; No <code>url</code> Field</h3>
-<p>Set <code>supported_interfaces=[AgentInterface(protocol_binding="JSONRPC", url=...)]</code> instead.</p>
+<p><strong>Problem</strong>: The SDK's <code>AgentCard</code> is a protobuf message with no <code>url</code> field. Construction like <code>AgentCard(url="http://...")</code> raises <code>ValueError</code>.</p>
+<p><strong>Fix</strong>: Set <code>supported_interfaces=[AgentInterface(protocol_binding="JSONRPC", url=...)]</code> instead.</p>
 
 <h2>Timeout Strategy</h2>
-<p>Pass a pre-configured <code>httpx.AsyncClient(timeout=httpx.Timeout(300))</code> via <code>ClientConfig(httpx_client=http)</code>.</p>
+<p>The default <code>create_client()</code> creates an httpx client with default timeouts (~5s). Sub-agent analyses routinely exceed this.</p>
+<p><strong>Fix</strong>: Pass a pre-configured <code>httpx.AsyncClient(timeout=httpx.Timeout(300))</code> via <code>ClientConfig(httpx_client=http)</code>.</p>
 
 <h2>Model Selection (Ollama Era)</h2>
 <table>
 <tr><th>Model</th><th>Verdict</th><th>Reason</th></tr>
 <tr><td><code>qwen2.5:7b</code></td><td>&check;</td><td>Reliable tool calling, good instruction following, ~4.7GB</td></tr>
-<tr><td><code>llama3.2</code> (3B)</td><td>&cross;</td><td>Tool calling unreliable</td></tr>
-<tr><td><code>deepseek-r1</code> (7B)</td><td>&cross;</td><td>Does not support tool calling</td></tr>
+<tr><td><code>llama3.2</code> (3B)</td><td>&cross;</td><td>Tool calling unreliable via both <code>ollama/</code> and <code>openai/</code> providers</td></tr>
+<tr><td><code>deepseek-r1</code> (7B)</td><td>&cross;</td><td>Does not support tool/function calling</td></tr>
 </table>
+<p><strong>Key</strong>: The <code>openai/</code> prefix (LiteLLM OpenAI-compatible provider) sends tool definitions in the correct format.</p>
 
 <h2>Migration from Ollama to LM Studio</h2>
+
+<h3>Problem: Ollama was too slow</h3>
+<p>Ollama's inference speed for <code>qwen2.5:7b</code> was 20&ndash;40 seconds per LLM call. With the orchestrator calling all three sub-agents sequentially, a single query took 2&ndash;3 minutes.</p>
+
+<h3>Solution: LM Studio</h3>
+<p>LM Studio provides faster inference, OpenAI-compatible API, simpler setup.</p>
+
+<h3>Changes made</h3>
 <table>
 <tr><th>Area</th><th>Before (Ollama)</th><th>After (LM Studio)</th></tr>
 <tr><td>Base URL</td><td><code>http://localhost:11434/v1</code></td><td><code>http://localhost:1234/v1</code></td></tr>
-<tr><td>Model name</td><td><code>qwen2.5:7b</code></td><td><code>gpt-oss-20b</code> &rarr; <code>qwen3-30b-a3b-2507</code></td></tr>
+<tr><td>Model name</td><td><code>qwen2.5:7b</code></td><td><code>gpt-oss-20b</code></td></tr>
+<tr><td>Agent 1 (ADK)</td><td><code>openai/qwen2.5:7b</code></td><td><code>openai/gpt-oss-20b</code></td></tr>
 <tr><td>Agent 2 (LlamaIndex)</td><td><code>llama-index-llms-ollama</code></td><td><code>llama-index-llms-openai-like</code></td></tr>
 <tr><td>Agent 3 (LangGraph)</td><td><code>langchain-ollama</code></td><td><code>langchain-openai</code></td></tr>
 <tr><td>Agent 4 (CrewAI)</td><td><code>CrewLLM(model="ollama/...")</code></td><td><code>CrewLLM(model="gpt-oss-20b")</code></td></tr>
 </table>
 
 <h2>MCP Server Design</h2>
+<p>The unified finsight MCP server (<code>finsight_server.py</code>) hosts agent registry + data tools on port 8010.</p>
 
 <h3>Docker-compose Alignment Fix</h3>
-<p>Replaced 4 broken MCP services with single <code>finsight-mcp</code> service.</p>
+<p><strong>Problem</strong>: <code>docker-compose.yml</code> referenced 4 separate MCP services (<code>mcp-yfinance</code>, <code>mcp-sec-edgar</code>, <code>mcp-reddit</code>, <code>mcp-python-runner</code>) that each ran different server files (<code>yfinance_server.py</code>, etc.). These files didn't exist &mdash; only the unified <code>finsight_server.py</code> existed in the repository.</p>
+<p><strong>Solution</strong>: Replaced the 4 broken services with a single <code>finsight-mcp</code> service that runs the existing <code>finsight_server.py</code>. Updated agent environment variables to point to the unified server (<code>MCP_SERVER_URL=http://finsight-mcp:8010/sse</code>). The actual codebase was already using this pattern &mdash; docker-compose was simply out of sync.</p>
 
 <h3>Lazy Agent Registry</h3>
-<p>Model loading deferred to first tool call via <code>_ensure_registry()</code> with <code>asyncio.Lock</code> double-checked locking.</p>
+<p><strong>Problem</strong>: <code>sentence-transformers</code> downloads the embedding model (~80MB) at import time. When ADK Web UI or MCP host imports the module, model download blocks startup and may fail in restricted environments.</p>
+<p><strong>Solution</strong>: Defer model loading to first tool call via <code>_ensure_registry()</code> with <code>asyncio.Lock</code> double-checked locking. Model is loaded once in a thread executor, never at module level.</p>
 
 <h3>Windows Compatibility</h3>
-<p><code>import resource</code> guarded with <code>if sys.platform != "win32"</code>.</p>
+<p><strong>Problem</strong>: <code>import resource</code> (Unix RLIMIT) raises <code>ModuleNotFoundError</code> on Windows.</p>
+<p><strong>Solution</strong>: Guard with <code>if sys.platform != "win32": import resource</code>. Sandbox <code>preexec_fn</code> is <code>None</code> on Windows (RLIMIT is Unix-only).</p>
 
 <h3>Thread-Safe SSE App Singleton</h3>
-<p><code>get_app()</code> with <code>threading.Lock</code> double-checked singleton pattern.</p>
+<p><strong>Problem</strong>: FastMCP's <code>sse_app()</code> creates a new Starlette app instance each call. Under concurrent reload or multi-worker setups, this duplicates middleware, routes, and lifecycle hooks, causing <code>RuntimeError: Lifespan context has already been started</code>.</p>
+<p><strong>Solution</strong>: <code>get_app()</code> with a <code>threading.Lock</code> double-checked singleton pattern.</p>
+
+<h3>Inline Imports for Localised Scope</h3>
+<p><strong>Problem</strong>: Top-level <code>import re</code> creates a module-wide reference. In sandbox contexts or when the module is reloaded, shadowed or patched <code>re</code> can break internal normalisation logic.</p>
+<p><strong>Solution</strong>: <code>import re as _re</code> inside <code>_resolve_company_keywords</code> and <code>_normalise_for_match</code> &mdash; guarantees a fresh, unpatched reference.</p>
 
 <h3>SEC EDGAR Caching</h3>
-<p><code>_EdgarClient._get_ticker_map()</code> with <code>asyncio.Lock</code> lazy loading. CIK results cached in <code>_cik_cache</code>.</p>
+<p><strong>Problem</strong>: Every <code>get_company_filings</code> call re-fetched the company ticker &rarr; CIK mapping (~4MB JSON from SEC.gov), adding latency and hitting SEC rate limits.</p>
+<p><strong>Solution</strong>: <code>_EdgarClient._get_ticker_map()</code> with <code>asyncio.Lock</code> lazy loading. CIK results cached in <code>_cik_cache</code>, ticker&rarr;title map cached in <code>_title_map</code>. Subsequent calls are dict lookups.</p>
 
 <h3>Sandbox Hardening</h3>
-<p>Expanded <code>_RESTRICTED_IMPORTS</code> and <code>_RESTRICTED_ATTRS</code> blocklists. Subprocess runs with <code>-I</code> and <code>-S</code> flags.</p>
+<p><strong>Problem</strong>: The Python sandbox allowed potentially dangerous imports (<code>builtins</code>, <code>gc</code>, <code>threading</code>, <code>multiprocessing</code>, etc.) that could be used to escape the subprocess.</p>
+<p><strong>Solution</strong>: Expanded <code>_RESTRICTED_IMPORTS</code> and <code>_RESTRICTED_ATTRS</code> blocklists. Subprocess runs with <code>-I</code> (isolated) and <code>-S</code> (no site) flags. RLIMIT applied on Unix.</p>
 
 <h2>Model Change: gpt-oss-20b &rarr; qwen</h2>
+<p>The LLM used by all agents was switched from <strong><code>gpt-oss-20b</code></strong> to a <strong>qwen</strong> model:</p>
 <table>
-<tr><th>Model</th><th>Speed</th></tr>
-<tr><td><code>gpt-oss-20b</code> (previous)</td><td>~40-60s per call</td></tr>
-<tr><td><code>qwen3-30b-a3b-2507</code> (current)</td><td>~5-10s per call</td></tr>
+<tr><th>Model</th><th>Speed</th><th>Notes</th></tr>
+<tr><td><code>gpt-oss-20b</code> (previous)</td><td>~40&ndash;60s per call</td><td>Large, slower inference</td></tr>
+<tr><td><code>qwen3-30b-a3b-2507</code> (current)</td><td>~5&ndash;10s per call</td><td>Much faster, sufficient quality</td></tr>
 </table>
+<p><strong>Key</strong>: The qwen model reduced per-call latency by ~5&ndash;10x while maintaining adequate output quality for all agent tasks (routing, summarisation, analysis). This was the single biggest performance improvement in the pipeline.</p>
 
 <h2>RAG Agent Auto-ingest</h2>
-<p>Fetches SEC filings via MCP on first query. Fixed with proper empty-check and <code>try/except json.JSONDecodeError</code>.</p>
+<p>The RAG agent fetches SEC filings via MCP on first query (<code>_ensure_ingested</code>). Was fragile with <code>json.loads()</code> on potentially empty MCP responses. Fixed with proper empty-check and <code>try/except json.JSONDecodeError</code>.</p>
 
 <h3>RAG Content Ingestion Fix</h3>
-<p>Added <code>get_filing_content()</code> MCP tool. RAG agent now stores actual filing text instead of just metadata.</p>
+<p><strong>Problem</strong>: RAG agent only stored SEC filing metadata (form type, description, URL) in ChromaDB, not actual filing content. Queries returned &ldquo;cannot be performed based on provided information&rdquo; because the index had no meaningful text.</p>
+<p><strong>Solution</strong>:</p>
+<ol>
+<li>Added <code>get_filing_content(edgar_url, ix_url)</code> MCP tool to fetch and extract text from raw EDGAR documents</li>
+<li>Updated <code>get_company_filings</code> to return both raw document URL (<code>edgar_url</code>) and IXBRL viewer URL (<code>ix_url</code>)</li>
+<li>RAG agent now calls <code>get_filing_content()</code> for each filing and stores extracted text (up to 20K chars) into ChromaDB</li>
+<li>Enhanced <code>get_filing_content</code> to handle multiple content types (HTML, XML, JSON), skip XBRL viewer pages, and fallback to IX URL if raw fails</li>
+</ol>
 
 <h3>Quant DCF Null Fix</h3>
-<p>Changed to read free cash flow from <code>cash_flow</code> statement instead of <code>income_statement</code>.</p>
+<p><strong>Problem</strong>: DCF valuation always returned <code>null</code> because <code>_get_fcf_from_financials()</code> looked for &ldquo;Free Cash Flow&rdquo; in the <code>income_statement</code> dict, but FCF belongs in the <code>cash_flow</code> statement.</p>
+<p><strong>Solution</strong>: Changed <code>dcf_valuation_node()</code> to use <code>data.get("cash_flow", {})</code> instead of <code>data.get("income_statement", {})</code>.</p>
 
 <h2>Ticker Extraction Decoupled from SEC Validation</h2>
-<p>Pure regex extraction, MCP-based validation, first-match heuristic, validation fallback to resolution, ticker format gate.</p>
+
+<h3>Problem</h3>
+<p><code>extract_ticker()</code> in <code>shared/ticker_utils.py</code> fetched the full SEC company_tickers.json (~4MB) on every call to validate candidates. This meant:</p>
+<ol>
+<li>Every agent query triggered a network call to SEC.gov just to extract a ticker</li>
+<li><code>RAGAgent.stream()</code> had a broken <code>await self._connect()</code> call (method didn't exist)</li>
+<li>Validation logic was duplicated inline across three agent executors with subtle differences</li>
+<li>No graceful fallback when MCP was unavailable</li>
+</ol>
+
+<h3>Solution</h3>
+
+<p><strong>Step 1 &mdash; Pure regex extraction</strong>: <code>extract_ticker()</code> now returns the first regex match immediately with no network calls. Priority cascade: parentheses &gt; trigger words &gt; $ prefix &gt; 3&ndash;5 letter words &gt; 2 letter words.</p>
+
+<p><strong>Step 2 &mdash; MCP-based validation</strong>: Each agent has a <code>_validate_ticker()</code> method that:</p>
+<ol>
+<li>Connects MCP if not already connected</li>
+<li>Calls the MCP <code>validate_ticker</code> tool (which talks to SEC EDGAR)</li>
+<li>Returns <code>(is_valid, ticker, company_or_error)</code> as a uniform <code>tuple[bool, str, str]</code></li>
+</ol>
+
+<p><strong>Step 3 &mdash; First-match heuristic</strong>: Pattern 4 (<code>\b([A-Z]{3,5})\b</code>) returns <code>matches[0]</code> (first match) rather than <code>matches[-1]</code> (last match). Rationale:</p>
+<ul>
+<li>The orchestrator LLM generates task text like &ldquo;<em>Analyze WMT (Walmart) SEC filings for...</em>&rdquo; &mdash; the ticker appears <strong>first</strong>, stop words like &ldquo;SEC&rdquo;, &ldquo;EPS&rdquo;, &ldquo;NYSE&rdquo;, &ldquo;INC&rdquo; appear <strong>after</strong> it</li>
+<li><code>matches[-1]</code> picked up trailing stop words: &ldquo;SEC&rdquo; instead of &ldquo;WMT&rdquo; in the task above</li>
+<li><code>matches[0]</code> prefers the ticker that was mentioned first</li>
+<li>If the first match is wrong, <code>_validate_ticker</code> rejects it &rarr; <code>resolved</code> fallback &rarr; company name resolution catches the real ticker</li>
+</ul>
+
+<p><strong>Step 4 &mdash; Validation fallback to resolution</strong>: When <code>extract_ticker</code> returns a candidate that <code>_validate_ticker</code> rejects (e.g. regex picks up &ldquo;SEC&rdquo; from task context), the agent retries with <code>_resolve_ticker</code> (company name resolution) before returning an error. This creates a three-layer defense:</p>
+<ol>
+<li><strong>Regex first</strong> (instant) &mdash; catches explicit tickers: &ldquo;(AAPL)&rdquo;, &ldquo;$V&rdquo;, &ldquo;for MA&rdquo;</li>
+<li><strong>Company name resolution</strong> (SEC reverse index + Yahoo fallback) &mdash; catches natural language: &ldquo;Mastercard&rdquo; &rarr; &ldquo;MA&rdquo;</li>
+<li><strong>Validation</strong> (SEC EDGAR) &mdash; confirms ticker exists, used as gate for all of the above</li>
+</ol>
+
+<p><strong>Step 5 &mdash; Ticker format gate</strong>: <code>is_valid_ticker_format()</code> rejects anything that doesn't match <code>^[A-Z]{1,5}(\.[A-Z]{1,2})?$</code> &mdash; prevents mutual fund identifiers (&ldquo;0P0000SECP.F&rdquo;) and other non-equity symbols from reaching validation.</p>
+
+<p><strong>Key properties</strong>:</p>
+<ul>
+<li>&check; Extraction never fails &mdash; pure regex, no network calls</li>
+<li>&check; Validation is optional &mdash; MCP validation has fallback to raw regex guess</li>
+<li>&check; No SEC API from agent side &mdash; only MCP server talks to SEC</li>
+<li>&check; MCP server caches &mdash; SEC map loaded once, cached per server lifetime</li>
+<li>&check; Backward compatible &mdash; all existing patterns still work</li>
+</ul>
 
 <h3>Consolidating <code>_validate_ticker</code> / <code>_resolve_ticker</code> Across Agents (v1.16)</h3>
-<p><strong>Problem</strong>: The MCP call + JSON-parsing logic was copy-pasted verbatim (~108 LOC) across all three sub-agent executors. A bug fix had to be applied in three places with no consistency guarantee.</p>
-<p><strong>Solution</strong>: Extracted <code>validate_ticker_via_mcp(mcp, ticker)</code> and <code>resolve_ticker_via_mcp(mcp, query, exclude_ticker)</code> into <code>shared/ticker_utils.py</code>. Each agent&rsquo;s wrapper methods are now ~7 lines handling their own connection logic, then delegating the MCP call to the shared functions.</p>
-<p><strong>Why keep wrapper methods?</strong> Each agent connects to MCP differently (RAG uses <code>_ensure_mcp_connected()</code>, Quant uses <code>_ensure_connected()</code>, Sentiment uses <code>_connect()</code>). Thin wrappers preserve per-agent connection semantics and leave <code>stream()</code> unchanged.</p>
+<p><strong>Problem</strong>: The MCP call + JSON-parsing logic of <code>_validate_ticker()</code> and <code>_resolve_ticker()</code> was copy-pasted verbatim (~108 LOC) across all three sub-agent executors. A bug fix or protocol change had to be applied in three places with no guarantee of consistency.</p>
+<p><strong>Solution</strong>: Extracted <code>validate_ticker_via_mcp(mcp, ticker)</code> and <code>resolve_ticker_via_mcp(mcp, query, exclude_ticker)</code> into <code>shared/ticker_utils.py</code>. Each agent's <code>_validate_ticker</code> / <code>_resolve_ticker</code> methods are now ~7-line wrappers that handle their own connection logic, then delegate the actual MCP call to the shared functions.</p>
+<p><strong>Why keep the wrapper methods instead of calling shared functions directly from <code>stream()</code>?</strong> Each agent connects to MCP differently &mdash; RAG agent uses lazy connect with <code>_ensure_mcp_connected()</code>, Quant uses <code>_ensure_connected()</code> (reused by <code>analyze()</code>), Sentiment uses <code>_connect()</code>. Keeping thin wrapper methods preserves per-agent connection semantics and leaves <code>stream()</code> unchanged.</p>
 
-<h2>Financial Filings Tool</h2>
-<p><code>get_financial_filings()</code> fetches 10-K and 10-Q separately to avoid 8-K domination.</p>
+<h2>Financial Filings Tool (get_financial_filings)</h2>
 
-<h2>News System: Concurrent RSS + Yahoo Fallback</h2>
-<p>All three RSS feeds fetched simultaneously via <code>asyncio.gather()</code>. Yahoo Finance news API fallback when RSS fails. Structured diagnostics in response.</p>
+<h3>Problem</h3>
+<p><code>get_company_filings()</code> returned all recent filings in order, but for large financial companies the &ldquo;recent&rdquo; batch was dominated by 8-Ks (current reports filed nearly daily). A request for <code>limit=10</code> might return 0&ndash;1 actual 10-K or 10-Q statements, leaving RAG agents with no financial data to analyze.</p>
+
+<h3>Solution</h3>
+<p>Added <code>get_financial_filings()</code> that fetches 10-K and 10-Q filings separately with independent limits:</p>
+<pre><code>annual_limit=5    &rarr; up to 5 years of 10-Ks
+quarterly_limit=8 &rarr; up to 2 years of 10-Qs</code></pre>
+<p>If the initial &ldquo;recent&rdquo; batch doesn't contain enough 10-Ks, it paginates to older filings pages. The response separates annual from quarterly so downstream agents can distinguish yearly trends from quarterly updates.</p>
+
+<h2>News System: Concurrent RSS + Yahoo Finance Fallback</h2>
+
+<h3>Problem</h3>
+<p>The original RSS pipeline had three issues:</p>
+<ol>
+<li>Feeds were fetched <strong>sequentially</strong> &mdash; if MarketWatch timed out, CNBC and Yahoo waited</li>
+<li>No failure diagnostics &mdash; a blank response looked identical to &ldquo;no news for this ticker&rdquo;</li>
+<li>No fallback &mdash; if all three RSS feeds returned zero matches, the agent got empty news with no explanation</li>
+</ol>
+
+<h3>Solution</h3>
+<p><strong>Concurrent fetching</strong>: All three RSS feeds are fetched simultaneously via <code>asyncio.gather()</code>. A slow/unreachable feed doesn't block the others.</p>
+<p><strong>Structured return values</strong>: <code>_fetch_rss()</code> returns <code>{"entries": [...], "status": "ok" | "http_xxx" | "parse_error" | "error", "error": "..."}</code>. Each source gets an entry in <code>feed_status</code> so agents can see which feeds worked.</p>
+<p><strong>Yahoo Finance news API fallback</strong>: When all RSS feeds are unreachable <strong>or</strong> return zero keyword-matched articles, <code>_fetch_yf_news()</code> queries Yahoo Finance's structured <code>v1/finance/search</code> API. Unlike RSS, results are pre-filtered to the ticker &mdash; no keyword matching needed.</p>
+<p><strong>Better diagnostics</strong>: <code>source_used</code> tells the agent whether results came from RSS or the Yahoo fallback. <code>feed_status</code> shows per-source HTTP status codes. The response distinguishes:</p>
+<ul>
+<li><code>rss_unreachable</code> &mdash; feeds returned errors</li>
+<li><code>rss_no_match</code> &mdash; feeds returned articles but none matched the ticker</li>
+</ul>
+
+<h3>MCP Response Parsing Inconsistency</h3>
+<p><strong>Problem</strong>: Each agent parsed MCP tool responses differently (checking for <code>.content</code>, <code>.text</code>, dict vs list, etc.), leading to fragile error handling.</p>
+<p><strong>Solution</strong>: Added <code>parse_mcp_result(result)</code> utility in <code>shared/mcp_client.py</code> that handles various MCP response formats consistently &mdash; returns parsed dict/list/string or <code>{"error": "..."}</code> on failure.</p>
 
 <h2>DCF Skipped from High Volatility Routing</h2>
-<p><code>dcf_error</code> set in <code>compute_metrics_node</code> before routing. Surfaced in <code>graph.run()</code> output and reasoning text.</p>
+
+<h3>Problem</h3>
+<p><code>dcf_valuation</code> returned <code>null</code> for tickers with annual volatility above 35% (e.g. Oracle at 41%). The graph's <code>_route_on_volatility</code> function routed these to <code>stress_test</code> and DCF was never called. The <code>dcf_error</code> field was <code>null</code> too &mdash; making it impossible to distinguish &ldquo;DCF failed&rdquo; from &ldquo;DCF was never executed&rdquo;.</p>
+
+<h3>Solution</h3>
+<p>Three changes across the graph pipeline:</p>
+<ol>
+<li><strong>Set <code>dcf_error</code> in <code>compute_metrics_node</code></strong>: When <code>annual_vol &gt; 0.35</code> is detected, the metrics node now includes a descriptive <code>dcf_error</code> message (e.g. &ldquo;DCF skipped: annual volatility (41.0%) exceeds 35% threshold &ndash; routed to stress test instead&rdquo;). This is set <em>before</em> the routing decision, so it's available in state regardless of which path is taken.</li>
+<li><strong>Surface <code>dcf_error</code> in <code>graph.run()</code> output</strong>: The result dict now includes the <code>dcf_error</code> field so callers can see why DCF is null.</li>
+<li><strong>Include <code>dcf_error</code> in reasoning</strong>: <code>format_output_node</code> appends the error to the reasoning string when DCF is null with an error, so the LLM summary has full context.</li>
+</ol>
+
+<p><strong>Key properties</strong></p>
+<ul>
+<li>&check; Callers can distinguish &ldquo;DCF not computed&rdquo; from &ldquo;DCF failed to compute&rdquo;</li>
+<li>&check; The error reason appears in both structured output (<code>dcf_error</code> field) and natural language summary (reasoning text)</li>
+<li>&check; No false positives &mdash; only set when volatility routing actually causes the skip</li>
+</ul>
 
 <h2>DCF Null from Negative Free Cash Flow</h2>
-<p>Iterates through periods and returns <strong>first positive FCF</strong>. Comprehensive failure logging for all DCF edge cases.</p>
+
+<h3>Problem</h3>
+<p><code>_get_fcf_from_financials()</code> returned the most recent period's FCF regardless of sign. For financial companies like JPM, the latest year's FCF was negative (large capital expenditures / investment purchases), causing the <code>latest_fcf &lt;= 0</code> guard to return <code>{"dcf_valuation": None}</code> with no explanation.</p>
+
+<h3>Solution</h3>
+<p>Changed <code>_get_fcf_from_financials()</code> to iterate through periods and return the <strong>first positive FCF</strong> instead of the first period's raw value. Added comprehensive failure logging:</p>
+<ol>
+<li><strong>No MCP client</strong> &mdash; logs &ldquo;no MCP client&rdquo;</li>
+<li><strong>Empty response</strong> &mdash; logs &ldquo;MCP returned empty response&rdquo;</li>
+<li><strong>No cash flow data</strong> &mdash; logs &ldquo;no cash flow data available&rdquo;</li>
+<li><strong>No positive FCF</strong> &mdash; logs actual FCF values from both <code>Free Cash Flow</code> field and <code>Operating Cash Flow + Capital Expenditure</code> calculation</li>
+<li><strong>Missing shares outstanding</strong> &mdash; logs the invalid value</li>
+<li><strong>Missing current price</strong> &mdash; logs the invalid value</li>
+</ol>
+<p>All failures return a <code>dcf_error</code> string alongside <code>dcf_valuation: null</code>, which is surfaced in the agent response.</p>
 
 <h2>Ticker False Positives from Financial Acronyms</h2>
-<p><code>_FINANCIAL_STOP_WORDS</code> blocklist, <code>clean_query_for_resolution()</code>, failed ticker exclusion from resolution query.</p>
 
-<h2>Portfolio Holdings Extraction</h2>
-<p>Four regex patterns in <code>extract_holdings()</code>. Holdings passed through the chain. Orchestrator LLM instructed to include holdings. Helpful notes instead of empty <code>{}</code>.</p>
+<h3>Problem</h3>
+<p>Pattern 4 of <code>extract_ticker()</code> (<code>\b([A-Z]{3,5})\b</code>) matched any uppercase word of 3&ndash;5 characters, including common financial acronyms like &ldquo;SEC&rdquo;, &ldquo;EPS&rdquo;, &ldquo;CEO&rdquo;, &ldquo;NYSE&rdquo;, &ldquo;NASDAQ&rdquo;. When a user asked &ldquo;Analyze General Electric SEC filings&rdquo;, the first match was &ldquo;SEC&rdquo; instead of &ldquo;General Electric&rdquo;.</p>
+<p>Validation rejected &ldquo;SEC&rdquo;, but the fallback <code>_resolve_ticker()</code> passed the full noisy query &ldquo;Analyze General Electric SEC filings for recent financial performance&rdquo; to MCP's <code>resolve_company_ticker</code>. The SEC reverse index could not reliably match against all those noise words, and Yahoo Finance occasionally returned irrelevant tickers.</p>
+
+<h3>Solution</h3>
+<p><strong>Step 1 &mdash; Financial stop-word blocklist</strong>: Added <code>_FINANCIAL_STOP_WORDS</code> in <code>shared/ticker_utils.py</code> &mdash; a curated set of 30+ financial acronyms that are never valid stock tickers. Applied to both pattern 4 (3&ndash;5 letter) and pattern 5 (2 letter) regex results.</p>
+<pre><code>_FINANCIAL_STOP_WORDS = frozenset({
+    "SEC", "EPS", "CEO", "CFO", "NYSE", "NASDAQ",
+    "INC", "LLC", "LTD", "CORP", "GAAP", "EBIT", "EBITDA",
+    ...
+})</code></pre>
+
+<p><strong>Step 2 &mdash; Query noise cleanup</strong>: Added <code>clean_query_for_resolution()</code> that strips:</p>
+<ul>
+<li>Common financial analysis words (&ldquo;analyze&rdquo;, &ldquo;filings&rdquo;, &ldquo;financial&rdquo;, &ldquo;performance&rdquo;, &ldquo;sec&rdquo;, &ldquo;edgar&rdquo;)</li>
+<li>Generic English stop words (&ldquo;the&rdquo;, &ldquo;a&rdquo;, &ldquo;for&rdquo;, &ldquo;about&rdquo;, &ldquo;this&rdquo;, &ldquo;that&rdquo;)</li>
+<li>Words from <code>_FINANCIAL_STOP_WORDS</code> (uppercase variants like &ldquo;SEC&rdquo;, &ldquo;INC&rdquo;)</li>
+</ul>
+
+<p><strong>Step 3 &mdash; Exclude ticker from resolution</strong>: <code>_resolve_ticker(query, exclude_ticker="SEC")</code> strips the regex-extracted false positive from the query before calling MCP. So &ldquo;Analyze General Electric SEC filings&rdquo; &rarr; &ldquo;General Electric&rdquo; after cleanup.</p>
+
+<p><strong>Key properties</strong>:</p>
+<ul>
+<li>&check; No false positives from financial jargon</li>
+<li>&check; Company name resolution receives clean input</li>
+<li>&check; Failed ticker is excluded from the resolution query</li>
+<li>&check; All three agents (RAG, Quant, Sentiment) apply the same cleanup</li>
+<li>&check; Backward compatible &mdash; all existing patterns still work</li>
+</ul>
+
+<h2>Portfolio Holdings Extraction for Correlation Analysis</h2>
+
+<h3>Problem</h3>
+<p>The Quant agent's <code>correlation_matrix</code> was always <code>{}</code> even when users explicitly mentioned portfolio holdings. The <code>correlation_node</code> in <code>nodes.py</code> requires <code>portfolio_holdings</code> (a list of ticker symbols) to compute correlations, but the chain never populated it:</p>
+<pre><code>stream() &rarr; analyze(ticker) &rarr; graph.run(ticker, portfolio_holdings=None)</code></pre>
+<p>The <code>QuantAgent.stream()</code> method extracted the target ticker from the query but had no logic to extract portfolio holdings. Even though <code>graph.run()</code> accepted a <code>portfolio_holdings</code> parameter, it was always passed as <code>None</code>.</p>
+
+<h3>Solution</h3>
+<p><strong>Step 1 &mdash; <code>extract_holdings()</code> in <code>shared/ticker_utils.py</code></strong>: Four regex patterns covering natural language phrasing:</p>
+<pre><code>_HOLDINGS_PATTERNS = [
+    # "My portfolio holds AAPL, MSFT, GOOGL"
+    # "My portfolio: TSLA, AMZN, META"
+    re.compile(r"(?:portfolio|holdings?)\s*(?::|holds?|contains?|includes?|consists\s+of)\s*..."),
+    # "I own MSFT and GOOGL"
+    # "my current portfolio includes AAPL, TSLA"
+    re.compile(r"(?:I\s+(?:own|hold|have|am\s+invested\s+in)|my\s+...portfolio...)\s+..."),
+    # "My current holdings are JPM, BAC, WFC"
+    re.compile(r"(?:my\s+...portfolio...)\s+are\s+..."),
+    # "currently own AAPL, MSFT"
+    re.compile(r"(?:currently\s+)?(?:own|hold|have)\s*:?\s*..."),
+]</code></pre>
+<p>Each pattern captures a comma-and-separated list of uppercase tickers. The <code>exclude_ticker</code> parameter removes the target stock from the holdings list.</p>
+
+<p><strong>Step 2 &mdash; Pass holdings through the chain</strong>: <code>stream()</code> calls <code>extract_holdings(query, exclude_ticker=ticker)</code>, passes to <code>analyze(portfolio_holdings=holdings)</code>, which passes to <code>graph.run(portfolio_holdings=holdings)</code>.</p>
+
+<p><strong>Step 3 &mdash; Orchestrator LLM instruction updated</strong>: Added step 4 to the orchestrator system prompt telling the LLM to include portfolio holdings in the task text for the Quant Analysis Agent. Without this, the LLM would drop holdings from the generated task.</p>
+
+<p><strong>Step 4 &mdash; Helpful notes instead of empty <code>{}</code></strong>: When no holdings are provided, <code>correlation_node</code> returns <code>{"note": "No portfolio holdings provided..."}</code>. When price data is insufficient, returns <code>{"note": "Insufficient overlapping price data..."}</code>. On exception, returns <code>{"error": "..."}</code>.</p>
+
+<p><strong>Key properties</strong></p>
+<ul>
+<li>&check; Holdings extraction is pure regex &mdash; no network calls, instant execution</li>
+<li>&check; Target ticker excluded from holdings to avoid self-correlation</li>
+<li>&check; Works with comma-separated, &ldquo;and&rdquo;-connected, and mixed formats</li>
+<li>&check; Backward compatible &mdash; returns <code>[]</code> when no holdings mentioned</li>
+</ul>
 
 <h3>Correlation Matrix Auto-Trigger via Memory Context (v1.16 Fix)</h3>
-<p><strong>Problem</strong>: <code>_build_memory_context()</code> appended stored portfolio holdings as <code>"User portfolio: GOOGL, AAPL, META, MSFT"</code> to every query. The orchestrator prompt said &ldquo;if the user mentions portfolio holdings, include them in the Quant agent task&rdquo; &mdash; the LLM treated the memory line as an explicit user mention and triggered a full correlation matrix even for single-ticker queries.</p>
-<p><strong>Root cause</strong>: No distinction between &ldquo;user said this right now&rdquo; vs &ldquo;system recalled this from memory&rdquo;. Memory context and direct user input were semantically indistinguishable to the LLM.</p>
+<p><strong>Problem</strong>: The orchestrator's <code>_build_memory_context()</code> appended stored portfolio holdings from <code>PortfolioStore</code> to every query as <code>"User portfolio: GOOGL, AAPL, META, MSFT"</code>. This line was injected into <code>[MEMORY CONTEXT]</code> before the user's actual message. The orchestrator system prompt said &ldquo;if the user mentions portfolio holdings, include them in the Quant agent task&rdquo;. The LLM treated the memory line as an explicit user mention and forwarded the holdings &mdash; triggering a full correlation matrix for every single-ticker query, even when the user never asked for one.</p>
+<p><strong>Root cause</strong>: No distinction between &ldquo;user said this right now&rdquo; vs &ldquo;system recalled this from memory&rdquo;. The memory context and direct user input were semantically indistinguishable to the LLM.</p>
 <p><strong>Fix (two-pronged)</strong>:</p>
 <ol>
-<li><strong>Label the memory line explicitly</strong>: Changed to <code>"Background &mdash; user's known holdings (do NOT include for portfolio correlation unless the user explicitly requests it...)"</code></li>
-<li><strong>Update the orchestrator prompt</strong>: Step 4 now says &ldquo;only if the user EXPLICITLY mentions their portfolio in their CURRENT message &mdash; do NOT include holdings from memory context background lines&rdquo;</li>
+<li><strong>Label the memory line explicitly</strong>: Changed <code>"User portfolio: ..."</code> to <code>"Background &mdash; user's known holdings (do NOT include for portfolio correlation unless the user explicitly requests it in their current message): ..."</code>. The label itself instructs the LLM how to treat the data.</li>
+<li><strong>Update the orchestrator prompt</strong>: Changed step 4 from &ldquo;if the user mentions portfolio holdings&rdquo; to &ldquo;only if the user EXPLICITLY mentions their portfolio or asks for correlation in their CURRENT message &mdash; do NOT include holdings from memory context background lines.&rdquo;</li>
 </ol>
-<p><strong>Why two changes?</strong> The label alone relies on the LLM parsing a long inline instruction inside injected text. The prompt change alone could be overridden by the memory line&rsquo;s phrasing. Together they create redundant clarity at both data and instruction levels.</p>
+<p><strong>Why two changes instead of one?</strong> The label alone relies on the LLM parsing a long inline instruction inside the injected text. The prompt change alone could be forgotten or overridden by conflicting signal in the memory line. Together they create redundant clarity: the data labels itself as background-only, and the instruction explicitly excludes memory-sourced holdings from auto-forwarding.</p>
 
 <h2>File Logging Design</h2>
-<p><strong>Problem</strong>: Services started via <code>uvicorn</code> never configured logging (sub-agent <code>server.py</code> files only called <code>basicConfig</code> inside <code>if __name__ == "__main__":</code>). No log files were written; <code>memory_callback.log</code> was written to the project root.</p>
-<p><strong>Solution</strong>: <code>shared/logging_config.py</code> provides <code>setup_file_logging(service_name)</code> &mdash; attaches a <code>RotatingFileHandler</code> (10 MB, 5 backups) and <code>StreamHandler</code> to the root logger, creates <code>logs/</code> if absent, guards against duplicate registration. Called at module level in each server so logging is configured regardless of how the process starts.</p>
-<p><strong>Why <code>RotatingFileHandler</code> not <code>TimedRotatingFileHandler</code>?</strong> Services generate bursts of logs during queries then go idle &mdash; time-based rotation creates many small empty files. Size-based rotation (10 MB &times; 5 = 50 MB per service) is simpler and sufficient for development usage.</p>
-<p><strong>Why not <code>logging.config.dictConfig</code>?</strong> A dict config moves complexity without removing it. A single function call with a service name is the simplest interface that solves the problem.</p>
+
+<h3>Problem</h3>
+<p>All five server entry points used <code>logging.basicConfig(level=logging.INFO)</code> either at module level or inside <code>if __name__ == "__main__":</code> blocks. This meant:</p>
+<ol>
+<li>Services started via <code>uvicorn</code> (the normal path) never called <code>basicConfig</code> &mdash; the sub-agent <code>server.py</code> files only configured logging when run directly</li>
+<li>All output went to stderr only &mdash; no log files were written</li>
+<li><code>memory_callback.log</code> was written to the project root instead of <code>logs/</code></li>
+<li>Each service independently configured logging with no shared format or rotation policy</li>
+</ol>
+
+<h3>Solution</h3>
+<p><code>shared/logging_config.py</code> provides a single <code>setup_file_logging(service_name)</code> function that:</p>
+<ul>
+<li>Attaches a <code>RotatingFileHandler</code> (10 MB, 5 backups) &rarr; <code>logs/&lt;service&gt;.log</code></li>
+<li>Attaches a <code>StreamHandler</code> (stderr) if none is present yet</li>
+<li>Creates the <code>logs/</code> directory if absent</li>
+<li>Guards against duplicate handler registration (idempotent)</li>
+</ul>
+<p>Each server calls <code>setup_file_logging(...)</code> at module level, not inside <code>if __name__ == "__main__":</code>, so logging is configured regardless of whether the process is started via uvicorn or run directly.</p>
+
+<h3>Why <code>RotatingFileHandler</code> instead of <code>TimedRotatingFileHandler</code>?</h3>
+<p>Size-based rotation is simpler to reason about in a development context. The services generate bursts of logs during queries then go idle &mdash; time-based rotation would create many small empty files. 10 MB per file with 5 backups gives 50 MB total per service, enough for days of normal usage without manual cleanup.</p>
+
+<h3>Why not configure via <code>logging.config.dictConfig</code>?</h3>
+<p>A dict config would require all services to share a config file or inline the same config dict &mdash; moving complexity, not removing it. A single function call with a service name is the simplest interface that solves the problem.</p>
 
 <h2>Langfuse Span Noise Filtering</h2>
-<p>Uses <code>is_default_export_span</code> helper. Filters A2A internal spans and HTTPX transport spans. Exports only high-level workflow and LLM spans.</p>
 
-<h2>Langfuse Distributed Tracing</h2>
-<p>Text-based trace context injection via A2A payload JSON prefix. Sub-agents use <code>extract_trace_ids()</code> and <code>start_observation(trace_context=...)</code>. LangGraph uses <code>CallbackHandler(trace_context=...)</code>.</p>
+<h3>Problem</h3>
+<p>With <code>should_export_span=lambda span: True</code>, Langfuse exported every single span including noisy A2A internal spans. Each A2A <code>send_message</code> call generated multiple internal spans from the <code>a2a-python-sdk</code> instrumentation scope (HTTP transport, JSON-RPC serialization, event handling). As the number of agents grew, this made Langfuse traces extremely noisy and hard to debug.</p>
+
+<h3>Solution</h3>
+<p>Use Langfuse's built-in <code>is_default_export_span</code> helper which exports spans only from:</p>
+<ul>
+<li><code>langfuse-sdk</code> scope (our manual <code>start_observation</code> calls &mdash; high-level workflow)</li>
+<li><code>gen_ai.*</code> attribute spans (actual LLM calls)</li>
+<li>Known LLM instrumentors (<code>litellm</code>, <code>openinference.*</code>, <code>langsmith</code>, <code>haystack</code>, <code>agent_framework</code>, etc.)</li>
+</ul>
+<p>This filters out <code>a2a-python-sdk</code>, <code>opentelemetry.instrumentation.httpx</code>, and other infrastructure scopes automatically.</p>
+
+<h3>What's exported vs filtered</h3>
+<table>
+<tr><th>Span Type</th><th>Instrumentation Scope</th><th>Exported?</th></tr>
+<tr><td><code>finsight-query</code> trace</td><td><code>langfuse-sdk</code></td><td>&check;</td></tr>
+<tr><td><code>orchestrator-execute</code></td><td><code>langfuse-sdk</code></td><td>&check;</td></tr>
+<tr><td><code>rag-agent-stream</code></td><td><code>langfuse-sdk</code></td><td>&check;</td></tr>
+<tr><td><code>quant-agent-stream</code></td><td><code>langfuse-sdk</code></td><td>&check;</td></tr>
+<tr><td><code>sentiment-agent-stream</code></td><td><code>langfuse-sdk</code></td><td>&check;</td></tr>
+<tr><td>LLM calls</td><td><code>litellm</code>, <code>openinference.*</code></td><td>&check;</td></tr>
+<tr><td>LangGraph nodes</td><td><code>langfuse-sdk</code> (via CallbackHandler)</td><td>&check;</td></tr>
+<tr><td>A2A <code>send_message</code> internal</td><td><code>a2a-python-sdk</code></td><td>&cross;</td></tr>
+<tr><td>A2A <code>DefaultRequestHandler</code></td><td><code>a2a-python-sdk</code></td><td>&cross;</td></tr>
+<tr><td>HTTPX transport spans</td><td><code>opentelemetry.instrumentation.httpx</code></td><td>&cross;</td></tr>
+</table>
+
+<h3>Tradeoff</h3>
+<p>If you need to <strong>temporarily debug</strong> and see all spans (including A2A internals), switch back to <code>should_export_span=lambda span: True</code>. The default filter is the recommended production setting per <a href="https://github.com/orgs/langfuse/discussions/8366">Langfuse maintainer guidance</a>.</p>
+
+<h2>HF_HUB_OFFLINE Default</h2>
+
+<h3>Problem</h3>
+<p>HuggingFace <code>sentence-transformers</code> and <code>transformers</code> make network calls to <code>huggingface.co</code> at import time to check for model updates, download missing files, and verify cached model integrity. In an air-gapped or offline development environment (or during Docker builds without internet), these checks fail with <code>OSError: Can't load model ...</code> or hang waiting for a timeout. The <code>all-MiniLM-L6-v2</code> model is large enough (~80MB) that re-download on every cold start is both slow and wasteful.</p>
+
+<h3>Solution</h3>
+<p><code>shared/config.py</code> sets <code>os.environ["HF_HUB_OFFLINE"] = "1"</code> at import time, before any HuggingFace code is imported or executed. This tells the <code>huggingface_hub</code> library to skip all network calls &mdash; it assumes models are already cached locally from a prior online run.</p>
+
+<p><strong>Why at the top of <code>config.py</code> instead of in <code>.env</code>?</strong> HuggingFace libraries read <code>HF_HUB_OFFLINE</code> at import time via <code>os.environ.get()</code>. If <code>.env</code> is loaded later (e.g. after the <code>config</code> import chain), the embedding model import happens before the env var is set. Setting it via <code>os.environ.setdefault()</code> at module level guarantees it's in place before any HuggingFace code runs.</p>
+
+<p><strong>Tradeoff</strong>: If a model is missing from the local cache, the error is a hard crash (<code>OSError</code>) instead of an automatic download. Set <code>HF_HUB_OFFLINE=0</code> in <code>.env</code> to re-enable downloads.</p>
+
+<h2>Langfuse Distributed Tracing Across Processes</h2>
+
+<h3>Problem</h3>
+<p>Each agent runs in a separate OS process (uvicorn on its own port). When a sub-agent calls <code>langfuse.start_observation()</code> it creates a brand new root trace &mdash; Langfuse has no way to know that the sub-agent trace belongs inside the orchestrator's trace. This resulted in 4 disconnected traces per query:</p>
+<pre><code>Trace A: orchestrator-execute   [pid: 8001]
+Trace B: rag-agent-stream        [pid: 8002]   &larr; orphan
+Trace C: quant-agent-stream      [pid: 8003]   &larr; orphan
+Trace D: sentiment-agent-stream  [pid: 8004]   &larr; orphan</code></pre>
+
+<h3>Solution</h3>
+<p><strong>Text-based trace context injection via A2A payload:</strong></p>
+<ol>
+<li><strong>Orchestrator</strong> (<code>sub_agent_client.py</code>): Extracts <code>trace_id</code> and <code>parent_span_id</code> from the current Langfuse context via <code>lf.get_current_trace_id()</code> and <code>lf.get_current_observation_id()</code>. Serializes them as a JSON prefix: <code>{"_trace": {"trace_id": "...", "parent_span_id": "..."}}\n&lt;&lt;&lt;TASK&gt;&gt;&gt;\n{task_text}</code>.</li>
+<li><strong>Sub-agents</strong> (<code>executor.py</code>): Extract the prefix via <code>extract_trace_ids(query)</code>, rebuild the <code>trace_context</code> dict, and pass it to <code>langfuse.start_observation(..., trace_context=trace_ctx)</code>. Langfuse uses the <code>trace_id</code> to join the existing trace and <code>parent_span_id</code> to set the parent observation.</li>
+<li><strong>LangGraph CallbackHandler</strong>: Quant agent additionally passes <code>trace_context</code> to <code>CallbackHandler(trace_context=trace_ctx)</code> so all internal graph nodes are linked to the parent trace.</li>
+</ol>
+
+<h3>Why not OpenTelemetry W3C TraceContext headers?</h3>
+<p>The A2A SDK controls the HTTP transport layer. Injecting custom headers would require modifying the SDK client or using httpx event hooks. The text-prefix approach is simpler, already partially implemented, and works reliably across all A2A transports (JSON-RPC, HTTP+JSON).</p>
+
+<h3>Why <code>start_observation()</code> not <code>start_as_current_observation()</code>?</h3>
+<p><code>start_as_current_observation()</code> is a context manager that manages OTel context tokens. In async generators, the context token is created in one async context but the generator yields control to a different context, causing <code>ValueError: Token was created in a different Context</code>. <code>start_observation()</code> creates the span manually without OTel context management, avoiding the conflict. The span's <code>.end()</code> is called in the <code>finally</code> block.</p>
+
+<h3>Result</h3>
+<pre><code>Trace A: finsight-query [ticker=NVDA]
+&boxur;&nbsp; orchestrator-execute
+    &boxur;&nbsp; send_message &rarr; Financial RAG Agent
+    &brvbar;&nbsp;&nbsp; &boxur;&nbsp; rag-agent-stream (child of orchestrator-execute)
+    &boxur;&nbsp; send_message &rarr; Quant Analysis Agent
+    &brvbar;&nbsp;&nbsp; &boxur;&nbsp; quant-agent-stream (child of orchestrator-execute)
+    &brvbar;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; &boxur;&nbsp; fetch_prices (LangGraph node)
+    &brvbar;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; &boxur;&nbsp; compute_metrics
+    &brvbar;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; &boxur;&nbsp; run_dcf / run_stress_test
+    &brvbar;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; &boxur;&nbsp; llm_summary
+    &boxur;&nbsp; send_message &rarr; Sentiment Intelligence Agent
+        &boxur;&nbsp; sentiment-agent-stream (child of orchestrator-execute)</code></pre>
 
 <h2>Date Hallucination</h2>
-<p>Added <code>Today's date: {date.today().isoformat()}</code> to every LLM prompt.</p>
+
+<h3>Problem</h3>
+<p>All LLM prompts lacked temporal context. Since the model's training data cut off before 2026, it treated 2026 filing dates as &ldquo;future-dated anomalies&rdquo; and instructed users to wait for &ldquo;Q1 2024 earnings&rdquo; &mdash; two-year-old data.</p>
+
+<h3>Solution</h3>
+<p>Added <code>Today's date: {date.today().isoformat()}</code> as the first line of every LLM prompt:</p>
+<ul>
+<li><strong>Orchestrator system prompt</strong> &mdash; so it includes the date when constructing sub-agent tasks</li>
+<li><strong>RAG query prompts</strong> &mdash; so the LlamaIndex LLM knows the reference date for financial data</li>
+<li><strong>Quant summary prompt</strong> &mdash; so the LangGraph summary LLM frames analysis in correct temporal context</li>
+<li><strong>Sentiment crew tasks</strong> &mdash; so CrewAI agents know the current date when analyzing news and filings</li>
+</ul>
+
+<h2>SQLite Singleton Connection with Write Lock</h2>
+
+<h3>Why a singleton connection instead of open/close per call?</h3>
+<p>The original <code>get_db()</code> opened a new <code>aiosqlite</code> connection on every function call &mdash; every ticker lookup, portfolio read, memory search, and write created + tore down a connection. Under load, this meant 10&ndash;20 open/close cycles per query across the memory layer.</p>
+<p>SQLite connections are not free: each open acquires a file handle, sets pragmas (WAL, foreign_keys, busy_timeout), and runs schema migration. For a file-backed database, opening a connection also involves a filesystem <code>open()</code> call, which under concurrent access (multiple agents) causes lock contention on the <code>.db</code> file itself &mdash; even for reads.</p>
+<p>The singleton pattern eliminates this entirely: one connection is opened once, WAL mode and pragmas are set once, schema migration runs once. All subsequent calls &mdash; both reads and writes &mdash; reuse the same connection.</p>
+
+<h3>Why a separate write lock instead of relying on SQLite's internal locking?</h3>
+<p>SQLite in WAL mode supports concurrent reads but serializes writes at the OS level (one writer at a time). Without a lock, two concurrent <code>await conn.execute(&quot;INSERT ...&quot;)</code> calls hit <code>SQLITE_BUSY</code> and wait on <code>busy_timeout</code> (5000ms). With 3&ndash;4 agents writing simultaneously (store_brief, portfolio upsert, performance record, memory persist), this caused 5-second stalls.</p>
+<p>The <code>asyncio.Lock</code> (<code>write_lock()</code>) serializes writes at the Python level before they reach SQLite. The wait is near-instant (microseconds) instead of the full <code>busy_timeout</code> (milliseconds). Reads skip the lock entirely &mdash; they just call <code>get_db()</code> and query, no contention.</p>
+
+<h3>Why not connection pooling (multiple connections)?</h3>
+<p>SQLite is a single-writer database regardless of connection count. Multiple connections don't help writes &mdash; they only complicate the code with pool management, checkout/return patterns, and the risk of connection leaks. A single connection with a write lock is the simplest correct solution.</p>
+
+<h3>Why not use <code>sqlite3</code> threading modes?</h3>
+<p><code>aiosqlite</code> is async-first and already handles thread safety by running all operations on a dedicated background thread. The Python-level <code>asyncio.Lock</code> is an additional guard that prevents concurrent callers from queueing multiple writes on the aiosqlite thread &mdash; it's defense in depth, not a workaround for a missing feature.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>One connection, one schema migration, one set of pragmas</li>
+<li>Writes serialized via <code>asyncio.Lock</code> &mdash; no <code>SQLITE_BUSY</code> stalls</li>
+<li>Reads contention-free (WAL mode allows concurrent reads on a single connection)</li>
+<li>284 lines removed vs 304 added across 5 files &mdash; net reduction in connection-management boilerplate</li>
+<li><code>close_db()</code> for clean process shutdown (no dangling connections)</li>
+</ul>
+
+<h2>Token-Bucket Rate Limiter</h2>
+
+<h3>Why a token bucket instead of a fixed-delay sleep?</h3>
+<p>A fixed <code>await asyncio.sleep(0.125)</code> between calls (8/s) would guarantee the rate but wastes 125ms even when no other requests are competing. The token bucket allows <strong>bursts</strong>: 10 consecutive tool calls fire instantly, then the rate smooths to 8/s. This matches real traffic patterns &mdash; a quant analysis query triggers 3&ndash;5 SEC calls in quick succession (ticker map, submissions, filing content), then nothing for 30+ seconds. The burst handles the batch, the rate limit prevents bans.</p>
+
+<h3>Why separate limiters instead of one global rate limiter?</h3>
+<p>Three different APIs with three different rate limits and traffic patterns:</p>
+<table>
+<tr><th>Limiter</th><th>Rate</th><th>Burst</th><th>Applied to</th><th>Why</th></tr>
+<tr><td><code>_sec_limiter</code></td><td>8/s</td><td>10</td><td>5 EDGAR HTTP sites</td><td>SEC published limit is 10 req/s hard cap; 8/s with 10 burst is conservative while allowing filing batches</td></tr>
+<tr><td><code>_yfinance_limiter</code></td><td>4/s</td><td>8</td><td>4 yfinance tools</td><td>Yahoo has no published cap; 4/s avoids 429s that appeared under the old unthrottled pattern</td></tr>
+<tr><td><code>_rss_limiter</code></td><td>2/s</td><td>4</td><td>RSS feeds + Yahoo news fallback</td><td>News is the least latency-sensitive &mdash; cached by TTL, served stale-is-ok</td></tr>
+</table>
+<p>A single global limiter would throttle SEC filing fetches because a news RSS fetch happened at the same instant, even though the two APIs have independent rate limits.</p>
+
+<h3>Why the loop form instead of recursion?</h3>
+<p>The initial plan proposed <code>await asyncio.sleep(1.0 / self.rate); return await self.acquire()</code> &mdash; a recursive call. Under contention (all 5 SEC sites firing simultaneously), this recurses 5+ levels deep, risking <code>RecursionError</code>. The while-loop form is equivalent but iterative &mdash; no stack growth regardless of contention depth.</p>
+
+<h3>Why not <code>asyncio.Semaphore</code> for burst limiting?</h3>
+<p><code>asyncio.Semaphore</code> limits concurrency (how many tasks run simultaneously) but does <strong>not</strong> limit rate (how many requests per second). A semaphore of 4 allows 4 concurrent requests every microsecond &mdash; no rate enforcement. The token bucket enforces both: at most 10 in a burst, and at most 8/s averaged over time.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>Burst handling &mdash; batch filing requests don't trigger rate limiting</li>
+<li>Independent limiters &mdash; SEC congestion doesn't stall news RSS</li>
+<li>Iterative wait &mdash; no RecursionError under contention</li>
+<li>Zero dependencies &mdash; pure stdlib, 30 lines</li>
+<li>All sites protected &mdash; no unthrottled HTTP path to external APIs</li>
+</ul>
+
+<h2>Async TTL Cache with Single-Flight Dedup</h2>
+
+<h3>Why replace the existing <code>_TTLCache</code>?</h3>
+<p>The original <code>_TTLCache</code> used <code>threading.Lock</code> and had no deduplication. Under concurrent access (all three sub-agents calling <code>get_prices(&quot;NVDA&quot;)</code> simultaneously), each call missed the cache independently, producing 3 identical network requests. The new <code>TTLCache</code> is fully async, supports <code>get_or_fetch()</code> with single-flight dedup, and separates cache management from tool logic.</p>
+
+<h3>How single-flight dedup works</h3>
+<p>When 5 concurrent callers call <code>get_or_fetch(&quot;prices:NVDA:1y:1d&quot;, fetch)</code>:</p>
+<ol>
+<li><strong>Callers 1&ndash;5</strong>: All check <code>_data</code> &rarr; miss</li>
+<li><strong>Caller 1</strong>: Acquires lock, re-checks &rarr; still miss, creates <code>asyncio.Future</code>, stores in <code>_inflight</code>, spawns fetch task</li>
+<li><strong>Callers 2&ndash;5</strong>: Queue on lock; each acquires, re-checks &rarr; still miss, but find <code>key in _inflight</code> &rarr; return existing Future</li>
+<li><strong>All 5</strong>: <code>await fut</code> &mdash; all unblock when fetch completes</li>
+</ol>
+<p>Result: 1 network call instead of 5.</p>
+
+<h3>Why <code>asyncio.Future</code> instead of an Event or callback queue?</h3>
+<p><code>asyncio.Future</code> is awaitable by multiple coroutines simultaneously &mdash; all callers <code>await fut</code> and all wake on <code>set_result()</code>. An <code>Event</code> doesn't propagate return values. A callback queue requires manual fan-out.</p>
+
+<h3>Why not <code>@functools.lru_cache</code>?</h3>
+<p><code>lru_cache</code> is synchronous, has no TTL, and doesn't collapse concurrent calls.</p>
+
+<h3>Why keep separate cache instances per tool type?</h3>
+<table>
+<tr><th>Cache</th><th>TTL</th><th>Why</th></tr>
+<tr><td><code>_cache_prices</code></td><td>1 min</td><td>Intraday prices change every trade</td></tr>
+<tr><td><code>_cache_financials</code></td><td>1 hr</td><td>Quarterly data; 24h was unnecessarily long</td></tr>
+<tr><td><code>_cache_news</code></td><td>5 min</td><td>Headlines publish every few minutes</td></tr>
+<tr><td><code>_cache_filing</code></td><td>Permanent (LRU-200)</td><td>SEC filings are immutable once filed</td></tr>
+<tr><td><code>_cache_submissions</code></td><td>6 hr</td><td>Large JSON blobs changing a few times daily</td></tr>
+</table>
+
+<h3>Why <code>get()</code>/<code>set()</code> still exist alongside <code>get_or_fetch()</code>?</h3>
+<p>Some tools need conditional caching. <code>get_news_sentiment</code> only stores results when articles are found &mdash; empty results are not cached. The <code>get()</code>/<code>set()</code> pair gives tools fine-grained control over what gets cached.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>N concurrent callers &rarr; 1 network request (single-flight)</li>
+<li>Fully async &mdash; no blocking calls in async context</li>
+<li>Per-tool TTLs match data lifecycle</li>
+<li>Conditional caching via <code>get()</code>/<code>set()</code></li>
+<li>LRU eviction on <code>max_entries</code> &mdash; memory bounded</li>
+</ul>
+
+<h2>Structured JSON Logging</h2>
+
+<h3>Why JSON in the file handler but plaintext in the terminal?</h3>
+<p>Log aggregators (Loki, CloudWatch, Datadog) ingest JSON natively &mdash; no custom parsers needed. A JSON line <code>{"ts": "...", "level": "INFO", "message": "..."}</code> is immediately queryable by field. The same line as plaintext requires regex to extract fields.</p>
+<p>But JSON is painful to read in a terminal during development &mdash; it takes ~3x the horizontal space and wraps awkwardly. The dual-formatter approach gives both: terminals get plaintext, log files get JSON.</p>
+
+<h3>Why implement a custom <code>JsonFormatter</code> instead of using a library?</h3>
+<p>The <code>python-json-logger</code> library adds a dependency for ~40 lines of custom code. The custom formatter in 30 lines produces the exact payload shape needed, supports structured extras via <code>record.trace_id</code> etc., and serializes tracebacks as <code>exc</code> key.</p>
+
+<h3>Why UTC timestamps instead of local time?</h3>
+<p>Log aggregators operate in UTC internally. Local timestamps require timezone-aware parsing, fragile across DST changes and deployment regions. UTC ISO-8601 is unambiguous, sortable, and natively supported by every log system.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>JSON file logs ingestible without custom parsers</li>
+<li>Plaintext terminals remain readable</li>
+<li>Zero new dependencies (~30 lines of stdlib)</li>
+<li>Structured extras (trace_id, latency_ms) auto-included when present on LogRecord</li>
+<li>Backward compatible &mdash; <code>setup_file_logging(service_name)</code> signature unchanged</li>
+</ul>
+
+<h2>Per-Service Log Levels via Env</h2>
+
+<h3>Why <code>LOG_LEVEL_&lt;SERVICE&gt;</code> instead of a single <code>LOG_LEVEL</code>?</h3>
+<p>A single <code>LOG_LEVEL=DEBUG</code> makes every service chatty — with per-service overrides, you can debug one component at <code>DEBUG</code> while keeping everything else at <code>WARNING</code>, preserving signal-to-noise ratio.</p>
+
+<h3>Why env vars instead of a config file?</h3>
+<p>Log level is an operational concern. Env vars are the twelve-factor standard, trivially overridable per-process in deployment environments (Docker, Kubernetes, supervisor).</p>
+
+<h3>Why make <code>level</code> default <code>None</code> instead of <code>logging.INFO</code>?</h3>
+<p>The old default forced env-resolution boilerplate at every call site. Moving the default to <code>None</code> moves env resolution <em>inside</em> the function. Callers that pass <code>level=</code> explicitly still override env.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>Zero code changes at call sites — old <code>setup_file_logging("orchestrator")</code> just works</li>
+<li>Explicit <code>level=</code> still overrides env</li>
+<li>Environment-controlled — deploy-time config, no code edits</li>
+<li>Flexible — single global level with selective per-service overrides</li>
+</ul>
+
+<h2>Log Sanitization Filter</h2>
+
+<h3>Why a <code>logging.Filter</code> instead of scrubbing at the call site?</h3>
+<p>Call-site scrubbing requires every <code>logger.info("api_key=%s", key)</code> to remember to sanitize — easy to miss, especially in error paths. A <code>logging.Filter</code> is a single injection point guaranteed to run on every log line before it reaches the handler.</p>
+
+<h3>Why not use <code>record.exc_info</code>?</h3>
+<p><code>exc_info</code> is set automatically by the logging framework — it doesn't contain arbitrary user strings. The dangerous paths are <code>record.msg</code> (the format string) and <code>record.args</code> (the arguments injected via <code>%s</code>). Both are scrubbed before the formatter renders the final line.</p>
+
+<h3>Why these specific patterns?</h3>
+<p><code>api_key=</code>, <code>sk-</code>/<code>pk-</code> tokens (OpenAI-style), <code>Bearer</code> authorization headers, and <code>LANGFUSE_*_KEY</code> values cover every known secret type in the codebase. The regex approach avoids false positives on short tokens — <code>sk-</code> patterns require 20+ alphanumeric characters.</p>
+
+<h3>Why is args scrubbing needed separately?</h3>
+<p>Python logging's <code>%</code> formatting happens <em>after</em> the filter runs but <em>before</em> the formatter renders. Scrubbing only <code>record.msg</code> would miss secrets passed as <code>%s</code> arguments in <code>record.args</code>.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>Zero cooperation from callers — attach once, all logs scrubbed</li>
+<li>Both <code>record.msg</code> and <code>record.args</code> are sanitized</li>
+<li>Regex patterns specific enough to avoid false positives</li>
+<li>Attached to both terminal and file handlers — no leak path</li>
+</ul>
+
+<h2>SQLiteTaskStore</h2>
+
+<h3>Why wrap InMemoryTaskStore instead of going straight to SQLite?</h3>
+<p>The A2A <code>TaskStore</code> protocol has four hot-path operations: <code>get</code>, <code>list</code>, <code>save</code>, <code>delete</code>. <code>get</code> and <code>list</code> fire on every A2A request — querying SQLite for every read would add ~1–5ms per call. Wrapping <code>InMemoryTaskStore</code> means reads are O(1) dict lookups, SQLite only on writes and cold-start load.</p>
+
+<h3>Why double-checked locking on load?</h3>
+<p>N concurrent A2A requests arriving simultaneously on a cold server would all attempt to re-populate from SQLite. The <code>asyncio.Lock</code> + double-check pattern ensures exactly one coroutine does the load while others wait.</p>
+
+<h3>Why inline migration instead of a separate system?</h3>
+<p>Alembic is overkill for one SQLite database with 3 versions. Inline <code>CREATE TABLE IF NOT EXISTS</code> in <code>init_db()</code> is idempotent and requires zero tooling.</p>
+
+<h3>Why MessageToJson instead of protobuf binary?</h3>
+<p>JSON storage lets you inspect tasks with any SQLite tool. Protobuf binary would require the <code>.proto</code> definition to decode. Overhead (~200–500 bytes per task) is negligible.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>Fast reads — in-memory dict for hot path, SQLite only on writes</li>
+<li>Cold-start resilience — tasks survive process restart</li>
+<li>Thread-safe — double-checked async lock on lazy load</li>
+<li>Write contention serialized via existing <code>write_lock()</code></li>
+<li>Zero-dependency migration — inline <code>CREATE TABLE IF NOT EXISTS</code></li>
+<li>Human-readable payload storage (JSON, not protobuf binary)</li>
+</ul>
+
+<h2>Memory Pruning / Retention Policy</h2>
+
+<h3>Why prune on startup instead of a schedule?</h3>
+<p>Startup is the only guaranteed execution point — if the process hasn't started, no scheduler runs. The operation is wrapped in <code>try/except</code> so it never blocks the server from starting. A background schedule adds lifecycle complexity; startup pruning is simpler and sufficient for this scale.</p>
+
+<h3>Why no VACUUM?</h3>
+<p><code>VACUUM</code> rewrites the entire SQLite file, blocking all concurrent access for potentially seconds. During startup the orchestrator is initializing connections and accepting health checks — a multi-second lock would cause timeouts. Deleted rows leave free pages reused by future inserts.</p>
+
+<h3>Why prune three tables?</h3>
+<p><code>ticker_briefs</code>, <code>recommendation_records</code>, and <code>memory_entries</code> all grow independently. Pruning all three keeps the entire DB bounded. Old conversation history degrades <code>load_memory</code> usefulness anyway.</p>
+
+<h3>Why <code>created_at</code> not <code>updated_at</code>?</h3>
+<p><code>created_at</code> is immutable after insert. <code>updated_at</code> could theoretically change, creating edge cases where a recent update preserves an objectively old record.</p>
+
+<h3>Why env var instead of a config constant?</h3>
+<p>Retention policy is an operational decision. An env var lets different deployments (dev: 7 days, staging: 30, prod: 90) configure without code changes.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>Startup-triggered — guaranteed execution before any work</li>
+<li>Best-effort — exception-safe, never blocks server start</li>
+<li>No VACUUM — avoids startup lock contention</li>
+<li>Prunes all three memory tables — bounded DB growth</li>
+<li>Configurable — env var with 90-day default</li>
+</ul>
+
+<h2>MCP Client Singleton with Auto-Reconnect</h2>
+
+<h3>Why a process-wide singleton instead of per-request?</h3>
+<p>Each <code>MCPClient.connect_all()</code> performs an SSE handshake taking ~100&ndash;500ms. Over 4 agents &times; N requests per analysis, this adds 1&ndash;2 seconds per user query. A singleton means one handshake at cold start; all subsequent calls reuse the established SSE stream.</p>
+
+<h3>Why double-checked locking?</h3>
+<p>The first check (unlocked) is a fast-path O(1) return. The locked check handles N concurrent first-callers — only one creates the client. Without the second check, N callers create N clients. Pattern:</p>
+<pre>if connected: return
+async with lock:
+    if not connected: create + connect
+    return</pre>
+
+<h3>Why reconnect on <code>ConnectionError</code>+<code>EOFError</code> only?</h3>
+<p>Narrow exception list ensures only transient connection issues trigger reconnect. Reconnecting on every exception type would mask programming bugs.</p>
+
+<h3>Why retry limit of 1?</h3>
+<p>If the MCP server is down, unlimited retries hang every tool call. One reconnect handles the common transient-blip case. After 2 failures, error propagates for application-level retry.</p>
+
+<h3>Why <code>atexit</code> instead of async cleanup?</h3>
+<p><code>atexit</code> is synchronous — uses a temporary event loop for disconnect. This is best-effort; if the main loop is already closed, the hook won't block process exit.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>Eliminates per-request SSE overhead (~100&ndash;500ms saved per A2A call)</li>
+<li>Double-checked lock — safe for N concurrent first callers</li>
+<li>Auto-reconnect on transient failures (narrow exception set)</li>
+<li>Single retry — fails fast on persistent outages</li>
+<li><code>atexit</code> hook — best-effort clean shutdown</li>
+<li>&minus;131 lines of boilerplate across 4 executor files</li>
+</ul>
+
+<h3>Why remove the fail-fast first-attempt timeout?</h3>
+<p><strong>Original design</strong>: The MCP client's <code>call_tool_by_name</code> used <code>self.timeout / 3</code> on the first retry attempt to fail fast (5s for a 15s timeout), then fell back to the full timeout on subsequent attempts. The rationale was: if the first attempt fails quickly, the total latency across all retries is bounded.</p>
+<p><strong>Problem</strong>: yfinance HTTP requests have natural latency variance &mdash; a call that takes 4 seconds one time might take 6 seconds the next (rate limiter queue, Yahoo backend load, network jitter). Under the /3 logic, a first attempt that took 5.5s would timeout (5s threshold), triggering a retry. The retry using the full 15s would then succeed &mdash; but the total latency was 5.5s + 6s = 11.5s instead of just 6s. The fail-fast pattern <em>added</em> latency by creating false-positive timeouts on naturally variable endpoints.</p>
+<p><strong>Fix</strong>: All retry attempts now use the full configured timeout. The exponential backoff still provides fast retries for genuine failures (connection errors, 503s). The timeout only fires when a request truly hangs beyond the configured limit, not when it's merely slower than average.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>No false-positive timeouts from normal latency variance</li>
+<li>Total latency per retry chain is <code>timeout &times; max_retries</code> worst-case (was <code>timeout/3 + timeout &times; (max_retries-1)</code>)</li>
+<li>Exponential backoff still provides fast retries on genuine failures</li>
+<li>Simplifies mental model &mdash; one timeout value, not context-dependent thresholds</li>
+</ul>
+
+<h2>Lazy OpenTelemetry Instrumentation</h2>
+
+<h3>Why lazy instead of module-level instrument()?</h3>
+<p>Module-level <code>*Instrumentor().instrument()</code> fires at import time — a pytest import triggers OTel span processors, exporter threads, and OTLP connections even when no tracing is needed. This breaks test isolation. Moving to <code>init_instrumentation()</code> with deferred imports means test code can import any module without side effects.</p>
+
+<h3>Why a set guard instead of a bool?</h3>
+<p>A set supports multiple agent types in the same process (useful for tests that import multiple server modules). Each type is instrumented exactly once.</p>
+
+<h3>Why not use <code>OTEL_PYTHON_DISABLED_INSTRUMENTATIONS</code>?</h3>
+<p>OTel's env var skips <code>instrument()</code> but doesn't defer imports — the instrumentor classes are still loaded at module level. The actual fix for test isolation is keeping imports deferred.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>Test imports have zero OTel side-effects</li>
+<li>Deferred imports — instrumentor packages loaded only when needed</li>
+<li>Set-based guard — idempotent across multiple calls</li>
+<li>Per-agent-type instrumentation — each server gets only what it needs</li>
+<li>Backward compatible — all traces still appear in Langfuse</li>
+</ul>
+
+<h2>Correlation-ID Propagation via ContextVar</h2>
+
+<h3>Why ContextVar instead of explicit parameter passing?</h3>
+<p>The trace_id is needed in dozens of locations across executors, MCP handlers, and log formatters. Passing it explicitly would require hundreds of signature changes. A <code>contextvars.ContextVar</code> makes it implicitly available to any code in the same async context — the exact use case it was designed for.</p>
+
+<h3>Why both trace_id and session_id?</h3>
+<p><code>trace_id</code> correlates a single user query across all sub-agents and MCP calls. <code>session_id</code> groups log lines by the ADK conversation session (multiple turns).</p>
+
+<h3>Why fallback in JsonFormatter?</h3>
+<p>Two-tier (<code>record.trace_id</code> → <code>current_trace_id.get()</code>) supports both explicit <code>extra=</code> on specific log lines and automatic correlation for all log lines emitted after ContextVar is set.</p>
+
+<h3>Why generic_executor sets both IDs?</h3>
+<p>It's the single entry point for all A2A requests to any sub-agent. Setting ContextVars there guarantees every sub-agent gets automatic correlation without each implementing its own logic.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>Zero parameter changes — trace_id flows implicitly via ContextVar</li>
+<li>Two-tier fallback — explicit <code>extra=</code> still overrides ContextVar</li>
+<li>generic_executor sets both IDs — single coverage point for all sub-agents</li>
+<li>extract_trace_ids() sets ContextVar — coverage for orchestrator path</li>
+<li>MCP tool log lines include structured <code>tool</code> and <code>ticker</code> fields</li>
+</ul>
+
+<h2>Deduplicate Ticker Validation</h2>
+
+<h3>Why shared functions instead of inheritance?</h3>
+<p>The 4 executors have different base classes (ADK AgentExecutor, LlamaIndex BaseAgent, LangGraph BaseAgent, CrewAI BaseAgent). Shared functions in <code>shared/ticker_utils.py</code> are pure composition — no inheritance or mixins needed.</p>
+
+<h3>Why return (True, ticker, "") on MCP failure?</h3>
+<p>Optimistic degrade — if MCP is down, the system still tries with a regex-based ticker guess rather than failing. Only the orchestrator's input guardrail is strict; other agents can produce useful responses without validated ticker data.</p>
+
+<h3>Why both <code>validate_ticker()</code> and <code>validate_ticker_via_mcp()</code>?</h3>
+<p>The <code>_via_mcp</code> variant is the low-level function for callers managing their own MCP lifecycle. The high-level wrapper handles MCP singleton internally. Both exist; callers choose.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>~80 lines of copy-paste removed from 4 executors</li>
+<li>Shared functions — fix once, run everywhere</li>
+<li>Optimistic degrade on MCP failure — (True, ticker, "") instead of crashing</li>
+<li>Low-level _via_mcp variants still available</li>
+</ul>
+
+<h2>Unified <code>@logged</code> Timing Decorator</h2>
+
+<h3>Why a decorator instead of explicit <code>time.monotonic()</code> calls?</h3>
+<p>Every hot path needs the same pattern: save t0, run, compute latency, log with <code>extra={"latency_ms": ...}</code>. A decorator eliminates boilerplate and ensures consistent format — all Exit lines have the same structure and structured field.</p>
+
+<h3>Why not decorate async generators?</h3>
+<p>Wrapping an async generator with a decorator that calls <code>await fn()</code> consumes it immediately. The inner <code>_build_response()</code> (a plain <code>async def</code>) is decorated instead.</p>
+
+<h3>Why <code>__qualname__</code> instead of <code>__name__</code>?</h3>
+<p><code>RAGAgent._build_response</code> disambiguates from <code>QuantAgent._build_response</code> without manual labeling.</p>
+
+<h3>Why Enter/Exit/Fail?</h3>
+<p>Three states cover the full lifecycle. Fail captures exception + latency before propagation — useful info lost in a normal traceback.</p>
+
+<h3>Why not capture <code>CancelledError</code>?</h3>
+<p>Cancellation noise should propagate immediately without logging. The <code>except Exception</code> clause intentionally excludes <code>BaseException</code> subclasses.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>Consistent Enter/Exit/Fail format across all hot paths</li>
+<li>Structured <code>latency_ms</code> field in JSON file logs</li>
+<li><code>grep "Exit" logs/*.log</code> → full-system latency report</li>
+<li><code>__qualname__</code> disambiguation for same-named methods</li>
+<li><code>CancelledError</code> and <code>KeyboardInterrupt</code> pass through unlogged</li>
+</ul>
+
+<h2>Cancellation Support + Per-Agent Timeouts</h2>
+
+<h3>Why store <code>asyncio.current_task()</code> instead of <code>all_tasks()</code>?</h3>
+<p><code>all_tasks()</code> includes unrelated background tasks (MCP keepalive, Langfuse flush). <code>current_task()</code> guarantees cancelling exactly the right task.</p>
+
+<h3>Why <code>wait_for()</code> with a timeout map instead of <code>asyncio.timeout()</code>?</h3>
+<p><code>asyncio.timeout()</code> is 3.11+ only. <code>wait_for()</code> is cross-version compatible. The timeout map uses substring matching so "rag" / "quant" / "sentiment" agent names automatically get the right timeout.</p>
+
+<h3>Why move eval-trace writes to <code>finally</code>?</h3>
+<p>Before, timeout exceptions jumped past the trace write. Moving to <code>finally</code> ensures traces are persisted even on timeout or cancellation.</p>
+
+<h3>Why TimeoutError returns JSON instead of raising?</h3>
+<p>A JSON payload <code>{"error": "agent_timeout", ...}</code> lets the LLM incorporate the timeout into its final response. Raising would propagate through A2A and produce a generic error.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li><code>cancel()</code> works on both executors — replaces <code>NotImplementedError</code></li>
+<li>Per-agent timeouts — one slow agent doesn't stall the pipeline</li>
+<li>Clean timeout payload — JSON instead of crash</li>
+<li>Eval traces persisted even on timeout/cancellation</li>
+<li>Backward compatible — existing <code>A2A_TIMEOUT</code> still applies as fallback</li>
+</ul>
 
 <h2>Persistent Memory Layer</h2>
-<p><code>DatabaseSessionService</code> for persistent sessions. <code>SQLiteMemoryService</code> for cross-session search. BM25 + embeddings hybrid search. Dual persistence path (<code>after_agent_callback</code> + <code>_persist_to_memory</code>).</p>
+
+<h3>Problem</h3>
+<p>ADK's default <code>InMemoryMemoryService</code> loses all conversation history on server restart. The <code>DatabaseSessionService</code> persists sessions to SQLite but doesn't expose them for cross-session search. The <code>load_memory</code> tool returned empty results because:</p>
+<ol>
+<li><code>adk web</code> uses <code>InMemoryMemoryService</code> (in-memory, lost on restart)</li>
+<li><code>InMemorySessionService.get_session()</code> returns a <code>Session</code> with an empty <code>events</code> list &mdash; events are stored in the DB but never loaded back into the session object</li>
+<li>Our initial <code>SQLiteMemoryService.add_session_to_memory(session)</code> iterated over <code>session.events</code>, which was always empty</li>
+</ol>
+
+<h3>Solution</h3>
+<p><strong>Standard ADK pattern</strong>: <code>run_async()</code> &rarr; <code>get_session()</code> &rarr; <code>add_session_to_memory(session)</code></p>
+<p>The <code>DatabaseSessionService.get_session()</code> loads events from the database when called after <code>run_async()</code> completes. We collect events during <code>run_async()</code> as a safety net, then use the standard pattern with fallback:</p>
+<pre><code>session = await self._runner.session_service.get_session(...)
+if session and session.events:
+    await self._runner.memory_service.add_session_to_memory(session)
+else:
+    # Fallback: use events collected during run_async
+    await self._runner.memory_service.add_events_to_memory(events=collected_events)</code></pre>
+
+<h3>Hybrid Search: BM25 + Embeddings</h3>
+<p>Instead of Mem0 (requires external OpenAI API), we implemented local hybrid search:</p>
+<ol>
+<li><strong>BM25 keyword scoring</strong> (<code>rank_bm25</code>) &mdash; exact term matching with TF-IDF weighting</li>
+<li><strong>Semantic similarity</strong> (<code>sentence-transformers/all-MiniLM-L6-v2</code>) &mdash; already in dependencies, runs locally</li>
+<li><strong>RRF fusion</strong> &mdash; combines both rankings, handles cases where one method fails</li>
+</ol>
+<p>This gives Mem0-like search quality without external API dependencies or per-query latency.</p>
+
+<h3>Schema Design</h3>
+<ul>
+<li><code>search_text</code> column added to <code>memory_entries</code> &mdash; pre-extracted plain text for fast BM25 scoring</li>
+<li>Auto-migration via <code>ALTER TABLE</code> &mdash; existing databases get the column on startup</li>
+<li><code>TickerMemory</code>, <code>PortfolioStore</code>, <code>PerformanceTracker</code> store structured data separately from conversation events</li>
+</ul>
+
+<h3>adk web vs main.py</h3>
+<p><code>adk web</code> creates its own runner with <code>InMemoryMemoryService</code> (default). Our <code>main.py</code> uses <code>SQLiteMemoryService</code> with BM25 + embedding search. Both work with our <code>_add_events_to_memory</code> implementation &mdash; the standard ADK pattern is compatible with any <code>MemoryService</code>.</p>
+<p>For production use with <code>adk web</code>, configure a custom memory service via <code>--memory-service-uri finsight://</code>.</p>
+
+<h3><code>load_memory</code> Signature Mismatch Fix (v1.14)</h3>
+<p>The <code>load_memory</code> tool returned empty results even after sessions were persisted. Root cause: ADK's <code>CallbackContext.add_events_to_memory()</code> calls with signature <code>(events=..., custom_metadata=None)</code>, but our <code>SQLiteMemoryService.add_events_to_memory()</code> required <code>(app_name=..., user_id=..., events=..., session_id=...)</code>.</p>
+<p><strong>Fix</strong>: Made <code>app_name</code> and <code>user_id</code> optional with defaults (<code>"finsight"</code> and <code>"default_user"</code>). When called via the callback, user_id, session_id, and app_name are extracted from <code>custom_metadata</code>.</p>
+<p><strong>Dual persistence</strong>: Events are persisted via two paths:</p>
+<ol>
+<li><strong><code>after_agent_callback</code></strong> &mdash; invoked by ADK after each agent turn (works for <code>adk web</code> UI)</li>
+<li><strong><code>_persist_to_memory</code></strong> &mdash; called directly in <code>agent_executor.py</code> after response processing (works for A2A requests)</li>
+</ol>
+<p>This ensures memory works regardless of invocation path.</p>
+
+<h2>Data-Driven DCF Assumptions</h2>
+
+<h3>Why replace the hardcoded 8% WACC with data-driven computation?</h3>
+<p>The original DCF model assumed a fixed 8% WACC for all tickers. For a high-beta tech stock (AAPL, beta=1.2), CAPM gives cost of equity &approx; 4.3% + 1.2 &times; 5.5% = 10.9% &mdash; 36% higher than the fixed assumption, overvaluing the stock. For a low-beta utility (DUK, beta=0.5), CAPM gives 4.3% + 0.5 &times; 5.5% = 7.05% &mdash; 12% lower, undervaluing it. A single WACC for all tickers systematically biases DCF outputs.</p>
+
+<h3>How is WACC now computed?</h3>
+<p>Three-step process in <code>dcf_valuation_node()</code> (<code>agent_3_langgraph/nodes.py:737</code>):</p>
+<ol>
+<li><strong>Cost of equity (CAPM)</strong>: <code>risk_free (4.3%) + beta &times; equity_premium (5.5%)</code>. Beta is taken from the computed metrics (yfinance 60-month), fallback to 1.0 if unavailable.</li>
+<li><strong>After-tax cost of debt</strong>: <code>interest_expense / total_debt &times; (1 - tax_rate)</code>, with fallback to 4%. Total debt is <code>longTermDebt + shortTermDebt</code> from latest financials.</li>
+<li><strong>WACC</strong>: Weighted average by market cap and total debt, clamped to [6%, 18%]. <code>wacc = (E/(E+D)) &times; coe + (D/(E+D)) &times; cod_at</code>. The clamp prevents degenerate values from extreme capital structures (e.g., a company with near-zero debt doesn't get a 2% WACC).</li>
+</ol>
+
+<h3>How is the growth rate determined?</h3>
+<p>Previously fixed at a single value. Now computed as:</p>
+<ul>
+<li><strong>Base growth</strong>: Blend of <code>revenueGrowth</code> (60%) and <code>earningsGrowth</code> (40%) from yfinance fundamentals</li>
+<li><strong>Bounds</strong>: Clamped to [2%, 25%] &mdash; a 2% floor reflects long-term GDP trend, 25% ceiling prevents unrealistic perpetual growth</li>
+<li><strong>Fallback</strong>: 8% if neither growth metric is available (same as the old hardcoded value)</li>
+<li><strong>Terminal growth</strong>: <code>min(3%, wacc - 2%)</code> &mdash; prevents terminal value from exceeding WACC (which would make terminal value infinite)</li>
+</ul>
+
+<h3>Why a tapered projection instead of a single-stage model?</h3>
+<p>A 2-stage DCF (high growth &rarr; terminal) produces abrupt jumps in the projected FCF. The 5-year tapered model linearly fades the initial growth rate toward the terminal rate over years 3&ndash;5, producing smoother valuations. The terminal value uses the Gordon Growth Model discounted to present value.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; Per-ticker WACC &mdash; beta and capital structure influence discount rate</li>
+<li>&check; Data-driven growth &mdash; revenue/earnings growth sets projections, not a constant</li>
+<li>&check; Bounded output &mdash; WACC clamped [6%, 18%], growth clamped [2%, 25%]</li>
+<li>&check; Smooth projection &mdash; tapered fade avoids GGM discontinuity</li>
+<li>&check; De facto backward compatible &mdash; fallback chain defaults to 8%/3% when data missing</li>
+</ul>
+
+<h2>Parallel Fan-Out Graph Topology</h2>
+
+<h3>Why parallel fan-out instead of a sequential chain?</h3>
+<p>The original Quant graph was largely sequential: <code>fetch_prices &rarr; compute_metrics &rarr; DCF/stress &rarr; format_output</code>. Price fetching and fundamentals fetching were sequential, adding ~3&ndash;5s per call. The revised graph fans out from START into 5 parallel branches:</p>
+<pre><code>START &rarr; fetch_prices &rarr; compute_base_metrics &rarr; [volatility gate] &rarr; DCF/stress
+                       &rarr; technical_analysis
+       &rarr; fetch_fundamentals &rarr; peer_comparison
+                               &rarr; analyst_positioning
+       &rarr; options_flow
+       &rarr; insider_signals</code></pre>
+<p>All paths converge at <code>format_output</code> &rarr; <code>llm_summary</code>. Since the branches are independent (prices don't depend on fundamentals, technicals don't depend on DCF), there's no reason to serialize them. <code>LangGraph</code> supports multiple outgoing edges from a node naturally &mdash; no special parallel construct needed.</p>
+
+<h3>Why not merge <code>fetch_prices</code> and <code>fetch_fundamentals</code> into one node?</h3>
+<p>They call different MCP tools with different cache profiles and error characteristics. <code>fetch_prices</code> uses <code>get_prices</code> (TTL-cached at 1 min) and can fail independently of <code>fetch_fundamentals</code> (TTL-cached at 1 hr). A single node would couple their lifetimes &mdash; if fundamentals data fails, prices are also lost, even though price-only analysis (volatility, Sharpe, technicals) is still useful.</p>
+
+<h3>Why a volatility gate instead of always computing both DCF and stress test?</h3>
+<p>DCF is meaningless for extremely volatile stocks &mdash; the discount rate uncertainty swamps the valuation. The 35% annual-vol threshold gates to stress test only, saving the ~1&ndash;2s DCF computation and avoiding a meaningless output. The <code>dcf_error</code> field is set in <code>compute_metrics_node</code> <em>before</em> the routing decision, so callers see &ldquo;DCF skipped: volatility exceeded 35%&rdquo; regardless of which path is taken.</p>
+
+<h3>Why add options_flow and insider_signals as separate branches?</h3>
+<p>These were previously not computed at all (no data source). Adding them as parallel branches from START means they run concurrently with prices/fundamentals with zero added latency (assuming no MCP bottleneck). Their data is incorporated at <code>format_output</code> through a weighted signal aggregation alongside the risk/DCF/fundamentals/technicals scores.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; 5 parallel branches &mdash; independent work streams don't block each other</li>
+<li>&check; Volatility-gated DCF &mdash; saves compute when valuation would be meaningless</li>
+<li>&check; No node coupling &mdash; price and fundamentals failures are isolated</li>
+<li>&check; Zero added latency &mdash; new branches (options, insider) run concurrently</li>
+<li>&check; All paths converge at format_output &mdash; single enrichment point</li>
+</ul>
+
+<hr>
+
+<h2>Quant Graph Fan-In Resolution: Diamond Dependency, Reducers &amp; Passthrough Keys</h2>
+
+<h3>Problem</h3>
+<p>The parallel fan-out graph had a subtle topology bug. <code>fetch_fundamentals</code> fed into three downstream nodes: <code>peer_comparison</code>, <code>analyst_positioning</code>, and a direct edge to <code>format_output</code>. This created a <strong>diamond dependency</strong> &mdash; <code>format_output</code> had two indirect predecessors via <code>peer_comparison</code>/<code>analyst_positioning</code> AND a direct edge from <code>fetch_fundamentals</code>. LangGraph scheduled <code>format_output</code> twice in the same checkpoint step when the two intermediate nodes completed concurrently. Each duplicate run wrote every state key, triggering <code>INVALID_CONCURRENT_GRAPH_UPDATE</code> at whichever key was updated first &mdash; typically <code>positioning</code> or <code>metrics</code>.</p>
+
+<h3>Solution</h3>
+<p>Three-part fix:</p>
+<ol>
+<li><strong>Remove diamond dependency</strong> (<code>agent_3_langgraph/graph.py:39</code>): Deleted <code>builder.add_edge(&quot;fetch_fundamentals&quot;, &quot;format_output&quot;)</code>. Fundamentals data flows through <code>peer_comparison</code> and <code>analyst_positioning</code> into shared state &mdash; <code>format_output</code> reads it from state, not from a direct edge. <code>format_output</code> now has exactly 5 clean predecessors and runs exactly once per invocation.</li>
+<li><strong>Add Annotated reducers for concurrent writes</strong> (<code>agent_3_langgraph/state.py:6-22</code>): Three state keys are written by multiple nodes in the same step, so they needed reducers even without the diamond:
+<ul>
+<li><code>metrics</code> &rarr; <code>_merge_dict</code> (merges dicts from <code>compute_metrics</code> and <code>format_output</code>, second wins on key collision)</li>
+<li><code>stress_test_result</code> &rarr; <code>_last_nonnull</code> (last non-null value wins &mdash; <code>stress_test_node</code> writes real data, <code>format_output</code>'s initial write is <code>None</code>)</li>
+<li><code>dcf_error</code> &rarr; <code>_last_nonnull</code></li>
+<li><code>reasoning</code> &rarr; <code>_last_str</code> (last non-empty string wins, then <code>llm_summary_node</code> overwrites)</li>
+<li><code>recommendation</code> &rarr; <code>_last_str</code> (idempotent &mdash; both runs produce same BUY/HOLD/SELL)</li>
+<li><code>monte_carlo</code> &rarr; <code>_last_nonnull</code></li>
+</ul>
+</li>
+<li><strong>Remove passthrough keys from format_output</strong> (<code>agent_3_langgraph/nodes.py</code>): <code>format_output_node</code> was returning copies of state keys (<code>positioning</code>, <code>dcf_valuation</code>, <code>correlation_matrix</code>, <code>fundamentals</code>, <code>technicals</code>, <code>peer_comparison</code>, <code>options_signals</code>, <code>insider_signals</code>) that other nodes already wrote. Even with reducers, writing every key from <code>format_output</code> is wasteful and confusing &mdash; the node should only emit what it computes: <code>recommendation</code>, <code>reasoning</code>, <code>metrics</code> (with signals/confidence), and <code>stress_test_result</code>. Full state from <code>ainvoke()</code> still carries every key via the owning nodes.</li>
+</ol>
+
+<h3>Why not use LangGraph's built-in fan-in handling?</h3>
+<p>LangGraph handles fan-in naturally &mdash; multiple predecessors can converge on a single node. The problem wasn't fan-in by itself but the <em>diamond</em>: <code>format_output</code> being reachable via two different path lengths from <code>fetch_fundamentals</code>. LangGraph triggers the node twice when its predecessors complete in different checkpoint steps (or in the same step via separate schedule entries). The reducers would have caught the symptom (<code>INVALID_CONCURRENT_GRAPH_UPDATE</code>) but the diamond removal fixes the root cause.</p>
+
+<h3>Why keep the reducers after fixing the diamond?</h3>
+<p>The reducers are still needed for the remaining concurrent writes &mdash; <code>metrics</code> is written by <code>compute_metrics</code> AND <code>format_output</code> in the same step, <code>stress_test_result</code> by <code>stress_test</code> AND <code>format_output</code>, and <code>dcf_error</code> by <code>compute_metrics</code> AND <code>dcf_valuation</code>. These are not diamond-induced duplicates but legitimate multi-writer keys. The reducers act as a safety net for any future topology changes that might introduce similar conflicts.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; Root cause fixed &mdash; diamond edge removed, <code>format_output</code> runs once</li>
+<li>&check; Reducers handle legitimate multi-writer keys</li>
+<li>&check; Passthrough keys removed &mdash; <code>format_output</code> only emits what it computes</li>
+<li>&check; Full state still accessible &mdash; owning nodes write their keys before fan-in</li>
+<li>&check; Safety net &mdash; reducers prevent regression from future topology changes</li>
+</ul>
+
+<hr>
+
+<h2>Parallel News Ingestion with SEC Filings</h2>
+
+<h3>Why fire news and SEC ingestion as concurrent background tasks?</h3>
+<p>The original RAG agent fetched SEC filings first (<code>_ensure_ingested</code>), then queried. News was fetched on-demand via a separate MCP tool call inside the query path. This meant:</p>
+<ol>
+<li>News ingestion added 1&ndash;3s latency to every query that mentioned &ldquo;news&rdquo; or &ldquo;sentiment&rdquo;</li>
+<li>News and SEC ingestion were sequential (~3s + ~8s = ~11s total cold-start)</li>
+<li>No persistent news index &mdash; news was re-fetched from MCP each time (no dedup cache)</li>
+</ol>
+
+<h3>Solution</h3>
+<p><code>query()</code> in <code>agent_2_llamaindex/executor.py:162</code> now fires both ingestions as <code>asyncio.create_task()</code> without awaiting:</p>
+<pre><code>asyncio.create_task(self._ensure_ingested(ticker))
+asyncio.create_task(self._ensure_news_ingested(ticker))
+return await self.index.query(ticker, query_text)</code></pre>
+<p>The ChromaDB query runs immediately against whatever is already indexed. If a filing or news article was ingested in a prior query, it's found. If the ticker has never been queried before, the ingestion tasks complete in the background and the current query returns results from the first ingestion that finishes (or falls back gracefully).</p>
+
+<h3>Why a separate dedup key for news?</h3>
+<p>SEC filings use <code>edgar_url</code> as the dedup key &mdash; immutable and canonical for SEC documents. News articles don't have an EDGAR URL. Using <code>news_{ticker}</code> as the daily dedup key in <code>_last_ingestion</code> ensures news is re-fetched at most once per day per ticker, regardless of how many times the ticker is queried. The same daily-dedup pattern as <code>_ensure_ingested</code> but with a different key namespace.</p>
+
+<h3>Why separate ChromaDB collections for news vs filings?</h3>
+<p>Different retrieval characteristics: news queries want recency (temporal decay matters), filing queries want relevance (semantic similarity matters). A single collection would mix the two, making it impossible to apply different reranking strategies. The <code>_classify_query_intent</code> function selects which collections to search based on query keywords, and the <code>_hybrid_score</code> blends vector (0.6), keyword (0.2), and temporal decay (0.2) differently per collection.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; Zero added latency &mdash; ingestion is fire-and-forget, query uses existing index</li>
+<li>&check; Parallel cold-start &mdash; news and filings ingest concurrently (~8s total vs ~11s)</li>
+<li>&check; Daily dedup per ticker &mdash; <code>news_{ticker}</code> key prevents redundant fetches</li>
+<li>&check; Separate collections &mdash; per-type retrieval strategies</li>
+<li>&check; Graceful degradation &mdash; query returns best available data</li>
+</ul>
+
+<h2>Multi-Collection Query Routing</h2>
+
+<h3>Why keyword-based intent classification instead of RouterQueryEngine?</h3>
+<p>LlamaIndex's <code>RouterQueryEngine</code> uses an LLM call to decide which tool/index to route to. For every RAG query, this adds ~2&ndash;5s of LLM inference time and ~500&ndash;2000 tokens, with the risk of the LLM choosing the wrong collection (e.g., routing an earnings question to general SEC filings). A keyword-based <code>_classify_query_intent()</code> in <code>index_manager.py:68</code> completes in microseconds with deterministic results.</p>
+<p>The classifier checks the query text for keyword groups:</p>
+<ul>
+<li><code>news</code>, <code>sentiment</code>, <code>headline</code>, <code>breaking</code>, etc. &rarr; include <code>&ldquo;news&rdquo;</code> collection</li>
+<li><code>earnings</code>, <code>revenue</code>, <code>guidance</code>, <code>eps</code>, <code>beat</code>, <code>miss</code> &rarr; include <code>&ldquo;earnings&rdquo;</code> collection</li>
+<li><code>analyze</code>, <code>overview</code>, <code>outlook</code>, <code>recommend</code>, <code>should I</code> &rarr; search ALL collections</li>
+<li>Default (pure financial analysis queries): search <code>&ldquo;sec_filings&rdquo;</code> only</li>
+</ul>
+
+<h3>Why score-sorted dedup instead of top-k per collection?</h3>
+<p>If each collection returns top-5 nodes and they overlap, the final set may have duplicates. The merge-dedup pipeline: collect all nodes from all selected collections &rarr; hybrid re-score each node &rarr; sort by score descending &rarr; deduplicate by content hash (first 200 chars) &rarr; truncate to top-5. This guarantees:</p>
+<ol>
+<li>The best-matching nodes win regardless of source collection</li>
+<li>No duplicate content reaches the LLM (which would waste context window)</li>
+<li>A node from a low-priority collection can outrank a weak match from the primary one</li>
+</ol>
+
+<h3>Why a 3-factor hybrid score?</h3>
+<p>A pure vector score favors semantically similar but potentially old content. Adding keyword overlap (exact term matching) ensures query terms like &ldquo;Q3 2025 revenue&rdquo; surface documents with those exact phrases. Adding temporal decay (exponential, &lambda;=0.004, year-old &approx; 0.23) favors recent news/earnings without completely excluding old filings. The weighted blend (0.6 vector + 0.2 keyword + 0.2 temporal) is tuned to balance semantic relevance with recency for financial data, where both matter.</p>
+
+<h3>Why not use LlamaIndex's built-in retriever fusion?</h3>
+<p><code>RetrieverQueryEngine</code> fusion expects all retrievers to use the same index type and similarity metric. Our collections are independent ChromaDB instances with different embedding profiles (different document types require different chunking strategies). The custom pipeline gives full control over per-collection retrieval parameters (top-k per collection, hybrid scoring weights, dedup strategy) without fighting the framework's assumptions.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; Deterministic routing &mdash; no LLM cost, no latency, no hallucinated choices</li>
+<li>&check; Microsecond classification &mdash; ~500&times; faster than RouterQueryEngine</li>
+<li>&check; Score-sorted dedup &mdash; best content wins, duplicates eliminated</li>
+<li>&check; 3-factor hybrid score &mdash; semantic + keyword + temporal = financial-grade ranking</li>
+<li>&check; Framework-agnostic &mdash; works with any vector store, not just LlamaIndex</li>
+</ul>
+
+<h2>Orchestrator Parallel Dispatch via System Prompt</h2>
+
+<h3>Why change the system prompt instead of adding code-level dispatch logic?</h3>
+<p>Two options existed for parallel agent dispatch:</p>
+<ul>
+<li><strong>Option A (system prompt)</strong>: Instruct the LLM in <code>_STATIC_PREAMBLE</code> to emit all <code>send_message</code> calls in a single assistant turn. Qwen3-30B-A3B natively supports multiple tool calls in one response &mdash; the instruction simply unlocks existing capability.</li>
+<li><strong>Option B (deterministic extraction)</strong>: A Python-side shim that extracts tickers from user input and fires all sub-agent A2A calls simultaneously, bypassing the LLM for routing. ~5h implementation, adds ticker-extraction false-negative risk.</li>
+</ul>
+<p>Option A was chosen (implemented in <code>agent_1_adk/agent.py:184-189</code>). It's zero new code, zero added latency, and has a documented escape hatch (Option B) if a future model swap breaks parallel tool calling. The <code>_STATIC_PREAMBLE</code> is KV prefix cached &mdash; adding the instruction has no inference cost.</p>
+
+<h3>Why add agent responsibility boundaries separately?</h3>
+<p>Without boundaries, the LLM sometimes routes news-related queries to the Sentiment agent (&ldquo;get news sentiment&rdquo; sounds like the Sentiment agent's job) even though RAG now owns financial news retrieval. The boundaries block in <code>_build_instruction()</code> (<code>agent.py:253-260</code>) disambiguates: &ldquo;Financial RAG Agent owns ALL document and news retrieval.&rdquo;</p>
+
+<h3>Why update step 5 to mention receiving results &ldquo;together&rdquo;?</h3>
+<p>The old step 5 said &ldquo;After all agents respond&rdquo; without specifying whether results arrive individually or together. The new wording (&ldquo;you will receive their results together in the next turn&rdquo;) aligns the LLM's expectation with the actual A2A behavior &mdash; all sub-agent responses arrive in the subsequent turn because the LLM doesn't await between <code>send_message</code> calls.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; Zero new code &mdash; pure system prompt instruction, no Python dispatch shim</li>
+<li>&check; KV-cached &mdash; static preamble keeps prefix cache warm</li>
+<li>&check; Documented escape hatch &mdash; Option B exists on paper if needed</li>
+<li>&check; Narrow boundary fix &mdash; prevents LLM misrouting news to Sentiment agent</li>
+<li>&check; Explicit parallel contract &mdash; step 5 confirms batch reception</li>
+</ul>
+
+<h2>Parallel Filing Downloads + Server-Side Truncation</h2>
+
+<h3>Why switch from sequential to parallel filing fetches?</h3>
+<p>The original <code>_ensure_ingested()</code> in <code>agent_2_llamaindex/executor.py</code> fetched filing content in a sequential loop. For a ticker with 5 new filings, this summed the per-filing latencies (~3-5s each = ~15-25s total). The revised two-phase pattern (<code>executor.py:74-107</code>):</p>
+<ol>
+<li><strong>Filter phase</strong>: Iterate filings to find un-ingested candidates (fast, no network)</li>
+<li><strong>Fetch phase</strong>: <code>asyncio.gather(*[_fetch_one(f) for f in candidates])</code> &mdash; all filing downloads run concurrently</li>
+</ol>
+<p>Filing downloads for a 5-filing ingest now complete in ~max(per-filing latency) (~3-5s). The <code>_fetch_one</code> helper isolates per-filing errors.</p>
+
+<h3>Why truncate server-side at 25k instead of client-side at 20k?</h3>
+<p>The old code truncated <code>content[:20000]</code> in the RAG agent after receiving the full response from MCP. A 10-K filing response (~80-150k chars) was fully transmitted before being truncated. Moving the truncation to <code>get_filing_content</code> in <code>mcp_servers/finsight_server.py:842</code> (<code>result["content"] = result.get("content", "")[:25000]</code>) cuts the bandwidth to &lt;25k per filing. The limit was also raised from 20k to 25k.</p>
+
+<h3>Why not parallelize filing fetches in Phase 1?</h3>
+<p>Phase 1 added the RAG news ingestion and multi-collection architecture. Parallelizing filing downloads was deferred to Phase 2 because the sequential loop was already functional &mdash; the latency impact was hidden behind the total cold-start (~11s). With Phase 2's focus on latency reduction, the parallel fetch was the highest-leverage RAG pipeline change.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; O(max) instead of O(sum) &mdash; 5-filing ingest drops from ~20s to ~4s</li>
+<li>&check; Isolated errors &mdash; per-filing failure doesn't block other filings</li>
+<li>&check; Server-side truncation &mdash; bandwidth cap, not client-side afterthought</li>
+<li>&check; Raised limit &mdash; 25k vs 20k, more content for retrieval</li>
+<li>&check; Backward compatible &mdash; ingestion pipeline downstream unchanged</li>
+</ul>
+
+<h2>Single-Flight News Cache</h2>
+
+<h3>Why refactor <code>get_news_sentiment</code> into impl + wrapper?</h3>
+<p>The original <code>get_news_sentiment</code> used manual <code>_cache_news.get(key)</code> / <code>_cache_news.set(key, result)</code> pattern. When two concurrent callers requested the same uncached ticker simultaneously, both would miss the cache and both would fetch RSS feeds &mdash; wasting one RSS round-trip (~1-2s). <code>TTLCache.get_or_fetch()</code> (<code>shared/ttl_cache.py:25</code>) was already designed for this: it uses an internal <code>asyncio.Event</code> per key so the second caller awaits the first's result instead of duplicating work.</p>
+<p>The refactor (<code>mcp_servers/finsight_server.py:1406-1551</code>):</p>
+<ol>
+<li>Extracted all fetch logic into <code>_get_news_sentiment_impl(ticker, limit)</code> &mdash; pure data fetching, no caching concern</li>
+<li>The outer <code>get_news_sentiment</code> tool now just calls <code>_cache_news.get_or_fetch(cache_key, lambda: _get_news_sentiment_impl(...))</code></li>
+</ol>
+
+<h3>Why was this deferred from Phase 1?</h3>
+<p>Phase 1's news ingestion was single-caller (only the RAG agent's background task calls <code>get_news_sentiment</code>). The single-flight pattern matters when multiple concurrent callers exist &mdash; which Phase 2 doesn't introduce directly, but the fix is zero-risk and prevents future regressions when additional consumers call the same tool.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; Single-flight &mdash; concurrent callers share one RSS fetch</li>
+<li>&check; Zero behavioral change &mdash; cache key, TTL, and response format identical</li>
+<li>&check; Pure refactor &mdash; impl extracted, wrapper delegates to get_or_fetch</li>
+<li>&check; Already-supported pattern &mdash; TTLCache.get_or_fetch existed, just unused by this tool</li>
+</ul>
+
+<h2>Fire-and-Forget RAG Ingestion</h2>
+
+<h3>Why convert <code>_ensure_ingested</code> from await to fire-and-forget?</h3>
+<p>Phase 1's <code>query()</code> used <code>await asyncio.gather(self._ensure_ingested(ticker), self._ensure_news_ingested(ticker))</code> &mdash; the query blocked until both ingestion tasks completed. This added ~11s of cold-start latency to every new ticker's first query.</p>
+<p>Phase 2 converts both to <code>asyncio.create_task()</code> (<code>executor.py:162-166</code>):</p>
+<pre><code>asyncio.create_task(self._ensure_ingested(ticker))
+asyncio.create_task(self._ensure_news_ingested(ticker))
+return await self.index.query(ticker, query_text)</code></pre>
+<p>The ChromaDB query runs immediately against whatever is already indexed. If the ticker was queried before, all data is available. If it's a new ticker, the ingestion finishes in the background and the current query returns a warming signal.</p>
+
+<h3>Why a warming signal instead of silently returning empty results?</h3>
+<p>Silent empty results are confusing &mdash; the user sees &ldquo;no data found&rdquo; and doesn't know whether the ticker genuinely has no filings or the index is still warming. The <code>_warming</code> flag in <code>index_manager.py</code> (<code>{"_warming": True, "summary": "Index is warming for {ticker}..."}</code>) makes the state explicit.</p>
+
+<h3>Why keep the per-ticker <code>asyncio.Event</code> tracking optional?</h3>
+<p>The plan mentioned optional <code>self._ingest_events</code> so a same-process second query could briefly await the first's ingestion. This wasn't implemented because:</p>
+<ol>
+<li>The warming signal already communicates the incomplete state</li>
+<li>An Event-based wait adds complexity for marginal UX gain (the background task completes in ~8s anyway)</li>
+<li>The simple approach (fire-and-forget + warming signal) is correct for both first and subsequent queries</li>
+</ol>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; Zero blocking on first query &mdash; ingestion runs in background</li>
+<li>&check; Warming signal &mdash; explicit incomplete-state communication</li>
+<li>&check; Existing data still usable &mdash; previously indexed content returns immediately</li>
+<li>&check; No complexity &mdash; no ingestion-tracking events needed</li>
+<li>&check; Graceful degradation &mdash; query returns best available data, even if partial</li>
+</ul>
+
+<hr>
+
+<h2>Sentiment Agent &rarr; Market Context Agent Rebrand</h2>
+
+<h3>Problem</h3>
+<p>Phase 1 gave the RAG agent news + filing retrieval. The Sentiment agent's news/filing fetch then became redundant &mdash; both agents fetched the same data and produced overlapping narratives. The original redesign proposal wanted to gut the Sentiment agent entirely, but the CrewAI narrative engine was already producing useful qualitative analysis. The question was: what unique analytical lane could Sentiment own that RAG and Quant didn't?</p>
+
+<h3>Solution</h3>
+<p>Rebrand &ldquo;Sentiment Intelligence Agent&rdquo; &rarr; &ldquo;Market Context Agent&rdquo; and repurpose its CrewAI narrative engine from bottom-up news analysis to top-down macro + peer positioning:</p>
+<ol>
+<li><strong>New MCP tool <code>get_macro_indicators()</code></strong> (<code>finsight_server.py:305</code>): Fetches Treasury yields (10Y/2Y), VIX, DXY, sector ETF performance &mdash; all cached 15 min. No ticker argument (macro is global).</li>
+<li><strong>New <code>shared/peer_sets.py</code></strong>: 33 hand-curated peer sets across 10+ sectors. Shared with Quant's <code>peer_comparison_node</code>.</li>
+<li><strong><code>_collect_data_parallel</code> rewritten</strong> (<code>executor.py:39-86</code>): 3-step pipeline &mdash; macro + primary financials &rarr; resolve peers &rarr; parallel peer financials + prices. Drops <code>get_news_sentiment</code> and <code>get_company_filings</code>.</li>
+<li><strong>MarketContextCrew</strong> (<code>crew.py</code>): Single agent, role &ldquo;Market Context Analyst&rdquo;. Task outputs JSON: <code>narrative</code>, <code>macro_regime</code>, <code>relative_peer_positioning</code>, <code>overall_signal</code>, <code>confidence_score</code>, <code>key_tailwinds</code>, <code>key_headwinds</code>.</li>
+<li><strong>Agent card</strong> (<code>market_context_agent.json</code>): Two skills &mdash; <code>macro_regime_analysis</code>, <code>peer_landscape_analysis</code>.</li>
+</ol>
+
+<h3>Why not keep Sentiment and RAG both fetching news?</h3>
+<p>Overlap. Both agents called <code>get_news_sentiment</code> and <code>get_company_filings</code> &mdash; the same MCP tools, the same cached data. The single-flight cache (Phase 2) already deduplicated the RSS fetches, but the orchestrator LLM still received two redundant narratives. Giving each agent a distinct data lane eliminates redundancy and makes the orchestrator's synthesis more efficient (RAG = document retrieval, Market Context = macro/peer positioning, Quant = numbers).</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; No redundant data fetches &mdash; every agent owns distinct MCP tools</li>
+<li>&check; Shared peer sets &mdash; Market Context and Quant use the same <code>peer_sets.py</code></li>
+<li>&check; Backward compatible &mdash; old agent name <code>sentiment_agent.json</code> removed; orchestrator discovers <code>market_context_agent.json</code> via <code>SubAgentClient.discover()</code></li>
+<li>&check; Langfuse trace continuity &mdash; trace name <code>market-context-agent-stream</code> replaces <code>sentiment-agent-stream</code></li>
+<li>&check; RAGAS rubrics updated &mdash; <code>macro_regime_quality</code> + <code>peer_positioning_quality</code> replace old sentiment rubrics</li>
+</ul>
+
+<hr>
+
+<h2>Dynamic Peer Discovery via Yahoo Finance API</h2>
+
+<h3>Why replace static lookup with live API call?</h3>
+<p>The original <code>shared/peer_sets.py</code> required hand-curated entries for every ticker's industry. When a ticker's industry wasn't in the map, peer comparison broke silently (<code>get_peer_tickers</code> returned <code>[]</code>). Maintaining coverage across thousands of listed stocks was impractical &mdash; only ~33 sectors had entries.</p>
+
+<h3>Solution</h3>
+<p>New MCP tool <code>get_peers(ticker)</code> (<code>mcp_servers/finsight_server.py</code>) hitting Yahoo Finance's <code>/v6/finance/recommendationsBySymbol</code> endpoint (&quot;People also watch&quot;). Returns 3-5 peer tickers for any exchange-listed stock without maintaining a static map. Results cached 24h &mdash; peer sets are stable intraday.</p>
+<p>Both Quant's <code>peer_comparison_node</code> and the Market Context agent use it. Fallback chain: MCP <code>get_peers</code> &rarr; <code>shared/peer_sets.py</code> via <code>get_peer_tickers()</code> &rarr; empty list.</p>
+
+<h3>Why keep peer_sets.py after migration?</h3>
+<p>As a fallback. The MCP server might be cold, rate-limited, or unreachable. <code>get_peer_tickers()</code> from <code>shared/peer_sets.py</code> provides a zero-latency fallback for the ~33 sectors already mapped. Future cleanup can deprecate the file when the MCP tool is proven stable in production.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; Live discovery &mdash; works for any exchange-listed ticker</li>
+<li>&check; No maintenance &mdash; Yahoo Finance crowdsources peer curation</li>
+<li>&check; 24h cache &mdash; peers are stable intraday</li>
+<li>&check; Dual fallback &mdash; MCP &rarr; peer_sets.py &rarr; empty list</li>
+<li>&check; Both agents use the same tool &mdash; no divergence</li>
+</ul>
+
+<hr>
+
+<h2>Market Context Agent &mdash; Peer Key Fixes &amp; Sector/Industry Restoration</h2>
+
+<h3>Problem</h3>
+<p>Two bugs silently degraded Market Context agent output after the peer refactor:</p>
+<ol>
+<li><strong>Wrong <code>get_financials</code> response key</strong> (<code>executor.py</code>): The code read <code>primary_fin.get(&quot;financials&quot;, {}).get(&quot;info&quot;, {})</code>, but <code>get_financials</code> MCP tool returns top-level keys directly &mdash; no <code>&quot;financials&quot;</code> wrapper. Every ticker got <code>info = {}</code>, so <code>sector</code> and <code>industry</code> were always empty, and <code>get_peer_tickers</code> returned <code>[]</code> for every ticker. Silent data loss &mdash; the agent still produced JSON, but <code>macro_regime</code> and <code>peer_landscape</code> analyses had no sector context.</li>
+<li><strong>Undefined <code>sector</code>/<code>industry</code> in return dict</strong> (<code>executor.py:73-74</code>): The <code>_collect_data_parallel</code> return dict referenced <code>sector</code> and <code>industry</code> variables that were never assigned &mdash; leftover from before the peer refactor removed the extraction code. CrewAI's <code>data.get(&quot;sector&quot;, &quot;&quot;)</code> handled the <code>NameError</code> gracefully, but the keys were always empty strings.</li>
+</ol>
+
+<h3>Solution</h3>
+<ol>
+<li><strong>Fix data extraction</strong> (<code>executor.py</code>): Changed <code>primary_fin.get(&quot;financials&quot;, {}).get(&quot;info&quot;, {})</code> to <code>primary_fin.get(&quot;info&quot;, {})</code>. Uses <code>res</code> (the full MCP response) directly for peer financials instead of the wrapper.</li>
+<li><strong>Restore sector/industry extraction</strong> (<code>executor.py</code>): Re-added <code>info = primary_fin.get(&quot;info&quot;, {}); sector = info.get(&quot;sector&quot;, &quot;&quot;); industry = info.get(&quot;industry&quot;, &quot;&quot;)</code> before the <code>get_peers</code> call. The return dict now gets populated values.</li>
+<li><strong>Expand peer sets</strong> (<code>shared/peer_sets.py</code>): Added ~30 new entries covering missing industries (Discount Stores, Grocery Stores, Consumer Defensive/Cyclical sectors). Fixed em-dash vs. hyphen mismatch &mdash; <code>_PEER_SETS</code> used &quot;Software&mdash;Infrastructure&quot; (U+2014) but yfinance returns &quot;Software - Infrastructure&quot; (hyphen+spaces). Added <code>_norm()</code> normalization function that collapses all dash variants to a single hyphen, with <code>_NORM_MAP</code> for O(1) fuzzy lookup.</li>
+</ol>
+
+<h3>Why wasn't this caught by testing?</h3>
+<p>No integration tests for the Market Context agent's data pipeline existed. The agent produced structurally valid JSON regardless &mdash; the narrative was just less informed. These bugs highlight the need for integration tests that verify non-empty <code>sector</code>/<code>industry</code>/<code>peers</code> in the CrewAI output, especially after data-source refactors.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; Non-empty sector/industry now flows to CrewAI narrative</li>
+<li>&check; Peer sets expanded to cover all major sectors</li>
+<li>&check; Em-dash/hyphen normalization prevents silent empty sets</li>
+<li>&check; Dynamic <code>get_peers</code> MCP tool works for any ticker</li>
+<li>&check; <code>peer_sets.py</code> remains as fallback for MCP failures</li>
+</ul>
+
+<h3>Peer Concurrency Cap &mdash; Why <code>asyncio.Semaphore(3)</code>?</h3>
+<p><strong>Problem</strong>: Both the Quant LangGraph and Market Context agents fetch <code>get_financials</code> for each peer ticker concurrently. With 8 peers, this fires 8 simultaneous MCP calls. The MCP server processes them via <code>asyncio.gather</code> with a shared <code>_yfinance_limiter</code> (4 req/s token bucket). While the token bucket limits the <em>rate</em>, it doesn't limit the <em>number of in-flight requests</em> the server queues.</p>
+<p>Under the old pattern, all 8 peer requests arrived at the MCP server simultaneously. The first 8 tokens were issued instantly (burst=8), but each yfinance <code>get_financials</code> call takes 1-3 seconds. The MCP client's <code>asyncio.wait_for(timeout=15)</code> wrapped each call &mdash; with 8 concurrent calls, the queue depth meant the last calls could exceed 15 seconds of wall-clock time, even though each individual yfinance call completed in &lt;3s. The timeout fired before the queue cleared.</p>
+<p><strong>Solution</strong>: <code>asyncio.Semaphore(3)</code> limits in-flight requests to 3, which is the smallest number that keeps the pipeline fed given yfinance's typical per-call latency (~1-3s). With 3 concurrent slots and 8 peers, the total wall-clock time is <code>ceil(8/3) &times; max_per_call_latency &approx; 3 &times; 3 = 9s</code> &mdash; well within the 15s timeout. Without the semaphore, 8 concurrent calls hit the rate limiter's burst of 8, all start their yfinance fetch, and the last ones timeout at ~15s.</p>
+<p>The token bucket (<code>_yfinance_limiter</code>) handles <em>rate</em> (requests per second) &mdash; it prevents Yahoo from seeing 8 requests at the same microsecond. The semaphore handles <em>concurrency</em> (in-flight requests at the same moment) &mdash; it prevents the MCP server's request queue from exceeding the timeout window. They solve complementary problems.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; 3 concurrent slots &mdash; peer financials complete within timeout window</li>
+<li>&check; Token bucket handles rate, semaphore handles concurrency &mdash; complementary</li>
+<li>&check; 4+ concurrent &rarr; no significant throughput gain (yfinance rate limiter is the bottleneck, not CPU), increased timeout risk</li>
+<li>&check; 2 concurrent &rarr; safe but slower: <code>ceil(8/2) &times; 3 = 12s</code> &mdash; still within timeout but leaves less headroom</li>
+<li>&check; Applied symmetrically in both <code>agent_3_langgraph/nodes.py</code> and <code>agent_4_crewai/executor.py</code></li>
+</ul>
+
+<hr>
+
+<h2>Quant Behavioral Signals &mdash; 8-Group Weighted Voting</h2>
+
+<h3>Problem</h3>
+<p>The Phase 1 Quant agent produced fundamentals + technicals + DCF &mdash; strong on logical analysis but blind to market psychology, insider behavior, and options flow. These signals (<code>put_call_ratio</code>, <code>insider_buying</code>, <code>short_interest</code>, <code>analyst_consensus</code>) capture what the broader market is <em>doing</em>, not just what the numbers say. The original Phase 3 plan assigned them to a redesigned Sentiment agent, but they're deterministic math on structured data &mdash; Quant's natural home.</p>
+
+<h3>Solution</h3>
+<p>Add three new graph nodes to the Quant LangGraph, each fetching data via existing or new MCP tools:</p>
+<table>
+<tr><th>Node</th><th>Data Source</th><th>Signal</th></tr>
+<tr><td><code>options_flow_node</code></td><td><code>get_options_chain</code> MCP</td><td>put/call vol ratio, OI ratio, flow classification</td></tr>
+<tr><td><code>insider_signals_node</code></td><td><code>get_company_filings</code> &rarr; Form 4 XML</td><td>net direction (90-day), CEO/CFO weighted</td></tr>
+<tr><td><code>analyst_positioning_node</code></td><td><code>get_sentiment_indicators</code> + <code>get_earnings_history</code></td><td>consensus score, upside %, short interest, squeeze risk</td></tr>
+</table>
+<p>All three fan out from <code>START</code> alongside existing nodes. <code>format_output_node</code> collects 8 signal groups with weights summing to 1.0. Confidence formula: <code>|composite| &times; (1 &minus; std(present_signals))</code>.</p>
+
+<h3>Why raw weighted sum instead of normalized?</h3>
+<p>The plan's original normalization renormalized weights to sum to 1.0 using only the signals present in a given ticker's response. This made confidence uninformative: a response with only 2 signals would normalize them to 0.50 each, producing the same composite as if all 8 were present. The fix (<code>nodes.py:228</code>) keeps the raw weighted sum &mdash; if only 2 of 8 signals are present, the composite is inherently lower, correctly reflecting reduced signal density.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; Deterministic &mdash; no LLM calls for signal computation</li>
+<li>&check; Same peer resolver (<code>shared/peer_sets.py</code>) as Market Context Agent</li>
+<li>&check; Normalized signals (-1 to +1) for uniform voting</li>
+<li>&check; 8-group coverage across fundamental, technical, behavioral, and macro dimensions</li>
+<li>&check; Confidence formula accounts for signal sparsity</li>
+</ul>
+
+<hr>
+
+<h2>Quant Behavioral Signal Refinements: Options Flow, Insider Data, Monte Carlo &amp; Schema Validator</h2>
+
+<h3>Options Flow &mdash; Why return <code>no_data</code> instead of misleading ratios?</h3>
+<p>When a ticker has zero options volume (no open positions, illiquid, or the options chain fetch returned empty), the old code computed <code>put_call_vol = 0/0 = NaN</code> and <code>oi_ratio = 0/0 = NaN</code>. These NaNs propagated through <code>_normalize_to_signal</code> as <code>0.0</code>, producing a neutral signal that looked like &quot;no unusual activity&quot; when it meant &quot;no data available.&quot;</p>
+<p><strong>Fix</strong> (<code>nodes.py:949</code>): Check total volume before computing ratios. If zero, return <code>flow_signal=&quot;no_data&quot;</code>, <code>note=&quot;No options volume &mdash; ticker may lack active options market&quot;</code>, and <code>put_call_vol_ratio=oi_ratio=0.5</code> (neutral). The <code>format_output_node</code> checks <code>flow_signal == &quot;no_data&quot;</code> and excludes it from behavioral signal aggregation rather than scoring it as neutral.</p>
+
+<h3>Insider Signals &mdash; Why replace Form 4 keyword matching with yfinance structured data?</h3>
+<p>The original <code>insider_signals_node</code> used <code>get_company_filings</code> filtered for Form 4 documents, then matched keywords (<code>&quot;P&quot;</code>/<code>&quot;A&quot;</code> for buys, <code>&quot;D&quot;</code>/<code>&quot;S&quot;</code> for sells) on filing descriptions. Many Form 4 filings have empty or inconsistent description fields &mdash; the XML content contains the actual transaction data, but the MCP tool only returns the filing metadata, not the parsed XML.</p>
+<p><strong>Fix</strong> (<code>nodes.py:997</code>): Switched to <code>yf.Ticker.insider_transactions</code> via a new <code>get_insider_transactions</code> MCP tool. Returns structured DataFrame with actual buy/sell records, dollar amounts, and executive roles. The node now computes: net direction (buys - sells / total), CEO/CFO weighted score, and net dollar volume. Since <code>get_insider_transactions</code> uses yfinance (no SEC EDGAR parsing), it's faster and more reliable than the Form 4 scraping approach.</p>
+
+<h3>Monte Carlo &mdash; Why run on low-volatility tickers?</h3>
+<p>The original graph only ran <code>_run_monte_carlo</code> on the high-volatility path (stress test branch). Low-volatility tickers went through the DCF valuation path, which ran no simulation. This meant DCF-only tickers (utilities, consumer staples) had <code>monte_carlo = None</code>, breaking downstream consumers that expected percentiles or <code>prob_profit</code>.</p>
+<p><strong>Fix</strong> (<code>nodes.py:733</code>): <code>dcf_valuation_node</code> now runs <code>_run_monte_carlo</code> on the price data it already holds. The simulation is computationally cheap (~50ms for 5,000 paths) and produces the same percentile/prob_profit/VaR output regardless of volatility route. Added <code>_last_nonnull</code> reducer for <code>monte_carlo</code> in state to handle the concurrent writer scenario.</p>
+
+<h3>Peer Comparison &mdash; Why fall back to peer_sets.py when MCP returns empty?</h3>
+<p><code>get_peers</code> MCP tool can return <code>[]</code> when Yahoo Finance's recommendations API is rate-limited, the server is cold, or the ticker has no recommendations. Without a fallback, <code>peer_comparison_node</code> returned <code>{&quot;peers&quot;: []}</code>, which <code>format_output</code> scored as neutral &mdash; but the user lost the peer context entirely.</p>
+<p><strong>Fix</strong> (<code>nodes.py:852</code>): When <code>get_peers</code> returns <code>[]</code>, fall back to <code>get_peer_tickers(ticker)</code> from <code>shared/peer_sets.py</code> (the hand-curated map). This gives the ~33 covered sectors a zero-network fallback. If both return empty, the node logs a warning and continues with an empty peer set.</p>
+
+<h3>Schema Validator &mdash; Why fix key paths?</h3>
+<p><code>score_quant_deterministic()</code> (<code>shared/runtime_eval.py:614</code>) is a zero-LLM schema validator that runs on every Quant response. It had three bugs:</p>
+<ol>
+<li>Wrong access path: <code>result[&quot;signal_scores&quot;]</code> &rarr; correct <code>result[&quot;metrics&quot;][&quot;signal_scores&quot;]</code></li>
+<li>Shortened group names: <code>&quot;dcf&quot;</code> in old signal score dict keys &rarr; <code>&quot;dcf_value&quot;</code> (actual key in <code>_SIGNAL_WEIGHTS</code>)</li>
+<li><code>conf</code> path: same deep-nesting fix</li>
+</ol>
+<p>The validator now checks all 8 signal groups present, weight sum &asymp; 1.0, MC percentiles consistent, peer fields present, recommendation + confidence invariants.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; No-data handling for zero-volume options &mdash; <code>flow_signal=&quot;no_data&quot;</code> instead of NaN</li>
+<li>&check; Structured insider transactions &mdash; yfinance DataFrame, not Form 4 keyword heuristics</li>
+<li>&check; Monte Carlo runs on both volatility paths &mdash; DCF tickers get simulation too</li>
+<li>&check; Peer fallback chain &mdash; MCP &rarr; peer_sets.py &rarr; empty</li>
+<li>&check; Schema validator actually validates &mdash; corrected key paths</li>
+</ul>
+
+<hr>
+
+<h2>Redis Two-Level Cache (L1 TTLCache + L2 Redis Write-Through)</h2>
+
+<h3>Problem</h3>
+<p>MCP tool results are cached in-process via <code>TTLCache</code> (<code>shared/ttl_cache.py:25</code>). In a multi-process deployment (e.g. Docker with 3 agent containers each calling the same MCP tools), each process maintains its own cache &mdash; the first request to each process pays the full yfinance/RSS fetch cost. A shared cache eliminates this redundancy.</p>
+
+<h3>Solution</h3>
+<p><code>shared/redis_cache.py</code> implements a two-level cache:</p>
+<ul>
+<li><strong>L1</strong>: In-process <code>TTLCache</code> (fast, no network). Hit &rarr; return immediately.</li>
+<li><strong>L2</strong>: Redis write-through. L1 miss &rarr; read from Redis &rarr; populate L1. Every L1 <code>set()</code> propagates to Redis.</li>
+</ul>
+<p>The <code>make_cache()</code> factory returns a bare <code>TTLCache</code> when <code>REDIS_URL</code> is unset (identical behavior to before), or a <code>RedisCache</code> when configured.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; Transparent drop-in &mdash; <code>make_cache()</code> returns same interface as <code>TTLCache</code></li>
+<li>&check; No migration effort &mdash; existing <code>_cache_*</code> variables accept <code>TTLCache</code> or <code>RedisCache</code></li>
+<li>&check; L1 speed for repeated calls, L2 sharing across processes</li>
+<li>&check; Write-through keeps L2 fresh automatically</li>
+<li>&check; Graceful degradation &mdash; Redis unreachable falls back to L1-only</li>
+</ul>
+
+<hr>
+
+<h2>RAGAS Eval Hardening &mdash; Circuit Breaker, SHA-256 Dedup, Burst Limiter</h2>
+
+<h3>Problem</h3>
+<p>Each RAG/Quant/Sentiment response fires 2-5 RAGAS LLM metric calls against the same Qwen3-30B model that serves live user queries. Three failure modes were observed:</p>
+<ol>
+<li><strong>Model unload storms</strong>: A single &ldquo;Model unloaded&rdquo; error triggers 3 retries per metric &times; 5 metrics = 15 concurrent load attempts.</li>
+<li><strong>Identical response re-evals</strong>: The same (input, response) pair re-scored across requests.</li>
+<li><strong>Metric timeout cascade</strong>: A single stuck metric blocks all others indefinitely.</li>
+</ol>
+
+<h3>Solution</h3>
+<p>Four hardening layers in <code>shared/runtime_eval.py</code>:</p>
+<ol>
+<li><strong>Circuit breaker</strong> (<code>_CIRCUIT_MAX_FAILURES=5</code>): 5 consecutive metric failures skips all eval for 5 min.</li>
+<li><strong>SHA-256 dedup</strong> (<code>_dedup_seen</code> TTL dict, 1h): Skips eval when the exact same query+response pair was scored within the last hour.</li>
+<li><strong>Burst limiter</strong> (<code>_burst_ok()</code>): Deque of timestamps enforces <code>EVAL_BURST_LIMIT</code> evaluations per minute.</li>
+<li><strong>Per-metric timeout</strong> (<code>_score_metric_with_timeout()</code>): Each metric wrapped in <code>asyncio.wait_for(timeout=EVAL_METRIC_TIMEOUT)</code>.</li>
+</ol>
+<p>The unified gate <code>_gate_ok()</code> combines all four.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; Circuit breaker prevents eval storm cascade</li>
+<li>&check; SHA-256 dedup eliminates redundant LLM calls for repeated responses</li>
+<li>&check; Burst limiter protects against eval batch-processing spikes</li>
+<li>&check; Per-metric timeout prevents one stuck metric from blocking others</li>
+<li>&check; All controlled via env vars (<code>EVAL_RUNTIME_DISABLED</code>, <code>EVAL_BURST_LIMIT</code>, <code>EVAL_METRIC_TIMEOUT</code>)</li>
+<li>&check; Zero-LLM <code>score_quant_deterministic()</code> validates schema without LLM calls</li>
+</ul>
+
+<hr>
+
+<h2>Date-Aware Semantic Cache</h2>
+
+<h3>Problem</h3>
+<p>The semantic cache (<code>shared/semantic_cache.py</code>) stored responses keyed by query text. A user asking &ldquo;Analyze NVDA&rdquo; on Tuesday would hit the cache from Monday's analysis &mdash; missing overnight news, price moves, or macro shifts. The cache was too effective: it served stale content across trading days.</p>
+
+<h3>Solution</h3>
+<p>Tag each cache entry with the current <code>YYYY-MM-DD</code> date on write, and filter by date on read using a ChromaDB <code>where</code> filter on the metadata <code>date</code> field. Same query on different days &rarr; no metadata match &rarr; cache miss &rarr; new analysis.</p>
+
+<h3>Why not a TTL?</h3>
+<p>A fixed TTL (e.g. 24 hours) would still serve stale data: a query at 9 AM Monday and another at 9 AM Tuesday would be 24 hours apart, but the open market only trades 6.5 hours per day. A date filter aligns with calendar boundaries and avoids edge cases around market holidays and weekends.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; Same-day repeat queries still hit cache (fast path)</li>
+<li>&check; Cross-day queries always regenerate (fresh analysis)</li>
+<li>&check; No TTL configuration &mdash; date boundary is unambiguous</li>
+<li>&check; ChromaDB <code>where</code> filter is O(1) with an index on metadata</li>
+</ul>
+
+<hr>
+
+<h2>RAG Startup Warm-Up</h2>
+
+<h3>Problem</h3>
+<p>The first RAG query after server start paid a ~3-5s cold-start tax: loading the HuggingFace <code>all-MiniLM-L6-v2</code> embedder, connecting to ChromaDB, and loading the CrossEncoder reranker all happened on first use.</p>
+
+<h3>Solution</h3>
+<p><code>_do_prewarm()</code> at <code>agent_2_llamaindex/server.py</code> runs once on Starlette startup via <code>asyncio.to_thread</code>. Three stages: embedder pre-load + dummy encode, three ChromaDB collections (sec_filings/news/earnings), CrossEncoder reranker. Each stage logs elapsed seconds.</p>
+
+<h3>Why not lazy-load as before?</h3>
+<p>Lazy-load is simple but unpredictable: the ~3-5s delay hits the first user, not the deployer. Pre-warming shifts the cost to startup time where it's visible in logs and doesn't affect user-facing latency.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; First RAG query: ~0s warm-up penalty (was ~3-5s)</li>
+<li>&check; Per-stage timing logged for cold-start budget analysis</li>
+<li>&check; Runs in thread executor &mdash; doesn't block asyncio event loop</li>
+<li>&check; Idempotent &mdash; <code>get_or_create_collection</code> is safe to call multiple times</li>
+<li>&check; Graceful if models fail &mdash; errors logged but server doesn't crash</li>
+</ul>
+
+<hr>
+
+<h2>Live Sector-Aware Scenario Shocks with Sector-Relative Ratio Scoring</h2>
+
+<h3>Problem</h3>
+<p>The stress test node ran a static scenario: fixed market decline percentage across all tickers. A 20% market decline on a low-beta utility ticker (&beta;=0.4, so -8% adjusted) vs. a high-beta tech ticker (&beta;=1.5, so -30% adjusted) produced the same stress loss narrative as a uniform -20% shock. Worse, the old formula <code>mkt_decline * beta</code> could produce absurd values &mdash; &beta;=2.5 during a 50% decline = -125% loss, which is impossible since equity can't go below -100%.</p>
+
+<h3>Solution</h3>
+<p><strong>Live market data</strong> (<code>nodes.py:660</code>): Replaced the static <code>_MKT_DECLINE_PCT = {&quot;mild&quot;: -0.10, ...}</code> with live data from the <code>get_macro_indicators</code> MCP tool &mdash; specifically the YTD return of the sector's SPDR ETF (XLK for tech, XLU for utilities, etc.) resolved via <code>_SECTOR_ETF_MAP</code>. Four scenarios:</p>
+<table>
+<tr><th>Scenario</th><th>Multiplier</th><th>Shock =</th></tr>
+<tr><td>Severe</td><td>&times;2.0</td><td><code>max(-0.95, beta &times; (sector_ytd &times; 2))</code></td></tr>
+<tr><td>Moderate</td><td>&times;1.0</td><td><code>-abs(beta &times; sector_ytd)</code></td></tr>
+<tr><td>Mild</td><td>&times;0.5</td><td><code>max(-0.10, beta &times; sector_ytd &times; 0.5)</code></td></tr>
+<tr><td>Recovery</td><td>&mdash;</td><td><code>sector_ytd</code> (no multiplication)</td></tr>
+</table>
+<p><strong>Sector-relative ratio</strong> (<code>nodes.py:688</code>): The stress result now includes <code>sector_ratio = portfolio_loss / sector_decline</code> &mdash; normalizing the loss relative to what the sector experienced. A ticker that drops 12% while its sector drops 10% gets a ratio of 1.2 (slightly worse than sector), independent of absolute decline size.</p>
+<p><strong>Lower bound</strong>: <code>max(-0.95, beta * mkt_decline)</code> prevents the impossible &lt; -100% scenario. The 95% floor is an accounting estimate &mdash; in practice, a stock losing 95% of its value is likely undergoing bankruptcy proceedings.</p>
+
+<h3>Why compute from sector YTD instead of VIX or general market indices?</h3>
+<p>VIX measures expected volatility, not realized return. S&amp;P 500 YTD is a broader market proxy but doesn't capture sector-specific dynamics &mdash; during a sector rotation, tech might be down 15% while healthcare is flat. Using the sector-specific SPDR ETF produces more relevant stress scenarios: an energy stock should be stressed against XLE's YTD performance, not SPY's.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; Live sector YTD &mdash; scenarios reflect actual market conditions, not hardcoded values</li>
+<li>&check; Sector-relative ratio &mdash; normalizes stress loss across sectors</li>
+<li>&check; Hard lower bound (&minus;95%) &mdash; prevents impossible loss values</li>
+<li>&check; Volatility gate preserved &mdash; high-vol tickers still skip stress test</li>
+<li>&check; 4 scenarios &mdash; severe through recovery give a range of outcomes</li>
+</ul>
+
+<h3>yfinance blocking calls &rarr; thread executor</h3>
+<p><strong>Problem</strong>: <code>yf.Ticker.insider_transactions</code> and <code>yf.Ticker.history(period=&quot;max&quot;)</code> are synchronous DataFrame operations that block the asyncio event loop. When the MCP server handles multiple concurrent tool calls (e.g. <code>get_financials</code> for 8 peer tickers), a blocking yfinance call stalls all in-flight coroutines &mdash; the event loop cannot switch to another task until the blocking call returns.</p>
+<p><strong>Solution (first pass)</strong>: The two worst offenders wrapped with <code>await loop.run_in_executor(None, lambda: yf.Ticker(...))</code>.</p>
+<p><strong>Followup (second pass)</strong>: After the first fix, users still saw intermittent <code>httpx.ReadError</code> mid-call on <code>get_financials</code>, <code>get_prices</code>, etc. The underlying cause was the same &mdash; other yfinance tools (<code>stock.history()</code>, <code>.financials</code>, <code>.balance_sheet</code>, <code>.cashflow</code>, <code>.info</code>, <code>.option_chain()</code>, <code>.options</code>, <code>stock.calendar</code>, <code>stock.earnings_dates</code>) were still making synchronous calls on the event loop. While individually fast (~50-200ms), under concurrent peer analysis the cumulative blocking window was large enough to stall FastMCP's SSE keepalive writes, causing the client to disconnect. Fixed by wrapping <strong>all 9 synchronous yfinance call sites</strong> in <code>run_in_executor</code>. A defence-in-depth change was also made to the MCP client: <code>httpx.ReadError</code>, <code>httpx.ConnectError</code>, and <code>httpx.NetworkError</code> were added to <code>_TRANSIENT_EXC</code> so transient SSE blips retry instead of failing immediately.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; Event loop unblocked &mdash; no coroutine starvation during yfinance data fetches</li>
+<li>&check; Thread pool managed by asyncio &mdash; no manual thread lifecycle</li>
+<li>&check; No API changes &mdash; return types, signatures, error handling identical</li>
+<li>&check; All 9 synchronous yfinance call sites wrapped (up from the original 2)</li>
+</ul>
+
+<hr>
+
+<h2>RAG Index Warming via A2A WORKING Events &mdash; From Fire-and-Forget to Await-able</h2>
+
+<h3>Problem</h3>
+<p>The RAG agent's <code>_build_response()</code> fired <code>asyncio.create_task(self._ensure_ingested(ticker))</code> and returned <code>{&quot;_warming&quot;: True, &quot;summary&quot;: &quot;Index is warming for [ticker]...&quot;}</code> immediately. The orchestrator saw a completed task with a warming placeholder &mdash; no data to synthesize. The user would then have to re-query to get the actual analysis after ingestion completed in background. Poor UX: every first query for a new ticker returned a &quot;come back later&quot; placeholder regardless of whether filing downloads were fast (5s) or slow (30s+).</p>
+<p>The root issue: A2A only reports terminal events (COMPLETED/FAILED). The RAG agent couldn't say &quot;I'm working on it, hold on&quot; &mdash; it had to return something immediately or block the A2A protocol indefinitely.</p>
+
+<h3>Solution</h3>
+<p>Two-part fix using A2A streaming's intermediate states:</p>
+<ol>
+<li><strong>RAG agent emits <code>TASK_STATE_WORKING</code> SSE events</strong> (<code>agent_2_llamaindex/executor.py:19-34</code>): Before entering ingestion, yields a <code>ServerTaskUpdateEvent</code> with <code>status: TASK_STATE_WORKING</code> and a message like <code>&quot;Ingesting SEC filings and news for [ticker]...&quot;</code>. This keeps the A2A channel open and tells the orchestrator &quot;not done yet, but making progress.&quot;</li>
+<li><strong>Orchestrator processes WORKING events</strong> (<code>SubAgentClient</code> via <code>a2a-sdk</code>): The <code>BaseClient</code>'s streaming event handler skips non-terminal events by default. Changed to accumulate WORKING events &mdash; when the streaming loop gets a <code>status_update</code> with <code>TASK_STATE_WORKING</code>, it updates a <code>_status_msg</code> on the client and continues listening. Once the terminal event arrives, the accumulated working messages are prepended to the result text, so the orchestrator LLM sees both the progress message and the final analysis.</li>
+<li><strong>Index check before ingestion</strong> (<code>_ensure_ingested</code>): Checks <code>is_filing_ingested(edgar_url)</code> before downloading &mdash; if all filings are already indexed, skips ingestion entirely and returns data from existing index. Combined with WORKING events, the path is:
+<ul>
+<li>Already indexed &rarr; immediate data return (no WORKING event)</li>
+<li>Not indexed &rarr; emit WORKING &rarr; download + ingest &rarr; emit data</li>
+<li>Timeout &rarr; orchestrator's per-agent timeout catches it</li>
+</ul>
+</li>
+</ol>
+
+<h3>Why not just increase the request timeout?</h3>
+<p>The A2A protocol is designed for near-immediate responses &mdash; the orchestrator's <code>asyncio.wait_for</code> wraps the entire <code>send_message()</code> call. Increasing the timeout would fix the symptom but not the UX: the user would still wait silently. WORKING events provide progress visibility and let the orchestrator send intermediate status back if desired (e.g. &quot;Analyzing NVDA... ingesting 10-K filings&quot;).</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; No more &quot;come back later&quot; placeholders &mdash; first queries on new tickers work end-to-end</li>
+<li>&check; WORKING events &mdash; progress visibility for long-running ingestion</li>
+<li>&check; Existing index check &mdash; already-indexed tickers skip ingestion entirely</li>
+<li>&check; Timeout preserved &mdash; orchestrator still has safety net</li>
+<li>&check; Minimal protocol change &mdash; WORKING events are part of the A2A spec</li>
+</ul>
 
 <hr>
 <p style="font-size:.85rem;color:#888"><a href="index.html">Back to docs hub</a></p>

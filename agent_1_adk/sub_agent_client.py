@@ -1,12 +1,12 @@
 import asyncio
 import json
 import logging
+import os
+import time
+from pathlib import Path
 from typing import Any
 
 import httpx
-from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
-
-HTTPXClientInstrumentor().instrument()
 
 from a2a.client import (
     A2ACardResolver,
@@ -32,11 +32,15 @@ _TERMINAL_STATES = {
     TaskState.TASK_STATE_INPUT_REQUIRED,
 }
 
-from shared.config import AGENT_SEED_URLS, A2A_TIMEOUT
+from shared.config import AGENT_SEED_URLS, A2A_TIMEOUT, A2A_TIMEOUT_RAG, A2A_TIMEOUT_QUANT, A2A_TIMEOUT_MARKET_CONTEXT
+from shared.logging_config import logged
 from shared.observability import get_langfuse_client
-from shared.trace_context import inject_trace_context
+from shared.trace_context import inject_trace_context, current_trace_id
 
 logger = logging.getLogger(__name__)
+
+_EVAL_TRACE_ENABLED = os.environ.get("EVAL_TRACE_ENABLED", "false").lower() == "true"
+_EVAL_TRACES_DIR = Path(__file__).parent.parent / "tests" / "evaluation" / "eval_results" / "orchestrator_traces"
 
 
 class SubAgentClient:
@@ -50,6 +54,7 @@ class SubAgentClient:
     def __init__(self) -> None:
         self._agents: dict[str, dict[str, Any]] = {}
 
+    # Retry with backoff: handles slow-starting agents by retrying failed URLs up to 3 times
     async def discover(self, retries: int = 3, delay: float = 5.0) -> None:
         """Fetch agent cards from all seed URLs using ``A2ACardResolver``.
 
@@ -120,6 +125,28 @@ class SubAgentClient:
             "_http": None,
         }
 
+    # Matching priority: exact → case-insensitive → substring (fuzzy fallback for LLM typos)
+    def resolve_agent_name(self, name: str) -> str | None:
+        """Return the registered agent name that best matches `name`.
+
+        Checks in order:
+        1. Exact match
+        2. Case-insensitive exact match
+        3. Case-insensitive substring match (name is contained in registered key or vice-versa)
+        Returns None if nothing matches.
+        """
+        if name in self._agents:
+            return name
+        lower = name.lower()
+        for key in self._agents:
+            if key.lower() == lower:
+                return key
+        for key in self._agents:
+            kl = key.lower()
+            if lower in kl or kl in lower:
+                return key
+        return None
+
     def list_agents(self) -> list[dict[str, str]]:
         return [
             {
@@ -144,6 +171,7 @@ class SubAgentClient:
             for s in a["card"].skills
         ]
 
+    # Lazy init: creates A2A client on first use, caches for subsequent calls to same agent
     async def _get_a2a_client(self, agent_name: str) -> Any:
         entry = self._agents.get(agent_name)
         if not entry:
@@ -162,6 +190,8 @@ class SubAgentClient:
         entry["_http"] = http
         return entry["_client"]
 
+    # Streams A2A events (message / artifact / status / task) and returns the first terminal result
+    @logged()
     async def send_message(self, agent_name: str, task_str: str) -> str:
         """Send a task to a remote agent and return its text response.
 
@@ -181,10 +211,13 @@ class SubAgentClient:
                 {"error": f"Failed to create client for '{agent_name}'"}
             )
 
+        # Propagate Langfuse trace context to sub-agents for end-to-end observability
         # --- Inject distributed trace context ---
         lf = get_langfuse_client()
         trace_id = lf.get_current_trace_id()
         parent_span_id = lf.get_current_observation_id()
+        if trace_id:
+            current_trace_id.set(trace_id)
         if trace_id and parent_span_id:
             task_str = inject_trace_context(task_str, trace_id, parent_span_id)
             logger.debug(
@@ -196,23 +229,39 @@ class SubAgentClient:
         message = new_text_message(task_str, role=1)
         req = SendMessageRequest(message=message)
 
-        try:
+        _TIMEOUT_MAP = {
+            "rag": A2A_TIMEOUT_RAG,
+            "quant": A2A_TIMEOUT_QUANT,
+            "market context": A2A_TIMEOUT_MARKET_CONTEXT,
+        }
+        agent_lower = agent_name.lower()
+        timeout = next(
+            (v for k, v in _TIMEOUT_MAP.items() if k in agent_lower),
+            A2A_TIMEOUT,
+        )
+
+        t0 = time.monotonic()
+        result_text = json.dumps({"error": "No response from agent"})
+
+        async def _stream() -> str:
+            nonlocal result_text
             async for event in client.send_message(req):
                 # 1. Direct message response (immediate, stateless)
                 if event.HasField("message"):
-                    return get_message_text(event.message)
+                    result_text = get_message_text(event.message)
+                    return result_text
 
                 # 2. Artifact update — streaming result data
                 if event.HasField("artifact_update"):
                     parts = event.artifact_update.artifact.parts
                     data_parts = get_data_parts(parts)
                     if data_parts:
-                        return json.dumps(data_parts[0])
-                    art_text = get_artifact_text(
-                        event.artifact_update.artifact
-                    )
+                        result_text = json.dumps(data_parts[0])
+                        return result_text
+                    art_text = get_artifact_text(event.artifact_update.artifact)
                     if art_text:
-                        return art_text
+                        result_text = art_text
+                        return result_text
                     continue
 
                 # 3. Status update — skip intermediate, handle terminal
@@ -220,21 +269,51 @@ class SubAgentClient:
                     state = event.status_update.status.state
                     if state not in _TERMINAL_STATES:
                         continue  # SUBMITTED, WORKING → skip
-                    return self._extract_terminal_result(
-                        event.status_update,
-                    )
+                    result_text = self._extract_terminal_result(event.status_update)
+                    return result_text
 
                 # 4. Full task — only process if terminal (skip SUBMITTED/WORKING)
                 if event.HasField("task"):
                     if event.task.status.state not in _TERMINAL_STATES:
                         continue
-                    return self._extract_task_result(event.task)
+                    result_text = self._extract_task_result(event.task)
+                    return result_text
 
+            return result_text
+
+        try:
+            result_text = await asyncio.wait_for(_stream(), timeout=timeout)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Agent '%s' timed out after %.0fs", agent_name, timeout
+            )
+            result_text = json.dumps({
+                "error": "agent_timeout",
+                "agent": agent_name,
+                "timeout": timeout,
+            })
         except Exception as e:
             logger.exception("Error sending message to '%s'", agent_name)
-            return json.dumps({"error": str(e)})
+            result_text = json.dumps({"error": str(e)})
+        finally:
+            latency_ms = round((time.monotonic() - t0) * 1000)
+            # Capture sub-agent interactions as JSON traces for offline RAGAS batch evaluation
+            if _EVAL_TRACE_ENABLED:
+                try:
+                    import uuid as _uuid
+                    _EVAL_TRACES_DIR.mkdir(parents=True, exist_ok=True)
+                    trace = {
+                        "agent_name": agent_name,
+                        "task_sent": task_str,
+                        "response": result_text,
+                        "latency_ms": latency_ms,
+                    }
+                    trace_path = _EVAL_TRACES_DIR / f"{_uuid.uuid4().hex}.json"
+                    trace_path.write_text(json.dumps(trace, indent=2))
+                except Exception as _te:
+                    logger.debug("Eval trace write failed: %s", _te)
 
-        return json.dumps({"error": "No response from agent"})
+        return result_text
 
     def _extract_terminal_result(
         self, status_update: Any
