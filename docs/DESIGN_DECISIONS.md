@@ -186,6 +186,8 @@ Evaluation results are only useful if they're tracked over time. Pushing scores 
 
 **Why increase HTTP timeout to 180s?** Faithfulness makes multiple sequential LLM calls within a single `ascore()` — it decomposes the response into atomic claims, then verifies each against the retrieved contexts. On a 20B local model at ~20-30s per call, three claims require 60-90s total. The default 60s client timeout kills the metric mid-decomposition. 180s provides headroom for up to 6 claims with retries.
 
+**Why `max_retries=5` instead of the previous `max_retries=1`?** LM Studio periodically unloads idle models from GPU memory. When a RAGAS metric call arrives after an idle period, LM Studio reloads the model — the first request times out, succeeding on retry. With `max_retries=1`, the single retry was sometimes insufficient for model reload (~2-5s). Increasing to 5 gives the SDK enough budget to absorb reload latency at the httpx layer rather than failing instructor's structured-output calls. The `instructor.from_openai(max_retries=1)` override was removed so instructor calls inherit the client's retry count. Separate `asyncio.TimeoutError` handling prevents timeouts from appearing as bare colons in logs.
+
 **Why `sys.stdout.reconfigure(encoding='utf-8')`?** RAGAS internal log messages (from `ragas/llms/base.py`) contain Unicode characters like curly quotes (`\u2010`, `\u2011`) when formatting LLM responses. On Windows with cp1252 console encoding, these characters trigger `UnicodeEncodeError`, producing noisy "--- Logging error ---" tracebacks. Setting UTF-8 at import time in `shared/config.py` prevents this for both stdout and stderr.
 
 **Why `_push_scores` skips when trace_id is None?** With placeholder Langfuse API keys (`pk-lf-...`), `langfuse.create_score()` with no `trace_id` sends an API request missing the required trace identifier. The Langfuse cloud API rejects these with "Bad request" errors. Since eval tasks may run outside any active trace context, the early return when `trace_id is None` avoids pointless API failures.
@@ -2267,14 +2269,16 @@ The Quant agent doesn't import `yfinance` — all data access goes through the M
 
 `get_insider_transactions` was a single DataFrame property access (~200ms), tolerable in isolation. But `_get_scenario_shocks_uncached` calls `history(period="max")` which fetches 25+ years of daily OHLCV data — this can take 2-5 seconds for a single ETF. When called during peer analysis (which already has 8 concurrent `get_financials` calls in-flight), the blocking history fetch starves the financials requests, causing them to exceed their `asyncio.wait_for` timeout.
 
-**Solution**: Both blocked calls are wrapped with `await loop.run_in_executor(None, lambda: yf.Ticker(...))`, which offloads the synchronous yfinance work to a thread pool. The event loop remains free to service other coroutines while the thread waits for yfinance's HTTP response. The change is purely mechanical — no API surface or return type changes.
+**Solution (first pass)**: The two worst offenders wrapped with `await loop.run_in_executor(None, lambda: yf.Ticker(...))`.
+
+**Followup (second pass)**: After the first fix, users still saw intermittent `httpx.ReadError` mid-call on `get_financials`, `get_prices`, etc. The underlying cause was the same — other yfinance tools (`stock.history()`, `.financials`, `.balance_sheet`, `.cashflow`, `.info`, `.option_chain()`, `.options`, `stock.calendar`, `stock.earnings_dates`) were still making synchronous calls on the event loop. While individually fast (~50-200ms), under concurrent peer analysis the cumulative blocking window was large enough to stall FastMCP's SSE keepalive writes, causing the client to disconnect. Fixed by wrapping **all 9 synchronous yfinance call sites** in `run_in_executor`. A defence-in-depth change was also made to the MCP client: `httpx.ReadError`, `httpx.ConnectError`, and `httpx.NetworkError` were added to `_TRANSIENT_EXC` so transient SSE blips retry instead of failing immediately.
 
 ### Key properties
 
 - ✅ Event loop unblocked — no coroutine starvation during yfinance data fetches
 - ✅ Thread-safe — `asyncio.get_event_loop()` runs the executor on the same loop
 - ✅ Zero API change — tool signatures and return types identical
-- ✅ Affects only the two longest-blocking yfinance calls: `insider_transactions` and `history(period="max")`
+- ✅ All 9 synchronous yfinance call sites wrapped (up from the original 2)
 
 ## Peer Sets — Expanded with Normalised Key Matching
 

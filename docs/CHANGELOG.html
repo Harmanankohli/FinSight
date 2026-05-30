@@ -42,6 +42,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <ul>
 <li><strong><code>get_insider_transactions</code> converted to async</strong> (<code>mcp_servers/finsight_server.py</code>): <code>yf.Ticker(ticker).insider_transactions</code> (synchronous DataFrame fetch) now runs via <code>loop.run_in_executor()</code> instead of blocking the asyncio event loop. Prevents concurrent tool calls from stalling while insider data is fetched.</li>
 <li><strong><code>_get_scenario_shocks_uncached</code> converted to async</strong> (<code>mcp_servers/finsight_server.py</code>): <code>yf.Ticker(sym).history(period="max")</code> (25+ years of price data) now runs via <code>loop.run_in_executor()</code>. Prevents long-running history fetches from starving concurrent MCP requests.</li>
+<li><strong>7 additional yfinance tools wrapped in <code>run_in_executor</code></strong> (<code>mcp_servers/finsight_server.py</code>): Followup to the two above &mdash; <code>_get_prices_uncached</code> (<code>stock.history()</code>), <code>_get_financials_uncached</code> (<code>.financials</code>/<code>.balance_sheet</code>/<code>.cashflow</code>/<code>.info</code>), <code>_get_macro_impl</code> (both macro/sector <code>history()</code> loops), <code>get_options_chain</code> (<code>option_chain()</code> and <code>.options</code>), <code>get_earnings_calendar</code> (<code>stock.calendar</code>), <code>get_sentiment_indicators</code> (<code>stock.info</code>), and <code>get_earnings_history</code> (<code>stock.earnings_dates</code>) all moved off the event loop. Together with the first two, every synchronous yfinance call in the server now runs via thread executor. Fixes <code>httpx.ReadError</code> SSE keepalive failures mid-call.</li>
 </ul>
 
 <h3 class="version">Quant &amp; Market Context &mdash; Peer Concurrency Cap</h3>
@@ -58,6 +59,19 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <ul>
 <li><strong>Redis auto-detection</strong> (<code>run_adk_web.bat</code>): Reads <code>REDIS_URL</code> from <code>.env</code> &mdash; when set and <code>redis-server</code> is in PATH, auto-starts Redis before launching agent services. Logs clear message when <code>redis-server</code> is missing (suggests <code>winget install Redis.Redis</code>). Falls back to in-process TTLCache.</li>
 <li><strong>Redis cleanup</strong> (<code>stop_servers.bat</code>): Kills <code>redis-server.exe</code> when <code>REDIS_URL</code> is configured. Uses <code>taskkill</code> + WMI-based process termination. Terminal cleanup filter updated to match <code>redis-server</code> command lines.</li>
+</ul>
+
+<h3 class="version">MCP Client &mdash; Transient Error Expansion</h3>
+<ul>
+<li><strong>httpx network errors added to retryable set</strong> (<code>shared/mcp_client.py</code>): <code>httpx.ReadError</code>, <code>httpx.ConnectError</code>, and <code>httpx.NetworkError</code> added to <code>_TRANSIENT_EXC</code> tuple. These errors surface when the MCP server&rsquo;s SSE connection resets due to event-loop blocking (see yfinance executor fixes). Previously, a brief SSE blip during a yfinance call would fail the entire MCP request immediately. Now they retry like any other transient network error. Import guarded with <code>try/except ImportError</code> so <code>httpx</code> is not a hard dependency.</li>
+</ul>
+
+<h3 class="version">RAGAS Eval &mdash; Retry Tuning &amp; Timeout Logging</h3>
+<ul>
+<li><strong>AsyncOpenAI <code>max_retries=5</code></strong> (<code>shared/runtime_eval.py</code>): Increased from 1 to 5 so LM Studio idle-unload retries are absorbed at the httpx/SDK layer rather than failing instructor structured-output calls outright. The previous <code>max_retries=1</code> caused spurious failures when LM Studio briefly unloaded the model between requests.</li>
+<li><strong>Removed instructor <code>max_retries=1</code> override</strong>: <code>instructor.from_openai()</code> now falls back to the client&rsquo;s retry count (5), so instructor calls get the same retry budget as raw client calls.</li>
+<li><strong><code>asyncio.TimeoutError</code> caught separately</strong> (<code>_run_metrics</code>): Now logged with a dedicated warning message including the <code>EVAL_METRIC_TIMEOUT</code> value instead of appearing as a bare colon in the generic <code>BaseException</code> handler.</li>
+<li><strong>Empty exception messages logged as type name</strong>: When <code>str(exc)</code> is empty (common for <code>TimeoutError</code> and <code>CancelledError</code>), logs <code>type(exc).__name__</code> instead of a bare colon.</li>
 </ul>
 
 <h2>v1.32 &mdash; Phase 4 Final Items: Date-Aware Semantic Cache + RAG Startup Warm-Up</h2>

@@ -194,6 +194,8 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 
 <p><strong>Why increase HTTP timeout to 180s?</strong> Faithfulness makes multiple sequential LLM calls within a single <code>ascore()</code> &mdash; it decomposes the response into atomic claims, then verifies each against the retrieved contexts. On a 20B local model at ~20&ndash;30s per call, three claims require 60&ndash;90s total. The default 60s client timeout kills the metric mid-decomposition. 180s provides headroom for up to 6 claims with retries.</p>
 
+<p><strong>Why <code>max_retries=5</code> instead of the previous <code>max_retries=1</code>?</strong> LM Studio periodically unloads idle models from GPU memory. When a RAGAS metric call arrives after an idle period, LM Studio reloads the model &mdash; the first request times out, succeeding on retry. With <code>max_retries=1</code>, the single retry was sometimes insufficient for model reload (~2-5s). Increasing to 5 gives the SDK enough budget to absorb reload latency at the httpx layer rather than failing instructor&rsquo;s structured-output calls. The <code>instructor.from_openai(max_retries=1)</code> override was removed so instructor calls inherit the client&rsquo;s retry count. Separate <code>asyncio.TimeoutError</code> handling prevents timeouts from appearing as bare colons in logs.</p>
+
 <p><strong>Why <code>sys.stdout.reconfigure(encoding='utf-8')</code>?</strong> RAGAS internal log messages (from <code>ragas/llms/base.py</code>) contain Unicode characters like curly quotes (<code>\u2010</code>, <code>\u2011</code>) when formatting LLM responses. On Windows with cp1252 console encoding, these characters trigger <code>UnicodeEncodeError</code>, producing noisy &ldquo;--- Logging error ---&rdquo; tracebacks. Setting UTF-8 at import time in <code>shared/config.py</code> prevents this for both stdout and stderr.</p>
 
 <p><strong>Why <code>_push_scores</code> skips when trace_id is None?</strong> With placeholder Langfuse API keys (<code>pk-lf-...</code>), <code>langfuse.create_score()</code> with no <code>trace_id</code> sends an API request missing the required trace identifier. The Langfuse cloud API rejects these with &ldquo;Bad request&rdquo; errors. Since eval tasks may run outside any active trace context, the early return when <code>trace_id is None</code> avoids pointless API failures.</p>
@@ -1780,19 +1782,15 @@ return await self.index.query(ticker, query_text)</code></pre>
 
 <h3>yfinance blocking calls &rarr; thread executor</h3>
 <p><strong>Problem</strong>: <code>yf.Ticker.insider_transactions</code> and <code>yf.Ticker.history(period=&quot;max&quot;)</code> are synchronous DataFrame operations that block the asyncio event loop. When the MCP server handles multiple concurrent tool calls (e.g. <code>get_financials</code> for 8 peer tickers), a blocking yfinance call stalls all in-flight coroutines &mdash; the event loop cannot switch to another task until the blocking call returns.</p>
-<p>Affected MCP tools:</p>
-<ul>
-<li><code>get_insider_transactions</code> &mdash; <code>yf.Ticker(ticker).insider_transactions</code></li>
-<li><code>_get_scenario_shocks_uncached</code> &mdash; <code>yf.Ticker(ticker).history(period=&quot;max&quot;)</code></li>
-</ul>
-<p><strong>Solution</strong>: Both blocked calls wrapped with <code>await loop.run_in_executor(None, lambda: yf.Ticker(...))</code>, which offloads synchronous yfinance work to a thread pool. The event loop remains free to service other coroutines while the thread waits for yfinance's HTTP response. Purely mechanical &mdash; no API surface or return type changes.</p>
+<p><strong>Solution (first pass)</strong>: The two worst offenders wrapped with <code>await loop.run_in_executor(None, lambda: yf.Ticker(...))</code>.</p>
+<p><strong>Followup (second pass)</strong>: After the first fix, users still saw intermittent <code>httpx.ReadError</code> mid-call on <code>get_financials</code>, <code>get_prices</code>, etc. The underlying cause was the same &mdash; other yfinance tools (<code>stock.history()</code>, <code>.financials</code>, <code>.balance_sheet</code>, <code>.cashflow</code>, <code>.info</code>, <code>.option_chain()</code>, <code>.options</code>, <code>stock.calendar</code>, <code>stock.earnings_dates</code>) were still making synchronous calls on the event loop. While individually fast (~50-200ms), under concurrent peer analysis the cumulative blocking window was large enough to stall FastMCP's SSE keepalive writes, causing the client to disconnect. Fixed by wrapping <strong>all 9 synchronous yfinance call sites</strong> in <code>run_in_executor</code>. A defence-in-depth change was also made to the MCP client: <code>httpx.ReadError</code>, <code>httpx.ConnectError</code>, and <code>httpx.NetworkError</code> were added to <code>_TRANSIENT_EXC</code> so transient SSE blips retry instead of failing immediately.</p>
 
 <h3>Key properties</h3>
 <ul>
 <li>&check; Event loop unblocked &mdash; no coroutine starvation during yfinance data fetches</li>
 <li>&check; Thread pool managed by asyncio &mdash; no manual thread lifecycle</li>
 <li>&check; No API changes &mdash; return types, signatures, error handling identical</li>
-<li>&check; Affects only the two longest-blocking yfinance calls: <code>insider_transactions</code> and <code>history(period=&quot;max&quot;)</code></li>
+<li>&check; All 9 synchronous yfinance call sites wrapped (up from the original 2)</li>
 </ul>
 
 <hr>

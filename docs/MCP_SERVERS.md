@@ -24,9 +24,9 @@ Health check: `GET http://localhost:8010/health` → `{"status":"ok","agent":"mc
 
 | Cache | TTL | Notes |
 |---|---|---|
-| `get_prices` | 5 min | Key: `(ticker, period, interval)` |
-| `get_financials` | 24 h | Key: `(ticker,)` |
-| `get_news_sentiment` | 15 min | Only cached when articles found |
+| `get_prices` | 1 min | Key: `(ticker, period, interval)` |
+| `get_financials` | 1 h | Key: `(ticker,)` |
+| `get_news_sentiment` | 5 min | Only cached when articles found |
 | `get_filing_content` | Permanent (LRU-200) | Filings are immutable |
 | `_fetch_submissions` | 6 h | Shared by `get_company_filings` + `get_financial_filings` |
 | `get_peers` | 24 h | yfinance Industry/Sector peer lists |

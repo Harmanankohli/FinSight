@@ -4,8 +4,9 @@
 
 ### MCP Server — yfinance Blocking Calls Moved to Thread Executor
 
-- **`get_insider_transactions` converted to async** (`mcp_servers/finsight_server.py`): `yf.Ticker(ticker).insider_transactions` (a synchronous DataFrame fetch) now runs via `loop.run_in_executor()` instead of blocking the asyncio event loop. Prevents the MCP server from stalling concurrent tool calls while insider data is being fetched.
-- **`_get_scenario_shocks_uncached` converted to async** (`mcp_servers/finsight_server.py`): `yf.Ticker(sym).history(period="max")` (fetches 25+ years of price data) now runs via `loop.run_in_executor()`. Prevents long-running yfinance history fetches from starving concurrent MCP requests (e.g. `get_financials` for peers).
+- **`get_insider_transactions` converted to async** (`mcp_servers/finsight_server.py`): `yf.Ticker(ticker).insider_transactions` (synchronous DataFrame fetch) now runs via `loop.run_in_executor()` instead of blocking the asyncio event loop. Prevents concurrent tool calls from stalling while insider data is fetched.
+- **`_get_scenario_shocks_uncached` converted to async** (`mcp_servers/finsight_server.py`): `yf.Ticker(sym).history(period="max")` (25+ years of price data) now runs via `loop.run_in_executor()`. Prevents long-running history fetches from starving concurrent MCP requests.
+- **7 additional yfinance tools wrapped in `run_in_executor`** (`mcp_servers/finsight_server.py`): Followup to the two above — `_get_prices_uncached` (`stock.history()`), `_get_financials_uncached` (`.financials`/`.balance_sheet`/`.cashflow`/`.info`), `_get_macro_impl` (both macro/sector `history()` loops), `get_options_chain` (`option_chain()` and `.options`), `get_earnings_calendar` (`stock.calendar`), `get_sentiment_indicators` (`stock.info`), and `get_earnings_history` (`stock.earnings_dates`) all moved off the event loop. Together with the first two, every synchronous yfinance call in the server now runs via thread executor. Fixes `httpx.ReadError` SSE keepalive failures mid-call.
 
 ### Quant & Market Context — Peer Concurrency Cap
 
@@ -20,6 +21,17 @@
 - **Redis auto-detection and startup** (`run_adk_web.bat`): Reads `REDIS_URL` from `.env` — when set and `redis-server` is in PATH, the batch file auto-starts Redis before launching agent services. Logs a clear message when `REDIS_URL` is set but `redis-server` is not found (suggests `winget install Redis.Redis`). Falls back gracefully to in-process TTLCache when Redis is unavailable.
 - **Redis cleanup in stop_servers.bat** (`stop_servers.bat`): `stop_servers.bat` now kills `redis-server.exe` when `REDIS_URL` is configured. Uses both `taskkill` and WMI-based process termination for robustness.
 - **Terminal cleanup updated**: The WMI process filter in `stop_servers.bat` now also matches `redis-server` command lines, ensuring all terminal windows are properly cleaned up.
+
+### MCP Client — Transient Error Expansion
+
+- **httpx network errors added to retryable set** (`shared/mcp_client.py`): `httpx.ReadError`, `httpx.ConnectError`, and `httpx.NetworkError` added to `_TRANSIENT_EXC` tuple. These errors surface when the MCP server's SSE connection resets due to event-loop blocking (see yfinance executor fixes above). Previously, a brief SSE blip during a yfinance call would fail the entire MCP request immediately. Now they retry like any other transient network error. The import is guarded with `try/except ImportError` so `httpx` is not a hard dependency of the module.
+
+### RAGAS Eval — Retry Tuning & Timeout Logging
+
+- **AsyncOpenAI `max_retries=5`** (`shared/runtime_eval.py`): Increased from 1 to 5 so LM Studio idle-unload retries are absorbed at the httpx/SDK layer rather than failing instructor structured-output calls outright. The previous `max_retries=1` was meant to suppress retry storms but also caused spurious failures when LM Studio briefly unloaded the model between requests.
+- **Removed instructor `max_retries=1` override**: `instructor.from_openai()` now falls back to the client's retry count (5), so instructor calls get the same retry budget as raw client calls.
+- **`asyncio.TimeoutError` caught separately** (`_run_metrics`): Now logged with a dedicated warning message including the `EVAL_METRIC_TIMEOUT` value instead of appearing as a bare colon in the generic `BaseException` handler.
+- **Empty exception messages logged as type name**: When `str(exc)` is empty (common for `TimeoutError` and `CancelledError`), logs `type(exc).__name__` instead of a bare colon in the warning line.
 
 ## v1.34 — Phase 5: Dynamic Peers, Sector-Relative Scoring, Live Scenario Shocks, Insider MCP Tool
 
