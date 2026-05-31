@@ -4,6 +4,7 @@ Handles post-turn memory persistence and orchestrator-level RAGAS eval.
 Bypassed entirely when running through FinSightAgentExecutor."""
 import asyncio
 import logging
+import re
 import sys
 from pathlib import Path
 
@@ -206,6 +207,84 @@ def _is_analysis_turn(events) -> bool:
     return False
 
 
+def _has_send_message_call(events) -> bool:
+    """True if send_message was called in the current turn (after last user msg)."""
+    last_user_idx = -1
+    for i in range(len(events) - 1, -1, -1):
+        if getattr(events[i], "author", None) == "user":
+            last_user_idx = i
+            break
+    if last_user_idx < 0:
+        return False
+    for event in events[last_user_idx + 1:]:
+        try:
+            for fn_call in event.get_function_calls():
+                if fn_call.name == "send_message":
+                    return True
+        except Exception:
+            continue
+    return False
+
+
+_REC_PATTERN = re.compile(r"\b(BUY|HOLD|SELL)\b", re.IGNORECASE)
+_CONF_PATTERN = re.compile(
+    r"(?:confidence|conf)[:\s]*(\d+(?:\.\d+)?)\s*%?"
+    r"|(\d+(?:\.\d+)?)\s*%\s*(?:confidence|conf)",
+    re.IGNORECASE,
+)
+
+
+def _extract_recommendation_from_text(text: str) -> tuple[str, float]:
+    """Best-effort extraction of recommendation + confidence from LLM synthesis text."""
+    rec = "UNKNOWN"
+    conf = 0.5
+    m = _REC_PATTERN.search(text)
+    if m:
+        rec = m.group(1).upper()
+    cm = _CONF_PATTERN.search(text)
+    if cm:
+        raw = cm.group(1) or cm.group(2)
+        val = float(raw)
+        conf = val / 100.0 if val > 1.0 else val
+    return rec, round(conf, 2)
+
+
+async def _auto_save_brief(session, user_query: str, response_text: str) -> None:
+    """Programmatically save the brief when the LLM forgot to call save_brief."""
+    from shared.memory import PerformanceTracker, TickerMemory
+    from shared.ticker_utils import extract_ticker
+
+    ticker = extract_ticker(user_query)
+    if not ticker:
+        logger.warning("auto_save_brief: could not extract ticker from query")
+        return
+
+    rec, conf = _extract_recommendation_from_text(response_text)
+
+    tm = TickerMemory()
+    await tm.store_minimal(
+        ticker=ticker,
+        user_id=session.user_id or "default_user",
+        session_id=session.id,
+        query=user_query,
+        response_text=response_text,
+        recommendation=rec,
+        confidence=conf,
+    )
+
+    pt = PerformanceTracker()
+    await pt.record_recommendation(
+        ticker=ticker,
+        user_id=session.user_id or "default_user",
+        recommendation=rec,
+        confidence=conf,
+    )
+
+    logger.info("auto_save_brief: saved %s %s (%.0f%%)", ticker, rec, conf * 100)
+    with open(_LOG_FILE, "a") as f:
+        f.write(f"  auto_save_brief: {ticker} {rec} ({conf:.0%})\n")
+
+
 # ADK invokes this after every agent turn. Non-analysis turns are skipped to avoid polluting long-term memory with casual chitchat queries.
 async def _persist_memory_callback(callback_context) -> None:
     """Persist session to memory after each agent turn.
@@ -228,14 +307,27 @@ async def _persist_memory_callback(callback_context) -> None:
             f.write("  No session or no events\n")
         return
 
-    # Skip persist/eval on non-analysis turns (e.g. user asking "what were my
-    # last recommendations?" which only calls load_memory). Otherwise the
-    # conversational query gets indexed and pollutes future memory searches.
-    if not _is_analysis_turn(session.events):
-        logger.info("Skipping persist + eval — turn did not call save_brief")
+    is_analysis = _is_analysis_turn(session.events)
+    sent_to_agents = _has_send_message_call(session.events)
+
+    if not is_analysis and not sent_to_agents:
+        logger.info("Skipping persist + eval — no save_brief or send_message")
         with open(_LOG_FILE, "a") as f:
             f.write("  Skipped (non-analysis turn)\n")
         return
+
+    if sent_to_agents and not is_analysis:
+        logger.info("LLM skipped save_brief — auto-saving")
+        with open(_LOG_FILE, "a") as f:
+            f.write("  LLM skipped save_brief — auto-saving\n")
+        user_query, response_text = _extract_query_and_response(session.events)
+        if response_text:
+            try:
+                await _auto_save_brief(session, user_query, response_text)
+            except Exception as e:
+                logger.error("auto_save_brief failed: %s", e, exc_info=True)
+                with open(_LOG_FILE, "a") as f:
+                    f.write(f"  auto_save_brief failed: {e}\n")
 
     # Use ADK's Context.add_events_to_memory with correct signature
     try:
