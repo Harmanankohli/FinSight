@@ -48,7 +48,7 @@ FinSightAgentExecutor:
     → LLM emits ALL send_message calls in ONE assistant turn (parallel, per system prompt instruction)
     → send_message("Financial RAG Agent", "Analyze NVDA...")
     → send_message("Quant Analysis Agent", "Compute metrics for NVDA...")
-    → send_message("Market Context Agent", "Sentiment for NVDA...")
+    → send_message("Market Context Agent", "Macro and peer landscape analysis for NVDA...")
     → LLM receives all results together in the next turn
     → LLM synthesizes BUY/HOLD/SELL
     → load_memory(query="...") — search past conversations
@@ -115,7 +115,7 @@ Body:
 
 ### Runtime Evaluation
 
-Triggered from `after_agent_callback` (ADK Web path) — see step 10 above. Fires `asyncio.create_task(score_response(...))` with 6 metrics. All scored from `user_input` + `response` only — no ground-truth reference needed. Globally toggled by `EVAL_TRACE_ENABLED` in `.env`. Scores pushed to Langfuse under `ragas/orchestrator/<metric>`.
+Triggered from `after_agent_callback` (ADK Web path) — see step 10 above. Fires `asyncio.create_task(score_response(...))` with 6 metrics. All scored from `user_input` + `response` only — no ground-truth reference needed. Globally toggled by `EVAL_TRACE_ENABLED` in `.env`. Globally toggled by `EVAL_TRACE_ENABLED` in `.env`. Scores pushed to Langfuse under `ragas/orchestrator/<metric>`.
 
 | Metric | Why |
 |---|---|
@@ -123,7 +123,7 @@ Triggered from `after_agent_callback` (ADK Web path) — see step 10 above. Fire
 | `citation_quality` (DomainSpecificRubrics) | Custom 5-level rubric: scores whether the response cites specific filing dates, sections, and monetary figures vs making generic claims. A response saying "NVDA's revenue grew" without citing the 10-Q date and amount scores 1. Critical for financial credibility — unsubstantiated claims are worthless. |
 | `risk_disclosure` (DomainSpecificRubrics) | Custom 5-level rubric: evaluates whether risks are acknowledged. An investment thesis without risk discussion is incomplete. Scores from "no risk mentioned" (level 1) to "balanced multi-category risk assessment" (level 5). |
 | `recommendation_clarity` (DomainSpecificRubrics) | Custom 5-level rubric: verifies the synthesizer produces an explicit BUY/HOLD/SELL signal with supporting evidence from ≥2 sub-agents. A response that discusses pros/cons without committing to a clear signal scores low. |
-| `response_completeness` (DomainSpecificRubrics) | Custom 5-level rubric: assesses whether all three analysis types (SEC filings, quant metrics, sentiment) are synthesized. A response that only discusses stock price without filing data or narrative scores 1. |
+| `response_completeness` (DomainSpecificRubrics) | Custom 5-level rubric: assesses whether all three analysis types (SEC filings, quant metrics, market context) are synthesized. A response that only discusses stock price without filing data or narrative scores 1. |
 | `no_forward_guarantees` (AspectCritic) | Flags any language suggesting guaranteed future performance. Prevents the orchestrator from making forward-looking promises. |
 
 ---

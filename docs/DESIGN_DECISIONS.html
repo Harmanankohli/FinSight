@@ -454,6 +454,30 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 </table>
 <p><strong>Key</strong>: The qwen model reduced per-call latency by ~5&ndash;10x while maintaining adequate output quality for all agent tasks (routing, summarisation, analysis). This was the single biggest performance improvement in the pipeline.</p>
 
+<h2>Model Change: qwen3-30b-A3B &rarr; Ministral-3-14b (v1.36)</h2>
+
+<h3>Why switch from qwen3-30b-A3B to ministral-3-14b-reasoning?</h3>
+<p>The default in <code>config.py</code> remained <code>qwen/qwen3-30b-a3b-2507</code>, but the active <code>.env</code> was changed to <code>mistralai/ministral-3-14b-reasoning</code> for local development:</p>
+<table>
+<tr><th>Aspect</th><th>qwen3-30b-A3B</th><th>ministral-3-14b-reasoning</th></tr>
+<tr><td>Params</td><td>30B total (3B active)</td><td>14B total</td></tr>
+<tr><td>Inference (M1 MBP 16GB)</td><td>~8&ndash;12s per call</td><td>~3&ndash;5s per call</td></tr>
+<tr><td>Tool-calling reliability</td><td>Reliable (calls <code>save_brief</code> consistently)</td><td>Unreliable (often skips <code>save_brief</code>)</td></tr>
+<tr><td>RAM usage</td><td>~6&ndash;8GB</td><td>~3&ndash;4GB</td></tr>
+</table>
+<p>Ministral is faster and lighter, which matters for the A3B model's runtime on a laptop with 16GB unified memory. The qwen model, despite having only 3B active parameters, still loads the full 30B into memory &mdash; consuming ~6&ndash;8GB vs ministral's ~3&ndash;4GB.</p>
+
+<h3>Why not change the <code>config.py</code> default?</h3>
+<p>The <code>.env</code> is per-developer. Changing the default would force the qwen download on every new clone. Keeping <code>qwen3-30b-a3b-2507</code> as the code default preserves it as the &quot;reference&quot; model &mdash; it has reliable tool-calling and was tested most thoroughly. Developers can override to ministral (or any LM Studio model) via <code>.env</code> for faster local iteration.</p>
+
+<h3>What problems did the switch expose?</h3>
+<p>Ministral's inconsistent <code>save_brief</code> calling directly motivated two v1.36 features:</p>
+<ol>
+<li><strong>Auto-save brief fallback</strong> &mdash; when the LLM delegates to sub-agents (<code>send_message</code> called) but doesn't call <code>save_brief</code>, the callback programmatically persists the analysis using regex-extracted rec/confidence</li>
+<li><strong>Full synthesis after-turn update</strong> &mdash; when <code>save_brief</code> is called early with a placeholder, the post-turn callback overwrites with the longer analysis text from session events</li>
+</ol>
+<p>See the relevant sections above for detailed rationale.</p>
+
 <h2>RAG Agent Auto-ingest</h2>
 <p>The RAG agent fetches SEC filings via MCP on first query (<code>_ensure_ingested</code>). Was fragile with <code>json.loads()</code> on potentially empty MCP responses. Fixed with proper empty-check and <code>try/except json.JSONDecodeError</code>.</p>
 
@@ -1826,6 +1850,138 @@ return await self.index.query(ticker, query_text)</code></pre>
 <li>&check; Timeout preserved &mdash; orchestrator still has safety net</li>
 <li>&check; Minimal protocol change &mdash; WORKING events are part of the A2A spec</li>
 </ul>
+
+<h2>AG-UI Bridge over ADK Web (v1.36)</h2>
+
+<h3>Why a custom SSE bridge instead of <code>adk web</code>'s built-in WebSocket?</h3>
+<p>CopilotKit speaks AG-UI &mdash; a streaming protocol that goes through <code>@ag-ui/client</code>. ADK Web uses a different WebSocket protocol aimed at its own web UI. Rather than reverse-engineer ADK Web's protocol or hack CopilotKit to speak it, we built a bridge layer (<code>agui_bridge.py</code>) that:</p>
+<ol>
+<li>Accepts <code>RunAgentInput</code> JSON (AG-UI's input schema)</li>
+<li>Translates ADK runner events into AG-UI SSE frames (<code>TextMessageStartEvent</code>, <code>ToolCallStartEvent</code>, <code>StateDeltaEvent</code>, etc.)</li>
+<li>Streams them back as <code>text/event-stream</code></li>
+</ol>
+<p>This keeps the frontend agnostic to the backend framework &mdash; CopilotKit connects to <code>/a2a-agui</code> via an <code>HttpAgent</code> and never knows ADK exists.</p>
+
+<h3>Why SSE instead of WebSocket?</h3>
+<p>SSE is simpler, unidirectional, and sufficient for streaming LLM responses. WebSocket would require managing connection lifecycle, heartbeats, and reconnection logic on both sides. SSE is natively supported by <code>StreamingResponse</code> (Starlette) and <code>EventSource</code> (browser/CopilotKit). For the use case &mdash; streaming text and tool events from server to client &mdash; SSE covers everything.</p>
+
+<h3>Why camelCase aliases in the SSE helper?</h3>
+<p>CopilotKit's Zod schemas expect camelCase keys (<code>messageId</code>, <code>toolCallId</code>, <code>runId</code>). ADK's AG-UI types generate snake_case by default. The <code>by_alias=True</code> dump in <code>shared/agui_sse.py:sse()</code> lets us define camelCase aliases on the Pydantic models once and have all serialization use the CopilotKit-compatible form automatically.</p>
+
+<h3>Why strip null values from SSE frames?</h3>
+<p>CopilotKit's Zod validation rejects <code>null</code> where an optional field isn't explicitly required. Fields like <code>rawEvent</code>, <code>parentRunId</code>, <code>name</code>, <code>encryptedValue</code> are optional metadata &mdash; when null, they cause Zod parse errors and the entire event is dropped. Selective null-stripping (<code>_STRIP_KEYS</code>) removes only from the event envelope, preserving null in data-carrying fields (<code>snapshot</code>, <code>delta</code>, nested <code>content</code>) where null is semantically meaningful.</p>
+
+<h3>Why server-side API proxies (<code>/api/traces</code>, <code>/api/health</code>) instead of direct browser calls?</h3>
+<p>Two reasons:</p>
+<ul>
+<li><strong>Credentials</strong>: Langfuse secret key and health endpoint URLs never leave the backend. The Next.js server-side <code>fetch</code> handles auth; the browser gets a clean JSON response.</li>
+<li><strong>CORS</strong>: Langfuse and sub-agent health endpoints are on different ports (Langfuse on 4000, sub-agents on 8001+) &mdash; the browser would need CORS headers. A same-origin proxy avoids this entirely.</li>
+</ul>
+
+<h3>Why CopilotKit over building a custom chat UI?</h3>
+<p>CopilotKit provides a production-grade chat interface (message list, input, streaming, function call rendering) out of the box. Building the same from scratch against raw AG-UI events would be ~500+ lines of React state management. CopilotKit's <code>CopilotKit</code> + <code>CopilotChat</code> components handle this with &lt;50 lines of code. The trade-off is dependency on a third-party library, but it's a mature one (1.59, 2M+ weekly downloads) with a stable AG-UI integration.</p>
+
+<h2>Auto-Save Brief Fallback (v1.36)</h2>
+
+<h3>Why detect <code>send_message</code> as an analysis signal?</h3>
+<p>Local models (e.g. ministral-3b, qwen-2.5) don't reliably call <code>save_brief</code> after synthesizing a response. They may generate the full analysis text but skip the function call &mdash; meaning the analysis is never persisted to <code>TickerMemory</code>, the same-day cache never populates, and subsequent queries re-run all agents.</p>
+<p><code>send_message</code> is the tool the orchestrator uses to delegate to sub-agents. If <code>send_message</code> was called, analysis was performed &mdash; the turn produced investment research, not a casual chat. Checking for <code>_has_send_message_call(session.events)</code> is a reliable heuristic: if the LLM delegated to agents, there's analysis to save.</p>
+
+<h3>Why pattern-based extraction of rec/conf instead of parsing structured output?</h3>
+<p>Structured output (e.g. JSON in the system prompt) is fragile with small local models &mdash; they often produce malformed JSON or omit fields. The heuristic regexes (<code>_REC_PATTERN</code>, <code>_CONF_PATTERN</code>) search the LLM's natural language text for &quot;BUY&quot;, &quot;confidence: 85%&quot;, etc. This works with any model regardless of instruction-following quality. The <code>store_minimal</code> method on <code>TickerMemory</code> accepts the extracted values directly without requiring the <code>brief_json</code> schema that <code>save_brief</code> normally populates &mdash; meaning the auto-saved brief is slightly less structured but guaranteed to persist.</p>
+
+<h3>Why both <code>TickerMemory</code> and <code>PerformanceTracker</code>?</h3>
+<p>Two separate storage systems:</p>
+<ul>
+<li><code>TickerMemory</code> &rarr; the brief (text + recommendation) for same-day caching and history</li>
+<li><code>PerformanceTracker</code> &rarr; the recommendation record for portfolio/performance tracking</li>
+</ul>
+<p>The LLM's normal <code>save_brief</code> call handles both. When we auto-save, we must write to both to keep the data consistent.</p>
+
+<h2>Full Synthesis Persistence &mdash; After-Turn Update Revisited (v1.36)</h2>
+
+<h3>Why re-introduce an after-turn update after removing it in v1.35?</h3>
+<p>The v1.35 approach stored the full analysis directly in <code>save_brief</code> by extracting text from <code>session.events</code> at the moment <code>save_brief</code> was called. This worked when the LLM generated analysis text <em>before</em> calling <code>save_brief</code>. But ADK often splits the generation into multiple events:</p>
+<ol>
+<li>Event A: long analysis text (<code>author=model</code>)</li>
+<li>Event B: function call <code>save_brief</code> with short ack like <code>&quot;Brief saved for NVDA&quot;</code></li>
+</ol>
+<p>When <code>save_brief</code> fires (event B), the v1.35 <code>_synthesis_text_from_context</code> helper correctly picked the longest text &mdash; so in practice it worked for most models.</p>
+<p>The v1.36 change is incremental: <strong>after</strong> the turn completes, the <code>_persist_memory_callback</code> / <code>_store_memory</code> now checks whether the analysis text in session events is <em>longer</em> than what was stored by <code>save_brief</code>. If so, it calls <code>tm.update_response_text()</code> to overwrite the brief with the full synthesis. This handles the edge case where:</p>
+<ul>
+<li>The LLM called <code>save_brief</code> early with a placeholder</li>
+<li>The real analysis text came after in a later event batch</li>
+<li>The v1.35 extraction missed it because it ran at <code>save_brief</code> time</li>
+</ul>
+<p>The same logic applies to the A2A executor path (<code>_store_memory</code> in <code>agent_executor.py</code>), ensuring both paths converge on the full text.</p>
+
+<h3>Why compare text lengths instead of always overwriting?</h3>
+<p>Some LLMs call <code>save_brief</code> with the <em>complete</em> analysis (text length = full synthesis). Overwriting with another event's text would be a no-op at best and destructive at worst if the extracted text is shorter. Length comparison is a safe heuristic: the longest model-generated text in the turn is the best candidate.</p>
+
+<h3>Why not use the A2A WORKING event approach for this (&agrave; la RAG warming)?</h3>
+<p>The RAG warming problem was about keeping the A2A channel open during long ingestion. This is a post-hoc data quality fix &mdash; the analysis text exists but was stored incorrectly. No protocol changes needed; just a longer lens on what to persist.</p>
+
+<h2>Case-Insensitive Ticker Lookup (v1.36)</h2>
+
+<h3>Why uppercase the entire query at <code>extract_ticker</code> entry?</h3>
+<p>Before v1.36, <code>extract_ticker(&quot;wmt&quot;)</code> returned <code>None</code> because the regex <code>[A-Z]{1,5}</code> required uppercase. <code>extract_ticker(&quot;wmt financials&quot;)</code> would also fail unless the ticker appeared in parens (<code>(WMT)</code>). This meant:</p>
+<ul>
+<li>Same-day cache missed for lowercase input (<code>wmt</code> &rarr; no match &rarr; <code>&quot;unknown&quot;</code> &rarr; cache skipped)</li>
+<li>Case-sensitive cache key (<code>ticker</code> in <code>_get_today_cached_text</code>) would miss even if extraction worked</li>
+</ul>
+<p>The fix: <code>query = query.upper()</code> at the top of <code>extract_ticker</code>. The regexes are all uppercase &mdash; they match <code>WMT</code> whether the user typed <code>wmt</code>, <code>Wmt</code>, or <code>WMT</code>. The <code>_is_financial_stop_word</code> check and parens patterns also operate on the uppercased input, so no existing logic breaks.</p>
+
+<h3>Why not use <code>re.IGNORECASE</code> instead?</h3>
+<p><code>re.IGNORECASE</code> would work but <code>query.upper()</code> is simpler, more visible, and avoids the <code>re</code> flag mental overhead when reading the function. It's also marginally faster &mdash; the regex engine doesn't need to check case at every character.</p>
+
+<h2>Weighted Vote Normalization (v1.36)</h2>
+
+<h3>Why redistribute missing signal weights instead of ignoring them?</h3>
+<p>The quant agent's behavioral voting uses 8 signal groups (options flow, insider transactions, short interest, etc.), each with a fixed weight in <code>_SIGNAL_WEIGHTS</code>. Before v1.36:</p>
+<pre><code>composite = sum(group_scores[k] * _SIGNAL_WEIGHTS.get(k, 0) for k in present)
+</code></pre>
+<p>When a signal was absent (score = 0.0), it was filtered out via <code>present = {k: v ... if v != 0.0}</code>. But its weight was <em>also</em> excluded &mdash; meaning the total divisor was &lt; 1.0. This dampened the composite score proportionally to the number of missing signals.</p>
+<p>Example: if only 2 of 8 signals are present, each with weight 0.15, the composite &rarr; sum of (score &times; 0.15) = 0.30 &times; average_score. A strong BUY signal of +1.0 in both groups gives composite = 0.30, which is still in HOLD territory (threshold 0.15). <strong>The more signals missing, the harder it was to get a confident non-HOLD vote.</strong></p>
+<p>The fix redistributes weights:</p>
+<pre><code>scale = 1.0 / total_present_weight
+composite = sum(group_scores[k] * _SIGNAL_WEIGHTS.get(k, 0) * scale for k in present)
+</code></pre>
+<p>Now a single +1.0 signal with weight 0.15 (scaled to 1.0) produces composite = 1.0 &rarr; confident BUY. This is correct: the present signal says BUY with high conviction; missing data shouldn't dilute its vote.</p>
+
+<h3>Why sort FCF periods descending in FCF checks?</h3>
+<p><code>_get_fcf_from_financials</code> iterates period keys to find positive free cash flow. Before v1.36, iteration order was insertion order (Python 3.7+) &mdash; which for yfinance data roughly follows ascending order (oldest first). If the oldest period had positive FCF but the most recent year had negative FCF (e.g. a capex-heavy investment year), the function returned the old positive FCF, incorrectly suggesting the company still generates positive FCF. Sorting descending ensures the most recent year is checked first.</p>
+
+<h3>Why <code>golden_cross</code> default <code>None</code> &rarr; <code>False</code>?</h3>
+<p><code>golden_cross</code> (50-day MA &gt; 200-day MA) was <code>None</code> when one or both MAs were unavailable (e.g. IPO &lt; 200 trading days old). <code>None</code> propagated into numeric comparisons in the quant graph &mdash; <code>None &lt; 0</code> is a TypeError in a strict context, and LangGraph's <code>add</code> reducer can't sum <code>None</code>. Defaulting to <code>False</code> makes it a safe boolean: no golden cross if we can't compute it.</p>
+
+<h2>Infrastructure Hardening (v1.36)</h2>
+
+<h3>Why <code>_ALLOWED_TABLES</code> whitelist in <code>prune_old_records</code>?</h3>
+<p>The prune function iterates a hardcoded table list and runs <code>DELETE FROM {table} WHERE created_at &lt; ?</code>. Before v1.36, this was a fully dynamic SQL string with no guard against injection &mdash; if a table name somehow came from user input or an env var, it could inject SQL. The whitelist <code>_ALLOWED_TABLES: frozenset[str]</code> constrains iteration to known-safe table names. This is defence-in-depth: the table names are still hardcoded, but the whitelist makes it impossible for a future refactor to accidentally pass a user-controlled table name into the f-string.</p>
+
+<h3>Why <code>_init_started</code> guard in <code>SemanticCache</code>?</h3>
+<p>SemanticCache is lazily initialized &mdash; Chroma client + embedding model are created on first <code>_ensure_ready()</code> call. If two concurrent requests hit <code>_ensure_ready()</code> simultaneously (or a re-entrant call occurs during the <code>SentenceTransformer</code> download), the Chroma/SentenceTransformer init runs twice. This can cause:</p>
+<ul>
+<li>Two Chroma clients pointing to the same on-disk DB (locking errors)</li>
+<li>Two SentenceTransformer models in memory (RAM waste)</li>
+<li>A crash if the first init is mid-download when the second one starts</li>
+</ul>
+<p>The <code>_init_started</code> boolean gate ensures <code>_ensure_ready()</code> is idempotent even under concurrent access. The first thread sets <code>_init_started = True</code> and runs init; subsequent threads (and re-entrant calls) see the flag and return immediately.</p>
+
+<h3>Why separate <code>_ADK_SESSION_DB</code> from <code>finsight_memory.db</code> in API routes?</h3>
+<p>The API routes (<code>/api/sessions</code>, <code>/api/sessions/{id}/events</code>) query ADK's session database &mdash; which stores conversation turns, tool calls, and event history. This is separate from <code>finsight_memory.db</code>, which stores custom tables (<code>ticker_briefs</code>, <code>recommendation_records</code>, <code>memory_entries</code>). Using <code>_ADK_SESSION_DB = DB_PATH.parent / &quot;adk_sessions.db&quot;</code> makes the path explicit and prevents accidental cross-contamination if the memory DB schema changes.</p>
+
+<h3>Why proper <code>finally</code> blocks for connection cleanup (api_routes)?</h3>
+<p>Before v1.36, some API routes omitted <code>try/finally</code> around <code>aiosqlite.connect()</code>. If the handler raised an exception mid-request, the database connection was leaked &mdash; no <code>await db.close()</code>. Over time, this exhausted the SQLite connection limit (default 5 concurrent writes on Windows, ~unlimited reads but with performance degradation). All routes now use:</p>
+<pre><code>db = None
+try:
+    db = await aiosqlite.connect(...)
+    ...
+finally:
+    if db is not None:
+        await db.close()
+</code></pre>
+<p>This guarantees cleanup even on exception paths. The <code>db = None</code> initialization ensures the <code>finally</code> block doesn't reference a <code>NameError</code> if the connection assignment fails.</p>
 
 <hr>
 <p style="font-size:.85rem;color:#888"><a href="index.html">Back to docs hub</a></p>
