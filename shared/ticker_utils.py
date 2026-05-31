@@ -24,7 +24,7 @@ def _is_financial_stop_word(word: str) -> bool:
 # Low-information words stripped before passing text to ticker-resolution tools,
 # reducing ambiguity in the NLP-based company→ticker lookup.
 _QUERY_NOISE_WORDS: frozenset[str] = frozenset({
-    "analyze", "research", "analyze", "get", "find", "show", "tell", "give",
+    "analyze", "research", "get", "find", "show", "tell", "give",
     "me", "about", "for", "the", "a", "an", "of", "in", "on", "at", "to",
     "from", "with", "by", "and", "or", "but", "is", "are", "was", "were",
     "be", "been", "being", "have", "has", "had", "do", "does", "did",
@@ -51,6 +51,7 @@ def clean_query_for_resolution(text: str) -> str:
 # (2) preposition-adjacent "buy NVDA" or "invest in NVDA",
 # (3) $ prefix as explicit signal, (4) isolated uppercase words.
 def extract_ticker(query: str) -> str:
+    query = query.upper()
     # All-uppercase parens = ticker symbol e.g. "Visa (V)" or "buy (NVDA)".
     m = re.search(r"\(([A-Z]{1,5}(?:\.[A-Z]{1,2})?)\)", query)
     if m and not _is_financial_stop_word(m.group(1)):

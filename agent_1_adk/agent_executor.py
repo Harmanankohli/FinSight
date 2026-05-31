@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import re
 import uuid
@@ -182,7 +183,7 @@ class FinSightAgentExecutor(AgentExecutor):
                 )
                 await updater.update_status(
                     TaskState.TASK_STATE_COMPLETED,
-                    new_text_message(cached_response, task.context_id, task.id),
+                    new_text_message(cached_response),
                     final=True,
                 )
                 return
@@ -193,7 +194,7 @@ class FinSightAgentExecutor(AgentExecutor):
             if cached:
                 await updater.update_status(
                     TaskState.TASK_STATE_COMPLETED,
-                    new_text_message(cached, task.context_id, task.id),
+                    new_text_message(cached),
                     final=True,
                 )
                 return
@@ -239,8 +240,6 @@ class FinSightAgentExecutor(AgentExecutor):
                         await self._add_events_to_memory(
                             user_id, context_id, collected_events
                         )
-                        # Also persist via memory service directly for load_memory
-                        await self._persist_to_memory(user_id, context_id, collected_events)
                     else:
                         logger.warning("No final event received from runner")
                         await updater.update_status(
@@ -324,7 +323,7 @@ class FinSightAgentExecutor(AgentExecutor):
 
         await updater.update_status(
             TaskState.TASK_STATE_COMPLETED,
-            new_text_message(text, task.context_id, task.id),
+            new_text_message(text),
             final=True,
         )
 
@@ -445,15 +444,23 @@ class FinSightAgentExecutor(AgentExecutor):
 
         ticker = extract_ticker(query) or "unknown"
 
-        # Skip if save_brief already stored a brief for this ticker today.
-        # This avoids duplicates when the LLM calls save_brief during execution
-        # and _store_memory also runs as a fallback.
         tm = TickerMemory()
         existing = await tm.get_latest(ticker, user_id=user_id)
         if existing:
             ad = existing.get("analysis_date") or existing["created_at"][:10]
             if ad == datetime.now(IST).date().isoformat():
-                logger.debug("Skip _store_memory — save_brief already stored today for %s", ticker)
+                stored = ""
+                try:
+                    bj = json.loads(existing.get("brief_json", "{}"))
+                    stored = bj.get("response_text", "")
+                except Exception:
+                    pass
+                if len(response_text) > len(stored):
+                    await tm.update_response_text(existing["id"], response_text)
+                    logger.info("Updated existing brief %s with longer text (%d > %d)",
+                                existing["id"], len(response_text), len(stored))
+                else:
+                    logger.debug("Skip _store_memory — save_brief already stored today for %s", ticker)
                 return
 
         rec_match = re.search(r'\b(BUY|HOLD|SELL)\b', response_text, re.IGNORECASE)

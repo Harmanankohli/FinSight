@@ -161,6 +161,26 @@ def _extract_query_and_response(events) -> tuple[str, str]:
     return user_query, best_text
 
 
+def _extract_save_brief_ticker(events) -> str | None:
+    """Return the ticker passed to save_brief in the current turn, or None."""
+    last_user_idx = -1
+    for i in range(len(events) - 1, -1, -1):
+        if getattr(events[i], "author", None) == "user":
+            last_user_idx = i
+            break
+    for event in events[last_user_idx + 1:]:
+        try:
+            for fn_call in event.get_function_calls():
+                if fn_call.name == "save_brief":
+                    args = fn_call.args or {}
+                    ticker = args.get("ticker", "")
+                    if ticker:
+                        return ticker.upper()
+        except Exception:
+            continue
+    return None
+
+
 # Checks whether the turn called save_brief (vs a load_memory-only query that should not be persisted)
 def _is_analysis_turn(events) -> bool:
     """True if the current turn produced a fresh analysis (called save_brief).
@@ -235,9 +255,32 @@ async def _persist_memory_callback(callback_context) -> None:
         with open(_LOG_FILE, "a") as f:
             f.write(f"  add_events_to_memory failed: {e}\n")
 
+    # ── Update saved brief with the full analysis if LLM generated it after save_brief ──
+    user_query, response_text = _extract_query_and_response(session.events)
+    if response_text:
+        ticker = _extract_save_brief_ticker(session.events)
+        if ticker:
+            try:
+                from shared.memory import TickerMemory
+                tm = TickerMemory()
+                latest = await tm.get_latest(ticker, user_id=session.user_id)
+                if latest:
+                    stored = ""
+                    try:
+                        import json as _json
+                        bj = _json.loads(latest.get("brief_json", "{}"))
+                        stored = bj.get("response_text", "")
+                    except Exception:
+                        pass
+                    if len(response_text) > len(stored):
+                        await tm.update_response_text(latest["id"], response_text)
+                        logger.info("Updated brief %s with full analysis (%d > %d chars)",
+                                    latest["id"], len(response_text), len(stored))
+            except Exception:
+                logger.debug("Failed to update brief with full analysis", exc_info=True)
+
     # ── Orchestrator RAGAS eval (ADK Web path) ──────────────────────────
     # ADK Web bypasses FinSightAgentExecutor, so the eval hook lives here.
-    user_query, response_text = _extract_query_and_response(session.events)
     if EVAL_ENABLED and user_query and response_text:
         trace_id = None
         try:
