@@ -13,7 +13,11 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
+from shared.memory.store import DB_PATH, get_db, write_lock
+
 logger = logging.getLogger(__name__)
+
+_ADK_SESSION_DB = DB_PATH.parent / "adk_sessions.db"
 
 
 def _user_id(request: Request) -> str | None:
@@ -25,9 +29,10 @@ def _user_id(request: Request) -> str | None:
 async def memory_ticker_history(request: Request) -> JSONResponse:
     symbol = request.path_params["symbol"].upper()
     limit = int(request.query_params.get("limit", "10"))
+    user_id = _user_id(request)
     from shared.memory import TickerMemory
     tm = TickerMemory()
-    history = await tm.get_history(symbol, limit=limit)
+    history = await tm.get_history(symbol, limit=limit, user_id=user_id)
     return JSONResponse(history)
 
 
@@ -57,8 +62,9 @@ async def sessions_list(request: Request) -> JSONResponse:
     """List all sessions (or filtered by user_id)."""
     import aiosqlite
     user_id = _user_id(request) or request.query_params.get("user_id")
+    db = None
     try:
-        db = await aiosqlite.connect("./db/adk_sessions.db")
+        db = await aiosqlite.connect(str(_ADK_SESSION_DB))
         if user_id:
             cursor = await db.execute(
                 "SELECT id, user_id, app_name, update_time FROM sessions WHERE user_id = ? ORDER BY update_time DESC LIMIT 50",
@@ -83,11 +89,13 @@ async def sessions_list(request: Request) -> JSONResponse:
                 "last_update_time": row[3],
                 "event_count": ev_count,
             })
-        await db.close()
         return JSONResponse(result)
     except Exception as exc:
         logger.exception("Failed to list sessions")
         return JSONResponse({"error": str(exc)}, status_code=500)
+    finally:
+        if db is not None:
+            await db.close()
 
 
 async def session_events(request: Request) -> JSONResponse:
@@ -95,14 +103,14 @@ async def session_events(request: Request) -> JSONResponse:
     import json as _json
     import aiosqlite
     session_id = request.path_params["id"]
+    db = None
     try:
-        db = await aiosqlite.connect("./db/adk_sessions.db")
+        db = await aiosqlite.connect(str(_ADK_SESSION_DB))
         cursor = await db.execute(
             "SELECT id, user_id, timestamp, event_data FROM events WHERE session_id = ? ORDER BY timestamp",
             (session_id,),
         )
         rows = await cursor.fetchall()
-        await db.close()
         if not rows:
             return JSONResponse({"error": "Session not found or no events"}, status_code=404)
         events = []
@@ -134,31 +142,9 @@ async def session_events(request: Request) -> JSONResponse:
     except Exception as exc:
         logger.exception("Failed to load session events")
         return JSONResponse({"error": str(exc)}, status_code=500)
-
-
-def _serialize_content(event) -> list:
-    content = getattr(event, "content", None)
-    if not content:
-        return []
-    parts = []
-    for part in (getattr(content, "parts", None) or []):
-        if getattr(part, "text", None):
-            parts.append({"type": "text", "text": part.text})
-        elif getattr(part, "function_call", None):
-            fc = part.function_call
-            parts.append({
-                "type": "function_call",
-                "name": fc.name,
-                "args": dict(fc.args or {}),
-            })
-        elif getattr(part, "function_response", None):
-            fr = part.function_response
-            parts.append({
-                "type": "function_response",
-                "name": fr.name,
-                "response": fr.response if isinstance(fr.response, str) else str(fr.response),
-            })
-    return parts
+    finally:
+        if db is not None:
+            await db.close()
 
 
 # ── /api/agents ───────────────────────────────────────────────────────────────

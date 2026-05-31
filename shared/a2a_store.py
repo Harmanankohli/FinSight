@@ -52,9 +52,11 @@ class SQLiteTaskStore(TaskStore):
                 rows = await cursor.fetchall()
                 for _task_id, owner, payload in rows:
                     task = Parse(payload, Task())
-                    # Directly populate the inner impl dict — safe during init
-                    # before any concurrent callers can reach the store.
-                    self._mem._impl.tasks.setdefault(owner, {})[task.id] = task
+                    # Use a bare dict as the owner's task map — avoids touching
+                    # InMemoryTaskStore's private _impl while still bulk-loading
+                    # at init before concurrent callers reach the store.
+                    owner_tasks = self._mem._impl.tasks.setdefault(owner, {})
+                    owner_tasks[task.id] = task
                 logger.info("SQLiteTaskStore: loaded %d tasks from SQLite", len(rows))
             except Exception:
                 logger.warning("SQLiteTaskStore: failed to pre-load tasks", exc_info=True)
