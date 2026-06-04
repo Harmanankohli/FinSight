@@ -1407,8 +1407,10 @@ async def llm_summary_node(state: QuantAnalysisState) -> dict:
     prompt += "\nWrite 3-4 sentences for an investor. Note signal conflicts. Be specific about numbers."
 
     try:
+        from shared.llm_queue import llm_queue, Priority
         llm = ChatOpenAI(model=LLM_MODEL, base_url=LLM_BASE_URL, api_key=LLM_API_KEY, temperature=0.3, max_tokens=512)
-        response = await llm.ainvoke(prompt)
+        async with llm_queue.acquire(Priority.CRITICAL, "quant-summary"):
+            response = await llm.ainvoke(prompt)
         summary = response.content if hasattr(response, "content") else str(response)
     except Exception as e:
         logger.warning("LLM summary failed: %s", e)
