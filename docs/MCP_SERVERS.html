@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -41,7 +41,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 
 <table>
 <tr><th>Port</th><th>Tools</th><th>Registry</th></tr>
-<tr><td>8010</td><td><code>get_prices</code>, <code>get_financials</code>, <code>get_options_chain</code>, <code>get_company_filings</code>, <code>get_financial_filings</code>, <code>get_filing_content</code>, <code>validate_ticker</code>, <code>resolve_company_ticker</code>, <code>full_text_search</code>, <code>get_news_sentiment</code>, <code>get_earnings_calendar</code>, <code>get_insider_transactions</code>, <code>get_peers</code>, <code>get_scenario_shocks</code>, <code>execute_python</code></td><td><code>find_agent</code>, <code>resource://agent_cards/list</code>, <code>resource://agent_cards/{name}</code></td></tr>
+<tr><td>8010</td><td><code>get_prices</code>, <code>get_financials</code>, <code>get_options_chain</code>, <code>get_company_filings</code>, <code>get_financial_filings</code>, <code>get_filing_content</code>, <code>validate_ticker</code>, <code>resolve_company_ticker</code>, <code>full_text_search</code>, <code>get_news_sentiment</code>, <code>get_earnings_calendar</code>, <code>get_insider_transactions</code>, <code>get_peers</code>, <code>get_macro_indicators</code>, <code>get_scenario_shocks</code>, <code>get_sentiment_indicators</code>, <code>get_earnings_history</code>, <code>execute_python</code></td><td><code>find_agent</code>, <code>resource://agent_cards/list</code>, <code>resource://agent_cards/{name}</code></td></tr>
 </table>
 
 <p>No API keys required (SEC uses public API, news uses RSS feeds). Windows-compatible &mdash; <code>import resource</code> guarded by platform check.</p>
@@ -56,6 +56,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <tr><th>Cache</th><th>TTL</th><th>Notes</th></tr>
 <tr><td><code>get_prices</code></td><td>1 min</td><td>Key: <code>(ticker, period, interval)</code></td></tr>
 <tr><td><code>get_financials</code></td><td>1 h</td><td>Key: <code>(ticker,)</code></td></tr>
+<tr><td><code>get_macro_indicators</code></td><td>15 min</td><td>Key: <code>"macro"</code> &mdash; Treasury yields, VIX, DXY, sector ETFs</td></tr>
 <tr><td><code>get_news_sentiment</code></td><td>5 min</td><td>Only cached when articles found</td></tr>
 <tr><td><code>get_filing_content</code></td><td>Permanent (LRU-200)</td><td>Filings are immutable</td></tr>
 <tr><td><code>_fetch_submissions</code></td><td>6 h</td><td>Shared by <code>get_company_filings</code> + <code>get_financial_filings</code></td></tr>
@@ -109,8 +110,11 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <table>
 <tr><th>Tool</th><th>Parameters</th><th>Returns</th></tr>
 <tr><td><code>get_peers</code></td><td><code>ticker</code></td><td>List of up to 8 peer tickers via yfinance Industry/Sector <code>top_companies</code>. Dynamic discovery &mdash; no static mapping needed. Cached 24h.</td></tr>
+<tr><td><code>get_macro_indicators</code></td><td>&mdash;</td><td>Treasury yields (10Y, 2Y), VIX, DXY, yield-curve regime, sector ETF 1mo performance. Cached 15 min.</td></tr>
 <tr><td><code>get_scenario_shocks</code></td><td><code>sector</code> (optional)</td><td>Historical crash returns for 4 scenarios (2008, 2020, dot-com, 2022 mild recession) using sector-specific ETFs (QQQ/XLP/XLF/etc). Cached 7 days.</td></tr>
 <tr><td><code>get_insider_transactions</code></td><td><code>ticker</code>, <code>days</code> (90)</td><td>Structured insider buy/sell data from yfinance <code>Ticker.insider_transactions</code>. Returns <code>transactions</code> array + <code>summary</code> dict with total, buys, sells, direction, net_shares, net_value.</td></tr>
+<tr><td><code>get_sentiment_indicators</code></td><td><code>ticker</code></td><td>Short interest %, analyst consensus breakdown (buy/hold/sell), institutional ownership %.</td></tr>
+<tr><td><code>get_earnings_history</code></td><td><code>ticker</code></td><td>Last N quarters EPS estimates vs actuals, beat rate, average surprise %.</td></tr>
 </table>
 
 <h3>Python Runner Tool</h3>

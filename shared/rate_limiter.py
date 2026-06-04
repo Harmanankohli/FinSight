@@ -7,12 +7,12 @@ import time
 
 
 class TokenBucket:
-    def __init__(self, rate: float, burst: int):
-        self.rate = rate
-        self.burst = burst
-        self.tokens = float(burst)
-        self.last = time.monotonic()
-        self._lock = asyncio.Lock()
+    def __init__(self, rate: float, burst: int) -> None:
+        self.rate: float = rate
+        self.burst: int = burst
+        self.tokens: float = float(burst)
+        self.last: float = time.monotonic()
+        self._lock: asyncio.Lock = asyncio.Lock()
 
     async def acquire(self) -> None:
         while True:

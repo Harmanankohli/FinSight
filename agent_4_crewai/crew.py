@@ -98,7 +98,9 @@ class MarketContextCrew:
     async def analyze(self, ticker: str, precollected_data: dict | None = None) -> dict:
         crew = self.build_crew(ticker, data=precollected_data)
         try:
-            result = crew.kickoff()
+            from shared.llm_queue import llm_queue, Priority
+            async with llm_queue.acquire(Priority.CRITICAL, "crewai-kickoff"):
+                result = crew.kickoff()
             raw = result.raw if hasattr(result, "raw") else str(result)
             try:
                 return json.loads(raw)

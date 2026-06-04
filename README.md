@@ -1,4 +1,4 @@
-# FinSight — Multi-Agent Investment Research System
+﻿# FinSight — Multi-Agent Investment Research System
 
 An autonomous multi-agent system that answers investment queries like *"Should I invest in NVIDIA?"* by coordinating three specialized agents across different frameworks, communicating via the **Agent-to-Agent (A2A)** protocol, and using **MCP (Model Context Protocol)** servers for external tool access.
 
@@ -6,7 +6,7 @@ An autonomous multi-agent system that answers investment queries like *"Should I
 
 - **Multi-framework orchestration**: Google ADK orchestrator delegates to LlamaIndex (RAG), LangGraph (Quant), and CrewAI (Market Context) agents
 - **A2A protocol**: Standard-compliant agent discovery and streaming communication via JSON-RPC over HTTP
-- **Multi-tier caching**: TTL-based tool-result cache in the MCP server (1 min prices, 1 h financials, 5 min news, permanent filings, 24h peers, 7d scenario shocks), LangChain SQLiteCache for LLM responses, and semantic cache using ChromaDB cosine similarity
+- **Multi-tier caching**: TTL-based tool-result cache in the MCP server (1 min prices, 1 h financials, 5 min news, permanent filings, 24h peers, 7d scenario shocks), LangChain SQLiteCache for LLM responses, semantic cache using ChromaDB cosine similarity, and LLM priority queue (`CRITICAL`/`NORMAL`/`LOW`) to prevent eval starvation of production inference
 - **Input/output guardrails**: Off-topic filter, pre-flight ticker validation, empty-response guard, and BUY/HOLD/SELL signal enforcement with auto-retry
 - **Persistent memory layer**: SQLite-backed session storage, cross-session memory search, ticker brief history, portfolio persistence, and recommendation tracking with live price snapshots
 - **Incremental RAG ingestion**: Tracks ingested filing URLs in SQLite — restarts never re-ingest already-indexed documents
@@ -41,7 +41,7 @@ An autonomous multi-agent system that answers investment queries like *"Should I
 │  ┌─────────────────┐  ┌─────────────────────────────────┐   │
 │  │ Agent Registry  │  │  Data Sources                 │   │
 │  │ find_agent()    │  │  get_prices, get_financials,  │   │
-│  │ resource://cards│  │  get_options_chain,           │   │
+│  │ resource://agent_cards│  │  get_options_chain,           │   │
 │  └─────────────────┘  │  get_company_filings,         │   │
 │                        │  get_financial_filings,       │   │
 │                        │  get_filing_content,          │   │
@@ -52,6 +52,7 @@ An autonomous multi-agent system that answers investment queries like *"Should I
 │                        │  get_earnings_calendar,       │   │
 │                        │  get_insider_transactions,    │   │
 │                        │  get_peers,                   │   │
+│                        │  get_macro_indicators,        │   │
 │                        │  get_scenario_shocks,         │   │
 │                        │  execute_python, ...          │   │
 │                        └─────────────────────────────────┘   │
@@ -68,7 +69,7 @@ All A2A communication uses `A2ACardResolver` for standard discovery and `ClientF
 | Orchestrator | Google ADK `LlmAgent` with `send_message` tool |
 | Sub-agent Executor | `GenericAgentExecutor` + `BaseAgent` pattern |
 | Memory Layer | SQLite (`aiosqlite`) — sessions, ticker briefs, portfolio, performance, ingested filings |
-| Caching | `_TTLCache` (MCP tools), LangChain `SQLiteCache` (LLM), ChromaDB semantic cache |
+| Caching | `_TTLCache` (MCP tools), LangChain `SQLiteCache` (LLM), ChromaDB semantic cache, `LLMPriorityQueue` (async semaphore, 3 tiers) |
 | Guardrails | Regex off-topic filter + MCP ticker pre-check (input), signal check + retry (output) |
 | RAG | LlamaIndex + ChromaDB (local) + HuggingFace embeddings, incremental ingestion |
 | Quant | LangChain + LangGraph (state machine, MCP data) + LangChain SQLiteCache |
@@ -88,7 +89,7 @@ All A2A communication uses `A2ACardResolver` for standard discovery and `ClientF
 
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/) (recommended) or pip
-- [LM Studio](https://lmstudio.ai) with a model loaded (e.g. `qwen3-30b-a3b-2507`) on port 1234
+- [LM Studio](https://lmstudio.ai) with a model loaded (e.g. `ministral-3-14b-reasoning` or `qwen3-30b-a3b-2507`) on port 1234
 
 ### Setup
 
@@ -134,7 +135,7 @@ uv run python -m uvicorn agent_3_langgraph.server:app --host 0.0.0.0 --port 8003
 uv run python -m uvicorn agent_4_crewai.server:app --host 0.0.0.0 --port 8004
 
 # Terminal 5: ADK Web UI
-uv run adk web --port 8080 --session_service_uri sqlite://./db/finsight_memory.db --memory_service_uri finsight:// agents
+uv run adk web --port 8080 --session_service_uri sqlite://./db/adk_sessions.db --memory_service_uri finsight:// agents
 ```
 
 **Startup order:** LM Studio → MCP Server → RAG → Quant → Market Context → ADK Web UI
@@ -226,7 +227,7 @@ Key environment variables in `.env`:
 
 | Variable | Default | Description |
 |---|---|---|
-| `ADK_MODEL` | `openai/qwen/qwen3-30b-a3b-2507` | LLM model for the orchestrator |
+| `ADK_MODEL` | `openai/mistralai/ministral-3-14b-reasoning` | LLM model for the orchestrator (default `openai/qwen/qwen3-30b-a3b-2507` in `config.py`) |
 | `AGENT_SEED_URLS` | `http://localhost:8002,http://localhost:8003,http://localhost:8004` | A2A agent discovery URLs |
 | `A2A_TIMEOUT` | `680.0` | Timeout for A2A communication (seconds) |
 | `LLM_BASE_URL` | `http://localhost:1234/v1` | LM Studio OpenAI-compatible endpoint |
@@ -244,10 +245,9 @@ Key environment variables in `.env`:
 | `docs/AGENTS.md` | Detailed agent reference (skills, architecture, streaming flow) |
 | `docs/MCP_SERVERS.md` | MCP server tools, TTL caching, registry, client usage |
 | `docs/DESIGN_DECISIONS.md` | Evolution log: why each design choice was made |
-| `docs/DEMO.md` | End-to-end walkthrough with example queries and health check testing |
 | `docs/CHANGELOG.md` | Version history |
 | `docs/TESTS.md` | Test coverage, patterns, RAGAS evaluation, running instructions |
-| `docs/improvements.html` | Caching + guardrails + evaluation platform improvements overview |
+| `docs/AGUI_FRONTEND_PLAN.html` | AG-UI Bridge and Next.js frontend plan |
 
 ## Testing
 

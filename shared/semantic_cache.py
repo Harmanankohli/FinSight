@@ -45,6 +45,7 @@ class SemanticCache:
         self._ttl = ttl_hours * 3600
         self._col = None
         self._embedder = None
+        self._init_started = False
 
     # Lazy initialisation: Chroma client + embedding model are created on first
     # use, not at construction. This avoids import-time failures when deps are
@@ -52,6 +53,9 @@ class SemanticCache:
     def _ensure_ready(self) -> None:
         if self._col is not None:
             return
+        if self._init_started:
+            return
+        self._init_started = True
         try:
             import chromadb
             from sentence_transformers import SentenceTransformer

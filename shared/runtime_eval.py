@@ -194,12 +194,14 @@ async def _setup_ragas_clients():
 
 
 async def _score_metric(metric, **kwargs) -> float:
-    try:
-        result = await metric.ascore(**kwargs)
-        return result.value
-    except Exception:
-        logger.warning("RAGAS metric '%s' ascore failed (kwargs keys: %s)", metric.name, list(kwargs.keys()), exc_info=True)
-        raise
+    from shared.llm_queue import llm_queue, Priority
+    async with llm_queue.acquire(Priority.LOW, f"eval/{metric.name}"):
+        try:
+            result = await metric.ascore(**kwargs)
+            return result.value
+        except Exception:
+            logger.warning("RAGAS metric '%s' ascore failed (kwargs keys: %s)", metric.name, list(kwargs.keys()), exc_info=True)
+            raise
 
 
 async def _score_metric_with_timeout(metric, **kwargs) -> float:

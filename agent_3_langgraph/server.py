@@ -109,8 +109,10 @@ async def _prewarm_llm():
     try:
         from langchain_openai import ChatOpenAI
         from shared.config import LLM_SUMMARY_MODEL, LLM_BASE_URL, LLM_API_KEY
+        from shared.llm_queue import llm_queue, Priority
         llm = ChatOpenAI(model=LLM_SUMMARY_MODEL, base_url=LLM_BASE_URL, api_key=LLM_API_KEY, temperature=0.0, max_tokens=1)
-        await llm.ainvoke("ping")
+        async with llm_queue.acquire(Priority.NORMAL, "quant-warmup"):
+            await llm.ainvoke("ping")
         logger.info("LLM pre-warmed (%s)", LLM_SUMMARY_MODEL)
     except Exception as e:
         logger.warning("LLM warmup failed (non-fatal): %s", e)

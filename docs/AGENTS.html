@@ -84,7 +84,7 @@ FinSightAgentExecutor:
     &rarr; LLM emits ALL send_message calls in ONE assistant turn (parallel, per system prompt instruction)
     &rarr; send_message("Financial RAG Agent", "Analyze NVDA...")
     &rarr; send_message("Quant Analysis Agent", "Compute metrics for NVDA...")
-    &rarr; send_message("Market Context Agent", "Sentiment for NVDA...")
+    &rarr; send_message("Market Context Agent", "Macro and peer landscape analysis for NVDA...")
     &rarr; LLM receives all results together in the next turn
     &rarr; LLM synthesizes BUY/HOLD/SELL
     &rarr; load_memory(query="...") &mdash; search past conversations
@@ -143,7 +143,7 @@ Body:
 
 <h3>Runtime Evaluation</h3>
 
-<p>Triggered from <code>after_agent_callback</code> (ADK Web path) &mdash; see step 10 above. Fires <code>asyncio.create_task(score_response(...))</code> with 6 metrics. All scored from <code>user_input</code> + <code>response</code> only &mdash; no ground-truth reference needed. Globally toggled by <code>EVAL_TRACE_ENABLED</code> in <code>.env</code>. Scores pushed to Langfuse under <code>ragas/orchestrator/&lt;metric&gt;</code>.</p>
+<p>Triggered from <code>after_agent_callback</code> (ADK Web path) &mdash; see step 10 above. Fires <code>asyncio.create_task(score_response(...))</code> with 6 metrics (all scored from <code>user_input</code> + <code>response</code> only &mdash; no ground-truth reference needed). Globally toggled by <code>EVAL_TRACE_ENABLED</code> in <code>.env</code>. All LLM-based metrics use <code>LOW</code> priority in <code>LLMPriorityQueue</code> &mdash; they yield to production <code>CRITICAL</code> calls when the LM Studio instance is saturated. Scores pushed to Langfuse under <code>ragas/orchestrator/&lt;metric&gt;</code>.</p>
 
 <table>
 <tr><th>Metric</th><th>Why</th></tr>
@@ -151,7 +151,7 @@ Body:
 <tr><td><code>citation_quality</code> (DomainSpecificRubrics)</td><td>Custom 5-level rubric: scores whether the response cites specific filing dates, sections, and monetary figures vs making generic claims. A response saying &ldquo;NVDA's revenue grew&rdquo; without citing the 10-Q date and amount scores 1. Critical for financial credibility &mdash; unsubstantiated claims are worthless.</td></tr>
 <tr><td><code>risk_disclosure</code> (DomainSpecificRubrics)</td><td>Custom 5-level rubric: evaluates whether risks are acknowledged. An investment thesis without risk discussion is incomplete. Scores from &ldquo;no risk mentioned&rdquo; (level 1) to &ldquo;balanced multi-category risk assessment&rdquo; (level 5).</td></tr>
 <tr><td><code>recommendation_clarity</code> (DomainSpecificRubrics)</td><td>Custom 5-level rubric: verifies the synthesizer produces an explicit BUY/HOLD/SELL signal with supporting evidence from &ge;2 sub-agents. A response that discusses pros/cons without committing to a clear signal scores low.</td></tr>
-<tr><td><code>response_completeness</code> (DomainSpecificRubrics)</td><td>Custom 5-level rubric: assesses whether all three analysis types (SEC filings, quant metrics, sentiment) are synthesized. A response that only discusses stock price without filing data or narrative scores 1.</td></tr>
+<tr><td><code>response_completeness</code> (DomainSpecificRubrics)</td><td>Custom 5-level rubric: assesses whether all three analysis types (SEC filings, quant metrics, market context) are synthesized. A response that only discusses stock price without filing data or narrative scores 1.</td></tr>
 <tr><td><code>no_forward_guarantees</code> (AspectCritic)</td><td>Flags any language suggesting guaranteed future performance. Prevents the orchestrator from making forward-looking promises.</td></tr>
 </table>
 
@@ -287,9 +287,12 @@ QuantAgent._build_response(query):
         &rarr; format_output (8-group weighted voting, sum=1.0)
           (risk_quality 0.15, dcf_value 0.20, fundamental_value 0.13, fundamental_quality 0.12,
            technicals_trend 0.15, technicals_momentum 0.10, peer_positioning 0.10, behavioral 0.05)
-        &rarr; llm_summary (enriched 3-4 sentence summary)
+        &rarr; llm_summary (CRITICAL priority queue — enriched 3-4 sentence summary)
       &rarr; if EVAL_ENABLED: asyncio.create_task(score_quant_response(...))
       &rarr; return {response_type: "data", content: result, ...}</pre>
+
+<h4>Startup Warm-up</h4>
+<p>On Starlette startup, <code>_prewarm()</code> runs an LLM ping via LangChain&rsquo;s <code>aiohttp</code> session to pre-warm the model server connection. Uses <code>LLMPriorityQueue</code> with <code>NORMAL</code> priority &mdash; ensures the warmup ping doesn&rsquo;t block production inference if startup coincides with concurrent eval scoring.</p>
 
 <p><strong>Portfolio Holdings Extraction</strong>: <code>extract_holdings()</code> in <code>shared/ticker_utils.py</code> uses regex patterns to extract holdings from natural language. The orchestrator LLM is instructed to include holdings in the task text for the Quant agent. Holdings are passed through the full chain and used by <code>correlation_node</code> to compute a correlation matrix.</p>
 
@@ -304,7 +307,7 @@ QuantAgent._build_response(query):
 <p><strong>Peer Discovery</strong>: The <code>peer_comparison_node</code> uses dynamic peer discovery via MCP <code>get_peers</code> (Yahoo Finance recommendations API), not <code>shared/peer_sets.py</code>. The static <code>peer_sets.py</code> is available as a fallback. The Market Context agent also uses dynamic <code>get_peers</code>.</p>
 
 <h4>Runtime Evaluation</h4>
-<p>After each analysis, fires <code>asyncio.create_task(score_quant_response(...))</code> with 2 RAGAS metrics + 1 deterministic schema validator. Scored from <code>user_input</code>, <code>response</code>, and full <code>quant_result</code> dict (Sharpe, VaR, DCF, beta, MC, signals) serialized as a reference string. <code>AnswerRelevancy</code> removed from Quant (kept on Orchestrator only, v1.31).</p>
+<p>After each analysis, fires <code>asyncio.create_task(score_quant_response(...))</code> with 2 RAGAS metrics + 1 deterministic schema validator. Scored from <code>user_input</code>, <code>response</code>, and full <code>quant_result</code> dict (Sharpe, VaR, DCF, beta, MC, signals) serialized as a reference string. <code>AnswerRelevancy</code> removed from Quant (kept on Orchestrator only, v1.31). RAGAS metric LLM calls use <code>LOW</code> priority in <code>LLMPriorityQueue</code> &mdash; they yield to production <code>CRITICAL</code> calls (Quant <code>llm_summary_node</code>).</p>
 <table>
 <tr><th>Metric</th><th>Why</th></tr>
 <tr><td><code>FactualCorrectness</code></td><td>Compares the LLM summary's numerical claims against the actual computed metrics. The reference is the raw quant result dict &mdash; if the LLM says &ldquo;Sharpe ratio of 1.5&rdquo; but the computation produced 0.8, this metric catches it. Prevents hallucinated numbers, the primary failure mode for quantitative analysis.</td></tr>
@@ -350,7 +353,7 @@ MarketContextAgent._build_response(query):
         &#x2502;   &#x2502;     &rarr; primary financials (sector/industry for peer resolution)
         &#x2502;   &#x251C;&#x2500;&#x2500; Step 2: resolve peers via MCP get_peers (dynamic, Yahoo Finance API)
         &#x2502;   &#x2514;&#x2500;&#x2500; Step 3: asyncio.gather(peer financials, peer prices for each peer)
-        &#x2514;&#x2500;&#x2500; MarketContextCrew.analyze(ticker, precollected_data)
+        &#x2514;&#x2500;&#x2500; MarketContextCrew.analyze(ticker, precollected_data)  (CRITICAL priority queue &mdash; crew.kickoff() issues LLM call)
             &#x2514;&#x2500;&#x2500; Single Agent ("Market Context Analyst") &mdash; no crew collaboration, data is pre-collected
               &rarr; Outputs JSON: narrative, macro_regime, relative_peer_positioning,
                 overall_signal (bullish/bearish/neutral), confidence_score (0-1),
@@ -365,7 +368,7 @@ MarketContextAgent._build_response(query):
 <p><strong>Known Issue</strong> (<code>agent_4_crewai/executor.py:73-74</code>): <code>_collect_data_parallel()</code> references undefined variables <code>sector</code> and <code>industry</code> in its return dict. The downstream <code>MarketContextCrew.analyze()</code> handles this gracefully via <code>data.get("sector", "")</code>, so it does not crash, but these keys are never populated.</p>
 
 <h4>Runtime Evaluation</h4>
-<p>After each analysis, fires <code>asyncio.create_task(score_market_context_response(...))</code> with 3 metrics. Scored from <code>user_input</code>, <code>response</code>, and <code>_retrieved_contexts</code> (macro indicator values + peer financial summaries from pre-fetched data). <code>AnswerRelevancy</code> removed from Market Context (kept on Orchestrator only, v1.31).</p>
+<p>After each analysis, fires <code>asyncio.create_task(score_market_context_response(...))</code> with 3 metrics. Scored from <code>user_input</code>, <code>response</code>, and <code>_retrieved_contexts</code> (macro indicator values + peer financial summaries from pre-fetched data). <code>AnswerRelevancy</code> removed from Market Context (kept on Orchestrator only, v1.31). RAGAS metric LLM calls use <code>LOW</code> priority in <code>LLMPriorityQueue</code> &mdash; they yield to production <code>CRITICAL</code> calls (<code>crew.kickoff()</code>).</p>
 <table>
 <tr><th>Metric</th><th>Why</th></tr>
 <tr><td><code>Faithfulness</code></td><td>Verifies the narrative is factually grounded in the collected macro and peer data &mdash; a narrative that fabricates indicator values or peer metrics fails here.</td></tr>
@@ -385,6 +388,7 @@ MarketContextAgent._build_response(query):
 <tr><td><strong><code>LLM_API_KEY</code> env var</strong></td><td>Replaces hardcoded <code>api_key="lmstudio"</code>. All agent files (<code>index_manager.py</code>, <code>nodes.py</code>, <code>crew.py</code>) import <code>LLM_API_KEY</code> from <code>shared/config.py</code>.</td></tr>
 <tr><td><strong>Per-service log levels</strong></td><td><code>LOG_LEVEL_&lt;SERVICE&gt;</code> env vars (e.g. <code>LOG_LEVEL_ORCHESTRATOR=DEBUG</code>).</td></tr>
 <tr><td><strong><code>SEC_USER_AGENT</code> env var</strong></td><td>Replaces hardcoded SEC user agent string in MCP server filing requests.</td></tr>
+<tr><td><strong>LLM Priority Queue</strong></td><td><code>LLMPriorityQueue</code> in <code>shared/llm_queue.py</code> (process-local, heap-based async semaphore). Three tiers: <code>CRITICAL</code> (quant summary, crew kickoff), <code>NORMAL</code> (warmup ping), <code>LOW</code> (RAGAS eval). Default <code>LLM_MAX_CONCURRENT=2</code>. Prevents eval starvation of production inference.</td></tr>
 </table>
 
 <h2>Phase Map</h2>
@@ -402,6 +406,7 @@ more added: prices, financials, macro, options chain, earnings calendar, sentime
 <code>httpx.ReadError</code>/<code>ConnectError</code>/<code>NetworkError</code> added to MCP client transient retry 
 set. RAGAS eval retry tuning: <code>max_retries=5</code>, separate <code>asyncio.TimeoutError</code> handling, empty 
 exception message classification.</td></tr>
+<tr><td><strong>Phase 6</strong></td><td>v1.37</td><td>LLM Priority Queue (<code>shared/llm_queue.py</code>) &mdash; 3-tier heap-based async semaphore to prevent RAGAS eval starvation of production LLM inference. Quant <code>llm_summary_node</code> and CrewAI <code>crew.kickoff()</code> use <code>CRITICAL</code> priority; server warmup uses <code>NORMAL</code>; all runtime eval metrics use <code>LOW</code> priority. Controlled by <code>LLM_MAX_CONCURRENT</code> env var (default 2).</td></tr>
 </table>
 
 <hr>
