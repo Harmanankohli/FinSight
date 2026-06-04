@@ -45,7 +45,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <ul>
 <li><strong>Multi-framework orchestration</strong>: Google ADK orchestrator delegates to LlamaIndex (RAG), LangGraph (Quant), and CrewAI (Market Context) agents</li>
 <li><strong>A2A protocol</strong>: Standard-compliant agent discovery and streaming communication via JSON-RPC over HTTP</li>
-<li><strong>Multi-tier caching</strong>: TTL-based tool-result cache in the MCP server (1 min prices, 1 h financials, 5 min news, permanent filings, 24h peers, 7d scenario shocks), LangChain SQLiteCache for LLM responses, and semantic cache using ChromaDB cosine similarity</li>
+<li><strong>Multi-tier caching + LLM priority queue</strong>: TTL-based tool-result cache in the MCP server (1 min prices, 1 h financials, 5 min news, permanent filings, 24h peers, 7d scenario shocks), LangChain SQLiteCache for LLM responses, semantic cache using ChromaDB cosine similarity, and a priority semaphore (<code>CRITICAL &gt; NORMAL &gt; LOW</code>) to prevent RAGAS eval from starving production inference</li>
 <li><strong>Input/output guardrails</strong>: Off-topic filter, pre-flight ticker validation, empty-response guard, and BUY/HOLD/SELL signal enforcement with auto-retry</li>
 <li><strong>Persistent memory layer</strong>: SQLite-backed session storage, cross-session memory search, ticker brief history, portfolio persistence, and recommendation tracking with live price snapshots</li>
 <li><strong>Incremental RAG ingestion</strong>: Tracks ingested filing URLs in SQLite &mdash; restarts never re-ingest already-indexed documents</li>

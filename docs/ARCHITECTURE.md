@@ -244,6 +244,18 @@ Wired into `agent_1_adk/agent_executor.py`:
 
 `agent_1_adk/agent.py` splits `_build_instruction()` into a module-level `_STATIC_PREAMBLE` constant and a dynamic tail (today's date + agent list). LM Studio reuses the KV-cached static prefix across requests. Same pattern applied to CrewAI backstory strings in `agent_4_crewai/crew.py`.
 
+### LLM Priority Queue (Tier 1E)
+
+`shared/llm_queue.py` provides a process-local async priority semaphore (`LLMPriorityQueue`) that throttles LLM calls when the single LM Studio instance is saturated. Three priority tiers:
+
+| Priority | Usage | Behavior |
+|---|---|---|
+| `CRITICAL` (0) | Quant `llm_summary_node`, CrewAI `crew.kickoff()` | Never starved — production inference served before eval |
+| `NORMAL` (1) | Quant server pre-warmup ping | Served after CRITICAL, before LOW |
+| `LOW` (2) | RAGAS eval `metric.ascore()` | Yields when production is queued — waits if all slots occupied |
+
+Sized by `LLM_MAX_CONCURRENT` (default 2). Uses `heapq` with `(priority, seq, asyncio.Future)` for O(log n) scheduling. Slots are handed directly to the next waiter on release, preserving priority ordering without race windows. Singleton instance imported where needed.
+
 ## Guardrails
 
 ### Input Guardrails
@@ -315,7 +327,7 @@ Timeouts configured via `.env` with `A2A_TIMEOUT=680.0`:
 
 ## LLM Configuration
 
-All agents use LM Studio (OpenAI-compatible local API). The `config.py` default is `qwen/qwen3-30b-a3b-2507`; developers commonly override to `mistralai/ministral-3-14b-reasoning` via `.env` for faster local inference.
+All agents use LM Studio (OpenAI-compatible local API). The `config.py` default is `qwen/qwen3-30b-a3b-2507`; developers commonly override to `mistralai/ministral-3-14b-reasoning` via `.env` for faster local inference. All LLM calls are throttled by `LLMPriorityQueue` (3 priority tiers) to prevent eval scoring from starving production inference; concurrency controlled by `LLM_MAX_CONCURRENT` env var (default 2).
 
 | Agent | Model (default) | Provider |
 |---|---|---|

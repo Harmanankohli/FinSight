@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.37 — LLM Priority Queue
+
+- **`shared/llm_queue.py` (new, 105 lines)**: `LLMPriorityQueue` — process-local async priority semaphore using `heapq` + `(priority, seq, asyncio.Future)`. Three tiers: `Priority.CRITICAL` (0), `Priority.NORMAL` (1), `Priority.LOW` (2). Slot handoff on release preserves priority ordering. Default `LLM_MAX_CONCURRENT=2`. Configurable via env var.
+
+- **`shared/config.py`**: `LLM_MAX_CONCURRENT` env var (default 2) controls queue size.
+
+- **`agent_3_langgraph/nodes.py`**: `llm_summary_node` LLM call uses `Priority.CRITICAL`.
+
+- **`agent_3_langgraph/server.py`**: Pre-warmup LLM ping uses `Priority.NORMAL`.
+
+- **`agent_4_crewai/crew.py`**: `crew.kickoff()` LLM call uses `Priority.CRITICAL`.
+
+- **`shared/runtime_eval.py`**: All RAGAS eval LLM calls (orchestrator, RAG, Quant, Market Context) use `Priority.LOW`.
+
 ## v1.36 — AG-UI Bridge + Next.js CopilotKit Frontend + Auto-Save Brief Fallback
 
 ### FEATURE — AG-UI Bridge & Next.js Frontend

@@ -2484,6 +2484,39 @@ Now a single +1.0 signal with weight 0.15 (scaled to 1.0) produces composite = 1
 
 `golden_cross` (50-day MA > 200-day MA) was `None` when one or both MAs were unavailable (e.g. IPO < 200 trading days old). `None` propagated into numeric comparisons in the quant graph — `None < 0` is a TypeError in a strict context, and LangGraph's `add` reducer can't sum `None`. Defaulting to `False` makes it a safe boolean: no golden cross if we can't compute it.
 
+## LLM Priority Queue (v1.37)
+
+### Why a priority queue instead of more concurrent LLM slots?
+
+The system runs four agents against a single local LM Studio instance with limited GPU memory. When RAGAS eval scoring fires (up to 6 metrics per agent response, each calling the LLM), eval can consume all available LLM slots and starve production inference — a user's quant summary or CrewAI kickoff sits behind eval metrics in the queue. Simply increasing `LLM_MAX_CONCURRENT` (default 2) makes the LM Studio model server the bottleneck instead, degrading latency for everyone.
+
+A priority semaphore solves this without increasing concurrency: production calls (`CRITICAL`) jump ahead of eval calls (`LOW`), and warmup/ping calls (`NORMAL`) sit between them. When all slots are full, the highest-priority waiter is served next.
+
+### Why a heap-based implementation instead of multiple semaphores?
+
+Three separate semaphores (one per priority) would require deciding ahead of time how many slots each priority gets. A fixed split wastes capacity: if no CRITICAL calls are active, the CRITICAL slots sit idle while LOW callers wait. A `heapq` with `(priority, sequence, future)` lets any priority use any slot — when no high-priority work exists, low-priority work fills the gap. The heap ensures O(log n) priority ordering at every arrival.
+
+### Why FIFO tie-breaking within the same priority?
+
+Within the same priority level, callers should be served in order of arrival — first-come, first-served. The monotonically increasing `_seq` counter breaks ties fairly. Without FIFO, a late-arriving CRITICAL caller could starve an earlier CRITICAL caller under heavy load (though in practice CRITICAL contention is low — typically one production call at a time).
+
+### Why does `_leave()` hand off to the next waiter instead of releasing immediately?
+
+In a naive semaphore, releasing a slot increments `_active -= 1`, and a new waiter acquires it — but the waiter must go through the full `acquire()` path. In `_leave()`, the slot is handed off directly: pop the highest-priority waiter from the heap, set its future's result, and return. The `_active` count never drops — the slot is effectively transferred. This prevents a window where a new CRITICAL caller arriving between `_leave()` decrement and the next waiter's acquire sees `_active < _max` and enters behind the just-woken waiter, even though the woken waiter hasn't started its LLM call yet. The handoff preserves priority ordering under all arrival patterns.
+
+### Why `LLM_MAX_CONCURRENT=2` as the default?
+
+LM Studio on consumer GPUs (8-16GB VRAM) can comfortably run 2 concurrent LLM requests on a 14-30B model before OOM or significant slowdown. 1 concurrent slot would leave the model server underused during data-fetch phases (prices, fundamentals, MCP calls don't hit the LLM). 3+ concurrent slots on a 16GB GPU cause VRAM contention and individual request slowdown — throughput doesn't increase but tail latency degrades. 2 is the empirically tested sweet spot for the target hardware.
+
+### Key properties
+
+- ✓ Production inference never starved — CRITICAL always served before LOW
+- ✓ No fixed partitioning — idle CRITICAL slots used by LOW/NORMAL work
+- ✓ O(log n) scheduling — heap-based priority queue, not polling
+- ✓ Priority-preserving handoff — slot handed directly to next waiter, no race window
+- ✓ Process-local — no IPC, no external dependencies, no serialization
+- ✓ Configurable — `LLM_MAX_CONCURRENT` env var tunes for different hardware
+
 ## Infrastructure Hardening (v1.36)
 
 ### Why `_ALLOWED_TABLES` whitelist in `prune_old_records`?

@@ -36,6 +36,40 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 
 <h1>Changelog</h1>
 
+<h2>v1.37 &mdash; Priority Queue for LLM Calls to Prevent Eval Starvation of Production</h2>
+
+<h3 class="version">Shared &mdash; LLM Priority Queue</h3>
+<ul>
+<li><strong><code>shared/llm_queue.py</code> (new, 105 lines)</strong>: Process-local async priority semaphore with three tiers: <code>CRITICAL</code> (production inference), <code>NORMAL</code> (warmup), <code>LOW</code> (RAGAS eval scoring). Serves highest-priority waiters first (FIFO tie-breaking within same priority). Sized by <code>LLM_MAX_CONCURRENT</code> env var (default 2).</li>
+<li><strong><code>LLMPriorityQueue</code> implementation</strong>: Uses <code>heapq</code> + <code>asyncio.Future</code> for O(log n) scheduling. <code>_leave()</code> hands off the slot to the next queued waiter instead of releasing immediately &mdash; prevents priority inversion when high-priority callers arrive after the queue is saturated.</li>
+<li><strong>Module-level singleton</strong> (<code>llm_queue = LLMPriorityQueue()</code>): Imported where needed; no global state management beyond the singleton pattern.</li>
+</ul>
+
+<h3 class="version">Config &mdash; <code>LLM_MAX_CONCURRENT</code></h3>
+<ul>
+<li><strong>New env var</strong> (<code>shared/config.py</code>): <code>LLM_MAX_CONCURRENT</code> &mdash; controls the maximum concurrent LLM calls per process (default 2). Tunes how aggressively LM Studio is parallelised.</li>
+</ul>
+
+<h3 class="version">Quant Agent &mdash; CRITICAL Priority for Summary</h3>
+<ul>
+<li><strong><code>llm_summary_node</code></strong> (<code>agent_3_langgraph/nodes.py</code>): Wraps <code>llm.ainvoke(prompt)</code> in <code>async with llm_queue.acquire(Priority.CRITICAL, "quant-summary")</code>. Production inference never starved by background eval.</li>
+</ul>
+
+<h3 class="version">Quant Server Warmup &mdash; NORMAL Priority</h3>
+<ul>
+<li><strong><code>_prewarm_llm()</code></strong> (<code>agent_3_langgraph/server.py</code>): Warmup ping wrapped in <code>async with llm_queue.acquire(Priority.NORMAL, "quant-warmup")</code>. Yields to production calls when all slots are occupied.</li>
+</ul>
+
+<h3 class="version">Market Context Agent &mdash; CRITICAL Priority for Kickoff</h3>
+<ul>
+<li><strong><code>MarketContextCrew.analyze()</code></strong> (<code>agent_4_crewai/crew.py</code>): Wraps <code>crew.kickoff()</code> in <code>async with llm_queue.acquire(Priority.CRITICAL, "crewai-kickoff")</code>. Ensures user-facing analysis is prioritised over eval scoring.</li>
+</ul>
+
+<h3 class="version">RAGAS Eval &mdash; LOW Priority (Yields to Production)</h3>
+<ul>
+<li><strong><code>_score_metric()</code></strong> (<code>shared/runtime_eval.py</code>): Wraps <code>metric.ascore()</code> in <code>async with llm_queue.acquire(Priority.LOW, f"eval/{metric.name}")</code>. When the queue is full with CRITICAL callers, eval waits. When a CRITICAL slot frees, the next production caller is served before eval.</li>
+</ul>
+
 <h2>v1.36 &mdash; AG-UI Bridge + Next.js CopilotKit Frontend + Auto-Save Brief Fallback</h2>
 
 <h3 class="version">FEATURE &mdash; AG-UI Bridge &amp; Next.js Frontend</h3>

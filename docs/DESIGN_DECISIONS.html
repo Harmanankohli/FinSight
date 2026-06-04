@@ -1954,6 +1954,34 @@ composite = sum(group_scores[k] * _SIGNAL_WEIGHTS.get(k, 0) * scale for k in pre
 <h3>Why <code>golden_cross</code> default <code>None</code> &rarr; <code>False</code>?</h3>
 <p><code>golden_cross</code> (50-day MA &gt; 200-day MA) was <code>None</code> when one or both MAs were unavailable (e.g. IPO &lt; 200 trading days old). <code>None</code> propagated into numeric comparisons in the quant graph &mdash; <code>None &lt; 0</code> is a TypeError in a strict context, and LangGraph's <code>add</code> reducer can't sum <code>None</code>. Defaulting to <code>False</code> makes it a safe boolean: no golden cross if we can't compute it.</p>
 
+<h2>LLM Priority Queue (v1.37)</h2>
+
+<h3>Why a priority queue instead of more concurrent LLM slots?</h3>
+<p>The system runs four agents against a single local LM Studio instance with limited GPU memory. When RAGAS eval scoring fires (up to 6 metrics per agent response, each calling the LLM), eval can consume all available LLM slots and starve production inference &mdash; a user's quant summary or CrewAI kickoff sits behind eval metrics in the queue. Simply increasing <code>LLM_MAX_CONCURRENT</code> (default 2) makes the LM Studio model server the bottleneck instead, degrading latency for everyone.</p>
+<p>A priority semaphore solves this without increasing concurrency: production calls (<code>CRITICAL</code>) jump ahead of eval calls (<code>LOW</code>), and warmup/ping calls (<code>NORMAL</code>) sit between them. When all slots are full, the highest-priority waiter is served next.</p>
+
+<h3>Why a heap-based implementation instead of multiple semaphores?</h3>
+<p>Three separate semaphores (one per priority) would require deciding ahead of time how many slots each priority gets. A fixed split wastes capacity: if no CRITICAL calls are active, the CRITICAL slots sit idle while LOW callers wait. A <code>heapq</code> with <code>(priority, sequence, future)</code> lets any priority use any slot &mdash; when no high-priority work exists, low-priority work fills the gap. The heap ensures O(log n) priority ordering at every arrival.</p>
+
+<h3>Why FIFO tie-breaking within the same priority?</h3>
+<p>Within the same priority level, callers should be served in order of arrival &mdash; first-come, first-served. The monotonically increasing <code>_seq</code> counter breaks ties fairly. Without FIFO, a late-arriving CRITICAL caller could starve an earlier CRITICAL caller under heavy load (though in practice CRITICAL contention is low &mdash; typically one production call at a time).</p>
+
+<h3>Why does <code>_leave()</code> hand off to the next waiter instead of releasing immediately?</h3>
+<p>In a naive semaphore, releasing a slot increments <code>_active -= 1</code>, and a new waiter acquires it &mdash; but the waiter must go through the full <code>acquire()</code> path. In <code>_leave()</code>, the slot is handed off directly: pop the highest-priority waiter from the heap, set its future's result, and return. The <code>_active</code> count never drops &mdash; the slot is effectively transferred. This prevents a window where a new CRITICAL caller arriving between <code>_leave()</code> decrement and the next waiter's acquire sees <code>_active &lt; _max</code> and enters behind the just-woken waiter, even though the woken waiter hasn't started its LLM call yet. The handoff preserves priority ordering under all arrival patterns.</p>
+
+<h3>Why <code>LLM_MAX_CONCURRENT=2</code> as the default?</h3>
+<p>LM Studio on consumer GPUs (8-16GB VRAM) can comfortably run 2 concurrent LLM requests on a 14-30B model before OOM or significant slowdown. 1 concurrent slot would leave the model server underused during data-fetch phases (prices, fundamentals, MCP calls don't hit the LLM). 3+ concurrent slots on a 16GB GPU cause VRAM contention and individual request slowdown &mdash; throughput doesn't increase but tail latency degrades. 2 is the empirically tested sweet spot for the target hardware.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; Production inference never starved &mdash; CRITICAL always served before LOW</li>
+<li>&check; No fixed partitioning &mdash; idle CRITICAL slots used by LOW/NORMAL work</li>
+<li>&check; O(log n) scheduling &mdash; heap-based priority queue, not polling</li>
+<li>&check; Priority-preserving handoff &mdash; slot handed directly to next waiter, no race window</li>
+<li>&check; Process-local &mdash; no IPC, no external dependencies, no serialization</li>
+<li>&check; Configurable &mdash; <code>LLM_MAX_CONCURRENT</code> env var tunes for different hardware</li>
+</ul>
+
 <h2>Infrastructure Hardening (v1.36)</h2>
 
 <h3>Why <code>_ALLOWED_TABLES</code> whitelist in <code>prune_old_records</code>?</h3>

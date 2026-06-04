@@ -246,6 +246,16 @@ RAGAgent._ensure_ingested(ticker) [background]:
 <h3>KV Cache Prefix (Tier 1C)</h3>
 <p><code>agent_1_adk/agent.py</code> splits <code>_build_instruction()</code> into a module-level <code>_STATIC_PREAMBLE</code> constant and a dynamic tail (today's date + agent list). LM Studio reuses the KV-cached static prefix across requests. Same pattern applied to CrewAI backstory strings in <code>agent_4_crewai/crew.py</code>.</p>
 
+<h3>LLM Priority Queue (Tier 1E)</h3>
+<p><code>shared/llm_queue.py</code> provides a process-local async priority semaphore (<code>LLMPriorityQueue</code>) that throttles LLM calls when the single LM Studio instance is saturated. Three priority tiers:</p>
+<table>
+<tr><th>Priority</th><th>Usage</th><th>Behavior</th></tr>
+<tr><td><code>CRITICAL</code> (0)</td><td>Quant <code>llm_summary_node</code>, CrewAI <code>crew.kickoff()</code></td><td>Never starved &mdash; production inference served before eval</td></tr>
+<tr><td><code>NORMAL</code> (1)</td><td>Quant server pre-warmup ping</td><td>Served after CRITICAL, before LOW</td></tr>
+<tr><td><code>LOW</code> (2)</td><td>RAGAS eval <code>metric.ascore()</code></td><td>Yields when production is queued &mdash; waits if all slots occupied</td></tr>
+</table>
+<p>Sized by <code>LLM_MAX_CONCURRENT</code> (default 2). Uses <code>heapq</code> with <code>(priority, seq, asyncio.Future)</code> for O(log n) scheduling. Slots are handed directly to the next waiter on release, preserving priority ordering without race windows. Singleton instance imported where needed.</p>
+
 <h2>Guardrails</h2>
 
 <h3>Input Guardrails</h3>
@@ -310,7 +320,7 @@ RAGAgent._ensure_ingested(ticker) [background]:
 </table>
 
 <h2>LLM Configuration</h2>
-<p>All agents use LM Studio (OpenAI-compatible local API). The <code>config.py</code> default is <code>qwen/qwen3-30b-a3b-2507</code>; developers commonly override to <code>mistralai/ministral-3-14b-reasoning</code> via <code>.env</code> for faster local inference.</p>
+<p>All agents use LM Studio (OpenAI-compatible local API). The <code>config.py</code> default is <code>qwen/qwen3-30b-a3b-2507</code>; developers commonly override to <code>mistralai/ministral-3-14b-reasoning</code> via <code>.env</code> for faster local inference. All LLM calls are throttled by <code>LLMPriorityQueue</code> (3 priority tiers) to prevent eval scoring from starving production inference; concurrency controlled by <code>LLM_MAX_CONCURRENT</code> env var (default 2).</p>
 <table>
 <tr><th>Agent</th><th>Model (default)</th><th>Provider</th></tr>
 <tr><td>Orchestrator (ADK)</td><td><code>qwen/qwen3-30b-a3b-2507</code></td><td><code>openai/</code> prefix (LM Studio endpoint)</td></tr>

@@ -115,7 +115,7 @@ Body:
 
 ### Runtime Evaluation
 
-Triggered from `after_agent_callback` (ADK Web path) — see step 10 above. Fires `asyncio.create_task(score_response(...))` with 6 metrics. All scored from `user_input` + `response` only — no ground-truth reference needed. Globally toggled by `EVAL_TRACE_ENABLED` in `.env`. Globally toggled by `EVAL_TRACE_ENABLED` in `.env`. Scores pushed to Langfuse under `ragas/orchestrator/<metric>`.
+Triggered from `after_agent_callback` (ADK Web path) — see step 10 above. Fires `asyncio.create_task(score_response(...))` with 6 metrics (all scored from `user_input` + `response` only — no ground-truth reference needed). Globally toggled by `EVAL_TRACE_ENABLED` in `.env`. All LLM-based metrics use `LOW` priority in `LLMPriorityQueue` — they yield to production `CRITICAL` calls when the LM Studio instance is saturated. Scores pushed to Langfuse under `ragas/orchestrator/<metric>`.
 
 | Metric | Why |
 |---|---|
@@ -270,10 +270,14 @@ QuantAgent._build_response(query):
         → format_output (8-group weighted voting, sum=1.0)
           (risk_quality 0.15, dcf_value 0.20, fundamental_value 0.13, fundamental_quality 0.12,
            technicals_trend 0.15, technicals_momentum 0.10, peer_positioning 0.10, behavioral 0.05)
-        → llm_summary (enriched 3-4 sentence summary)
+        → llm_summary (CRITICAL priority queue — enriched 3-4 sentence summary)
       → if EVAL_ENABLED: asyncio.create_task(score_quant_response(...))
       → return {response_type: "data", content: result, ...}
 ```
+
+### Startup Warm-up
+
+On Starlette startup, `_prewarm()` runs an LLM ping via LangChain's `aiohttp` session to pre-warm the model server connection. Uses `LLMPriorityQueue` with `NORMAL` priority — ensures the warmup ping doesn't block production inference if startup coincides with concurrent eval scoring.
 
 **Portfolio Holdings Extraction**: `extract_holdings()` in `shared/ticker_utils.py` uses regex patterns to extract holdings from natural language (e.g. "My portfolio holds AAPL, MSFT, GOOGL"). The orchestrator LLM is instructed to include holdings in the task text for the Quant agent. Holdings are passed through the full chain and used by `correlation_node` to compute a correlation matrix.
 
@@ -289,7 +293,7 @@ QuantAgent._build_response(query):
 
 #### Runtime Evaluation
 
-After each analysis, fires `asyncio.create_task(score_quant_response(...))` with 2 RAGAS metrics + 1 deterministic schema validator. Scored from `user_input`, `response`, and full `quant_result` dict (Sharpe, VaR, DCF, beta, MC, signals) serialized as a reference string. `AnswerRelevancy` removed from Quant (kept on Orchestrator only, v1.31).
+After each analysis, fires `asyncio.create_task(score_quant_response(...))` with 2 RAGAS metrics + 1 deterministic schema validator. Scored from `user_input`, `response`, and full `quant_result` dict (Sharpe, VaR, DCF, beta, MC, signals) serialized as a reference string. `AnswerRelevancy` removed from Quant (kept on Orchestrator only, v1.31). RAGAS metric LLM calls use `LOW` priority in `LLMPriorityQueue` — they yield to production `CRITICAL` calls (Quant `llm_summary_node`).
 
 | Metric | Why |
 |---|---|
@@ -338,7 +342,7 @@ MarketContextAgent._build_response(query):
         │   │     → primary financials (sector/industry for peer resolution)
         │   ├── Step 2: resolve peers via MCP get_peers (dynamic, Yahoo Finance API)
         │   └── Step 3: asyncio.gather(peer financials, peer prices for each peer)
-        └── MarketContextCrew.analyze(ticker, precollected_data)
+        └── MarketContextCrew.analyze(ticker, precollected_data)  (CRITICAL priority queue — crew.kickoff() issues LLM call)
             └── Single Agent ("Market Context Analyst") — no crew collaboration, data is pre-collected
               → Outputs JSON: narrative, macro_regime, relative_peer_positioning,
                 overall_signal (bullish/bearish/neutral), confidence_score (0-1),
@@ -355,7 +359,7 @@ MarketContextAgent._build_response(query):
 
 #### Runtime Evaluation
 
-After each analysis, fires `asyncio.create_task(score_market_context_response(...))` with 3 metrics. Scored from `user_input`, `response`, and `_retrieved_contexts` (macro indicator values + peer financial summaries from pre-fetched data). `AnswerRelevancy` removed from Market Context (kept on Orchestrator only, v1.31).
+After each analysis, fires `asyncio.create_task(score_market_context_response(...))` with 3 metrics. Scored from `user_input`, `response`, and `_retrieved_contexts` (macro indicator values + peer financial summaries from pre-fetched data). `AnswerRelevancy` removed from Market Context (kept on Orchestrator only, v1.31). RAGAS metric LLM calls use `LOW` priority in `LLMPriorityQueue` — they yield to production `CRITICAL` calls (`crew.kickoff()`).
 
 | Metric | Why |
 |---|---|
@@ -377,6 +381,7 @@ All four agents share a common infrastructure layer:
 | **`LLM_API_KEY` env var** | Replaces hardcoded `api_key="lmstudio"`. All agent files (`index_manager.py`, `nodes.py`, `crew.py`) import `LLM_API_KEY` from `shared/config.py`. |
 | **Per-service log levels** | `LOG_LEVEL_<SERVICE>` env vars (e.g. `LOG_LEVEL_ORCHESTRATOR=DEBUG`). |
 | **`SEC_USER_AGENT` env var** | Replaces hardcoded SEC user agent string in MCP server filing requests. |
+| **LLM Priority Queue** | `LLMPriorityQueue` in `shared/llm_queue.py` (process-local, heap-based async semaphore). Three tiers: `CRITICAL` (quant summary, crew kickoff), `NORMAL` (warmup ping), `LOW` (RAGAS eval). Default `LLM_MAX_CONCURRENT=2`. Prevents eval starvation of production inference. |
 
 ## Phase Map
 
@@ -389,3 +394,4 @@ The project evolved through five phases, each adding distinct agent capabilities
 | **Phase 3** | v1.31 | Sentiment Agent → Market Context Agent rebrand. Quant behavioral signals (options, insider, positioning). RAGAS runtime eval for all 4 agents. Eval circuit breaker, dedup, burst limiter. Date-scoped memory persistence gate (`_is_analysis_turn`). |
 | **Phase 4** | v1.31-1.32 | Date-scoped semantic cache. RAG startup warm-up. `no_forward_guarantees` AspectCritic. Stress test beta-adjusted formula. 8-group weighted voting normalization fix. |
 | **Phase 5** | v1.33-1.35 | Quant graph fan-in reducer fixes (concurrent update, diamond dependency, duplicate fan-in). Dynamic peer discovery via yfinance Industry/Sector classes. Live sector-aware scenario shocks with sector ETF benchmarks. Sector-relative fundamental scoring. Structured `get_insider_transactions` MCP tool replacing Form 4 text parsing. `get_peers` MCP tool using yfinance. Expanded `peer_sets.py` with normalised key matching. Monte Carlo runs on both high-vol and low-vol paths. Options flow zero-volume edge case handling. Null-safe schema validator for quant deterministic eval. yfinance blocking calls moved to thread executor (`run_in_executor`). Peer concurrency capped at 3 (`asyncio.Semaphore`). Redis auto-start in `run_adk_web.bat`. MCP client timeout simplification (removed fail-fast first-attempt timeout). All 9 sync yfinance calls now wrapped in `run_in_executor` (7 more added: prices, financials, macro, options chain, earnings calendar, sentiment indicators, earnings history). `httpx.ReadError`/`ConnectError`/`NetworkError` added to MCP client transient retry set. RAGAS eval retry tuning: `max_retries=5`, separate `asyncio.TimeoutError` handling, empty exception message classification. |
+| **Phase 6** | v1.37 | LLM Priority Queue (`shared/llm_queue.py`) — 3-tier heap-based async semaphore to prevent RAGAS eval starvation of production LLM inference. Quant `llm_summary_node` and CrewAI `crew.kickoff()` use `CRITICAL` priority; server warmup uses `NORMAL`; all runtime eval metrics use `LOW` priority. Controlled by `LLM_MAX_CONCURRENT` env var (default 2). |
