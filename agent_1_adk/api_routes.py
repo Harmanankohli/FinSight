@@ -6,11 +6,12 @@ X-FinSight-User-Id request header.
 
 from __future__ import annotations
 
+import json
 import logging
 
 import httpx
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from shared.memory.store import DB_PATH, get_db, write_lock
@@ -147,6 +148,88 @@ async def session_events(request: Request) -> JSONResponse:
             await db.close()
 
 
+# ── /api/reports ─────────────────────────────────────────────────────────────
+
+_REPORT_CONTENT_TYPES = {
+    "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
+
+
+async def _build_report_response(
+    brief_json_str: str | None,
+    ticker: str,
+    recommendation: str,
+    confidence: float,
+    analysis_date: str,
+    fmt: str,
+) -> Response:
+    from shared.report_generator import generate_pptx, generate_docx
+
+    brief_data: dict = {}
+    if brief_json_str:
+        try:
+            brief_data = json.loads(brief_json_str)
+        except json.JSONDecodeError:
+            pass
+
+    generator = generate_pptx if fmt == "pptx" else generate_docx
+    buf = generator(brief_data, ticker, recommendation or "UNKNOWN",
+                    confidence or 0.0, analysis_date or "")
+
+    safe_date = (analysis_date or "report").replace(":", "-")
+    filename = f"FinSight_{ticker}_{safe_date}.{fmt}"
+    return Response(
+        content=buf.getvalue(),
+        media_type=_REPORT_CONTENT_TYPES[fmt],
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+async def report_by_id(request: Request) -> Response:
+    """Download PPTX or DOCX for a specific brief by its database ID."""
+    brief_id = request.path_params["brief_id"]
+    fmt = request.path_params["format"].lower()
+    if fmt not in _REPORT_CONTENT_TYPES:
+        return JSONResponse({"error": "format must be pptx or docx"}, status_code=400)
+
+    conn = await get_db()
+    cursor = await conn.execute(
+        "SELECT ticker, recommendation, confidence, brief_json, analysis_date "
+        "FROM ticker_briefs WHERE id = ?",
+        (brief_id,),
+    )
+    row = await cursor.fetchone()
+    if not row:
+        return JSONResponse({"error": "Brief not found"}, status_code=404)
+
+    ticker, rec, conf, brief_json_str, analysis_date = row
+    return await _build_report_response(brief_json_str, ticker, rec, conf or 0.0, analysis_date or "", fmt)
+
+
+async def report_latest(request: Request) -> Response:
+    """Download PPTX or DOCX for the most recent brief of a ticker."""
+    symbol = request.path_params["symbol"].upper()
+    fmt = request.path_params["format"].lower()
+    if fmt not in _REPORT_CONTENT_TYPES:
+        return JSONResponse({"error": "format must be pptx or docx"}, status_code=400)
+
+    from shared.memory import TickerMemory
+    tm = TickerMemory()
+    latest = await tm.get_latest(symbol)
+    if not latest:
+        return JSONResponse({"error": f"No briefs found for {symbol}"}, status_code=404)
+
+    return await _build_report_response(
+        latest.get("brief_json"),
+        latest["ticker"],
+        latest.get("recommendation", "UNKNOWN"),
+        latest.get("confidence") or 0.0,
+        latest.get("analysis_date") or "",
+        fmt,
+    )
+
+
 # ── /api/agents ───────────────────────────────────────────────────────────────
 
 async def agents_list(request: Request) -> JSONResponse:
@@ -189,4 +272,6 @@ def get_api_routes() -> list[Route]:
         Route("/api/sessions/{id}/events", session_events, methods=["GET"]),
         Route("/api/agents", agents_list, methods=["GET"]),
         Route("/api/agents/{name}/health", agent_health, methods=["GET"]),
+        Route("/api/reports/{brief_id}/{format}", report_by_id, methods=["GET"]),
+        Route("/api/reports/ticker/{symbol}/latest/{format}", report_latest, methods=["GET"]),
     ]

@@ -431,7 +431,6 @@ class FinSightAgentExecutor(AgentExecutor):
 
         return "\n".join(parts)
 
-    # Dedup-aware store: skips if save_brief already persisted this ticker today
     async def _store_memory(
         self, query: str, response_text: str, session_id: str, user_id: str
     ) -> None:
@@ -460,7 +459,7 @@ class FinSightAgentExecutor(AgentExecutor):
                     logger.info("Updated existing brief %s with longer text (%d > %d)",
                                 existing["id"], len(response_text), len(stored))
                 else:
-                    logger.debug("Skip _store_memory — save_brief already stored today for %s", ticker)
+                    logger.debug("Skip _store_memory — brief already stored today for %s", ticker)
                 return
 
         rec_match = re.search(r'\b(BUY|HOLD|SELL)\b', response_text, re.IGNORECASE)

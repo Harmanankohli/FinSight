@@ -125,10 +125,7 @@ with open(_LOG_FILE, "a") as _f:
 
 # Pulls the user query + the synthesized analysis text from session events.
 # Uses the LONGEST LLM text from the current turn (events after the last user
-# message) rather than text co-located with save_brief, because ADK often
-# splits the big analysis and the function call into separate events — the
-# event that actually fires save_brief may only contain a short acknowledgment
-# like "Brief saved." while the full analysis is in the preceding event.
+# message). This runs in after_agent_callback so the full synthesis is available.
 def _extract_query_and_response(events) -> tuple[str, str]:
     """Pull the last user query and the longest LLM response from the current turn."""
     # Find the last user message index so we scope to the current turn only.
@@ -162,33 +159,12 @@ def _extract_query_and_response(events) -> tuple[str, str]:
     return user_query, best_text
 
 
-def _extract_save_brief_ticker(events) -> str | None:
-    """Return the ticker passed to save_brief in the current turn, or None."""
-    last_user_idx = -1
-    for i in range(len(events) - 1, -1, -1):
-        if getattr(events[i], "author", None) == "user":
-            last_user_idx = i
-            break
-    for event in events[last_user_idx + 1:]:
-        try:
-            for fn_call in event.get_function_calls():
-                if fn_call.name == "save_brief":
-                    args = fn_call.args or {}
-                    ticker = args.get("ticker", "")
-                    if ticker:
-                        return ticker.upper()
-        except Exception:
-            continue
-    return None
-
-
-# Checks whether the turn called save_brief (vs a load_memory-only query that should not be persisted)
 def _is_analysis_turn(events) -> bool:
-    """True if the current turn produced a fresh analysis (called save_brief).
+    """True if the current turn produced a fresh analysis.
 
-    Walks back to the most recent user message and checks whether any tool
-    call after it was save_brief. A turn that only calls load_memory (i.e.
-    the user is asking about past recommendations) returns False.
+    Detects analysis by checking if send_message was called (normal path),
+    or if the response contains a BUY/HOLD/SELL signal (fallback/no-agents path).
+    A turn that only calls load_memory returns False.
     """
     last_user_idx = -1
     for i in range(len(events) - 1, -1, -1):
@@ -197,25 +173,7 @@ def _is_analysis_turn(events) -> bool:
             break
     if last_user_idx < 0:
         return False
-    for event in events[last_user_idx + 1:]:
-        try:
-            for fn_call in event.get_function_calls():
-                if fn_call.name == "save_brief":
-                    return True
-        except Exception:
-            continue
-    return False
 
-
-def _has_send_message_call(events) -> bool:
-    """True if send_message was called in the current turn (after last user msg)."""
-    last_user_idx = -1
-    for i in range(len(events) - 1, -1, -1):
-        if getattr(events[i], "author", None) == "user":
-            last_user_idx = i
-            break
-    if last_user_idx < 0:
-        return False
     for event in events[last_user_idx + 1:]:
         try:
             for fn_call in event.get_function_calls():
@@ -223,6 +181,20 @@ def _has_send_message_call(events) -> bool:
                     return True
         except Exception:
             continue
+
+    # Fallback: check if the LLM response contains a BUY/HOLD/SELL signal
+    # (covers the no-agents-available path where LLM analyzes on its own)
+    for event in events[last_user_idx + 1:]:
+        author = getattr(event, "author", None)
+        if not author or author == "user":
+            continue
+        content = getattr(event, "content", None)
+        if not content or not getattr(content, "parts", None):
+            continue
+        text = "".join(p.text for p in content.parts if getattr(p, "text", None))
+        if re.search(r'\b(BUY|HOLD|SELL)\b', text):
+            return True
+
     return False
 
 
@@ -250,7 +222,13 @@ def _extract_recommendation_from_text(text: str) -> tuple[str, float]:
 
 
 async def _auto_save_brief(session, user_query: str, response_text: str) -> None:
-    """Programmatically save the brief when the LLM forgot to call save_brief."""
+    """Auto-save the investment brief after the turn completes.
+
+    Extracts BUY/HOLD/SELL and confidence from the full response text,
+    then persists via TickerMemory + PerformanceTracker.
+    """
+    from datetime import datetime
+    from shared.config import IST
     from shared.memory import PerformanceTracker, TickerMemory
     from shared.ticker_utils import extract_ticker
 
@@ -259,12 +237,34 @@ async def _auto_save_brief(session, user_query: str, response_text: str) -> None
         logger.warning("auto_save_brief: could not extract ticker from query")
         return
 
+    user_id = session.user_id or "default_user"
+    tm = TickerMemory()
+
+    existing = await tm.get_latest(ticker, user_id=None)
+    if existing:
+        ad = existing.get("analysis_date") or existing["created_at"][:10]
+        if ad == datetime.now(IST).date().isoformat():
+            # Update with longer text if available
+            stored = ""
+            try:
+                import json as _json
+                bj = _json.loads(existing.get("brief_json", "{}"))
+                stored = bj.get("response_text", "")
+            except Exception:
+                pass
+            if len(response_text) > len(stored):
+                await tm.update_response_text(existing["id"], response_text)
+                logger.info("Updated brief %s with longer text (%d > %d)",
+                            existing["id"], len(response_text), len(stored))
+            else:
+                logger.debug("Auto-save skipped — brief already exists today for %s", ticker)
+            return
+
     rec, conf = _extract_recommendation_from_text(response_text)
 
-    tm = TickerMemory()
     await tm.store_minimal(
         ticker=ticker,
-        user_id=session.user_id or "default_user",
+        user_id=user_id,
         session_id=session.id,
         query=user_query,
         response_text=response_text,
@@ -275,7 +275,7 @@ async def _auto_save_brief(session, user_query: str, response_text: str) -> None
     pt = PerformanceTracker()
     await pt.record_recommendation(
         ticker=ticker,
-        user_id=session.user_id or "default_user",
+        user_id=user_id,
         recommendation=rec,
         confidence=conf,
     )
@@ -292,6 +292,7 @@ async def _persist_memory_callback(callback_context) -> None:
     This callback is invoked by ADK after every agent invocation.
     It stores the session's events into the memory service so that
     `load_memory` can search across all past sessions.
+    Also auto-saves the investment brief when an analysis turn completes.
     """
     session = callback_context.session
     logger.info("_persist_memory_callback: session=%s, events=%s",
@@ -307,27 +308,11 @@ async def _persist_memory_callback(callback_context) -> None:
             f.write("  No session or no events\n")
         return
 
-    is_analysis = _is_analysis_turn(session.events)
-    sent_to_agents = _has_send_message_call(session.events)
-
-    if not is_analysis and not sent_to_agents:
-        logger.info("Skipping persist + eval — no save_brief or send_message")
+    if not _is_analysis_turn(session.events):
+        logger.info("Skipping persist + eval — turn did not produce analysis")
         with open(_LOG_FILE, "a") as f:
             f.write("  Skipped (non-analysis turn)\n")
         return
-
-    if sent_to_agents and not is_analysis:
-        logger.info("LLM skipped save_brief — auto-saving")
-        with open(_LOG_FILE, "a") as f:
-            f.write("  LLM skipped save_brief — auto-saving\n")
-        user_query, response_text = _extract_query_and_response(session.events)
-        if response_text:
-            try:
-                await _auto_save_brief(session, user_query, response_text)
-            except Exception as e:
-                logger.error("auto_save_brief failed: %s", e, exc_info=True)
-                with open(_LOG_FILE, "a") as f:
-                    f.write(f"  auto_save_brief failed: {e}\n")
 
     # Use ADK's Context.add_events_to_memory with correct signature
     try:
@@ -347,29 +332,15 @@ async def _persist_memory_callback(callback_context) -> None:
         with open(_LOG_FILE, "a") as f:
             f.write(f"  add_events_to_memory failed: {e}\n")
 
-    # ── Update saved brief with the full analysis if LLM generated it after save_brief ──
+    # ── Auto-save brief (ADK Web path) ──────────────────────────────────
     user_query, response_text = _extract_query_and_response(session.events)
     if response_text:
-        ticker = _extract_save_brief_ticker(session.events)
-        if ticker:
-            try:
-                from shared.memory import TickerMemory
-                tm = TickerMemory()
-                latest = await tm.get_latest(ticker, user_id=session.user_id)
-                if latest:
-                    stored = ""
-                    try:
-                        import json as _json
-                        bj = _json.loads(latest.get("brief_json", "{}"))
-                        stored = bj.get("response_text", "")
-                    except Exception:
-                        pass
-                    if len(response_text) > len(stored):
-                        await tm.update_response_text(latest["id"], response_text)
-                        logger.info("Updated brief %s with full analysis (%d > %d chars)",
-                                    latest["id"], len(response_text), len(stored))
-            except Exception:
-                logger.debug("Failed to update brief with full analysis", exc_info=True)
+        try:
+            await _auto_save_brief(session, user_query, response_text)
+        except Exception as e:
+            logger.error("Auto-save brief failed: %s", e, exc_info=True)
+            with open(_LOG_FILE, "a") as f:
+                f.write(f"  auto_save_brief failed: {e}\n")
 
     # ── Orchestrator RAGAS eval (ADK Web path) ──────────────────────────
     # ADK Web bypasses FinSightAgentExecutor, so the eval hook lives here.

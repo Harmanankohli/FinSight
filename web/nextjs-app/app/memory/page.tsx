@@ -3,6 +3,18 @@
 import { Suspense, useEffect, useState, FormEvent } from "react";
 import { useSearchParams } from "next/navigation";
 
+async function downloadReportById(briefId: string, ticker: string, format: "pptx" | "docx") {
+  const res = await fetch(`/api/orch/api/reports/${briefId}/${format}`);
+  if (!res.ok) return;
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `FinSight_${ticker}_${new Date().toISOString().slice(0, 10)}.${format}`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 interface Brief {
   id: string; ticker: string; recommendation: string; confidence: number;
   brief_json: string; created_at: string; analysis_date: string;
@@ -26,6 +38,15 @@ function MemoryContent() {
   const [searchedTicker, setSearchedTicker] = useState("all");
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [downloading, setDownloading] = useState<string | null>(null); // "{id}-{format}"
+
+  const handleDownload = async (e: React.MouseEvent, b: Brief, format: "pptx" | "docx") => {
+    e.stopPropagation();
+    const key = `${b.id}-${format}`;
+    setDownloading(key);
+    await downloadReportById(b.id, b.ticker, format);
+    setDownloading(null);
+  };
 
   const fetchBriefs = async (sym: string) => {
     setLoading(true);
@@ -144,6 +165,26 @@ function MemoryContent() {
                       <span className="mono" style={{ fontSize: 10, color: "var(--text-muted)" }}>
                         {b.confidence?.toFixed(2)}
                       </span>
+                      {(["pptx", "docx"] as const).map((fmt) => {
+                        const key = `${b.id}-${fmt}`;
+                        return (
+                          <button
+                            key={fmt}
+                            onClick={(e) => handleDownload(e, b, fmt)}
+                            disabled={downloading !== null}
+                            title={`Download ${fmt.toUpperCase()}`}
+                            style={{
+                              padding: "3px 8px", borderRadius: 4, cursor: downloading ? "not-allowed" : "pointer",
+                              border: "1px solid var(--sand)", background: "var(--ivory-dark)",
+                              fontSize: 10, fontWeight: 600, color: "var(--clay)",
+                              fontFamily: "var(--font-sans, system-ui)",
+                              opacity: downloading && downloading !== key ? 0.5 : 1,
+                            }}
+                          >
+                            {downloading === key ? "…" : fmt === "pptx" ? "PPT" : "DOC"}
+                          </button>
+                        );
+                      })}
                       <span style={{ fontSize: 12, color: "var(--text-muted)" }}>{isOpen ? "▲" : "▼"}</span>
                     </div>
                   </div>

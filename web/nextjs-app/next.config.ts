@@ -13,6 +13,10 @@ const nextConfig: NextConfig = {
         source: "/api/orch/:path*",
         destination: `${ORCHESTRATOR_URL}/:path*`,
       },
+      {
+        source: "/reports/:path*",
+        destination: `${ORCHESTRATOR_URL}/reports/:path*`,
+      },
     ];
   },
 };

@@ -6,6 +6,18 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { addRecentQuery } from "@/lib/recentQueries";
 
+async function downloadReport(ticker: string, format: "pptx" | "docx") {
+  const res = await fetch(`/api/orch/api/reports/ticker/${ticker}/latest/${format}`);
+  if (!res.ok) return;
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `FinSight_${ticker}_${new Date().toISOString().slice(0, 10)}.${format}`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 interface FinsightState {
   active_agents?: string[];
   active_agent?: string | null;
@@ -29,14 +41,64 @@ function extractSignal(text: string): { signal: string; cls: string } | null {
   return { signal: m[1], cls: m[1].toLowerCase() };
 }
 
+// Words that appear in briefs but aren't tickers
+const _SKIP = new Set([
+  "BUY", "HOLD", "SELL", "THE", "AND", "FOR", "NOT", "ARE", "HAS",
+  "ITS", "THIS", "THAT", "WITH", "FROM", "HAVE", "BEEN", "WILL",
+  "BUT", "ALL", "CAN", "HAD", "HER", "WAS", "ONE", "OUR", "OUT",
+  "MAY", "NEW", "NOW", "OLD", "SEE", "WAY", "WHO", "DID", "GET",
+  "LET", "SAY", "SHE", "TOO", "USE", "KEY", "PER", "GDP", "YOY",
+  "CEO", "CFO", "IPO", "ROE", "ROA", "EPS", "DCF", "RSI", "ATH",
+]);
+
+function extractTicker(messages: { role: string; content: string | unknown }[]): string | null {
+  // Extract from assistant response — the orchestrator always uses the actual ticker symbol
+  // Look for patterns like "Investment Analysis: NVDA" or "Recommendation for TSLA"
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.role !== "assistant") continue;
+    const text = typeof m.content === "string" ? m.content : "";
+    // Try structured patterns first
+    const structured = text.match(/(?:Analysis|Recommendation|Brief|Report)[:\s]+(?:for\s+)?([A-Z]{1,5})\b/);
+    if (structured && !_SKIP.has(structured[1])) return structured[1];
+    // Fall back to first all-caps 2-5 letter word that looks like a ticker
+    const caps = text.match(/\b([A-Z]{2,5})\b/g);
+    if (caps) {
+      const ticker = caps.find(t => !_SKIP.has(t));
+      if (ticker) return ticker;
+    }
+  }
+  // Fallback: try the user message for an explicit ticker
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.role !== "user") continue;
+    const text = typeof m.content === "string" ? m.content : "";
+    const caps = text.match(/\b([A-Z]{2,5})\b/g);
+    if (caps) {
+      const ticker = caps.find(t => !_SKIP.has(t));
+      if (ticker) return ticker;
+    }
+  }
+  return null;
+}
+
 export default function ResearchPage() {
   const { state, running } = useCoAgent<FinsightState>({ name: "finsight" });
   const { messages, sendMessage, isLoading } = useCopilotChatHeadless_c();
   const [input, setInput] = useState("");
+  const [downloading, setDownloading] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const threadRef = useRef<HTMLDivElement>(null);
   const activeAgents = state?.active_agents ?? [];
   const anyActive = activeAgents.length > 0;
+
+  const handleDownload = async (format: "pptx" | "docx") => {
+    const ticker = extractTicker(messages as { role: string; content: string | unknown }[]);
+    if (!ticker) return;
+    setDownloading(format);
+    await downloadReport(ticker, format);
+    setDownloading(null);
+  };
 
   useEffect(() => {
     threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight, behavior: "smooth" });
@@ -150,6 +212,8 @@ export default function ResearchPage() {
                 const text = typeof m.content === "string" ? m.content : "";
                 if (!text) return null;
                 const sig = extractSignal(text);
+                const isLast = idx === messages.length - 1 || messages.slice(idx + 1).every(mm => mm.role !== "assistant");
+                const showDownload = sig && !running && isLast;
                 return (
                   <div key={`msg-${idx}`} className="turn">
                     <div className="msg-asst">
@@ -167,6 +231,33 @@ export default function ResearchPage() {
                             <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
                           </div>
                         </div>
+                        {showDownload && (
+                          <div style={{
+                            display: "flex", alignItems: "center", gap: 10, marginTop: 14,
+                            padding: "10px 14px", borderRadius: 8,
+                            background: "var(--ivory-dark)", border: "1px solid var(--sand)",
+                          }}>
+                            <span style={{ fontSize: 12, color: "var(--text-muted)", fontFamily: "var(--font-sans, system-ui)" }}>
+                              Export report:
+                            </span>
+                            {(["pptx", "docx"] as const).map((fmt) => (
+                              <button
+                                key={fmt}
+                                onClick={() => handleDownload(fmt)}
+                                disabled={downloading !== null}
+                                style={{
+                                  padding: "5px 14px", borderRadius: 6, cursor: downloading ? "not-allowed" : "pointer",
+                                  border: "1px solid var(--clay-light)", background: "white",
+                                  color: "var(--clay-deep)", fontSize: 12, fontWeight: 600,
+                                  fontFamily: "var(--font-sans, system-ui)",
+                                  opacity: downloading && downloading !== fmt ? 0.5 : 1,
+                                }}
+                              >
+                                {downloading === fmt ? "…" : `⬇ ${fmt.toUpperCase()}`}
+                              </button>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>

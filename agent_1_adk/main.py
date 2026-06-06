@@ -19,7 +19,8 @@ from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
-from starlette.routing import Route
+from starlette.routing import Mount, Route
+from starlette.staticfiles import StaticFiles
 
 from shared.memory import SQLiteMemoryService, init_db
 from shared.observability import init_langfuse, init_instrumentation, shutdown_langfuse
@@ -112,6 +113,12 @@ routes.append(Route("/a2a-agui", make_agui_bridge_endpoint(runner), methods=["PO
 routes.extend(create_agent_card_routes(agent_card))
 routes.extend(create_jsonrpc_routes(request_handler, "/a2a"))
 routes.extend(get_api_routes())
+
+# Serve generated reports as static files (PPTX/DOCX downloads)
+from pathlib import Path as _Path
+_reports_dir = _Path("db/reports")
+_reports_dir.mkdir(parents=True, exist_ok=True)
+routes.append(Mount("/reports", app=StaticFiles(directory=str(_reports_dir)), name="reports"))
 
 app = Starlette(
     routes=routes,
