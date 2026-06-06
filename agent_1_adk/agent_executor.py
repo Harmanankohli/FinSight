@@ -18,7 +18,7 @@ from langfuse import propagate_attributes
 
 import os
 
-from shared.config import EVAL_ENABLED
+from shared.config import AGENT_SEED_URLS, EVAL_ENABLED
 from shared.observability import get_langfuse_client
 from shared.runtime_eval import score_response as _eval_score_response
 from shared.ticker_utils import extract_ticker
@@ -45,6 +45,18 @@ _NON_INVESTMENT_RE = re.compile(
     re.IGNORECASE,
 )
 _SIGNAL_RE = re.compile(r"\b(BUY|HOLD|SELL)\b")
+
+
+async def _release_sub_agent_evals() -> None:
+    """POST /release-evals to each sub-agent so they fire deferred evals."""
+    import httpx
+    urls = [u.strip().rstrip("/") for u in AGENT_SEED_URLS.split(",") if u.strip()]
+    async with httpx.AsyncClient(timeout=5) as client:
+        for base in urls:
+            try:
+                await client.post(f"{base}/release-evals")
+            except Exception:
+                logger.debug("release-evals failed for %s (non-fatal)", base)
 
 
 class FinSightAgentExecutor(AgentExecutor):
@@ -311,6 +323,7 @@ class FinSightAgentExecutor(AgentExecutor):
                     trace_id,
                 )
             )
+            asyncio.create_task(_release_sub_agent_evals())
 
         # Store in semantic cache for future identical/similar queries
         if original_input:

@@ -162,13 +162,13 @@ class MarketContextAgent(BaseAgent):
                     or json.dumps(result, indent=2)
                 )
                 if EVAL_ENABLED:
-                    asyncio.create_task(
-                        _eval_sentiment_response(
-                            query,
-                            narrative,
-                            contexts,
-                            trace_id,
-                        )
+                    from shared.eval_gate import defer_eval
+                    defer_eval(
+                        _eval_sentiment_response,
+                        query,
+                        narrative,
+                        contexts,
+                        trace_id,
                     )
                 return {
                     "response_type": "data",

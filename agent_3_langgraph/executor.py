@@ -1,4 +1,3 @@
-import asyncio
 import json
 import logging
 from collections.abc import AsyncIterable
@@ -114,13 +113,13 @@ class QuantAgent(BaseAgent):
                 result["schema_validation"] = schema_checks
                 span.update(output={"ticker": ticker, "recommendation": result.get("recommendation"), "schema_passed": schema_checks["passed"]})
                 if EVAL_ENABLED:
-                    asyncio.create_task(
-                        _eval_quant_response(
-                            query,
-                            result.get("reasoning", ""),
-                            result,
-                            trace_id,
-                        )
+                    from shared.eval_gate import defer_eval
+                    defer_eval(
+                        _eval_quant_response,
+                        query,
+                        result.get("reasoning", ""),
+                        result,
+                        trace_id,
                     )
                 return {
                     "response_type": "data",

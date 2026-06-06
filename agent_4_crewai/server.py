@@ -35,6 +35,12 @@ logger = logging.getLogger(__name__)
 async def health(request):
     return JSONResponse({"status": "ok", "agent": "market_context"})
 
+
+async def release_evals(request):
+    from shared.eval_gate import release_evals as _release
+    n = await _release()
+    return JSONResponse({"released": n})
+
 host = os.environ.get("HOST", "localhost")
 
 agent_card = AgentCard(
@@ -79,7 +85,7 @@ request_handler = DefaultRequestHandler(
     agent_card=agent_card,
 )
 
-routes = [Route("/health", health)]  # Liveness check
+routes = [Route("/health", health), Route("/release-evals", release_evals, methods=["POST"])]
 routes.extend(create_agent_card_routes(agent_card))  # A2A agent card discovery
 routes.extend(create_jsonrpc_routes(request_handler, "/a2a"))  # JSON-RPC task endpoints
 

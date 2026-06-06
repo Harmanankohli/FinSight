@@ -15,12 +15,24 @@ if _src not in sys.path:
 from google.genai import types
 
 from agent_1_adk.agent import root_agent
-from shared.config import EVAL_ENABLED
+from shared.config import AGENT_SEED_URLS, EVAL_ENABLED
 from shared.runtime_eval import score_response as _eval_score_response
 
 __all__ = ["root_agent"]
 
 logger = logging.getLogger(__name__)
+
+
+async def _release_sub_agent_evals() -> None:
+    """POST /release-evals to each sub-agent so they fire deferred evals."""
+    import httpx
+    urls = [u.strip().rstrip("/") for u in AGENT_SEED_URLS.split(",") if u.strip()]
+    async with httpx.AsyncClient(timeout=5) as client:
+        for base in urls:
+            try:
+                await client.post(f"{base}/release-evals")
+            except Exception:
+                logger.debug("release-evals failed for %s (non-fatal)", base)
 
 
 async def _memory_cache_callback(callback_context) -> types.Content | None:
@@ -352,6 +364,7 @@ async def _persist_memory_callback(callback_context) -> None:
         except Exception:
             pass
         asyncio.create_task(_eval_score_response(user_query, response_text, trace_id))
+        asyncio.create_task(_release_sub_agent_evals())
         logger.info("Orchestrator eval scheduled (trace=%s)", trace_id)
 
 
