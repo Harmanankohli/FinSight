@@ -478,6 +478,16 @@ class FinSightAgentExecutor(AgentExecutor):
         rec_match = re.search(r'\b(BUY|HOLD|SELL)\b', response_text, re.IGNORECASE)
         recommendation = rec_match.group(1).upper() if rec_match else "UNKNOWN"
 
+        confidence = 0.5
+        conf_match = re.search(
+            r"(?:confidence|conf)(?:\s+score)?[:\s]*(\d+(?:\.\d+)?)\s*%?"
+            r"|(\d+(?:\.\d+)?)\s*%\s*(?:confidence|conf)",
+            response_text, re.IGNORECASE,
+        )
+        if conf_match:
+            raw = float(conf_match.group(1) or conf_match.group(2))
+            confidence = raw / 100.0 if raw > 1.0 else raw
+
         await tm.store_minimal(
             ticker=ticker,
             user_id=user_id,
@@ -485,6 +495,7 @@ class FinSightAgentExecutor(AgentExecutor):
             query=query,
             response_text=response_text,
             recommendation=recommendation,
+            confidence=round(confidence, 2),
         )
 
         pt = PerformanceTracker()
@@ -492,7 +503,7 @@ class FinSightAgentExecutor(AgentExecutor):
             ticker=ticker,
             user_id=user_id,
             recommendation=recommendation,
-            confidence=0.5,
+            confidence=round(confidence, 2),
         )
 
         try:

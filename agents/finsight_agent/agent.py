@@ -212,7 +212,7 @@ def _is_analysis_turn(events) -> bool:
 
 _REC_PATTERN = re.compile(r"\b(BUY|HOLD|SELL)\b", re.IGNORECASE)
 _CONF_PATTERN = re.compile(
-    r"(?:confidence|conf)[:\s]*(\d+(?:\.\d+)?)\s*%?"
+    r"(?:confidence|conf)(?:\s+score)?[:\s]*(\d+(?:\.\d+)?)\s*%?"
     r"|(\d+(?:\.\d+)?)\s*%\s*(?:confidence|conf)",
     re.IGNORECASE,
 )
