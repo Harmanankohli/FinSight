@@ -141,6 +141,67 @@ async def _build_memory_context(user_input: str, user_id: str) -> str:
     return "\n".join(parts)
 
 
+_REC_RE = re.compile(r"\b(BUY|HOLD|SELL)\b", re.IGNORECASE)
+_CONF_RE = re.compile(
+    r"(?:confidence|conf)(?:\s+score)?[:\s]*(\d+(?:\.\d+)?)\s*%?"
+    r"|(\d+(?:\.\d+)?)\s*%\s*(?:confidence|conf)",
+    re.IGNORECASE,
+)
+
+
+async def _auto_save_brief(
+    user_query: str, response_text: str, session_id: str, user_id: str
+) -> None:
+    """Persist the investment brief to TickerMemory after synthesis completes."""
+    from datetime import datetime
+    from shared.config import IST
+    from shared.memory import PerformanceTracker, TickerMemory
+    from shared.ticker_utils import extract_ticker
+
+    try:
+        ticker = extract_ticker(user_query)
+        if not ticker:
+            return
+
+        tm = TickerMemory()
+        existing = await tm.get_latest(ticker, user_id=None)
+        if existing:
+            ad = existing.get("analysis_date") or existing["created_at"][:10]
+            if ad == datetime.now(IST).date().isoformat():
+                stored = ""
+                try:
+                    bj = json.loads(existing.get("brief_json", "{}"))
+                    stored = bj.get("response_text", "")
+                except Exception:
+                    pass
+                if len(response_text) > len(stored):
+                    await tm.update_response_text(existing["id"], response_text)
+                return
+
+        rec_m = _REC_RE.search(response_text)
+        rec = rec_m.group(1).upper() if rec_m else "UNKNOWN"
+        conf = 0.5
+        conf_m = _CONF_RE.search(response_text)
+        if conf_m:
+            raw = float(conf_m.group(1) or conf_m.group(2))
+            conf = raw / 100.0 if raw > 1.0 else raw
+
+        await tm.store_minimal(
+            ticker=ticker, user_id=user_id, session_id=session_id,
+            query=user_query, response_text=response_text,
+            recommendation=rec, confidence=round(conf, 2),
+        )
+
+        pt = PerformanceTracker()
+        await pt.record_recommendation(
+            ticker=ticker, user_id=user_id,
+            recommendation=rec, confidence=round(conf, 2),
+        )
+        logger.info("Auto-saved brief: %s %s (%.0f%%)", ticker, rec, conf * 100)
+    except Exception:
+        logger.debug("Auto-save brief failed", exc_info=True)
+
+
 async def _stream(
     runner: Runner,
     user_text: str,
@@ -158,12 +219,13 @@ async def _stream(
     # Also track fn_call.id → call_id for ADK's internal ID scheme
     pending_by_fn_id: dict[str, str] = {}
     active_agents: list[str] = []
+    synthesis_parts: list[str] = []
+    had_send_message = False
 
     yield sse(RunStartedEvent(
         type=EventType.RUN_STARTED,
         thread_id=thread_id,
         run_id=run_id,
-        input=payload.model_dump(by_alias=True),
     ))
 
     # Seed the state so JSON Patch operations resolve against a known root
@@ -222,6 +284,7 @@ async def _stream(
                 pending_by_fn_id[fn_id] = call_id
 
                 if fn_call.name == "send_message":
+                    had_send_message = True
                     args = dict(fn_call.args or {})
                     agent_raw = args.get("agent_name", "")
                     agent_display = _display_name(agent_raw)
@@ -276,6 +339,7 @@ async def _stream(
                                 role="assistant",
                             ))
                             text_started = True
+                        synthesis_parts.append(part.text)
                         yield sse(TextMessageContentEvent(
                             type=EventType.TEXT_MESSAGE_CONTENT,
                             message_id=msg_id,
@@ -295,6 +359,11 @@ async def _stream(
             ))
 
         yield sse(StepFinishedEvent(type=EventType.STEP_FINISHED, step_name="orchestrator"))
+
+        if had_send_message and synthesis_parts:
+            asyncio.create_task(
+                _auto_save_brief(user_text, "".join(synthesis_parts), session_id, user_id)
+            )
 
     except asyncio.CancelledError:
         logger.info("Bridge stream cancelled run_id=%s", run_id)

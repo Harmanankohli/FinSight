@@ -3,11 +3,11 @@
 import json
 import time
 
-# Top-level event keys that are optional metadata — safe to strip when null.
-# Keys like 'snapshot', 'delta', 'input', 'content' carry user data where
-# null is semantically meaningful and must be preserved.
+# Optional event keys where null must be omitted (Zod .optional() rejects null).
+# Data-carrying keys like 'snapshot', 'delta', 'content' are NOT listed here
+# because null may be semantically meaningful for JSON Patch / state management.
 _STRIP_KEYS = {"rawEvent", "parentRunId", "parentMessageId", "result",
-               "name", "code", "encryptedValue", "role"}
+               "name", "code", "encryptedValue", "role", "input"}
 
 
 def _clean(obj, depth=0):
@@ -51,17 +51,5 @@ def sse(event_obj) -> str:
     if event_obj.timestamp is None:
         event_obj.timestamp = int(time.time() * 1000)
     data = event_obj.model_dump(by_alias=True)
-
-    # Strip null optional fields at event envelope level
-    data = {k: v for k, v in data.items()
-            if not (v is None and k in _STRIP_KEYS)}
-
-    # Strip null fields inside input.messages (name, encryptedValue, etc.)
-    if "input" in data and isinstance(data["input"], dict):
-        inp = data["input"]
-        inp = {k: v for k, v in inp.items() if not (v is None and k in _STRIP_KEYS)}
-        if "messages" in inp:
-            inp["messages"] = _strip_message_nulls(inp["messages"])
-        data["input"] = inp
-
+    data = _clean(data)
     return f"data: {json.dumps(data)}\n\n"
