@@ -2011,6 +2011,72 @@ finally:
 </code></pre>
 <p>This guarantees cleanup even on exception paths. The <code>db = None</code> initialization ensures the <code>finally</code> block doesn't reference a <code>NameError</code> if the connection assignment fails.</p>
 
+<h2>Deferred Eval Gate (v1.38)</h2>
+
+<h3>Why defer sub-agent evals instead of running them immediately?</h3>
+<p>Sub-agent eval LLM calls (RAGAS scoring for RAG, Quant, Market Context) fired via <code>asyncio.create_task()</code> the moment each sub-agent produced a response. All three sub-agents share the same LM Studio instance with the orchestrator. When all three sub-agents complete roughly simultaneously (they run in parallel), three eval storms hit LM Studio right when the orchestrator needs GPU for final answer synthesis. The process-local <code>LLMPriorityQueue</code> (v1.37) coordinates LLM calls within a single process, but cannot coordinate across three separate processes &mdash; each agent runs in its own uvicorn worker.</p>
+
+<h3>Why a deferred queue instead of reducing eval concurrency?</h3>
+<p>Reducing eval concurrency (e.g. <code>LLM_MAX_CONCURRENT=1</code>) would slow eval throughput but not solve the temporal clash: sub-agent evals peak exactly when orchestrator synthesis needs the LLM. The deferred gate shifts all sub-agent evals to <em>after</em> the orchestrator finishes its synthesis, so the LM Studio is used for production inference first and eval scoring second. The 120s safety-net ensures evals eventually run even if the orchestrator never signals.</p>
+
+<h3>Why HTTP POST instead of an in-process signal?</h3>
+<p>The orchestrator and sub-agents are separate processes (separate uvicorn instances on different ports). Shared memory, asyncio queues, or signals don't work across process boundaries. HTTP POST is the simplest cross-process coordination mechanism &mdash; no message broker, no shared filesystem, no new dependencies. A 5-second timeout prevents slow endpoint problems: if a sub-agent isn't responding to <code>/release-evals</code>, the orchestrator moves on.</p>
+
+<h3>Why a 120s safety-net timeout?</h3>
+<p>Sub-agent analyses take 20-60s to complete. The orchestrator synthesis adds 10-30s on top. 120s covers the worst-case pipeline (60s analysis + 30s synthesis = 90s) with 30s margin. If the orchestrator crashes after dispatching sub-agents but before calling <code>/release-evals</code>, the safety-net releases evals after 120s &mdash; late but not lost.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>Cross-process eval coordination &mdash; single HTTP POST replaces uncoordinated asyncio.create_task storm</li>
+<li>120s safety-net &mdash; evals always run even if orchestrator fails</li>
+<li>Zero new infrastructure &mdash; HTTP is the only coupling</li>
+<li>Non-blocking &mdash; orchestrator fires release as fire-and-forget, doesn't wait for responses</li>
+<li>Backward compatible &mdash; eval still runs, just deferred</li>
+</ul>
+
+<h2>Confidence Regex &mdash; &ldquo;Confidence Score: X&rdquo; Format (v1.38)</h2>
+
+<h3>Why update the regex to match &ldquo;Confidence Score&rdquo;?</h3>
+<p>The LLM (ministral/qwen) sometimes outputs &ldquo;Confidence Score: 0.75&rdquo; (with the word &ldquo;Score&rdquo; capitalized) instead of &ldquo;confidence: 0.75&rdquo; or &ldquo;75% confidence&rdquo;. The original <code>_CONF_PATTERN</code> used <code>(?:confidence|conf)[:\s]*(\d+\.?\d*)...</code> which only matched &ldquo;confidence:&rdquo; and &ldquo;conf:&rdquo; prefixes. Adding <code>(?:\s+score)?</code> makes the &ldquo;Score&rdquo; suffix optional &mdash; both old and new formats match with the same capture group.</p>
+<p>The A2A executor path (<code>_store_memory</code> in <code>agent_executor.py</code>) previously hardcoded <code>confidence=0.5</code> for both <code>store_minimal()</code> and <code>record_recommendation()</code>. This meant briefs saved via the A2A path always recorded 50% confidence regardless of the actual LLM response. The fix extracts confidence from <code>response_text</code> using the same regex, producing accurate confidence values in the A2A path.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>Matches &ldquo;Confidence Score: X&rdquo;, &ldquo;confidence: X&rdquo;, and &ldquo;X% confidence&rdquo; uniformly</li>
+<li>A2A executor path extracts real confidence instead of hardcoding 0.5</li>
+<li>Consistent extraction logic between ADK-web and A2A paths</li>
+</ul>
+
+<h2>AG-UI Bridge &mdash; Null-Stripping + Auto-Save (v1.38)</h2>
+
+<h3>Why recursive <code>_clean()</code> instead of flat <code>_strip_message_nulls()</code>?</h3>
+<p>CopilotKit Cloud injects <code>encryptedValue: null</code> at arbitrary nesting depths inside the AG-UI event payload &mdash; not just at the <code>input.messages[*]</code> level. The old flat approach only handled specific paths (<code>input</code>, <code>input.messages[*].name</code>, etc.). When CopilotKit added <code>encryptedValue: null</code> at a new depth, the event arrived with null values that Zod rejected.</p>
+<p>The recursive <code>_clean()</code> traverses the entire event dict and strips any key whose value is <code>None</code> and whose key is in <code>_STRIP_KEYS</code>. This handles any future nesting depth changes without code updates.</p>
+
+<h3>Why add <code>&quot;input&quot;</code> to <code>_STRIP_KEYS</code> now?</h3>
+<p>Previously, <code>input</code> was excluded from null-stripping because it carried user-entered data where null could be semantically meaningful for JSON Patch state management. But CopilotKit Cloud included <code>encryptedValue: null</code> inside the input payload, and fixing it at the <code>input.messages[*]</code> level was fragile. Adding <code>&quot;input&quot;</code> to <code>_STRIP_KEYS</code> is safe because <code>input</code> is an optional metadata field in the AG-UI event envelope &mdash; it describes the request, it's not the payload's core data. The <code>snapshot</code>, <code>delta</code>, and <code>content</code> keys remain excluded from stripping because they carry the actual state data.</p>
+
+<h3>Why auto-save briefs in the bridge path?</h3>
+<p>The bridge (<code>POST /a2a-agui</code>) was the only orchestrator entry point that didn't auto-save briefs. The <code>after_agent_callback</code> path (ADK web UI) and the <code>FinSightAgentExecutor</code> path (direct A2A) both saved briefs, but the bridge streamed AG-UI events directly without persisting to <code>TickerMemory</code>. This meant repeat queries via CopilotKit always missed the same-day cache &mdash; the brief was generated fresh every time.</p>
+<p>The bridge's <code>_auto_save_brief()</code> function uses the same extraction logic as the other two paths: regex for recommendation and confidence from the synthesis text, <code>store_minimal()</code> for persistence, <code>PerformanceTracker.record_recommendation()</code> for tracking. It also checks for an existing today-brief &mdash; if found and the stored text is shorter, <code>update_response_text()</code> overwrites with the longer synthesis text, ensuring the best version is cached.</p>
+
+<h3>Why not share the save logic between all three paths?</h3>
+<p>The three paths have different contexts available:</p>
+<ul>
+<li><strong>ADK callback</strong> (<code>_persist_memory_callback</code>): Has <code>session.events</code> and <code>callback_context</code></li>
+<li><strong>A2A executor</strong> (<code>_store_memory</code>): Has <code>session</code> and direct <code>TickerMemory</code> access</li>
+<li><strong>Bridge</strong> (<code>_auto_save_brief</code>): Has <code>user_text</code>, <code>response_text</code>, <code>session_id</code>, <code>user_id</code></li>
+</ul>
+<p>Each path extracts the brief from different sources, making a shared function awkward without passing large context objects. The duplication (~30 lines per path) is acceptable for clarity &mdash; each path's save logic is self-contained and easy to understand in context.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>Recursive null-stripping handles arbitrary nesting depths</li>
+<li>Bridge path now saves briefs &mdash; same-day cache works for CopilotKit queries too</li>
+<li><code>update_response_text()</code> overwrites with longer text &mdash; best version cached</li>
+<li>Self-contained per-path save logic &mdash; clear, no shared context coupling</li>
+</ul>
+
 <hr>
 <p style="font-size:.85rem;color:#888"><a href="index.html">Back to docs hub</a></p>
 </div>

@@ -11,7 +11,7 @@
 | A2A Endpoint | `POST /a2a` (via Starlette + `create_jsonrpc_routes`) |
 | Health | `GET /health` → `{"status":"ok","agent":"orchestrator"}` |
 
-The orchestrator uses a single `LlmAgent` with three tools (`send_message`, `save_brief`, `load_memory`). The LLM delegates tasks to sub-agents by name and synthesizes results:
+The orchestrator uses a single `LlmAgent` with three tools (`send_message`, `generate_report`, `load_memory`). The `save_brief` function is still defined in `agent.py` but is no longer exposed as an LLM-callable tool — briefs are auto-saved via `after_agent_callback`. The LLM delegates tasks to sub-agents by name and synthesizes results:
 
 1. **Discovers agents in background** via `SubAgentClient.discover()` — async `A2ACardResolver` with retries
 2. **Input guardrails** — Off-topic queries rejected in < 100 ms via `_NON_INVESTMENT_RE`. Invalid tickers rejected in < 2 s via pre-flight MCP `validate_ticker` call before any sub-agent is invoked. Uses `get_shared_mcp()` singleton — no per-request connect/disconnect overhead.
@@ -21,8 +21,8 @@ The orchestrator uses a single `LlmAgent` with three tools (`send_message`, `sav
 6. **LLM routes to agents in parallel** — The `_STATIC_PREAMBLE` explicitly instructs the model to emit ALL `send_message` calls in a SINGLE assistant response for parallel execution (`agent.py:184-189`). Qwen3-30B-A3B natively supports multiple tool calls in one turn. `_build_instruction()` also appends agent responsibility boundaries (`agent.py:253-260`) clarifying RAG owns ALL document/news retrieval, Market Context owns macro, Quant owns numeric analysis — preventing the LLM from routing news queries to the wrong agent. Each call measured with `time.monotonic()` and emitted as a Langfuse latency span.
 7. **Output guardrails** — Responses shorter than 50 chars trigger `TASK_STATE_FAILED`. Missing BUY/HOLD/SELL signal emits a Langfuse warning with `missing_signal: true`.
 8. **Synthesizes results** — LLM collects all outputs and produces a BUY/HOLD/SELL recommendation
-9. **Auto-save** — After each response, persists ticker brief, portfolio holdings, and performance record (with live price snapshot via yfinance) to SQLite. Fires background task to evaluate past recommendations.
-10. **Memory persist + Runtime RAGAS evaluation** — All run from `after_agent_callback` in `agents/finsight_agent/agent.py`. The callback first checks `_is_analysis_turn()` (was `save_brief` called in this turn?) — non-analysis turns like "what were my last recommendations?" skip persist + eval to avoid memory pollution. Analysis turns then call `add_events_to_memory()` and fire `asyncio.create_task(_eval_score_response(...))` with 6 metrics. The full synthesis text is stored directly by `save_brief` (reads longest LLM text from session events) — the post-turn `update_response_text` overwrite was removed. All gated globally by `EVAL_TRACE_ENABLED`. Scores pushed to Langfuse under `ragas/orchestrator/<metric>`.
+9. **Auto-save** — After each response, persists ticker brief, portfolio holdings, and performance record (with live price snapshot via yfinance) to SQLite. Fires background task to evaluate past recommendations. Briefs are auto-saved via `after_agent_callback` — the LLM does not need to call `save_brief`. Confidence scores are extracted from response text via regex matching "Confidence Score: X", "confidence: X", and "X% confidence" formats.
+10. **Memory persist + Runtime RAGAS evaluation** — All run from `after_agent_callback` in `agents/finsight_agent/agent.py`. The callback first checks `_is_analysis_turn()` (was `save_brief` called in this turn or were `send_message` invocations detected?) — non-analysis turns like "what were my last recommendations?" skip persist + eval to avoid memory pollution. Analysis turns then call `add_events_to_memory()` and fire `asyncio.create_task(_eval_score_response(...))` with 6 metrics. The callback also fires `_release_sub_agent_evals()` — a fire-and-forget task that POSTs to each sub-agent's `/release-evals` endpoint so their deferred evals run. The full synthesis text is stored directly by `save_brief` (reads longest LLM text from session events) — the post-turn `update_response_text` overwrite was removed. All gated globally by `EVAL_TRACE_ENABLED`. Scores pushed to Langfuse under `ragas/orchestrator/<metric>`.
 11. **Eval hardening** — The `_gate_ok()` pre-eval gate enforces: **circuit breaker** (5 consecutive metric failures opens the circuit, skipping eval for the rest of the process lifetime), **SHA-256 dedup** (identical input+response pairs skip eval via 1h TTL dict), **burst limiter** (`_burst_ok()` enforces `EVAL_BURST_LIMIT` evaluations per minute), and **per-metric timeout** (`_score_metric_with_timeout()` default 90s via `EVAL_METRIC_TIMEOUT`).
 12. **Memory pruning** — `prune_old_records()` called on startup deletes rows older than `MEMORY_RETENTION_DAYS=90` from `ticker_briefs`, `recommendation_records`, and `memory_entries`. Uses existing `write_lock()` for concurrency safety. Returns dict of `{table: rows_deleted}`.
 13. **Cancellation support** — `FinSightAgentExecutor.cancel()` stores `asyncio.current_task()`, catches `CancelledError`, emits `TASK_STATE_CANCELED`.
@@ -44,7 +44,7 @@ FinSightAgentExecutor:
   A2A Request → execute()
   → _build_memory_context(query) → inject [MEMORY CONTEXT] prefix
   → RUNNER.run_async(user_query)
-  → ADK LlmAgent (tools: [send_message, save_brief, load_memory])
+  → ADK LlmAgent (tools: [send_message, generate_report, load_memory])
     → LLM emits ALL send_message calls in ONE assistant turn (parallel, per system prompt instruction)
     → send_message("Financial RAG Agent", "Analyze NVDA...")
     → send_message("Quant Analysis Agent", "Compute metrics for NVDA...")
@@ -71,14 +71,15 @@ Executor-level cache (A2A path — agent_1_adk/agent_executor.py):
   → [miss] → _build_memory_context() → RUNNER.run_async()
 
 after_agent_callback (ADK web UI path — primary path; run_adk_web.bat no longer starts agent_1_adk/main.py):
-  → _is_analysis_turn(session.events) — was save_brief called?
+  → _is_analysis_turn(session.events) — was save_brief called OR was send_message invoked?
        ├── No  → skip persist + eval (memory recall turn, e.g. load_memory only)
        └── Yes →
-            → callback_context.add_events_to_memory(events=session.events, custom_metadata={...})
-            → SQLiteMemoryService.add_events_to_memory() → memory_entries table
-            → if EVAL_ENABLED: asyncio.create_task(score_response(query, response, trace_id))
-                 → ragas/orchestrator/{AnswerRelevancy, citation_quality, risk_disclosure,
-                                       recommendation_clarity, response_completeness}
+             → callback_context.add_events_to_memory(events=session.events, custom_metadata={...})
+             → SQLiteMemoryService.add_events_to_memory() → memory_entries table
+             → if EVAL_ENABLED: asyncio.create_task(score_response(query, response, trace_id))
+                  → ragas/orchestrator/{AnswerRelevancy, citation_quality, risk_disclosure,
+                                        recommendation_clarity, response_completeness}
+             → asyncio.create_task(_release_sub_agent_evals())  — POST /release-evals to all sub-agents
 ```
 
 ### Streaming Event Flow
@@ -115,7 +116,7 @@ Body:
 
 ### Runtime Evaluation
 
-Triggered from `after_agent_callback` (ADK Web path) — see step 10 above. Fires `asyncio.create_task(score_response(...))` with 6 metrics (all scored from `user_input` + `response` only — no ground-truth reference needed). Globally toggled by `EVAL_TRACE_ENABLED` in `.env`. All LLM-based metrics use `LOW` priority in `LLMPriorityQueue` — they yield to production `CRITICAL` calls when the LM Studio instance is saturated. Scores pushed to Langfuse under `ragas/orchestrator/<metric>`.
+Triggered from `after_agent_callback` (ADK Web path) — see step 10 above. Fires `asyncio.create_task(score_response(...))` with 6 metrics (all scored from `user_input` + `response` only — no ground-truth reference needed). Also fires `_release_sub_agent_evals()` as a background task, which POSTs to each sub-agent's `/release-evals` endpoint to fire their deferred eval coroutines. Globally toggled by `EVAL_TRACE_ENABLED` in `.env`. All LLM-based metrics use `LOW` priority in `LLMPriorityQueue` — they yield to production `CRITICAL` calls when the LM Studio instance is saturated. Scores pushed to Langfuse under `ragas/orchestrator/<metric>`.
 
 | Metric | Why |
 |---|---|
@@ -180,7 +181,7 @@ RAGAgent._build_response(query):
         └── LlamaIndex response synthesizer (response_mode="compact", similarity_top_k=3)
             — single LLM call per query, not N sequential refine calls
       → Returns A2A WORKING event with "Index is warming for {ticker}..." message, then fetches and returns data once ingestion completes
-      → if EVAL_ENABLED: asyncio.create_task(score_rag_response(...))
+      → if EVAL_ENABLED: defer_eval(score_rag_response, ...) (deferred via shared/eval_gate.py — released by orchestrator's POST /release-evals)
       → return {response_type: "data", content: result, ...}
 
 RAGAgent._ensure_ingested(ticker) [background]:
@@ -271,7 +272,7 @@ QuantAgent._build_response(query):
           (risk_quality 0.15, dcf_value 0.20, fundamental_value 0.13, fundamental_quality 0.12,
            technicals_trend 0.15, technicals_momentum 0.10, peer_positioning 0.10, behavioral 0.05)
         → llm_summary (CRITICAL priority queue — enriched 3-4 sentence summary)
-      → if EVAL_ENABLED: asyncio.create_task(score_quant_response(...))
+      → if EVAL_ENABLED: defer_eval(score_quant_response, ...) (deferred via shared/eval_gate.py)
       → return {response_type: "data", content: result, ...}
 ```
 
@@ -347,7 +348,7 @@ MarketContextAgent._build_response(query):
               → Outputs JSON: narrative, macro_regime, relative_peer_positioning,
                 overall_signal (bullish/bearish/neutral), confidence_score (0-1),
                 key_tailwinds, key_headwinds
-      → if EVAL_ENABLED: asyncio.create_task(score_market_context_response(...))
+      → if EVAL_ENABLED: defer_eval(score_market_context_response, ...) (deferred via shared/eval_gate.py)
       → return {response_type: "data", content: result, ...}
 ```
 
@@ -382,6 +383,7 @@ All four agents share a common infrastructure layer:
 | **Per-service log levels** | `LOG_LEVEL_<SERVICE>` env vars (e.g. `LOG_LEVEL_ORCHESTRATOR=DEBUG`). |
 | **`SEC_USER_AGENT` env var** | Replaces hardcoded SEC user agent string in MCP server filing requests. |
 | **LLM Priority Queue** | `LLMPriorityQueue` in `shared/llm_queue.py` (process-local, heap-based async semaphore). Three tiers: `CRITICAL` (quant summary, crew kickoff), `NORMAL` (warmup ping), `LOW` (RAGAS eval). Default `LLM_MAX_CONCURRENT=2`. Prevents eval starvation of production inference. |
+| **Deferred Eval Gate** | `shared/eval_gate.py` — holds sub-agent eval LLM calls until the orchestrator releases them via `POST /release-evals` after synthesis completes. Prevents 3 sub-agent eval processes from competing with orchestrator synthesis on a single LM Studio instance. Includes 120s safety-net auto-release. |
 
 ## Phase Map
 
@@ -395,3 +397,4 @@ The project evolved through five phases, each adding distinct agent capabilities
 | **Phase 4** | v1.31-1.32 | Date-scoped semantic cache. RAG startup warm-up. `no_forward_guarantees` AspectCritic. Stress test beta-adjusted formula. 8-group weighted voting normalization fix. |
 | **Phase 5** | v1.33-1.35 | Quant graph fan-in reducer fixes (concurrent update, diamond dependency, duplicate fan-in). Dynamic peer discovery via yfinance Industry/Sector classes. Live sector-aware scenario shocks with sector ETF benchmarks. Sector-relative fundamental scoring. Structured `get_insider_transactions` MCP tool replacing Form 4 text parsing. `get_peers` MCP tool using yfinance. Expanded `peer_sets.py` with normalised key matching. Monte Carlo runs on both high-vol and low-vol paths. Options flow zero-volume edge case handling. Null-safe schema validator for quant deterministic eval. yfinance blocking calls moved to thread executor (`run_in_executor`). Peer concurrency capped at 3 (`asyncio.Semaphore`). Redis auto-start in `run_adk_web.bat`. MCP client timeout simplification (removed fail-fast first-attempt timeout). All 9 sync yfinance calls now wrapped in `run_in_executor` (7 more added: prices, financials, macro, options chain, earnings calendar, sentiment indicators, earnings history). `httpx.ReadError`/`ConnectError`/`NetworkError` added to MCP client transient retry set. RAGAS eval retry tuning: `max_retries=5`, separate `asyncio.TimeoutError` handling, empty exception message classification. |
 | **Phase 6** | v1.37 | LLM Priority Queue (`shared/llm_queue.py`) — 3-tier heap-based async semaphore to prevent RAGAS eval starvation of production LLM inference. Quant `llm_summary_node` and CrewAI `crew.kickoff()` use `CRITICAL` priority; server warmup uses `NORMAL`; all runtime eval metrics use `LOW` priority. Controlled by `LLM_MAX_CONCURRENT` env var (default 2). |
+| **Phase 7** | v1.38 | Deferred Eval Gate (`shared/eval_gate.py`) — cross-process eval coordination. Sub-agents defer evals via `defer_eval()` instead of `asyncio.create_task()`; orchestrator POSTs `/release-evals` after synthesis. Confidence regex updated for "Confidence Score: X" format. AG-UI bridge auto-saves briefs and strips null optional fields recursively for CopilotKit Zod compatibility. |

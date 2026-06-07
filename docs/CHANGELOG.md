@@ -1,5 +1,35 @@
 # Changelog
 
+## v1.38 — Deferred Eval Gate + AG-UI Bridge Auto-Save + Confidence Extraction
+
+### Infrastructure — Deferred Sub-Agent Eval Gate
+
+**`shared/eval_gate.py` (new, 74 lines)**: Per-process deferred eval queue that holds sub-agent eval LLM calls until the orchestrator finishes its final answer synthesis. Sub-agent evals were firing immediately via `asyncio.create_task()`, hitting LM Studio from 3 separate processes right when the orchestrator needed it for synthesis. The process-local `LLMPriorityQueue` couldn't coordinate across processes.
+
+- **`defer_eval(fn, *args, **kwargs)`**: Replaces `asyncio.create_task(eval_fn(...))` in all three sub-agent executors (RAG, Quant, Market Context). Queues the eval coroutine in a module-level list instead of executing immediately.
+- **`release_evals()`**: Fires all deferred evals as `asyncio.create_task()` calls. Returns count of evals released. Cancels the auto-release safety-net when called explicitly.
+- **`_auto_release()`**: Safety-net background task that fires after `EVAL_DEFER_TIMEOUT` (120s) if the orchestrator never calls `/release-evals`. Prevents evals from being silently dropped if the orchestrator crashes mid-synthesis.
+
+**`POST /release-evals` endpoint** added to all three sub-agent servers (`agent_2_llamaindex/server.py`, `agent_3_langgraph/server.py`, `agent_4_crewai/server.py`): Calls `release_evals()` and returns `{"released": N}`.
+
+**Orchestrator fires release after synthesis** — both `agents/finsight_agent/agent.py` (`after_agent_callback`) and `agent_1_adk/agent_executor.py` (`FinSightAgentExecutor`) call `_release_sub_agent_evals()` as a fire-and-forget `asyncio.create_task()` after scheduling the orchestrator's own eval. The `_release_sub_agent_evals()` helper POSTs to each sub-agent's `/release-evals` endpoint with a 5-second HTTP timeout.
+
+### AG-UI Bridge — Null-Stripping + Auto-Save Briefs
+
+**`agent_1_adk/agui_bridge.py`**:
+- **RunStartedEvent no longer echoes input**: The `input=payload.model_dump(by_alias=True)` parameter was removed from `RunStartedEvent` construction. CopilotKit Cloud injected `encryptedValue: null` into the input payload, which caused Zod validation failures downstream because null is not accepted for optional fields in the AG-UI schema version CopilotKit targets.
+- **Bridge auto-saves investment briefs**: After the orchestrator stream completes, `_auto_save_brief()` extracts ticker, recommendation, and confidence from the synthesis text using regex, then persists to `TickerMemory` via `store_minimal()` and `PerformanceTracker`. Checks for today's existing brief — if found and the existing response text is shorter, calls `update_response_text()` to overwrite with the longer synthesis. This ensures repeat queries via the bridge return cached results from memory.
+
+**`shared/agui_sse.py`**:
+- **Recursive `_clean()` null stripping**: Replaced the flat `_strip_message_nulls()` approach with a depth-aware recursive cleaner that strips null-valued optional fields at any nesting depth. `_STRIP_KEYS` expanded to include `"input"` — previously the list excluded `input` because it carried user data where null was semantically meaningful, but CopilotKit Cloud's `encryptedValue: null` is now injected at arbitrary nesting depths. The recursive approach handles all depths uniformly.
+- **Removed `_strip_message_nulls()` helper**: The old function that specifically handled `input.messages[*].name/encryptedValue/role` nulls is gone — the recursive `_clean()` handles these paths naturally.
+
+### Confidence Score Extraction — "Confidence Score: X" Format
+
+**`agents/finsight_agent/agent.py`** (`_CONF_PATTERN`): Regex updated from `(?:confidence|conf)[:\s]*(\d+(?:\.\d+)?)...` to `(?:confidence|conf)(?:\s+score)?[:\s]*(\d+(?:\.\d+)?)...`. The LLM output uses "Confidence Score: 0.75" (with the word "Score") but the regex only matched "confidence: 0.75" and "75% confidence". The optional `(?:\s+score)?` group handles the new format without breaking existing matches.
+
+**`agent_1_adk/agent_executor.py`** (`_store_memory` method): The A2A executor path now extracts confidence from the response text using the same regex pattern instead of hardcoding `confidence=0.5`. Also added `confidence=round(confidence, 2)` to both `store_minimal()` and `record_recommendation()` calls — previously the executor passed `confidence=0.5` to both, meaning briefs saved via the A2A path always recorded 50% confidence regardless of the actual response.
+
 ## v1.37 — LLM Priority Queue
 
 - **`shared/llm_queue.py` (new, 105 lines)**: `LLMPriorityQueue` — process-local async priority semaphore using `heapq` + `(priority, seq, asyncio.Future)`. Three tiers: `Priority.CRITICAL` (0), `Priority.NORMAL` (1), `Priority.LOW` (2). Slot handoff on release preserves priority ordering. Default `LLM_MAX_CONCURRENT=2`. Configurable via env var.

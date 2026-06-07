@@ -2551,3 +2551,77 @@ finally:
 ```
 
 This guarantees cleanup even on exception paths. The `db = None` initialization ensures the `finally` block doesn't reference a `NameError` if the connection assignment fails.
+
+## Deferred Eval Gate (v1.38)
+
+### Why defer sub-agent evals instead of running them immediately?
+
+Sub-agent eval LLM calls (RAGAS scoring for RAG, Quant, Market Context) fired via `asyncio.create_task()` the moment each sub-agent produced a response. All three sub-agents share the same LM Studio instance with the orchestrator. When all three sub-agents complete roughly simultaneously (they run in parallel), three eval storms hit LM Studio right when the orchestrator needs GPU for final answer synthesis. The process-local `LLMPriorityQueue` (v1.37) coordinates LLM calls within a single process, but cannot coordinate across three separate processes — each agent runs in its own uvicorn worker.
+
+### Why a deferred queue instead of reducing eval concurrency?
+
+Reducing eval concurrency (e.g. `LLM_MAX_CONCURRENT=1`) would slow eval throughput but not solve the temporal clash: sub-agent evals peak exactly when orchestrator synthesis needs the LLM. The deferred gate shifts all sub-agent evals to *after* the orchestrator finishes its synthesis, so the LM Studio is used for production inference first and eval scoring second. The 120s safety-net ensures evals eventually run even if the orchestrator never signals.
+
+### Why HTTP POST instead of an in-process signal?
+
+The orchestrator and sub-agents are separate processes (separate uvicorn instances on different ports). Shared memory, asyncio queues, or signals don't work across process boundaries. HTTP POST is the simplest cross-process coordination mechanism — no message broker, no shared filesystem, no new dependencies. A 5-second timeout prevents slow endpoint problems: if a sub-agent isn't responding to `/release-evals`, the orchestrator moves on.
+
+### Why a 120s safety-net timeout?
+
+Sub-agent analyses take 20-60s to complete. The orchestrator synthesis adds 10-30s on top. 120s covers the worst-case pipeline (60s analysis + 30s synthesis = 90s) with 30s margin. If the orchestrator crashes after dispatching sub-agents but before calling `/release-evals`, the safety-net releases evals after 120s — late but not lost.
+
+### Key properties
+
+- ✅ Cross-process eval coordination — single HTTP POST replaces uncoordinated asyncio.create_task storm
+- ✅ 120s safety-net — evals always run even if orchestrator fails
+- ✅ Zero new infrastructure — HTTP is the only coupling
+- ✅ Non-blocking — orchestrator fires release as fire-and-forget, doesn't wait for responses
+- ✅ Backward compatible — eval still runs, just deferred
+
+## Confidence Regex — "Confidence Score: X" Format (v1.38)
+
+### Why update the regex to match "Confidence Score"?
+
+The LLM (ministral/qwen) sometimes outputs "Confidence Score: 0.75" (with the word "Score" capitalized) instead of "confidence: 0.75" or "75% confidence". The original `_CONF_PATTERN` used `(?:confidence|conf)[:\s]*(\d+\.?\d*)...` which only matched "confidence:" and "conf:" prefixes. Adding `(?:\s+score)?` makes the "Score" suffix optional — both old and new formats match with the same capture group.
+
+The A2A executor path (`_store_memory` in `agent_executor.py`) previously hardcoded `confidence=0.5` for both `store_minimal()` and `record_recommendation()`. This meant briefs saved via the A2A path always recorded 50% confidence regardless of the actual LLM response. The fix extracts confidence from `response_text` using the same regex, producing accurate confidence values in the A2A path.
+
+### Key properties
+
+- ✅ Matches "Confidence Score: X", "confidence: X", and "X% confidence" uniformly
+- ✅ A2A executor path extracts real confidence instead of hardcoding 0.5
+- ✅ Consistent extraction logic between ADK-web and A2A paths
+
+## AG-UI Bridge — Null-Stripping + Auto-Save (v1.38)
+
+### Why recursive `_clean()` instead of flat `_strip_message_nulls()`?
+
+CopilotKit Cloud injects `encryptedValue: null` at arbitrary nesting depths inside the AG-UI event payload — not just at the `input.messages[*]` level. The old flat approach only handled specific paths (`input`, `input.messages[*].name`, etc.). When CopilotKit added `encryptedValue: null` at a new depth, the event arrived with null values that Zod rejected.
+
+The recursive `_clean()` traverses the entire event dict and strips any key whose value is `None` and whose key is in `_STRIP_KEYS`. This handles any future nesting depth changes without code updates.
+
+### Why add `"input"` to `_STRIP_KEYS` now?
+
+Previously, `input` was excluded from null-stripping because it carried user-entered data where null could be semantically meaningful for JSON Patch state management. But CopilotKit Cloud included `encryptedValue: null` inside the input payload, and fixing it at the `input.messages[*]` level was fragile. Adding `"input"` to `_STRIP_KEYS` is safe because `input` is an optional metadata field in the AG-UI event envelope — it describes the request, it's not the payload's core data. The `snapshot`, `delta`, and `content` keys remain excluded from stripping because they carry the actual state data.
+
+### Why auto-save briefs in the bridge path?
+
+The bridge (`POST /a2a-agui`) was the only orchestrator entry point that didn't auto-save briefs. The `after_agent_callback` path (ADK web UI) and the `FinSightAgentExecutor` path (direct A2A) both saved briefs, but the bridge streamed AG-UI events directly without persisting to `TickerMemory`. This meant repeat queries via CopilotKit always missed the same-day cache — the brief was generated fresh every time.
+
+The bridge's `_auto_save_brief()` function uses the same extraction logic as the other two paths: regex for recommendation and confidence from the synthesis text, `store_minimal()` for persistence, `PerformanceTracker.record_recommendation()` for tracking. It also checks for an existing today-brief — if found and the stored text is shorter, `update_response_text()` overwrites with the longer synthesis text, ensuring the best version is cached.
+
+### Why not share the save logic between all three paths?
+
+The three paths have different contexts available:
+- **ADK callback** (`_persist_memory_callback`): Has `session.events` and `callback_context`
+- **A2A executor** (`_store_memory`): Has `session` and direct `TickerMemory` access
+- **Bridge** (`_auto_save_brief`): Has `user_text`, `response_text`, `session_id`, `user_id`
+
+Each path extracts the brief from different sources, making a shared function awkward without passing large context objects. The duplication (~30 lines per path) is acceptable for clarity — each path's save logic is self-contained and easy to understand in context.
+
+### Key properties
+
+- ✅ Recursive null-stripping handles arbitrary nesting depths
+- ✅ Bridge path now saves briefs — same-day cache works for CopilotKit queries too
+- ✅ `update_response_text()` overwrites with longer text — best version cached
+- ✅ Self-contained per-path save logic — clear, no shared context coupling

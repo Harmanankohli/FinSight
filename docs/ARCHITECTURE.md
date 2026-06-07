@@ -28,7 +28,7 @@ FinSight is a multi-agent investment research system where four specialized agen
 
 ## Orchestrator Architecture
 
-The orchestrator (`agent_1_adk/`) uses a single `LlmAgent` with one `send_message` tool that delegates to sub-agents via A2A. Two parallel cache paths can short-circuit the LLM entirely on same-day repeat queries:
+The orchestrator (`agent_1_adk/`) uses a single `LlmAgent` with three tools (`send_message`, `generate_report`, `load_memory`). The `save_brief` function is defined but no longer exposed as an LLM tool — briefs are auto-saved via `after_agent_callback`. Two parallel cache paths can short-circuit the LLM entirely on same-day repeat queries:
 
 ```
 Module load → SubAgentClient.discover()
@@ -50,6 +50,7 @@ A2A Request → FinSightAgentExecutor.execute()
   → after_agent_callback: _persist_memory_callback
     → add_events_to_memory()
     → if EVAL_ENABLED: score_response()
+    → _release_sub_agent_evals() — POST /release-evals to all sub-agents (they defer evals until this signal)
   → COMPLETED with synthesis
 ```
 
@@ -329,6 +330,10 @@ Timeouts configured via `.env` with `A2A_TIMEOUT=680.0`:
 
 All agents use LM Studio (OpenAI-compatible local API). The `config.py` default is `qwen/qwen3-30b-a3b-2507`; developers commonly override to `mistralai/ministral-3-14b-reasoning` via `.env` for faster local inference. All LLM calls are throttled by `LLMPriorityQueue` (3 priority tiers) to prevent eval scoring from starving production inference; concurrency controlled by `LLM_MAX_CONCURRENT` env var (default 2).
 
+### Cross-Process Eval Coordination
+
+Sub-agent evals are deferred via `shared/eval_gate.py` to prevent three sub-agent eval processes from competing with orchestrator synthesis on the shared LM Studio instance. Each sub-agent calls `defer_eval()` instead of `asyncio.create_task()`. The orchestrator's `after_agent_callback` fires `_release_sub_agent_evals()` which POSTs to each sub-agent's `/release-evals` endpoint after synthesis completes. A 120s safety-net auto-release prevents evals from being silently dropped if the orchestrator crashes.
+
 | Agent | Model (default) | Provider |
 |---|---|---|
 | Orchestrator (ADK) | `qwen/qwen3-30b-a3b-2507` | `openai/` prefix (LM Studio endpoint) |
@@ -488,6 +493,18 @@ All five services expose `GET /health`:
 | Quant Agent | `http://localhost:8003/health` | `{"status":"ok","agent":"quant"}` |
 | Market Context Agent | `http://localhost:8004/health` | `{"status":"ok","agent":"market_context"}` |
 | MCP Server | `http://localhost:8010/health` | `{"status":"ok","agent":"mcp"}` |
+
+### Eval Release Endpoints
+
+The three sub-agent servers expose `POST /release-evals` to trigger deferred eval coroutines:
+
+| Service | Endpoint | Response |
+|---|---|---|
+| RAG Agent | `POST http://localhost:8002/release-evals` | `{"released": N}` |
+| Quant Agent | `POST http://localhost:8003/release-evals` | `{"released": N}` |
+| Market Context Agent | `POST http://localhost:8004/release-evals` | `{"released": N}` |
+
+The orchestrator calls these endpoints via `_release_sub_agent_evals()` as a fire-and-forget background task after synthesis completes (5s HTTP timeout, non-fatal on failure).
 
 The MCP server mounts its health route alongside the FastMCP SSE app via a Starlette wrapper in `get_app()`. Docker-compose `healthcheck` blocks use these endpoints with `curl -f`, and `depends_on` is set to `condition: service_healthy`.
 

@@ -36,6 +36,33 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 
 <h1>Changelog</h1>
 
+<h2>v1.38 &mdash; Deferred Eval Gate + AG-UI Bridge Auto-Save + Confidence Extraction</h2>
+
+<h3 class="version">Infrastructure &mdash; Deferred Sub-Agent Eval Gate</h3>
+<ul>
+<li><strong><code>shared/eval_gate.py</code> (new, 74 lines)</strong>: Per-process deferred eval queue that holds sub-agent eval LLM calls until the orchestrator finishes its final answer synthesis. Sub-agent evals were firing immediately via <code>asyncio.create_task()</code>, hitting LM Studio from 3 separate processes right when the orchestrator needed it for synthesis. The process-local <code>LLMPriorityQueue</code> couldn't coordinate across processes.</li>
+<li><strong><code>defer_eval(fn, *args, **kwargs)</code></strong>: Replaces <code>asyncio.create_task(eval_fn(...))</code> in all three sub-agent executors (RAG, Quant, Market Context). Queues the eval coroutine in a module-level list instead of executing immediately.</li>
+<li><strong><code>release_evals()</code></strong>: Fires all deferred evals as <code>asyncio.create_task()</code> calls. Returns count of evals released. Cancels the auto-release safety-net when called explicitly.</li>
+<li><strong><code>_auto_release()</code></strong>: Safety-net background task that fires after <code>EVAL_DEFER_TIMEOUT</code> (120s) if the orchestrator never calls <code>/release-evals</code>. Prevents evals from being silently dropped if the orchestrator crashes mid-synthesis.</li>
+</ul>
+<ul>
+<li><strong><code>POST /release-evals</code> endpoint</strong> added to all three sub-agent servers (<code>agent_2_llamaindex/server.py</code>, <code>agent_3_langgraph/server.py</code>, <code>agent_4_crewai/server.py</code>): Calls <code>release_evals()</code> and returns <code>{"released": N}</code>.</li>
+<li><strong>Orchestrator fires release after synthesis</strong> &mdash; both <code>agents/finsight_agent/agent.py</code> (<code>after_agent_callback</code>) and <code>agent_1_adk/agent_executor.py</code> (<code>FinSightAgentExecutor</code>) call <code>_release_sub_agent_evals()</code> as a fire-and-forget <code>asyncio.create_task()</code> after scheduling the orchestrator's own eval. The helper POSTs to each sub-agent's <code>/release-evals</code> endpoint with a 5-second HTTP timeout.</li>
+</ul>
+
+<h3 class="version">AG-UI Bridge &mdash; Null-Stripping + Auto-Save Briefs</h3>
+<ul>
+<li><strong>RunStartedEvent no longer echoes input</strong> (<code>agent_1_adk/agui_bridge.py</code>): Removed <code>input=payload.model_dump(by_alias=True)</code> from RunStartedEvent construction. CopilotKit Cloud injected <code>encryptedValue: null</code> into the input payload, causing Zod validation failures downstream.</li>
+<li><strong>Bridge auto-saves investment briefs</strong>: After the orchestrator stream completes, <code>_auto_save_brief()</code> extracts ticker, recommendation, and confidence from the synthesis text via regex, then persists to <code>TickerMemory</code> via <code>store_minimal()</code> and <code>PerformanceTracker</code>. Checks for today's existing brief &mdash; if found and the stored text is shorter, calls <code>update_response_text()</code> to overwrite with the longer synthesis.</li>
+<li><strong>Recursive <code>_clean()</code> null stripping</strong> (<code>shared/agui_sse.py</code>): Replaced the flat <code>_strip_message_nulls()</code> approach with a depth-aware recursive cleaner that strips null-valued optional fields at any nesting depth. <code>_STRIP_KEYS</code> expanded to include <code>"input"</code>. The old <code>_strip_message_nulls()</code> helper removed.</li>
+</ul>
+
+<h3 class="version">Confidence Score Extraction &mdash; "Confidence Score: X" Format</h3>
+<ul>
+<li><strong><code>_CONF_PATTERN</code> updated</strong> (<code>agents/finsight_agent/agent.py</code>): Regex changed from <code>(?:confidence|conf)[:\s]*...</code> to <code>(?:confidence|conf)(?:\s+score)?[:\s]*...</code>. The LLM output uses "Confidence Score: 0.75" (with the word "Score") but the regex only matched "confidence: 0.75" and "75% confidence". The optional <code>(?:\s+score)?</code> group handles the new format without breaking existing matches.</li>
+<li><strong>A2A executor path extracts real confidence</strong> (<code>agent_1_adk/agent_executor.py</code>): Replaced hardcoded <code>confidence=0.5</code> with regex extraction from response text. Both <code>store_minimal()</code> and <code>record_recommendation()</code> now receive <code>confidence=round(confidence, 2)</code> instead of a constant 0.5.</li>
+</ul>
+
 <h2>v1.37 &mdash; Priority Queue for LLM Calls to Prevent Eval Starvation of Production</h2>
 
 <h3 class="version">Shared &mdash; LLM Priority Queue</h3>

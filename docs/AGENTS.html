@@ -48,7 +48,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <tr><td>Health</td><td><code>GET /health</code> &rarr; <code>{"status":"ok","agent":"orchestrator"}</code></td></tr>
 </table>
 
-<p>The orchestrator uses a single <code>LlmAgent</code> with one <code>send_message</code> tool. The LLM delegates tasks to sub-agents by name and synthesizes results:</p>
+<p>The orchestrator uses a single <code>LlmAgent</code> with three tools (<code>send_message</code>, <code>generate_report</code>, <code>load_memory</code>). The <code>save_brief</code> function is still defined in <code>agent.py</code> but is no longer exposed as an LLM-callable tool &mdash; briefs are auto-saved via <code>after_agent_callback</code>. The LLM delegates tasks to sub-agents by name and synthesizes results:</p>
 <ol>
 <li><strong>Discovers agents in background</strong> via <code>SubAgentClient.discover()</code> &mdash; async <code>A2ACardResolver</code> with retries</li>
 <li><strong>Input guardrails</strong> &mdash; Off-topic queries rejected in &lt; 100 ms via <code>_NON_INVESTMENT_RE</code>. Invalid tickers rejected in &lt; 2 s via pre-flight MCP <code>validate_ticker</code> call before any sub-agent is invoked. Uses <code>get_shared_mcp()</code> singleton &mdash; no per-request connect/disconnect overhead.</li>
@@ -58,8 +58,8 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <li><strong>LLM routes to agents in parallel</strong> &mdash; <code>_STATIC_PREAMBLE</code> explicitly instructs the model to emit ALL <code>send_message</code> calls in a SINGLE assistant response for parallel execution (<code>agent.py:184-189</code>). <code>_build_instruction()</code> also appends agent responsibility boundaries (<code>agent.py:253-260</code>) clarifying RAG owns ALL document/news retrieval, Market Context owns macro, Quant owns numeric analysis. Each call measured with <code>time.monotonic()</code> and emitted as a Langfuse latency span.</li>
 <li><strong>Output guardrails</strong> &mdash; Responses shorter than 50 chars trigger <code>TASK_STATE_FAILED</code>. Missing BUY/HOLD/SELL signal emits a Langfuse warning with <code>missing_signal: true</code>.</li>
 <li><strong>Synthesizes results</strong> &mdash; LLM collects all outputs and produces a BUY/HOLD/SELL recommendation</li>
-<li><strong>Auto-save</strong> &mdash; After each response, persists ticker brief, portfolio holdings, and performance record (with live price snapshot via yfinance) to SQLite. Fires background task to evaluate past recommendations.</li>
-<li><strong>Memory persist + Runtime RAGAS evaluation</strong> &mdash; All run from <code>after_agent_callback</code> in <code>agents/finsight_agent/agent.py</code>. The callback first checks <code>_is_analysis_turn()</code> (was <code>save_brief</code> called in this turn?) &mdash; non-analysis turns like "what were my last recommendations?" skip persist + eval to avoid memory pollution. Analysis turns then call <code>add_events_to_memory()</code> and fire <code>asyncio.create_task(_eval_score_response(...))</code> with 6 metrics. The full synthesis text is stored directly by <code>save_brief</code> (reads longest LLM text from session events) &mdash; the post-turn <code>update_response_text</code> overwrite was removed. All gated globally by <code>EVAL_TRACE_ENABLED</code>. Scores pushed to Langfuse under <code>ragas/orchestrator/&lt;metric&gt;</code>.</li>
+<li><strong>Auto-save</strong> &mdash; After each response, persists ticker brief, portfolio holdings, and performance record (with live price snapshot via yfinance) to SQLite. Fires background task to evaluate past recommendations. Briefs are auto-saved via <code>after_agent_callback</code> &mdash; the LLM does not need to call <code>save_brief</code>. Confidence scores are extracted from response text via regex matching "Confidence Score: X", "confidence: X", and "X% confidence" formats.</li>
+<li><strong>Memory persist + Runtime RAGAS evaluation</strong> &mdash; All run from <code>after_agent_callback</code> in <code>agents/finsight_agent/agent.py</code>. The callback first checks <code>_is_analysis_turn()</code> (was <code>save_brief</code> called or <code>send_message</code> invoked?) &mdash; non-analysis turns like "what were my last recommendations?" skip persist + eval to avoid memory pollution. Analysis turns then call <code>add_events_to_memory()</code> and fire <code>asyncio.create_task(_eval_score_response(...))</code> with 6 metrics. The callback also fires <code>_release_sub_agent_evals()</code> &mdash; a fire-and-forget task that POSTs to each sub-agent's <code>/release-evals</code> endpoint so their deferred evals run. The full synthesis text is stored directly by <code>save_brief</code> (reads longest LLM text from session events) &mdash; the post-turn <code>update_response_text</code> overwrite was removed. All gated globally by <code>EVAL_TRACE_ENABLED</code>. Scores pushed to Langfuse under <code>ragas/orchestrator/&lt;metric&gt;</code>.</li>
 <li><strong>Eval hardening</strong> &mdash; The <code>_gate_ok()</code> pre-eval gate enforces: <strong>circuit breaker</strong> (5 consecutive metric failures opens the circuit, skipping eval for the rest of the process lifetime), <strong>SHA-256 dedup</strong> (identical input+response pairs skip eval via 1h TTL dict), <strong>burst limiter</strong> (<code>_burst_ok()</code> enforces <code>EVAL_BURST_LIMIT</code> evaluations per minute), and <strong>per-metric timeout</strong> (<code>_score_metric_with_timeout()</code> default 90s via <code>EVAL_METRIC_TIMEOUT</code>).</li>
 <li><strong>Memory pruning</strong> &mdash; <code>prune_old_records()</code> called on startup deletes rows older than <code>MEMORY_RETENTION_DAYS=90</code> from <code>ticker_briefs</code>, <code>recommendation_records</code>, and <code>memory_entries</code>. Uses existing <code>write_lock()</code> for concurrency safety.</li>
 <li><strong>Cancellation support</strong> &mdash; <code>FinSightAgentExecutor.cancel()</code> stores <code>asyncio.current_task()</code>, catches <code>CancelledError</code>, emits <code>TASK_STATE_CANCELED</code>.</li>
@@ -80,7 +80,7 @@ FinSightAgentExecutor:
   A2A Request &rarr; execute()
   &rarr; _build_memory_context(query) &rarr; inject [MEMORY CONTEXT] prefix
   &rarr; RUNNER.run_async(user_query)
-  &rarr; ADK LlmAgent (tools: [send_message, save_brief, load_memory])
+  &rarr; ADK LlmAgent (tools: [send_message, generate_report, load_memory])
     &rarr; LLM emits ALL send_message calls in ONE assistant turn (parallel, per system prompt instruction)
     &rarr; send_message("Financial RAG Agent", "Analyze NVDA...")
     &rarr; send_message("Quant Analysis Agent", "Compute metrics for NVDA...")
@@ -107,15 +107,16 @@ Executor-level cache (A2A path &mdash; agent_1_adk/agent_executor.py):
   &rarr; [miss] &rarr; _build_memory_context() &rarr; RUNNER.run_async()
 
 after_agent_callback (ADK web UI path &mdash; primary path; run_adk_web.bat no longer starts agent_1_adk/main.py):
-  &rarr; _is_analysis_turn(session.events) &mdash; was save_brief called?
+  &rarr; _is_analysis_turn(session.events) &mdash; was save_brief called OR was send_message invoked?
        &#9500; No  &rarr; skip persist + eval (memory recall turn, e.g. load_memory only)
        &#9492; Yes &rarr;
             &rarr; callback_context.add_events_to_memory(events=session.events, custom_metadata={...})
             &rarr; SQLiteMemoryService.add_events_to_memory() &rarr; memory_entries table
             &rarr; if EVAL_ENABLED: asyncio.create_task(score_response(query, response, trace_id))
                  &rarr; ragas/orchestrator/{AnswerRelevancy, citation_quality, risk_disclosure,
-                                            recommendation_clarity, response_completeness,
-                                            no_forward_guarantees}</pre>
+                                             recommendation_clarity, response_completeness,
+                                             no_forward_guarantees}
+            &rarr; asyncio.create_task(_release_sub_agent_evals())  &mdash; POST /release-evals to all sub-agents</pre>
 
 <h3>Streaming Event Flow</h3>
 <pre>event 1: task { state: SUBMITTED }          &larr; skipped (non-terminal)
@@ -206,7 +207,7 @@ RAGAgent._build_response(query):
         &#x2514;&#x2500;&#x2500; LlamaIndex response synthesizer (response_mode="compact", similarity_top_k=3)
             &mdash; single LLM call per query, not N sequential refine calls
       &rarr; Returns A2A WORKING event with "Index is warming for {ticker}..." message, then fetches and returns data once ingestion completes
-      &rarr; if EVAL_ENABLED: asyncio.create_task(score_rag_response(...))
+      &rarr; if EVAL_ENABLED: defer_eval(score_rag_response, ...) (deferred via shared/eval_gate.py &mdash; released by orchestrator's POST /release-evals)
       &rarr; return {response_type: "data", content: result, ...}
 
 RAGAgent._ensure_ingested(ticker) [background]:
@@ -288,7 +289,7 @@ QuantAgent._build_response(query):
           (risk_quality 0.15, dcf_value 0.20, fundamental_value 0.13, fundamental_quality 0.12,
            technicals_trend 0.15, technicals_momentum 0.10, peer_positioning 0.10, behavioral 0.05)
         &rarr; llm_summary (CRITICAL priority queue — enriched 3-4 sentence summary)
-      &rarr; if EVAL_ENABLED: asyncio.create_task(score_quant_response(...))
+      &rarr; if EVAL_ENABLED: defer_eval(score_quant_response, ...) (deferred via shared/eval_gate.py)
       &rarr; return {response_type: "data", content: result, ...}</pre>
 
 <h4>Startup Warm-up</h4>
@@ -358,7 +359,7 @@ MarketContextAgent._build_response(query):
               &rarr; Outputs JSON: narrative, macro_regime, relative_peer_positioning,
                 overall_signal (bullish/bearish/neutral), confidence_score (0-1),
                 key_tailwinds, key_headwinds
-      &rarr; if EVAL_ENABLED: asyncio.create_task(score_market_context_response(...))
+      &rarr; if EVAL_ENABLED: defer_eval(score_market_context_response, ...) (deferred via shared/eval_gate.py)
       &rarr; return {response_type: "data", content: result, ...}</pre>
 
 <p><strong>Note</strong>: The old Sentiment agent fetched <code>get_news_sentiment</code> and <code>get_company_filings</code> &mdash; both redundant with the RAG agent (Phase 1). As of Phase 3 (v1.31), Market Context fetches only macro indicators (15-min cached, no ticker argument) and peer financials/prices via dynamic MCP <code>get_peers</code>. News and filings are exclusively the RAG agent's domain. Peer sets use live Yahoo Finance API discovery, not <code>shared/peer_sets.py</code> (which exists as a fallback).</p>
@@ -389,10 +390,11 @@ MarketContextAgent._build_response(query):
 <tr><td><strong>Per-service log levels</strong></td><td><code>LOG_LEVEL_&lt;SERVICE&gt;</code> env vars (e.g. <code>LOG_LEVEL_ORCHESTRATOR=DEBUG</code>).</td></tr>
 <tr><td><strong><code>SEC_USER_AGENT</code> env var</strong></td><td>Replaces hardcoded SEC user agent string in MCP server filing requests.</td></tr>
 <tr><td><strong>LLM Priority Queue</strong></td><td><code>LLMPriorityQueue</code> in <code>shared/llm_queue.py</code> (process-local, heap-based async semaphore). Three tiers: <code>CRITICAL</code> (quant summary, crew kickoff), <code>NORMAL</code> (warmup ping), <code>LOW</code> (RAGAS eval). Default <code>LLM_MAX_CONCURRENT=2</code>. Prevents eval starvation of production inference.</td></tr>
+<tr><td><strong>Deferred Eval Gate</strong></td><td><code>shared/eval_gate.py</code> &mdash; holds sub-agent eval LLM calls until the orchestrator releases them via <code>POST /release-evals</code> after synthesis completes. Prevents 3 sub-agent eval processes from competing with orchestrator synthesis on a single LM Studio instance. Includes 120s safety-net auto-release.</td></tr>
 </table>
 
 <h2>Phase Map</h2>
-<p>The project evolved through five phases, each adding distinct agent capabilities:</p>
+<p>The project evolved through six phases, each adding distinct agent capabilities:</p>
 <table>
 <tr><th>Phase</th><th>Version</th><th>What Changed</th></tr>
 <tr><td><strong>Phase 1</strong></td><td>v1.29</td><td>RAG news/earnings ingestion, Quant fundamentals/technicals/DCF</td></tr>
@@ -407,6 +409,7 @@ more added: prices, financials, macro, options chain, earnings calendar, sentime
 set. RAGAS eval retry tuning: <code>max_retries=5</code>, separate <code>asyncio.TimeoutError</code> handling, empty 
 exception message classification.</td></tr>
 <tr><td><strong>Phase 6</strong></td><td>v1.37</td><td>LLM Priority Queue (<code>shared/llm_queue.py</code>) &mdash; 3-tier heap-based async semaphore to prevent RAGAS eval starvation of production LLM inference. Quant <code>llm_summary_node</code> and CrewAI <code>crew.kickoff()</code> use <code>CRITICAL</code> priority; server warmup uses <code>NORMAL</code>; all runtime eval metrics use <code>LOW</code> priority. Controlled by <code>LLM_MAX_CONCURRENT</code> env var (default 2).</td></tr>
+<tr><td><strong>Phase 7</strong></td><td>v1.38</td><td>Deferred Eval Gate (<code>shared/eval_gate.py</code>) &mdash; sub-agent evals deferred until orchestrator releases them after synthesis, preventing LM Studio contention. Confidence score extraction fixed to match "Confidence Score: X," "confidence: X," and "X% confidence" formats via <code>_CONF_PATTERN</code> regex. AG-UI Bridge null-stripping (<code>_clean()</code> recursively removes null/None values) + auto-save briefs via <code>after_agent_callback</code> without LLM tool call. Tools list changed from <code>[send_message, save_brief, load_memory]</code> to <code>[send_message, generate_report, load_memory]</code>.</td></tr>
 </table>
 
 <hr>
