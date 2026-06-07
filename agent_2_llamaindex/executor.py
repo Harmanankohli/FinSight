@@ -244,13 +244,13 @@ class RAGAgent(BaseAgent):
                 result = await self.query(ticker, query)
                 span.update(output={"ticker": ticker, "result_keys": list(result.keys()) if isinstance(result, dict) else "unknown"})
                 if EVAL_ENABLED:
-                    asyncio.create_task(
-                        _eval_rag_response(
-                            query,
-                            result.get("summary", ""),
-                            result.get("context_texts", []),
-                            trace_id,
-                        )
+                    from shared.eval_gate import defer_eval
+                    defer_eval(
+                        _eval_rag_response,
+                        query,
+                        result.get("summary", ""),
+                        result.get("context_texts", []),
+                        trace_id,
                     )
                 return {
                     "response_type": "data",

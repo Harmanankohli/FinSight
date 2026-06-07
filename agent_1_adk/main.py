@@ -16,8 +16,11 @@ from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
 from google.adk.runners import Runner
 from google.adk.sessions import DatabaseSessionService
 from starlette.applications import Starlette
+from starlette.middleware import Middleware
+from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
-from starlette.routing import Route
+from starlette.routing import Mount, Route
+from starlette.staticfiles import StaticFiles
 
 from shared.memory import SQLiteMemoryService, init_db
 from shared.observability import init_langfuse, init_instrumentation, shutdown_langfuse
@@ -31,6 +34,8 @@ from shared.config import ADK_MODEL
 from .agent import root_agent
 from .agent_executor import FinSightAgentExecutor
 from .agui_endpoint import make_agui_endpoint
+from .agui_bridge import make_agui_bridge_endpoint
+from .api_routes import get_api_routes
 
 from shared.logging_config import setup_file_logging
 setup_file_logging("orchestrator")
@@ -96,13 +101,38 @@ async def health(request):
     return JSONResponse({"status": "ok", "agent": "orchestrator"})
 
 
+_ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+
 # Three route groups: health check, AG-UI (RAGAS evaluation), and A2A protocol (sub-agent clients)
 routes = [Route("/health", health)]
 routes.append(Route("/agentic_chat", make_agui_endpoint(runner), methods=["POST"]))
+routes.append(Route("/a2a-agui", make_agui_bridge_endpoint(runner), methods=["POST"]))
 routes.extend(create_agent_card_routes(agent_card))
 routes.extend(create_jsonrpc_routes(request_handler, "/a2a"))
+routes.extend(get_api_routes())
 
-app = Starlette(routes=routes, debug=True)
+# Serve generated reports as static files (PPTX/DOCX downloads)
+from pathlib import Path as _Path
+_reports_dir = _Path("db/reports")
+_reports_dir.mkdir(parents=True, exist_ok=True)
+routes.append(Mount("/reports", app=StaticFiles(directory=str(_reports_dir)), name="reports"))
+
+app = Starlette(
+    routes=routes,
+    debug=True,
+    middleware=[
+        Middleware(
+            CORSMiddleware,
+            allow_origins=_ALLOWED_ORIGINS,
+            allow_methods=["GET", "POST", "OPTIONS"],
+            allow_headers=["*"],
+            expose_headers=["X-FinSight-User-Id"],
+        )
+    ],
+)
 
 
 async def start_server(host: str, port: int) -> None:

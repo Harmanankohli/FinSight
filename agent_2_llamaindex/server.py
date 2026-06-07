@@ -35,8 +35,13 @@ logger = logging.getLogger(__name__)
 
 
 async def health(request):
-    # Health check for orchestrator-level monitoring and container orchestration probes
     return JSONResponse({"status": "ok", "agent": "rag"})
+
+
+async def release_evals(request):
+    from shared.eval_gate import release_evals as _release
+    n = await _release()
+    return JSONResponse({"released": n})
 
 host = os.environ.get("HOST", "localhost")
 
@@ -137,7 +142,7 @@ async def _prewarm():
         logger.exception("RAG warm-up failed (non-fatal — first query will pay cold-start cost)")
 
 
-routes = [Route("/health", health)]  # Liveness check
+routes = [Route("/health", health), Route("/release-evals", release_evals, methods=["POST"])]
 routes.extend(create_agent_card_routes(agent_card))  # A2A agent card discovery
 routes.extend(create_jsonrpc_routes(request_handler, "/a2a"))  # JSON-RPC task endpoints
 

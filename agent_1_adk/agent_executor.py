@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import re
 import uuid
@@ -17,7 +18,7 @@ from langfuse import propagate_attributes
 
 import os
 
-from shared.config import EVAL_ENABLED
+from shared.config import AGENT_SEED_URLS, EVAL_ENABLED
 from shared.observability import get_langfuse_client
 from shared.runtime_eval import score_response as _eval_score_response
 from shared.ticker_utils import extract_ticker
@@ -44,6 +45,18 @@ _NON_INVESTMENT_RE = re.compile(
     re.IGNORECASE,
 )
 _SIGNAL_RE = re.compile(r"\b(BUY|HOLD|SELL)\b")
+
+
+async def _release_sub_agent_evals() -> None:
+    """POST /release-evals to each sub-agent so they fire deferred evals."""
+    import httpx
+    urls = [u.strip().rstrip("/") for u in AGENT_SEED_URLS.split(",") if u.strip()]
+    async with httpx.AsyncClient(timeout=5) as client:
+        for base in urls:
+            try:
+                await client.post(f"{base}/release-evals")
+            except Exception:
+                logger.debug("release-evals failed for %s (non-fatal)", base)
 
 
 class FinSightAgentExecutor(AgentExecutor):
@@ -182,7 +195,7 @@ class FinSightAgentExecutor(AgentExecutor):
                 )
                 await updater.update_status(
                     TaskState.TASK_STATE_COMPLETED,
-                    new_text_message(cached_response, task.context_id, task.id),
+                    new_text_message(cached_response),
                     final=True,
                 )
                 return
@@ -193,7 +206,7 @@ class FinSightAgentExecutor(AgentExecutor):
             if cached:
                 await updater.update_status(
                     TaskState.TASK_STATE_COMPLETED,
-                    new_text_message(cached, task.context_id, task.id),
+                    new_text_message(cached),
                     final=True,
                 )
                 return
@@ -239,8 +252,6 @@ class FinSightAgentExecutor(AgentExecutor):
                         await self._add_events_to_memory(
                             user_id, context_id, collected_events
                         )
-                        # Also persist via memory service directly for load_memory
-                        await self._persist_to_memory(user_id, context_id, collected_events)
                     else:
                         logger.warning("No final event received from runner")
                         await updater.update_status(
@@ -312,6 +323,7 @@ class FinSightAgentExecutor(AgentExecutor):
                     trace_id,
                 )
             )
+            asyncio.create_task(_release_sub_agent_evals())
 
         # Store in semantic cache for future identical/similar queries
         if original_input:
@@ -324,7 +336,7 @@ class FinSightAgentExecutor(AgentExecutor):
 
         await updater.update_status(
             TaskState.TASK_STATE_COMPLETED,
-            new_text_message(text, task.context_id, task.id),
+            new_text_message(text),
             final=True,
         )
 
@@ -432,7 +444,6 @@ class FinSightAgentExecutor(AgentExecutor):
 
         return "\n".join(parts)
 
-    # Dedup-aware store: skips if save_brief already persisted this ticker today
     async def _store_memory(
         self, query: str, response_text: str, session_id: str, user_id: str
     ) -> None:
@@ -445,19 +456,37 @@ class FinSightAgentExecutor(AgentExecutor):
 
         ticker = extract_ticker(query) or "unknown"
 
-        # Skip if save_brief already stored a brief for this ticker today.
-        # This avoids duplicates when the LLM calls save_brief during execution
-        # and _store_memory also runs as a fallback.
         tm = TickerMemory()
         existing = await tm.get_latest(ticker, user_id=user_id)
         if existing:
             ad = existing.get("analysis_date") or existing["created_at"][:10]
             if ad == datetime.now(IST).date().isoformat():
-                logger.debug("Skip _store_memory — save_brief already stored today for %s", ticker)
+                stored = ""
+                try:
+                    bj = json.loads(existing.get("brief_json", "{}"))
+                    stored = bj.get("response_text", "")
+                except Exception:
+                    pass
+                if len(response_text) > len(stored):
+                    await tm.update_response_text(existing["id"], response_text)
+                    logger.info("Updated existing brief %s with longer text (%d > %d)",
+                                existing["id"], len(response_text), len(stored))
+                else:
+                    logger.debug("Skip _store_memory — brief already stored today for %s", ticker)
                 return
 
         rec_match = re.search(r'\b(BUY|HOLD|SELL)\b', response_text, re.IGNORECASE)
         recommendation = rec_match.group(1).upper() if rec_match else "UNKNOWN"
+
+        confidence = 0.5
+        conf_match = re.search(
+            r"(?:confidence|conf)(?:\s+score)?[:\s]*(\d+(?:\.\d+)?)\s*%?"
+            r"|(\d+(?:\.\d+)?)\s*%\s*(?:confidence|conf)",
+            response_text, re.IGNORECASE,
+        )
+        if conf_match:
+            raw = float(conf_match.group(1) or conf_match.group(2))
+            confidence = raw / 100.0 if raw > 1.0 else raw
 
         await tm.store_minimal(
             ticker=ticker,
@@ -466,6 +495,7 @@ class FinSightAgentExecutor(AgentExecutor):
             query=query,
             response_text=response_text,
             recommendation=recommendation,
+            confidence=round(confidence, 2),
         )
 
         pt = PerformanceTracker()
@@ -473,7 +503,7 @@ class FinSightAgentExecutor(AgentExecutor):
             ticker=ticker,
             user_id=user_id,
             recommendation=recommendation,
-            confidence=0.5,
+            confidence=round(confidence, 2),
         )
 
         try:

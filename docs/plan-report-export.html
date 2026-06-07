@@ -1,0 +1,874 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Implementation Plan — Report Export (PPTX / DOCX)</title>
+<style>
+  :root {
+    --ivory: #FAFAF5;
+    --ivory-dark: #F3F1EA;
+    --clay: #9C6644;
+    --clay-light: #C8A882;
+    --clay-deep: #5C3D2E;
+    --sand: #E2DDD3;
+    --text-primary: #2C2C2C;
+    --text-secondary: #5A5A5A;
+    --text-muted: #8A8A7A;
+    --green: #2E7D32;
+    --amber: #E68A00;
+    --red: #C62828;
+    --blue: #1565C0;
+    --code-bg: #F5F2EB;
+    --border: #D6D0C4;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Georgia', 'Times New Roman', serif;
+    background: var(--ivory);
+    color: var(--text-primary);
+    line-height: 1.72;
+    padding: 0;
+  }
+  .page {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 48px 40px 80px;
+  }
+  /* ── Header ── */
+  .header {
+    border-bottom: 3px solid var(--clay);
+    padding-bottom: 28px;
+    margin-bottom: 40px;
+  }
+  .header .badge {
+    display: inline-block;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    color: var(--clay);
+    background: var(--ivory-dark);
+    border: 1px solid var(--clay-light);
+    padding: 4px 12px;
+    border-radius: 4px;
+    margin-bottom: 14px;
+  }
+  .header h1 {
+    font-size: 32px;
+    font-weight: 700;
+    color: var(--clay-deep);
+    margin-bottom: 8px;
+    line-height: 1.25;
+  }
+  .header .subtitle {
+    font-size: 16px;
+    color: var(--text-secondary);
+    font-style: italic;
+  }
+  .meta {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 12px;
+    display: flex;
+    gap: 20px;
+  }
+  /* ── Sections ── */
+  h2 {
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--clay-deep);
+    margin: 44px 0 16px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--sand);
+  }
+  h3 {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--clay);
+    margin: 28px 0 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  h4 {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin: 20px 0 8px;
+  }
+  p { margin: 10px 0; }
+  ul, ol {
+    margin: 10px 0 10px 24px;
+  }
+  li { margin: 5px 0; }
+  /* ── Code ── */
+  code {
+    font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+    font-size: 13px;
+    background: var(--code-bg);
+    padding: 2px 6px;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+    color: var(--clay-deep);
+  }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 16px 20px;
+    overflow-x: auto;
+    margin: 14px 0;
+    line-height: 1.55;
+  }
+  pre code {
+    background: none;
+    border: none;
+    padding: 0;
+    font-size: 12.5px;
+  }
+  /* ── Tables ── */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    font-size: 14px;
+  }
+  th {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--clay);
+    background: var(--ivory-dark);
+    text-align: left;
+    padding: 10px 14px;
+    border-bottom: 2px solid var(--clay-light);
+  }
+  td {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--sand);
+    vertical-align: top;
+  }
+  tr:last-child td { border-bottom: none; }
+  /* ── Callouts ── */
+  .callout {
+    border-left: 4px solid var(--clay);
+    background: var(--ivory-dark);
+    padding: 14px 20px;
+    margin: 18px 0;
+    border-radius: 0 6px 6px 0;
+    font-size: 14px;
+  }
+  .callout.info { border-left-color: var(--blue); }
+  .callout.warn { border-left-color: var(--amber); }
+  .callout strong { color: var(--clay-deep); }
+  /* ── Flow diagram ── */
+  .flow {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    margin: 20px 0;
+    flex-wrap: wrap;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 13px;
+  }
+  .flow .node {
+    background: var(--ivory-dark);
+    border: 1px solid var(--border);
+    padding: 10px 16px;
+    border-radius: 8px;
+    text-align: center;
+    min-width: 100px;
+  }
+  .flow .node.highlight {
+    background: var(--clay);
+    color: white;
+    border-color: var(--clay-deep);
+    font-weight: 600;
+  }
+  .flow .arrow {
+    color: var(--clay-light);
+    font-size: 18px;
+    padding: 0 6px;
+  }
+  /* ── File tree ── */
+  .file-tree {
+    font-family: 'Cascadia Code', 'Consolas', monospace;
+    font-size: 13px;
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 16px 20px;
+    line-height: 1.7;
+  }
+  .file-tree .new { color: var(--green); font-weight: 700; }
+  .file-tree .mod { color: var(--amber); font-weight: 700; }
+  .file-tree .dim { color: var(--text-muted); }
+  /* ── Signal badges ── */
+  .signal { font-family: 'Segoe UI', system-ui, sans-serif; font-weight: 700; font-size: 12px; padding: 3px 10px; border-radius: 4px; letter-spacing: 0.5px; }
+  .signal.buy { background: #E8F5E9; color: var(--green); border: 1px solid #A5D6A7; }
+  .signal.hold { background: #FFF8E1; color: var(--amber); border: 1px solid #FFE082; }
+  .signal.sell { background: #FFEBEE; color: var(--red); border: 1px solid #EF9A9A; }
+  /* ── Step cards ── */
+  .step-card {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin: 16px 0;
+    overflow: hidden;
+  }
+  .step-card .step-header {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 14px;
+    font-weight: 700;
+    background: var(--ivory-dark);
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .step-card .step-num {
+    background: var(--clay);
+    color: white;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    flex-shrink: 0;
+  }
+  .step-card .step-body {
+    padding: 16px 18px;
+  }
+  /* ── Slide mockups ── */
+  .slide-mock {
+    border: 2px solid var(--border);
+    border-radius: 6px;
+    padding: 20px 24px;
+    margin: 12px 0;
+    background: white;
+    min-height: 120px;
+    position: relative;
+  }
+  .slide-mock .slide-label {
+    position: absolute;
+    top: 6px;
+    right: 10px;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+  }
+  .slide-mock h5 {
+    font-size: 18px;
+    color: var(--clay-deep);
+    margin-bottom: 8px;
+  }
+  .slide-mock .slide-body {
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.6;
+  }
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 700px) { .two-col { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- ═══════════════════════════ HEADER ═══════════════════════════ -->
+  <div class="header">
+    <div class="badge">Implementation Plan</div>
+    <h1>Report Export: PPTX &amp; DOCX</h1>
+    <div class="subtitle">Allow users to download investment briefs as professional PowerPoint or Word documents</div>
+    <div class="meta">
+      <span>Project: FinSight Multi-Agent Investment System</span>
+      <span>Date: 2026-06-06</span>
+      <span>Status: Proposed</span>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════ CONTEXT ═══════════════════════════ -->
+  <h2>1. Context &amp; Motivation</h2>
+  <p>
+    Users complete an investment analysis on the Research page and see the brief rendered inline as markdown.
+    There is currently <strong>no way to export or share</strong> this analysis outside the browser.
+    The user wants a "Download as Report" option that generates professional PPTX or DOCX files
+    suitable for sharing with colleagues, clients, or archiving.
+  </p>
+
+  <div class="callout">
+    <strong>Constraint:</strong> All document generation must happen on the <strong>orchestrator backend</strong> (Python).
+    The frontend only triggers the download and receives the binary file.
+  </div>
+
+  <h3>Current Brief Storage</h3>
+  <p>Briefs are stored in the SQLite <code>ticker_briefs</code> table. The <code>brief_json</code> column contains one of two shapes:</p>
+
+  <div class="two-col">
+    <div>
+      <h4>Full InvestmentBrief</h4>
+      <pre><code>{
+  "ticker": "NVDA",
+  "final_recommendation": "BUY",
+  "confidence_score": 0.82,
+  "recommendation_rationale": "...",
+  "rag_insights": { ... },
+  "quant_metrics": { ... },
+  "sentiment_intelligence": { ... },
+  "disclaimer": "..."
+}</code></pre>
+    </div>
+    <div>
+      <h4>Minimal Brief (most common)</h4>
+      <pre><code>{
+  "response_text": "## Executive Summary\n
+  NVIDIA presents a compelling ...\n
+  ## Quantitative Analysis\n
+  Sharpe: 1.45, Vol: 28% ..."
+}</code></pre>
+    </div>
+  </div>
+
+  <p>The generator must handle <strong>both shapes</strong> gracefully — extracting structured metrics when available, falling back to markdown section parsing for minimal briefs.</p>
+
+  <!-- ═══════════════════════════ ARCHITECTURE ═══════════════════════════ -->
+  <h2>2. Architecture</h2>
+
+  <h3>Request Flow</h3>
+  <div class="flow">
+    <div class="node">User clicks<br/>"Download PPTX"</div>
+    <span class="arrow">→</span>
+    <div class="node">Next.js<br/><code>/api/orch/*</code></div>
+    <span class="arrow">→</span>
+    <div class="node highlight">Orchestrator<br/><code>/api/reports/*</code></div>
+    <span class="arrow">→</span>
+    <div class="node">TickerMemory<br/><code>get_latest()</code></div>
+    <span class="arrow">→</span>
+    <div class="node highlight">ReportGenerator<br/><code>generate_pptx()</code></div>
+    <span class="arrow">→</span>
+    <div class="node">Binary response<br/><code>.pptx / .docx</code></div>
+  </div>
+
+  <h3>Files Changed / Created</h3>
+  <div class="file-tree">
+    <span class="dim">multi-agent-investment-system/</span><br/>
+    ├── <span class="mod">[MOD]</span> pyproject.toml <span class="dim">— add python-pptx, python-docx</span><br/>
+    ├── shared/<br/>
+    │   └── <span class="new">[NEW]</span> report_generator.py <span class="dim">— PPTX + DOCX generation</span><br/>
+    ├── agent_1_adk/<br/>
+    │   └── <span class="mod">[MOD]</span> api_routes.py <span class="dim">— add /api/reports/* endpoints</span><br/>
+    └── web/nextjs-app/app/<br/>
+    &nbsp;&nbsp;&nbsp; ├── research/<br/>
+    &nbsp;&nbsp;&nbsp; │   └── <span class="mod">[MOD]</span> page.tsx <span class="dim">— add download bar after brief</span><br/>
+    &nbsp;&nbsp;&nbsp; └── memory/<br/>
+    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; └── <span class="mod">[MOD]</span> page.tsx <span class="dim">— add download buttons to cards</span><br/>
+  </div>
+
+  <!-- ═══════════════════════════ STEP 1 ═══════════════════════════ -->
+  <h2>3. Implementation Steps</h2>
+
+  <div class="step-card">
+    <div class="step-header">
+      <span class="step-num">1</span>
+      Add Dependencies — <code>pyproject.toml</code>
+    </div>
+    <div class="step-body">
+      <p>Add two new packages to the <code>[project] dependencies</code> list:</p>
+      <pre><code>"python-pptx>=1.0.0",
+"python-docx>=1.1.0",</code></pre>
+      <p>Then run <code>uv sync</code> to install.</p>
+      <div class="callout info">
+        <strong>Why these libraries?</strong> Both are pure-Python, well-maintained, and produce native Office Open XML files.
+        No external system dependencies (unlike WeasyPrint/reportlab for PDF). They support programmatic
+        slide/paragraph construction with full styling control.
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════ STEP 2 ═══════════════════════════ -->
+  <div class="step-card">
+    <div class="step-header">
+      <span class="step-num">2</span>
+      Create Report Generator — <code>shared/report_generator.py</code>
+    </div>
+    <div class="step-body">
+
+      <h4>Module Interface</h4>
+      <pre><code>from io import BytesIO
+
+def generate_pptx(brief_data: dict, ticker: str, recommendation: str,
+                  confidence: float, analysis_date: str) -> BytesIO:
+    """Generate a branded PPTX presentation from a brief."""
+
+def generate_docx(brief_data: dict, ticker: str, recommendation: str,
+                  confidence: float, analysis_date: str) -> BytesIO:
+    """Generate a branded DOCX document from a brief."""</code></pre>
+
+      <p>Both functions accept the raw <code>brief_data</code> dict (parsed from <code>brief_json</code>) plus metadata fields from the <code>ticker_briefs</code> row. They return a <code>BytesIO</code> buffer ready to stream as a response.</p>
+
+      <h4>Content Extraction (shared helper)</h4>
+      <pre><code>def _extract_sections(brief_data: dict) -> ReportContent:
+    """Parse brief_data into structured report sections.
+
+    Returns a ReportContent dataclass with:
+      - executive_summary: str
+      - sections: list[Section]  (title + body pairs)
+      - metrics: dict | None     (if structured InvestmentBrief)
+      - risks: list[str]
+      - catalysts: list[str]
+      - disclaimer: str
+    """</code></pre>
+
+      <p><strong>Structured brief path:</strong> Extract fields directly from the Pydantic model shape —
+      <code>rag_insights</code>, <code>quant_metrics</code>, <code>sentiment_intelligence</code>, <code>recommendation_rationale</code>.</p>
+
+      <p><strong>Minimal brief path:</strong> Split <code>response_text</code> on <code>## </code> markdown headers.
+      Each header becomes a section title; everything until the next header becomes the body.
+      Strip markdown formatting (bold, links, bullets → plain text) for clean document rendering.</p>
+
+      <!-- ── PPTX Template ── -->
+      <h4>PPTX Slide Deck Structure</h4>
+      <p>Built programmatically with <code>python-pptx</code> — no external template file needed.</p>
+
+      <div class="slide-mock">
+        <span class="slide-label">Slide 1 — Title</span>
+        <h5 style="font-size: 24px; color: var(--clay-deep);">Investment Analysis: NVDA</h5>
+        <div class="slide-body">
+          <span class="signal buy">BUY</span>&nbsp;&nbsp;
+          <span style="font-size: 13px; color: var(--text-muted);">Confidence: 0.82 &nbsp;·&nbsp; June 6, 2026</span>
+          <div style="margin-top: 12px; font-size: 12px; color: var(--text-muted);">Generated by FinSight Multi-Agent Investment System</div>
+        </div>
+      </div>
+
+      <div class="slide-mock">
+        <span class="slide-label">Slide 2 — Executive Summary</span>
+        <h5>Executive Summary</h5>
+        <div class="slide-body">
+          NVIDIA presents a compelling investment opportunity driven by strong datacenter GPU demand,
+          expanding AI workload adoption, and robust forward guidance. The quant model shows favorable
+          risk-adjusted returns with a Sharpe ratio of 1.45...
+        </div>
+      </div>
+
+      <div class="slide-mock">
+        <span class="slide-label">Slide 3 — Key Metrics (if structured data available)</span>
+        <h5>Key Metrics</h5>
+        <div class="slide-body">
+          <table style="width: 80%; font-size: 12px;">
+            <tr><td style="padding: 4px 12px; font-weight: 700;">Sharpe Ratio</td><td>1.45</td><td style="font-weight: 700;">Beta</td><td>1.12</td></tr>
+            <tr><td style="padding: 4px 12px; font-weight: 700;">Annual Volatility</td><td>28.3%</td><td style="font-weight: 700;">VaR (95%)</td><td>-3.2%</td></tr>
+            <tr><td style="padding: 4px 12px; font-weight: 700;">DCF Intrinsic Value</td><td>$185.00</td><td style="font-weight: 700;">Price Target</td><td>$190.00</td></tr>
+            <tr><td style="padding: 4px 12px; font-weight: 700;">Analyst Consensus</td><td>Overweight</td><td style="font-weight: 700;">Insider Signal</td><td>Neutral</td></tr>
+          </table>
+        </div>
+      </div>
+
+      <div class="slide-mock">
+        <span class="slide-label">Slides 4+ — Analysis Sections</span>
+        <h5>{Section Title from Markdown}</h5>
+        <div class="slide-body">
+          One slide per major <code>##</code> section from the brief. Content is split across
+          multiple slides if it exceeds ~300 words per slide to maintain readability.
+          <br/><br/>
+          Sections typically include: Quantitative Analysis, Fundamental Analysis,
+          Technical Analysis, Market Context, Risks &amp; Catalysts, etc.
+        </div>
+      </div>
+
+      <div class="slide-mock">
+        <span class="slide-label">Final Slide — Disclaimer</span>
+        <h5 style="font-size: 14px;">Disclaimer</h5>
+        <div class="slide-body" style="font-size: 11px; color: var(--text-muted);">
+          This analysis is generated by an AI system and is for informational purposes only.
+          It does not constitute financial advice. Past performance is not indicative of future results.
+          Always consult a qualified financial advisor before making investment decisions.
+        </div>
+      </div>
+
+      <h4>PPTX Styling</h4>
+      <table>
+        <tr><th>Element</th><th>Style</th></tr>
+        <tr><td>Slide background</td><td>White (<code>#FFFFFF</code>)</td></tr>
+        <tr><td>Title font</td><td>Calibri, 28pt, bold, color <code>#5C3D2E</code> (clay-deep)</td></tr>
+        <tr><td>Body font</td><td>Calibri, 14pt, color <code>#2C2C2C</code></td></tr>
+        <tr><td>Signal badge</td><td>Colored rectangle shape — green/amber/red per signal</td></tr>
+        <tr><td>Metrics table</td><td>Styled table with clay header row</td></tr>
+        <tr><td>Footer</td><td>"FinSight" + date, 9pt, muted gray</td></tr>
+      </table>
+
+      <!-- ── DOCX Template ── -->
+      <h4>DOCX Document Structure</h4>
+      <p>Built programmatically with <code>python-docx</code>.</p>
+
+      <table>
+        <tr><th>Section</th><th>Content</th><th>Styling</th></tr>
+        <tr>
+          <td>Title block</td>
+          <td>"Investment Analysis Report" + ticker + date + signal</td>
+          <td>Title style, centered. Signal as colored bold text.</td>
+        </tr>
+        <tr>
+          <td>Summary box</td>
+          <td>Recommendation + confidence + one-line rationale</td>
+          <td>Bordered paragraph with clay background shading</td>
+        </tr>
+        <tr>
+          <td>Key Metrics table</td>
+          <td>2-column table of quant/sentiment metrics (if structured data)</td>
+          <td>Table with styled header row</td>
+        </tr>
+        <tr>
+          <td>Analysis sections</td>
+          <td>Each <code>##</code> section → Heading 2 + body paragraphs</td>
+          <td>Heading 2 in clay-deep, body in Calibri 11pt</td>
+        </tr>
+        <tr>
+          <td>Risks &amp; Catalysts</td>
+          <td>Bulleted lists extracted from brief</td>
+          <td>List Bullet style</td>
+        </tr>
+        <tr>
+          <td>Disclaimer</td>
+          <td>Standard legal disclaimer</td>
+          <td>Italic, muted gray, 9pt</td>
+        </tr>
+        <tr>
+          <td>Footer</td>
+          <td>"Generated by FinSight · {date}"</td>
+          <td>Document footer, centered, 8pt</td>
+        </tr>
+      </table>
+
+      <h4>DOCX Styling</h4>
+      <table>
+        <tr><th>Element</th><th>Style</th></tr>
+        <tr><td>Title</td><td>Calibri, 24pt, bold, clay-deep</td></tr>
+        <tr><td>Heading 2</td><td>Calibri, 16pt, bold, clay</td></tr>
+        <tr><td>Body</td><td>Calibri, 11pt, color <code>#2C2C2C</code>, 1.15 line spacing</td></tr>
+        <tr><td>Table header</td><td>Clay background, white text, bold</td></tr>
+        <tr><td>Page margins</td><td>1 inch all sides (default)</td></tr>
+      </table>
+
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════ STEP 3 ═══════════════════════════ -->
+  <div class="step-card">
+    <div class="step-header">
+      <span class="step-num">3</span>
+      Add API Endpoints — <code>agent_1_adk/api_routes.py</code>
+    </div>
+    <div class="step-body">
+
+      <h4>New Endpoints</h4>
+      <table>
+        <tr><th>Method</th><th>Path</th><th>Purpose</th></tr>
+        <tr>
+          <td><code>GET</code></td>
+          <td><code>/api/reports/{brief_id}/{format}</code></td>
+          <td>Download report for a specific brief by its database ID. <code>format</code> is <code>pptx</code> or <code>docx</code>.</td>
+        </tr>
+        <tr>
+          <td><code>GET</code></td>
+          <td><code>/api/reports/ticker/{symbol}/latest/{format}</code></td>
+          <td>Download report for the latest brief of a ticker. Convenience endpoint for the Research page.</td>
+        </tr>
+      </table>
+
+      <h4>Implementation</h4>
+      <pre><code>import json
+from io import BytesIO
+from starlette.requests import Request
+from starlette.responses import Response
+
+from shared.report_generator import generate_pptx, generate_docx
+
+CONTENT_TYPES = {
+    "pptx": "application/vnd.openxmlformats-officedocument"
+            ".presentationml.presentation",
+    "docx": "application/vnd.openxmlformats-officedocument"
+            ".wordprocessingml.document",
+}
+GENERATORS = {"pptx": generate_pptx, "docx": generate_docx}
+
+
+async def report_by_id(request: Request) -> Response:
+    brief_id = request.path_params["brief_id"]
+    fmt = request.path_params["format"]
+    if fmt not in GENERATORS:
+        return JSONResponse({"error": "format must be pptx or docx"}, 400)
+
+    # Fetch brief from DB
+    conn = await get_db()
+    cursor = await conn.execute(
+        "SELECT ticker, recommendation, confidence, brief_json, "
+        "analysis_date FROM ticker_briefs WHERE id = ?", (brief_id,)
+    )
+    row = await cursor.fetchone()
+    if not row:
+        return JSONResponse({"error": "Brief not found"}, 404)
+
+    ticker, rec, conf, brief_json_str, analysis_date = row
+    brief_data = json.loads(brief_json_str) if brief_json_str else {}
+
+    buf = GENERATORS[fmt](brief_data, ticker, rec, conf, analysis_date or "")
+    filename = f"FinSight_{ticker}_{analysis_date or 'report'}.{fmt}"
+
+    return Response(
+        content=buf.getvalue(),
+        media_type=CONTENT_TYPES[fmt],
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+async def report_latest(request: Request) -> Response:
+    symbol = request.path_params["symbol"].upper()
+    fmt = request.path_params["format"]
+    # ... same pattern, using TickerMemory.get_latest(symbol) ...</code></pre>
+
+      <h4>Route Registration</h4>
+      <p>Add to <code>get_api_routes()</code> return list:</p>
+      <pre><code>Route("/api/reports/{brief_id}/{format}", report_by_id, methods=["GET"]),
+Route("/api/reports/ticker/{symbol}/latest/{format}", report_latest, methods=["GET"]),</code></pre>
+
+      <p>These are automatically picked up by <code>main.py</code> which calls <code>routes.extend(get_api_routes())</code>.</p>
+
+      <h4>Response Headers</h4>
+      <table>
+        <tr><th>Format</th><th>Content-Type</th><th>Content-Disposition</th></tr>
+        <tr>
+          <td>PPTX</td>
+          <td><code>application/vnd.openxmlformats-officedocument.presentationml.presentation</code></td>
+          <td><code>attachment; filename="FinSight_NVDA_2026-06-06.pptx"</code></td>
+        </tr>
+        <tr>
+          <td>DOCX</td>
+          <td><code>application/vnd.openxmlformats-officedocument.wordprocessingml.document</code></td>
+          <td><code>attachment; filename="FinSight_NVDA_2026-06-06.docx"</code></td>
+        </tr>
+      </table>
+
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════ STEP 4 ═══════════════════════════ -->
+  <div class="step-card">
+    <div class="step-header">
+      <span class="step-num">4</span>
+      Frontend — Research Page Download Bar — <code>web/nextjs-app/app/research/page.tsx</code>
+    </div>
+    <div class="step-body">
+
+      <h4>Trigger Condition</h4>
+      <p>Show the download bar when <code>!running &amp;&amp; hasMessages</code> and the last assistant message contains a BUY/HOLD/SELL signal. This means the analysis is complete and a brief has been saved.</p>
+
+      <h4>Ticker Extraction</h4>
+      <p>Extract the ticker from the user's original query message using regex: <code>/\b([A-Z]{1,5})\b/</code> matching common stock ticker patterns. The first all-caps 1-5 letter word that isn't a common English word (I, A, THE, etc.) is the ticker.</p>
+
+      <h4>UI Placement</h4>
+      <p>The download bar renders <strong>inline below the assistant's brief message</strong> in the chat thread, styled as a subtle action row:</p>
+
+      <div style="border: 1px solid var(--border); border-radius: 8px; padding: 12px 18px; margin: 12px 0; background: var(--ivory-dark); display: flex; align-items: center; gap: 12px; font-family: 'Segoe UI', system-ui, sans-serif; font-size: 13px;">
+        <span style="color: var(--text-muted);">Export report:</span>
+        <button style="padding: 5px 14px; border-radius: 6px; border: 1px solid var(--clay-light); background: white; color: var(--clay-deep); font-size: 12px; cursor: pointer; font-weight: 600;">
+          ⬇ PPTX
+        </button>
+        <button style="padding: 5px 14px; border-radius: 6px; border: 1px solid var(--clay-light); background: white; color: var(--clay-deep); font-size: 12px; cursor: pointer; font-weight: 600;">
+          ⬇ DOCX
+        </button>
+      </div>
+
+      <h4>Download Logic</h4>
+      <pre><code>const downloadReport = async (ticker: string, format: "pptx" | "docx") => {
+  const res = await fetch(
+    `/api/orch/api/reports/ticker/${ticker}/latest/${format}`
+  );
+  if (!res.ok) return;  // show error toast
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `FinSight_${ticker}_${new Date().toISOString().slice(0,10)}.${format}`;
+  a.click();
+  URL.revokeObjectURL(url);
+};</code></pre>
+
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════ STEP 5 ═══════════════════════════ -->
+  <div class="step-card">
+    <div class="step-header">
+      <span class="step-num">5</span>
+      Frontend — Memory Page Download Buttons — <code>web/nextjs-app/app/memory/page.tsx</code>
+    </div>
+    <div class="step-body">
+
+      <h4>UI Placement</h4>
+      <p>Add two small icon buttons to each brief card's header row, next to the signal badge and confidence score:</p>
+
+      <div style="border: 1px solid var(--border); border-radius: 8px; padding: 14px 18px; margin: 12px 0; background: white; display: flex; align-items: center; gap: 14px; font-family: 'Segoe UI', system-ui, sans-serif; font-size: 13px;">
+        <span style="font-weight: 700; font-size: 18px; color: var(--clay-deep); font-family: monospace;">NVDA</span>
+        <span style="font-size: 10px; color: var(--text-muted);">2026-06-06</span>
+        <span style="width: 1px; height: 24px; background: var(--sand);"></span>
+        <span style="flex: 1; color: var(--text-secondary); font-size: 12px;">NVIDIA presents a compelling investment opportunity driven by...</span>
+        <span class="signal buy">BUY</span>
+        <span style="font-family: monospace; font-size: 10px; color: var(--text-muted);">0.82</span>
+        <button style="padding: 3px 8px; border-radius: 4px; border: 1px solid var(--sand); background: var(--ivory-dark); font-size: 10px; cursor: pointer; color: var(--clay);" title="Download PPTX">PPT</button>
+        <button style="padding: 3px 8px; border-radius: 4px; border: 1px solid var(--sand); background: var(--ivory-dark); font-size: 10px; cursor: pointer; color: var(--clay);" title="Download DOCX">DOC</button>
+        <span style="font-size: 12px; color: var(--text-muted);">▼</span>
+      </div>
+
+      <h4>Download Logic</h4>
+      <p>Same <code>downloadReport</code> helper, but using the brief's <code>id</code> instead of ticker:</p>
+      <pre><code>const downloadById = async (briefId: string, format: "pptx" | "docx") => {
+  const res = await fetch(`/api/orch/api/reports/${briefId}/${format}`);
+  // ... same blob download pattern ...
+};</code></pre>
+
+      <p>Stop event propagation on the button click so the card expand/collapse toggle doesn't fire:</p>
+      <pre><code>onClick={(e) => { e.stopPropagation(); downloadById(b.id, "pptx"); }}</code></pre>
+
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════ REPORT CONTENT ═══════════════════════════ -->
+  <h2>4. Report Content Strategy</h2>
+
+  <h3>Section Mapping</h3>
+  <p>The generator maps brief content into report sections. For structured briefs, it extracts fields directly. For minimal briefs, it parses markdown headers.</p>
+
+  <table>
+    <tr><th>Report Section</th><th>Structured Brief Source</th><th>Minimal Brief Source</th></tr>
+    <tr>
+      <td>Executive Summary</td>
+      <td><code>recommendation_rationale</code></td>
+      <td>First paragraph or <code>## Executive Summary</code> section</td>
+    </tr>
+    <tr>
+      <td>Key Metrics</td>
+      <td><code>quant_metrics.*</code> fields as a table</td>
+      <td>Skip (no structured data)</td>
+    </tr>
+    <tr>
+      <td>Fundamental Analysis</td>
+      <td><code>rag_insights</code> (revenue growth, R&amp;D, guidance)</td>
+      <td><code>## Fundamental</code> or <code>## RAG</code> section</td>
+    </tr>
+    <tr>
+      <td>Quantitative Analysis</td>
+      <td><code>quant_metrics</code> (Sharpe, vol, beta, VaR, DCF)</td>
+      <td><code>## Quant</code> section</td>
+    </tr>
+    <tr>
+      <td>Market Sentiment</td>
+      <td><code>sentiment_intelligence</code> (consensus, targets, insider)</td>
+      <td><code>## Market</code> or <code>## Sentiment</code> section</td>
+    </tr>
+    <tr>
+      <td>Risks &amp; Catalysts</td>
+      <td><code>rag_insights.key_risks</code> + <code>sentiment.key_catalysts</code></td>
+      <td><code>## Risk</code> section</td>
+    </tr>
+    <tr>
+      <td>Disclaimer</td>
+      <td><code>disclaimer</code> field</td>
+      <td>Default disclaimer text</td>
+    </tr>
+  </table>
+
+  <h3>Markdown Stripping</h3>
+  <p>The <code>response_text</code> contains markdown formatting. Before inserting into PPTX/DOCX, strip:</p>
+  <ul>
+    <li><code>**bold**</code> → apply bold formatting natively in the document</li>
+    <li><code>- bullet</code> → convert to native bullet points</li>
+    <li><code>[link](url)</code> → plain text (or hyperlink in DOCX)</li>
+    <li><code>| table |</code> → native table (best-effort parsing)</li>
+    <li>Headers (<code>##</code>) → used as section delimiters, then stripped</li>
+  </ul>
+
+  <!-- ═══════════════════════════ VERIFICATION ═══════════════════════════ -->
+  <h2>5. Verification</h2>
+
+  <table>
+    <tr><th>#</th><th>Check</th><th>How</th></tr>
+    <tr>
+      <td>1</td>
+      <td>Dependencies install</td>
+      <td><code>uv sync</code> completes without errors</td>
+    </tr>
+    <tr>
+      <td>2</td>
+      <td>Endpoint returns valid PPTX</td>
+      <td><code>curl -o test.pptx http://localhost:8001/api/reports/ticker/NVDA/latest/pptx</code> — opens in PowerPoint</td>
+    </tr>
+    <tr>
+      <td>3</td>
+      <td>Endpoint returns valid DOCX</td>
+      <td><code>curl -o test.docx http://localhost:8001/api/reports/ticker/NVDA/latest/docx</code> — opens in Word</td>
+    </tr>
+    <tr>
+      <td>4</td>
+      <td>404 for missing ticker</td>
+      <td><code>curl http://localhost:8001/api/reports/ticker/ZZZZ/latest/pptx</code> → 404 JSON</td>
+    </tr>
+    <tr>
+      <td>5</td>
+      <td>Research page download bar</td>
+      <td>Run analysis in browser, confirm PPTX/DOCX buttons appear after completion, click downloads valid file</td>
+    </tr>
+    <tr>
+      <td>6</td>
+      <td>Memory page download buttons</td>
+      <td>Visit Memory page, confirm PPT/DOC buttons on each card, click downloads valid file</td>
+    </tr>
+    <tr>
+      <td>7</td>
+      <td>Both brief shapes work</td>
+      <td>Test with a structured InvestmentBrief and a minimal response_text brief — both produce readable reports</td>
+    </tr>
+    <tr>
+      <td>8</td>
+      <td>Report content is correct</td>
+      <td>Open generated files — verify ticker, signal, date, sections, metrics, and disclaimer are all present and accurate</td>
+    </tr>
+  </table>
+
+  <!-- ═══════════════════════════ RISKS ═══════════════════════════ -->
+  <h2>6. Risks &amp; Edge Cases</h2>
+
+  <table>
+    <tr><th>Risk</th><th>Mitigation</th></tr>
+    <tr>
+      <td>Brief has no <code>response_text</code> and no structured fields</td>
+      <td>Fall back to a single-section report with the raw <code>query</code> field and "No analysis content available" body</td>
+    </tr>
+    <tr>
+      <td>Very long briefs exceed slide capacity</td>
+      <td>Split sections longer than ~300 words across multiple slides with "(continued)" suffix</td>
+    </tr>
+    <tr>
+      <td>Markdown tables in <code>response_text</code></td>
+      <td>Best-effort parsing of pipe-delimited tables into native PPTX/DOCX tables; fall back to preformatted text</td>
+    </tr>
+    <tr>
+      <td>Special characters in ticker or content</td>
+      <td>python-pptx/docx handle Unicode natively; sanitize filename with regex</td>
+    </tr>
+    <tr>
+      <td>Concurrent requests generating large files</td>
+      <td>Generation is in-memory and fast (~50ms for typical briefs); no caching needed initially</td>
+    </tr>
+  </table>
+
+</div>
+</body>
+</html>

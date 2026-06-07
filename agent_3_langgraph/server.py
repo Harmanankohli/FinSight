@@ -33,8 +33,13 @@ logger = logging.getLogger(__name__)
 
 
 async def health(request):
-    # Health check for orchestrator-level monitoring and container orchestration probes
     return JSONResponse({"status": "ok", "agent": "quant"})
+
+
+async def release_evals(request):
+    from shared.eval_gate import release_evals as _release
+    n = await _release()
+    return JSONResponse({"released": n})
 
 host = os.environ.get("HOST", "localhost")
 
@@ -109,14 +114,16 @@ async def _prewarm_llm():
     try:
         from langchain_openai import ChatOpenAI
         from shared.config import LLM_SUMMARY_MODEL, LLM_BASE_URL, LLM_API_KEY
+        from shared.llm_queue import llm_queue, Priority
         llm = ChatOpenAI(model=LLM_SUMMARY_MODEL, base_url=LLM_BASE_URL, api_key=LLM_API_KEY, temperature=0.0, max_tokens=1)
-        await llm.ainvoke("ping")
+        async with llm_queue.acquire(Priority.NORMAL, "quant-warmup"):
+            await llm.ainvoke("ping")
         logger.info("LLM pre-warmed (%s)", LLM_SUMMARY_MODEL)
     except Exception as e:
         logger.warning("LLM warmup failed (non-fatal): %s", e)
 
 
-routes = [Route("/health", health)]  # Liveness check
+routes = [Route("/health", health), Route("/release-evals", release_evals, methods=["POST"])]
 routes.extend(create_agent_card_routes(agent_card))  # A2A agent card discovery
 routes.extend(create_jsonrpc_routes(request_handler, "/a2a"))  # JSON-RPC task endpoints
 

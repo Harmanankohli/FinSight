@@ -11,6 +11,29 @@ from mcp.client.sse import sse_client
 
 logger = logging.getLogger(__name__)
 
+# Module-level transient error tuple — defined once, not inside the class body.
+# httpx is an optional dependency; degrade gracefully if missing.
+try:
+    import httpx as _httpx
+    _TRANSIENT_ERRORS: tuple[type[Exception], ...] = (
+        asyncio.TimeoutError,
+        ConnectionError,
+        asyncio.IncompleteReadError,
+        EOFError,
+        OSError,
+        _httpx.ReadError,
+        _httpx.ConnectError,
+        _httpx.NetworkError,
+    )
+except ImportError:
+    _TRANSIENT_ERRORS = (
+        asyncio.TimeoutError,
+        ConnectionError,
+        asyncio.IncompleteReadError,
+        EOFError,
+        OSError,
+    )
+
 # ── Process-wide singleton ────────────────────────────────────────────────────
 _global_client: "MCPClient | None" = None
 _client_lock = asyncio.Lock()
@@ -213,26 +236,7 @@ class MCPClient:
     # httpx.ReadError / httpx.ConnectError cover MCP SSE connection resets
     # that happen when the MCP server is briefly overloaded — they should
     # be retried like any other transient network error.
-    try:
-        import httpx as _httpx
-        _TRANSIENT_EXC = (
-            asyncio.TimeoutError,
-            ConnectionError,
-            asyncio.IncompleteReadError,
-            EOFError,
-            OSError,
-            _httpx.ReadError,
-            _httpx.ConnectError,
-            _httpx.NetworkError,
-        )
-    except ImportError:
-        _TRANSIENT_EXC = (
-            asyncio.TimeoutError,
-            ConnectionError,
-            asyncio.IncompleteReadError,
-            EOFError,
-            OSError,
-        )
+    _TRANSIENT_EXC = _TRANSIENT_ERRORS
 
     # Routes to a specific named server. Used when the caller knows which
     # server hosts the tool (e.g. multi-server orchestration layers).

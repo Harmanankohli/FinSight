@@ -237,9 +237,11 @@ class TickerMemory:
                 prev_date = prev_date.split("T")[0]
             prev_rec = prev["recommendation"]
             if prev_rec != rec:
+                _RANK = {"SELL": 0, "HOLD": 1, "BUY": 2}
+                direction = "upgraded" if _RANK.get(rec, 1) > _RANK.get(prev_rec, 1) else "downgraded"  # noqa: E501
                 lines.append(
                     f"Prior rec ({prev_date}): {prev_rec} "
-                    f"-> upgraded/downgraded to {rec}."
+                    f"-> {direction} to {rec}."
                 )
 
         brief_data = latest.get("brief_json", "{}")

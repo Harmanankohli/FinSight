@@ -124,7 +124,7 @@ class GenericAgentExecutor(AgentExecutor):
                             task_id=task.id,
                             context_id=task.context_id,
                             status=TaskStatus(
-                                state=TaskState.input_required,
+                                state=TaskState.TASK_STATE_INPUT_REQUIRED,
                                 message=new_text_message(str(item.get("content", ""))),
                             ),
                         )

@@ -1,4 +1,4 @@
-# Architecture
+﻿# Architecture
 
 ## Overview
 
@@ -28,7 +28,7 @@ FinSight is a multi-agent investment research system where four specialized agen
 
 ## Orchestrator Architecture
 
-The orchestrator (`agent_1_adk/`) uses a single `LlmAgent` with one `send_message` tool that delegates to sub-agents via A2A. Two parallel cache paths can short-circuit the LLM entirely on same-day repeat queries:
+The orchestrator (`agent_1_adk/`) uses a single `LlmAgent` with three tools (`send_message`, `generate_report`, `load_memory`). The `save_brief` function is defined but no longer exposed as an LLM tool — briefs are auto-saved via `after_agent_callback`. Two parallel cache paths can short-circuit the LLM entirely on same-day repeat queries:
 
 ```
 Module load → SubAgentClient.discover()
@@ -50,6 +50,7 @@ A2A Request → FinSightAgentExecutor.execute()
   → after_agent_callback: _persist_memory_callback
     → add_events_to_memory()
     → if EVAL_ENABLED: score_response()
+    → _release_sub_agent_evals() — POST /release-evals to all sub-agents (they defer evals until this signal)
   → COMPLETED with synthesis
 ```
 
@@ -200,6 +201,7 @@ Four independent caching tiers reduce latency and external API load:
 | Cache | TTL | Key | Notes |
 |---|---|---|---|
 | `_cache_prices` | 1 min | `(ticker, period, interval)` | yfinance OHLCV |
+| `_cache_benchmark` | 1 h | ticker | Index benchmarks (^GSPC, ^VIX, etc.) |
 | `_cache_financials` | 1 h | `(ticker,)` | income/balance/cashflow |
 | `_cache_news` | 5 min | `(ticker, limit)` | only cached when articles found |
 | `_cache_macro` | 15 min | `"macro"` | Treasury yields, VIX, DXY, sector ETFs |
@@ -243,6 +245,18 @@ Wired into `agent_1_adk/agent_executor.py`:
 
 `agent_1_adk/agent.py` splits `_build_instruction()` into a module-level `_STATIC_PREAMBLE` constant and a dynamic tail (today's date + agent list). LM Studio reuses the KV-cached static prefix across requests. Same pattern applied to CrewAI backstory strings in `agent_4_crewai/crew.py`.
 
+### LLM Priority Queue (Tier 1E)
+
+`shared/llm_queue.py` provides a process-local async priority semaphore (`LLMPriorityQueue`) that throttles LLM calls when the single LM Studio instance is saturated. Three priority tiers:
+
+| Priority | Usage | Behavior |
+|---|---|---|
+| `CRITICAL` (0) | Quant `llm_summary_node`, CrewAI `crew.kickoff()` | Never starved — production inference served before eval |
+| `NORMAL` (1) | Quant server pre-warmup ping | Served after CRITICAL, before LOW |
+| `LOW` (2) | RAGAS eval `metric.ascore()` | Yields when production is queued — waits if all slots occupied |
+
+Sized by `LLM_MAX_CONCURRENT` (default 2). Uses `heapq` with `(priority, seq, asyncio.Future)` for O(log n) scheduling. Slots are handed directly to the next waiter on release, preserving priority ordering without race windows. Singleton instance imported where needed.
+
 ## Guardrails
 
 ### Input Guardrails
@@ -270,8 +284,8 @@ Single unified MCP server (`mcp_servers/finsight_server.py`, port 8010) hosting 
 │                                                       │
 │  Agent Registry         │  Data Sources                    │
 │  ├── find_agent()       │  ├── get_prices()                │
-│  ├── resource://cards   │  ├── get_financials()            │
-│  └── resource://{name}  │  ├── get_options_chain()         │
+│  ├── resource://agent_cards/list   │  ├── get_financials()            │
+│  └── resource://agent_cards/{name}  │  ├── get_options_chain()         │
 │                         │  ├── get_company_filings()       │
 │                         │  ├── get_financial_filings()     │
 │                         │  ├── get_filing_content()        │
@@ -314,14 +328,18 @@ Timeouts configured via `.env` with `A2A_TIMEOUT=680.0`:
 
 ## LLM Configuration
 
-All agents use LM Studio (OpenAI-compatible local API):
+All agents use LM Studio (OpenAI-compatible local API). The `config.py` default is `qwen/qwen3-30b-a3b-2507`; developers commonly override to `mistralai/ministral-3-14b-reasoning` via `.env` for faster local inference. All LLM calls are throttled by `LLMPriorityQueue` (3 priority tiers) to prevent eval scoring from starving production inference; concurrency controlled by `LLM_MAX_CONCURRENT` env var (default 2).
 
-| Agent | Model | Provider |
+### Cross-Process Eval Coordination
+
+Sub-agent evals are deferred via `shared/eval_gate.py` to prevent three sub-agent eval processes from competing with orchestrator synthesis on the shared LM Studio instance. Each sub-agent calls `defer_eval()` instead of `asyncio.create_task()`. The orchestrator's `after_agent_callback` fires `_release_sub_agent_evals()` which POSTs to each sub-agent's `/release-evals` endpoint after synthesis completes. A 120s safety-net auto-release prevents evals from being silently dropped if the orchestrator crashes.
+
+| Agent | Model (default) | Provider |
 |---|---|---|
 | Orchestrator (ADK) | `qwen/qwen3-30b-a3b-2507` | `openai/` prefix (LM Studio endpoint) |
 | RAG (LlamaIndex) | `qwen/qwen3-30b-a3b-2507` | `llama-index-llms-openai-like` |
 | Quant (LangGraph) | `qwen/qwen3-30b-a3b-2507` | `langchain-openai` |
-| Sentiment (CrewAI) | `qwen/qwen3-30b-a3b-2507` | CrewLLM (OpenAI-compatible) |
+| Market Context (CrewAI) | `qwen/qwen3-30b-a3b-2507` | CrewLLM (OpenAI-compatible) |
 
 ## Observability & Tracing
 
@@ -476,6 +494,18 @@ All five services expose `GET /health`:
 | Market Context Agent | `http://localhost:8004/health` | `{"status":"ok","agent":"market_context"}` |
 | MCP Server | `http://localhost:8010/health` | `{"status":"ok","agent":"mcp"}` |
 
+### Eval Release Endpoints
+
+The three sub-agent servers expose `POST /release-evals` to trigger deferred eval coroutines:
+
+| Service | Endpoint | Response |
+|---|---|---|
+| RAG Agent | `POST http://localhost:8002/release-evals` | `{"released": N}` |
+| Quant Agent | `POST http://localhost:8003/release-evals` | `{"released": N}` |
+| Market Context Agent | `POST http://localhost:8004/release-evals` | `{"released": N}` |
+
+The orchestrator calls these endpoints via `_release_sub_agent_evals()` as a fire-and-forget background task after synthesis completes (5s HTTP timeout, non-fatal on failure).
+
 The MCP server mounts its health route alongside the FastMCP SSE app via a Starlette wrapper in `get_app()`. Docker-compose `healthcheck` blocks use these endpoints with `curl -f`, and `depends_on` is set to `condition: service_healthy`.
 
 ## File Logging
@@ -536,7 +566,7 @@ When the orchestrator runs through `adk web` (the path `run_adk_web.bat` uses), 
 | Orchestrator | `score_response()` | AnswerRelevancy, citation_quality, risk_disclosure, recommendation_clarity, response_completeness | AnswerRelevancy: generic catch-all for response quality. citation_quality: unsubstantiated financial claims are worthless — must cite filing dates/amounts. risk_disclosure: an investment thesis without risk discussion is incomplete. recommendation_clarity: the core output is a BUY/HOLD/SELL signal — ambiguous synthesis fails. response_completeness: must synthesize all 3 analysis types, not just one. | `user_input`, `response` |
 | RAG | `score_rag_response()` | Faithfulness, AnswerRelevancy, ContextPrecisionWithoutReference | Faithfulness: prevents hallucinated dates/numbers by verifying claims against retrieved SEC text. ContextPrecisionWithoutReference: flags retrieval drift — when RAG returns irrelevant filings, this drops even if Faithfulness passes. | `user_input`, `response`, `context_texts` (ChromaDB nodes) |
 | Quant | `score_quant_response()` | FactualCorrectness, AnswerRelevancy | FactualCorrectness: compares LLM summary numbers (Sharpe, VaR, DCF) against actual computed values — primary failure mode is hallucinated numbers. AnswerRelevancy: generic catch-all. | `user_input`, `response`, `quant_result` (computed metrics dict) |
-| Sentiment | `score_sentiment_response()` | AnswerRelevancy, catalyst_identification, insider_signal_discussion, Faithfulness | catalyst_identification: vague "sentiment is positive" without naming the catalyst scores low — must identify specific events. insider_signal_discussion: omitting insider trading patterns misses a key sentiment signal. Faithfulness: verifies narrative is grounded in collected news/filing data, not fabricated. | `user_input`, `response`, `_retrieved_contexts` (news/filing titles) |
+| Market Context | `score_market_context_response()` | Faithfulness, macro_regime_analysis, peer_landscape_quality | Faithfulness: verifies narrative is grounded in collected macro and peer data. macro_regime_analysis: evaluates if narrative discusses yield curve, VIX, DXY, sector ETF performance with actual values. peer_landscape_quality: evaluates depth of peer comparison across multiple metrics. | `user_input`, `response`, `_retrieved_contexts` (macro + peer data) |
 
 ### Per-Metric Streaming
 

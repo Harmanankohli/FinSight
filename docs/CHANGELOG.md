@@ -1,6 +1,100 @@
 # Changelog
 
-## v1.35 — Async Event-Loop Fixes: yfinance Executor, Peer Concurrency Cap, Redis Auto-Start
+## v1.38 — Deferred Eval Gate + AG-UI Bridge Auto-Save + Confidence Extraction
+
+### Infrastructure — Deferred Sub-Agent Eval Gate
+
+**`shared/eval_gate.py` (new, 74 lines)**: Per-process deferred eval queue that holds sub-agent eval LLM calls until the orchestrator finishes its final answer synthesis. Sub-agent evals were firing immediately via `asyncio.create_task()`, hitting LM Studio from 3 separate processes right when the orchestrator needed it for synthesis. The process-local `LLMPriorityQueue` couldn't coordinate across processes.
+
+- **`defer_eval(fn, *args, **kwargs)`**: Replaces `asyncio.create_task(eval_fn(...))` in all three sub-agent executors (RAG, Quant, Market Context). Queues the eval coroutine in a module-level list instead of executing immediately.
+- **`release_evals()`**: Fires all deferred evals as `asyncio.create_task()` calls. Returns count of evals released. Cancels the auto-release safety-net when called explicitly.
+- **`_auto_release()`**: Safety-net background task that fires after `EVAL_DEFER_TIMEOUT` (120s) if the orchestrator never calls `/release-evals`. Prevents evals from being silently dropped if the orchestrator crashes mid-synthesis.
+
+**`POST /release-evals` endpoint** added to all three sub-agent servers (`agent_2_llamaindex/server.py`, `agent_3_langgraph/server.py`, `agent_4_crewai/server.py`): Calls `release_evals()` and returns `{"released": N}`.
+
+**Orchestrator fires release after synthesis** — both `agents/finsight_agent/agent.py` (`after_agent_callback`) and `agent_1_adk/agent_executor.py` (`FinSightAgentExecutor`) call `_release_sub_agent_evals()` as a fire-and-forget `asyncio.create_task()` after scheduling the orchestrator's own eval. The `_release_sub_agent_evals()` helper POSTs to each sub-agent's `/release-evals` endpoint with a 5-second HTTP timeout.
+
+### AG-UI Bridge — Null-Stripping + Auto-Save Briefs
+
+**`agent_1_adk/agui_bridge.py`**:
+- **RunStartedEvent no longer echoes input**: The `input=payload.model_dump(by_alias=True)` parameter was removed from `RunStartedEvent` construction. CopilotKit Cloud injected `encryptedValue: null` into the input payload, which caused Zod validation failures downstream because null is not accepted for optional fields in the AG-UI schema version CopilotKit targets.
+- **Bridge auto-saves investment briefs**: After the orchestrator stream completes, `_auto_save_brief()` extracts ticker, recommendation, and confidence from the synthesis text using regex, then persists to `TickerMemory` via `store_minimal()` and `PerformanceTracker`. Checks for today's existing brief — if found and the existing response text is shorter, calls `update_response_text()` to overwrite with the longer synthesis. This ensures repeat queries via the bridge return cached results from memory.
+
+**`shared/agui_sse.py`**:
+- **Recursive `_clean()` null stripping**: Replaced the flat `_strip_message_nulls()` approach with a depth-aware recursive cleaner that strips null-valued optional fields at any nesting depth. `_STRIP_KEYS` expanded to include `"input"` — previously the list excluded `input` because it carried user data where null was semantically meaningful, but CopilotKit Cloud's `encryptedValue: null` is now injected at arbitrary nesting depths. The recursive approach handles all depths uniformly.
+- **Removed `_strip_message_nulls()` helper**: The old function that specifically handled `input.messages[*].name/encryptedValue/role` nulls is gone — the recursive `_clean()` handles these paths naturally.
+
+### Confidence Score Extraction — "Confidence Score: X" Format
+
+**`agents/finsight_agent/agent.py`** (`_CONF_PATTERN`): Regex updated from `(?:confidence|conf)[:\s]*(\d+(?:\.\d+)?)...` to `(?:confidence|conf)(?:\s+score)?[:\s]*(\d+(?:\.\d+)?)...`. The LLM output uses "Confidence Score: 0.75" (with the word "Score") but the regex only matched "confidence: 0.75" and "75% confidence". The optional `(?:\s+score)?` group handles the new format without breaking existing matches.
+
+**`agent_1_adk/agent_executor.py`** (`_store_memory` method): The A2A executor path now extracts confidence from the response text using the same regex pattern instead of hardcoding `confidence=0.5`. Also added `confidence=round(confidence, 2)` to both `store_minimal()` and `record_recommendation()` calls — previously the executor passed `confidence=0.5` to both, meaning briefs saved via the A2A path always recorded 50% confidence regardless of the actual response.
+
+## v1.37 — LLM Priority Queue
+
+- **`shared/llm_queue.py` (new, 105 lines)**: `LLMPriorityQueue` — process-local async priority semaphore using `heapq` + `(priority, seq, asyncio.Future)`. Three tiers: `Priority.CRITICAL` (0), `Priority.NORMAL` (1), `Priority.LOW` (2). Slot handoff on release preserves priority ordering. Default `LLM_MAX_CONCURRENT=2`. Configurable via env var.
+
+- **`shared/config.py`**: `LLM_MAX_CONCURRENT` env var (default 2) controls queue size.
+
+- **`agent_3_langgraph/nodes.py`**: `llm_summary_node` LLM call uses `Priority.CRITICAL`.
+
+- **`agent_3_langgraph/server.py`**: Pre-warmup LLM ping uses `Priority.NORMAL`.
+
+- **`agent_4_crewai/crew.py`**: `crew.kickoff()` LLM call uses `Priority.CRITICAL`.
+
+- **`shared/runtime_eval.py`**: All RAGAS eval LLM calls (orchestrator, RAG, Quant, Market Context) use `Priority.LOW`.
+
+## v1.36 — AG-UI Bridge + Next.js CopilotKit Frontend + Auto-Save Brief Fallback
+
+### FEATURE — AG-UI Bridge & Next.js Frontend
+
+**AG-UI bridge layer** (`agent_1_adk/agui_bridge.py`, `shared/agui_sse.py`, `agent_1_adk/api_routes.py`):
+- **`POST /a2a-agui` endpoint** (`agui_bridge.py`): Streams AG-UI-compatible events from the ADK runner with off-topic guardrail, today's brief cache, memory context injection, and `active_agents` state tracking via `STATE_DELTA`/`STATE_SNAPSHOT`.
+- **`shared/agui_sse.py`**: SSE framing utility with camelCase aliases, timestamp stamping, and null-stripping for CopilotKit Zod compatibility.
+- **`agent_1_adk/api_routes.py`**: REST routes for `/api/memory/ticker`, `/api/sessions`, `/api/agents` with direct SQLite queries.
+- **`agent_1_adk/agui_endpoint.py`**: Uses shared SSE helper, passes input to `RunStartedEvent`.
+- **`agent_1_adk/main.py`**: Wires bridge, REST routes, CORS for `localhost:3000`.
+- **`ui_sample/`** (6 new files): Sample HTML pages — `index.html`, `research.html`, `operator.html`, `trace.html`, `memory.html` plus `finsight.css` — matching the clay/ivory design system.
+
+**Next.js frontend** (`web/nextjs-app/`, 25+ files):
+- **Next.js 16 + CopilotKit 1.59 + @ag-ui/client**: 5-page app — Overview, Research (CopilotKit chat + agent tiles + trace strip), Trace (Langfuse span visualization), Memory (expandable ticker briefs), Operator (service health dashboard).
+- **Design system**: Clay/ivory palette matching `ui_sample/`, serif headings, JetBrains Mono, agent color-coding, signal badges (BUY/HOLD/SELL).
+- **Server-side proxies**: `/api/copilotkit` — CopilotRuntime with `HttpAgent` → `/a2a-agui`; `/api/traces` — Langfuse proxy (keys from env, never exposed to browser); `/api/health` — CORS-safe health check proxy.
+- **Scripts**: `run_ui.bat` / `stop_ui.bat` — start/stop all services including Next.js on `:3000`.
+
+### Agent — Auto-Save Brief Fallback
+
+**`agents/finsight_agent/agent.py`**:
+- **`_auto_save_brief()`**: When the LLM fails to call `save_brief` after a `send_message` turn (common with smaller local models like ministral-3b), the `after_agent_callback` detects `send_message` usage as the analysis signal and programmatically persists the brief via `TickerMemory` + `PerformanceTracker`. The gate logic: `_has_send_message_call()` checks for `send_message` invocations in the turn. When `send_message` was called but `save_brief` wasn't, `_auto_save_brief` extracts recommendation/confidence from the response text and saves it.
+- **`_extract_recommendation_from_text()`**: Best-effort regex extraction of `BUY|HOLD|SELL` + confidence percentage from freeform LLM text. Handles `"confidence: 85%"`, `"conf: 0.85"`, `"75% confidence"` formats.
+- **Callback updated**: `_is_analysis_turn()` → `_is_analysis_turn() or _has_send_message_call()` — non-analysis turns (e.g. `load_memory`-only queries) are still skipped.
+
+### After-Turn Callback — Full Synthesis Persistence + Case-Insensitive Ticker Lookup
+
+**`agents/finsight_agent/agent.py`** (`_persist_memory_callback`):
+- **Full analysis text overwrite**: After the callback persists events to memory, it extracts the longest LLM-generated text from the current turn and calls `TickerMemory.update_response_text()` when it's longer than what `save_brief` stored. This ensures the saved brief contains the complete analysis even when the LLM generates it after calling `save_brief` (ADK often splits the analysis and function call into separate events). Fixes `save_brief` returning only "Brief saved for NVDA: BUY" on same-day cache hits.
+
+**`shared/ticker_utils.py`**:
+- **Case-insensitive ticker extraction**: `extract_ticker()` now uppercases its output, so `wmt` matches the cached `WMT` brief in the memory cache callback.
+
+### Quant — Weighted Vote Normalization & Misc Fixes
+
+**`agent_3_langgraph/nodes.py`**:
+- **FCF period sorting**: `_get_financials` now sorts free cash flow data descending by period so the most recent year is used first in DCF valuation.
+- **Volatility scoring fix**: Signal scoring logic corrected for the volatility gate — ensures `risk_quality` signal accurately reflects computed volatility tier.
+- **Weight redistribution**: When a signal group is absent (no data), its weight is redistributed proportionally across remaining present groups instead of being silently dropped — prevents confidence inflation on sparse data.
+- **`golden_cross` defaults to `False`**: The `technicals` dict now explicitly sets `golden_cross=False` when the indicator is absent or null, preventing downstream `None` comparison errors.
+
+### Infrastructure — DB Paths, Connection Cleanup, Misc Fixes
+
+- **`agent_1_adk/api_routes.py`**: Memory API routes now use `_ADK_SESSION_DB` constant instead of hardcoded path. Proper `try/finally` blocks ensure connections are always cleaned up. Dead code removed.
+- **`shared/a2a_store.py`**: Task preload from SQLite fixed to avoid touching the private `InMemoryTaskStore._impl` attribute — uses the public `upsert()` API instead.
+- **`shared/generic_executor.py`**: Corrected `TaskState` enum value reference for cancellation handling.
+- **`shared/mcp_client.py`**: Transient error tuple `_TRANSIENT_EXC` extracted to module level (was inline in function scope) — enables reuse by other modules.
+- **`shared/memory/store.py`**: `prune_old_records()` now uses an `_ALLOWED_TABLES` whitelist (`frozenset`) to prevent SQL injection via table name — defensive hardening.
+- **`shared/memory/ticker_memory.py`**: Change detection (`has_changed`) now correctly identifies both upgrades (SELL→BUY) and downgrades (BUY→SELL) instead of treating all changes uniformly.
+- **`shared/rate_limiter.py`**: Added type annotations to all public methods.
+- **`shared/semantic_cache.py`**: Added `_init_started` guard to prevent re-entrancy during `SemanticCache.__init__` when the ChromaDB client creation triggers import side-effects.
 
 ### MCP Server — yfinance Blocking Calls Moved to Thread Executor
 
@@ -32,6 +126,11 @@
 - **Removed instructor `max_retries=1` override**: `instructor.from_openai()` now falls back to the client's retry count (5), so instructor calls get the same retry budget as raw client calls.
 - **`asyncio.TimeoutError` caught separately** (`_run_metrics`): Now logged with a dedicated warning message including the `EVAL_METRIC_TIMEOUT` value instead of appearing as a bare colon in the generic `BaseException` handler.
 - **Empty exception messages logged as type name**: When `str(exc)` is empty (common for `TimeoutError` and `CancelledError`), logs `type(exc).__name__` instead of a bare colon in the warning line.
+
+### Model — Local Switch to Ministral-3-14b
+
+- **`.env` model changed to `mistralai/ministral-3-14b-reasoning`**: The active development model switched from `qwen/qwen3-30b-a3b-2507` to `ministral-3-14b-reasoning` for faster inference (~3-5s vs ~8-12s per call) and lower RAM consumption (~3-4GB vs ~6-8GB). The `config.py` default remains `qwen3-30b-a3b-2507` as the reference model — developers override via `.env`.
+- **Impact**: Ministral's inconsistent `save_brief` calling directly motivated the auto-save brief fallback and full-synthesis after-turn update features above. The trade-off (speed/resource efficiency vs tool-calling reliability) is acceptable for local development.
 
 ## v1.34 — Phase 5: Dynamic Peers, Sector-Relative Scoring, Live Scenario Shocks, Insider MCP Tool
 

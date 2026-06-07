@@ -24,7 +24,7 @@ def _is_financial_stop_word(word: str) -> bool:
 # Low-information words stripped before passing text to ticker-resolution tools,
 # reducing ambiguity in the NLP-based company→ticker lookup.
 _QUERY_NOISE_WORDS: frozenset[str] = frozenset({
-    "analyze", "research", "analyze", "get", "find", "show", "tell", "give",
+    "analyze", "research", "get", "find", "show", "tell", "give",
     "me", "about", "for", "the", "a", "an", "of", "in", "on", "at", "to",
     "from", "with", "by", "and", "or", "but", "is", "are", "was", "were",
     "be", "been", "being", "have", "has", "had", "do", "does", "did",
@@ -49,8 +49,10 @@ def clean_query_for_resolution(text: str) -> str:
 
 # Priority order: (1) parenthesised tickers "buy NVDA (NVDA)",
 # (2) preposition-adjacent "buy NVDA" or "invest in NVDA",
-# (3) $ prefix as explicit signal, (4) isolated uppercase words.
+# (3) $ prefix as explicit signal, (4) isolated uppercase words,
+# (5) case-insensitive fallback for lowercase tickers like "aapl".
 def extract_ticker(query: str) -> str:
+    query = query.upper()
     # All-uppercase parens = ticker symbol e.g. "Visa (V)" or "buy (NVDA)".
     m = re.search(r"\(([A-Z]{1,5}(?:\.[A-Z]{1,2})?)\)", query)
     if m and not _is_financial_stop_word(m.group(1)):
@@ -77,6 +79,21 @@ def extract_ticker(query: str) -> str:
     matches = [w for w in re.findall(r"\b([A-Z]{1,2})\b", query) if not _is_financial_stop_word(w)]
     if matches:
         return matches[-1]
+
+    # Case-insensitive fallback: match lowercase/mixed-case ticker after a
+    # preposition or action verb (e.g. "analyze aapl", "about nvda").
+    m = re.search(r"(?:for|of|about|buy|sell|invest|in|analyze|research)\s+\$?([A-Za-z]{1,5}(?:\.[A-Za-z]{1,2})?)\b", query, re.IGNORECASE)
+    if m:
+        candidate = m.group(1).upper()
+        if is_valid_ticker_format(candidate) and not _is_financial_stop_word(candidate) and candidate.lower() not in _QUERY_NOISE_WORDS:
+            return candidate
+
+    # Bare lowercase ticker (e.g. just "nvda" or "aapl" as the entire query)
+    stripped = query.strip()
+    if re.fullmatch(r"[A-Za-z]{1,5}(\.[A-Za-z]{1,2})?", stripped):
+        candidate = stripped.upper()
+        if is_valid_ticker_format(candidate) and not _is_financial_stop_word(candidate) and candidate.lower() not in _QUERY_NOISE_WORDS:
+            return candidate
 
     return ""
 

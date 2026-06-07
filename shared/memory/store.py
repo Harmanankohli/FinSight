@@ -197,11 +197,14 @@ async def prune_old_records(days: int | None = None) -> dict[str, int]:
         days = int(os.environ.get("MEMORY_RETENTION_DAYS", "90"))
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     conn = await get_db()
+    _ALLOWED_TABLES: frozenset[str] = frozenset({
+        "ticker_briefs", "recommendation_records", "memory_entries",
+    })
     async with write_lock():
         deleted: dict[str, int] = {}
-        for table in ("ticker_briefs", "recommendation_records", "memory_entries"):
+        for table in _ALLOWED_TABLES:
             cur = await conn.execute(
-                f"DELETE FROM {table} WHERE created_at < ?", (cutoff,)  # noqa: S608
+                f"DELETE FROM {table} WHERE created_at < ?", (cutoff,)
             )
             deleted[table] = cur.rowcount
         await conn.commit()

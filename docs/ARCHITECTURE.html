@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -39,7 +39,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <h1>Architecture</h1>
 
 <h2>Overview</h2>
-<p>FinSight is a multi-agent investment research system where four specialized agents communicate via the <strong>Google A2A Protocol</strong> (Agent-to-Agent). The orchestrator (ADK <code>LlmAgent</code>) discovers sub-agents at startup via <code>A2ACardResolver</code>, delegates tasks via a single <code>send_message</code> tool, and the LLM routes to all agents in parallel (instructed via system prompt to emit all <code>send_message</code> calls in one assistant turn). Each sub-agent processes tasks internally using its own framework and tools.</p>
+<p>FinSight is a multi-agent investment research system where four specialized agents communicate via the <strong>Google A2A Protocol</strong> (Agent-to-Agent). The orchestrator (ADK <code>LlmAgent</code>) discovers sub-agents at startup via <code>A2ACardResolver</code>, delegates tasks via three tools (<code>send_message</code>, <code>generate_report</code>, <code>load_memory</code>), and the LLM routes to all agents in parallel (instructed via system prompt to emit all <code>send_message</code> calls in one assistant turn). Each sub-agent processes tasks internally using its own framework and tools.</p>
 
 <h2>Communication Pattern</h2>
 <pre>&#x250C;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2510;
@@ -61,7 +61,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 &#x2514;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2518;</pre>
 
 <h2>Orchestrator Architecture</h2>
-<p>The orchestrator (<code>agent_1_adk/</code>) uses a single <code>LlmAgent</code> with one <code>send_message</code> tool that delegates to sub-agents via A2A. Two parallel cache paths can short-circuit the LLM entirely on same-day repeat queries:</p>
+<p>The orchestrator (<code>agent_1_adk/</code>) uses a single <code>LlmAgent</code> with three tools (<code>send_message</code>, <code>generate_report</code>, <code>load_memory</code>). The <code>save_brief</code> function is defined but no longer exposed as an LLM tool &mdash; briefs are auto-saved via <code>after_agent_callback</code>. Two parallel cache paths can short-circuit the LLM entirely on same-day repeat queries:</p>
 <pre>Module load &rarr; SubAgentClient.discover()
   &#x251C;&#x2500;&#x2500; A2ACardResolver(httpx.AsyncClient, url) per seed URL
   &#x251C;&#x2500;&#x2500; Returns typed AgentCard (protobuf)
@@ -78,9 +78,10 @@ A2A Request &rarr; FinSightAgentExecutor.execute()
     &rarr; SubAgentClient &rarr; A2A response (text or data parts)
     &rarr; LLM receives all results together in the next turn
     &rarr; LLM synthesizes BUY/HOLD/SELL
-    &rarr; after_agent_callback: _persist_memory_callback
+  &rarr; after_agent_callback: _persist_memory_callback
     &rarr; add_events_to_memory()
     &rarr; if EVAL_ENABLED: score_response()
+    &rarr; _release_sub_agent_evals() &mdash; POST /release-evals to all sub-agents (they defer evals until this signal)
   &rarr; COMPLETED with synthesis</pre>
 
 <h3>Key Design Choices</h3>
@@ -246,6 +247,16 @@ RAGAgent._ensure_ingested(ticker) [background]:
 <h3>KV Cache Prefix (Tier 1C)</h3>
 <p><code>agent_1_adk/agent.py</code> splits <code>_build_instruction()</code> into a module-level <code>_STATIC_PREAMBLE</code> constant and a dynamic tail (today's date + agent list). LM Studio reuses the KV-cached static prefix across requests. Same pattern applied to CrewAI backstory strings in <code>agent_4_crewai/crew.py</code>.</p>
 
+<h3>LLM Priority Queue (Tier 1E)</h3>
+<p><code>shared/llm_queue.py</code> provides a process-local async priority semaphore (<code>LLMPriorityQueue</code>) that throttles LLM calls when the single LM Studio instance is saturated. Three priority tiers:</p>
+<table>
+<tr><th>Priority</th><th>Usage</th><th>Behavior</th></tr>
+<tr><td><code>CRITICAL</code> (0)</td><td>Quant <code>llm_summary_node</code>, CrewAI <code>crew.kickoff()</code></td><td>Never starved &mdash; production inference served before eval</td></tr>
+<tr><td><code>NORMAL</code> (1)</td><td>Quant server pre-warmup ping</td><td>Served after CRITICAL, before LOW</td></tr>
+<tr><td><code>LOW</code> (2)</td><td>RAGAS eval <code>metric.ascore()</code></td><td>Yields when production is queued &mdash; waits if all slots occupied</td></tr>
+</table>
+<p>Sized by <code>LLM_MAX_CONCURRENT</code> (default 2). Uses <code>heapq</code> with <code>(priority, seq, asyncio.Future)</code> for O(log n) scheduling. Slots are handed directly to the next waiter on release, preserving priority ordering without race windows. Singleton instance imported where needed.</p>
+
 <h2>Guardrails</h2>
 
 <h3>Input Guardrails</h3>
@@ -270,8 +281,8 @@ RAGAgent._ensure_ingested(ticker) [background]:
 &#x2502;                                                       &#x2502;
 &#x2502;  Agent Registry         &#x2502;  Data Sources                    &#x2502;
 &#x2502;  &#x251C;&#x2500;&#x2500; find_agent()       &#x2502;  &#x251C;&#x2500;&#x2500; get_prices()                &#x2502;
-&#x2502;  &#x251C;&#x2500;&#x2500; resource://cards   &#x2502;  &#x251C;&#x2500;&#x2500; get_financials()            &#x2502;
-&#x2502;  &#x2514;&#x2500;&#x2500; resource://{name}  &#x2502;  &#x251C;&#x2500;&#x2500; get_options_chain()         &#x2502;
+&#x2502;  &#x251C;&#x2500;&#x2500; resource://agent_cards/list   &#x2502;  &#x251C;&#x2500;&#x2500; get_financials()            &#x2502;
+&#x2502;  &#x2514;&#x2500;&#x2500; resource://agent_cards/{name}  &#x2502;  &#x251C;&#x2500;&#x2500; get_options_chain()         &#x2502;
 &#x2502;                         &#x2502;  &#x251C;&#x2500;&#x2500; get_company_filings()       &#x2502;
 &#x2502;                         &#x2502;  &#x251C;&#x2500;&#x2500; get_financial_filings()     &#x2502;
 &#x2502;                         &#x2502;  &#x251C;&#x2500;&#x2500; get_filing_content()        &#x2502;
@@ -310,9 +321,9 @@ RAGAgent._ensure_ingested(ticker) [background]:
 </table>
 
 <h2>LLM Configuration</h2>
-<p>All agents use LM Studio (OpenAI-compatible local API):</p>
+<p>All agents use LM Studio (OpenAI-compatible local API). The <code>config.py</code> default is <code>qwen/qwen3-30b-a3b-2507</code>; developers commonly override to <code>mistralai/ministral-3-14b-reasoning</code> via <code>.env</code> for faster local inference. All LLM calls are throttled by <code>LLMPriorityQueue</code> (3 priority tiers) to prevent eval scoring from starving production inference; concurrency controlled by <code>LLM_MAX_CONCURRENT</code> env var (default 2).</p>
 <table>
-<tr><th>Agent</th><th>Model</th><th>Provider</th></tr>
+<tr><th>Agent</th><th>Model (default)</th><th>Provider</th></tr>
 <tr><td>Orchestrator (ADK)</td><td><code>qwen/qwen3-30b-a3b-2507</code></td><td><code>openai/</code> prefix (LM Studio endpoint)</td></tr>
 <tr><td>RAG (LlamaIndex)</td><td><code>qwen/qwen3-30b-a3b-2507</code></td><td><code>llama-index-llms-openai-like</code></td></tr>
 <tr><td>Quant (LangGraph)</td><td><code>qwen/qwen3-30b-a3b-2507</code></td><td><code>langchain-openai</code></td></tr>
@@ -419,6 +430,18 @@ Sub-agents (agent_2, agent_3, agent_4)
 <li><code>run_rag_eval.py</code> &mdash; Faithfulness, ResponseRelevancy, ContextPrecision, ContextRecall, NoiseSensitivity</li>
 <li><code>run_orchestrator_eval.py</code> &mdash; ToolCallAccuracy, AgentGoalAccuracy</li>
 </ul>
+
+<h2>Cross-Process Eval Coordination</h2>
+<p>Sub-agent evals are deferred via <code>shared/eval_gate.py</code> to prevent three sub-agent eval processes from competing with orchestrator synthesis on the shared LM Studio instance. Each sub-agent calls <code>defer_eval()</code> instead of <code>asyncio.create_task()</code>. The orchestrator's <code>after_agent_callback</code> fires <code>_release_sub_agent_evals()</code> which POSTs to each sub-agent's <code>/release-evals</code> endpoint after synthesis completes. A 120s safety-net auto-release prevents evals from being silently dropped if the orchestrator crashes.</p>
+
+<h3>Eval Release Endpoints</h3>
+<p>The three sub-agent servers expose <code>POST /release-evals</code> to trigger deferred eval coroutines:</p>
+<table>
+<tr><th>Sub-Agent</th><th>Endpoint</th><th>Response</th></tr>
+<tr><td>RAG Agent</td><td><code>POST http://localhost:8002/release-evals</code></td><td><code>{"released": N}</code></td></tr>
+<tr><td>Quant Agent</td><td><code>POST http://localhost:8003/release-evals</code></td><td><code>{"released": N}</code></td></tr>
+<tr><td>Market Context Agent</td><td><code>POST http://localhost:8004/release-evals</code></td><td><code>{"released": N}</code></td></tr>
+</table>
 
 <h2>Memory Layer Architecture</h2>
 <p>The memory layer provides persistent session storage and cross-session memory retrieval using SQLite. All memory components are in <code>shared/memory/</code>.</p>

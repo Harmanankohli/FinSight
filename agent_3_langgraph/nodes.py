@@ -83,13 +83,16 @@ def _get_latest_field(financials: dict, field: str) -> float | None:
 
 
 def _get_fcf_from_financials(financials_dict: dict) -> float | None:
-    for period_key, metrics in financials_dict.items():
+    # Sort periods descending so we return the most recent year's positive FCF
+    for period_key in sorted(financials_dict.keys(), reverse=True):
+        metrics = financials_dict[period_key]
         if "Free Cash Flow" in metrics:
             fcf = float(metrics["Free Cash Flow"])
             logger.debug("FCF check %s: Free Cash Flow=%s", period_key, fcf)
             if fcf > 0:
                 return fcf
-    for period_key, metrics in financials_dict.items():
+    for period_key in sorted(financials_dict.keys(), reverse=True):
+        metrics = financials_dict[period_key]
         op = metrics.get("Operating Cash Flow")
         capex = metrics.get("Capital Expenditure")
         if op is not None and capex is not None:
@@ -133,10 +136,10 @@ def _score_risk_quality(metrics: dict) -> float:
         score += 0.3
     elif vol < 0.25:
         score += 0.1
+    elif vol > 0.35 and vol <= 0.45:
+        score -= 0.1
     elif vol > 0.45:
         score -= 0.3
-    elif vol > 0.35:
-        score -= 0.1
     return max(-1.0, min(1.0, score))
 
 
@@ -367,8 +370,8 @@ def _score_behavioral(options: dict | None, positioning: dict | None, insider: d
 def _weighted_vote(group_scores: dict[str, float]) -> tuple[str, float]:
     """Returns (BUY/HOLD/SELL, confidence 0-1) from group scores weighted by _SIGNAL_WEIGHTS.
 
-    Missing/zero signals contribute zero — they neither push nor normalize.
-    A single mild positive in one of 8 groups should not become a high-confidence BUY.
+    Missing/zero signals have their weights redistributed proportionally
+    across present signals so that total weight always sums to 1.0.
 
     Confidence (per plan §8.6.2): |composite| × (1 − std(present_signals))
     — rewards consensus across signals, penalises conflict.
@@ -376,7 +379,13 @@ def _weighted_vote(group_scores: dict[str, float]) -> tuple[str, float]:
     present = {k: v for k, v in group_scores.items() if v != 0.0}
     if not present:
         return "HOLD", 0.5
-    composite = sum(group_scores[k] * _SIGNAL_WEIGHTS.get(k, 0) for k in present)
+    total_present_weight = sum(_SIGNAL_WEIGHTS.get(k, 0) for k in present)
+    if total_present_weight <= 0:
+        return "HOLD", 0.5
+    scale = 1.0 / total_present_weight
+    composite = sum(
+        group_scores[k] * _SIGNAL_WEIGHTS.get(k, 0) * scale for k in present
+    )
     if composite > 0.15:
         rec = "BUY"
     elif composite < -0.15:
@@ -557,7 +566,7 @@ async def fundamental_analysis_node(state: QuantAnalysisState) -> dict:
             "current_price": current_price,
             "pct_from_52w_high": round((current_price - fifty2w_high) / fifty2w_high, 4) if fifty2w_high and current_price else None,
             "pct_from_52w_low": round((current_price - fifty2w_low) / fifty2w_low, 4) if fifty2w_low and current_price else None,
-            "golden_cross": (fifty_day_ma > two_hundred_day_ma) if fifty_day_ma and two_hundred_day_ma else None,
+            "golden_cross": (fifty_day_ma > two_hundred_day_ma) if fifty_day_ma and two_hundred_day_ma else False,
             "net_debt": total_debt - total_cash,
         }
         return {"fundamentals": fundamentals, "_financials_raw": data}
@@ -1398,8 +1407,10 @@ async def llm_summary_node(state: QuantAnalysisState) -> dict:
     prompt += "\nWrite 3-4 sentences for an investor. Note signal conflicts. Be specific about numbers."
 
     try:
+        from shared.llm_queue import llm_queue, Priority
         llm = ChatOpenAI(model=LLM_MODEL, base_url=LLM_BASE_URL, api_key=LLM_API_KEY, temperature=0.3, max_tokens=512)
-        response = await llm.ainvoke(prompt)
+        async with llm_queue.acquire(Priority.CRITICAL, "quant-summary"):
+            response = await llm.ainvoke(prompt)
         summary = response.content if hasattr(response, "content") else str(response)
     except Exception as e:
         logger.warning("LLM summary failed: %s", e)

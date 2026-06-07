@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -34,7 +34,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <body>
 <div class="container">
 <div class="header-nav">
-<a href="docs/index.html">Home</a><a href="README.html">Overview</a><a href="docs/ARCHITECTURE.html">Architecture</a><a href="docs/AGENTS.html">Agents</a><a href="docs/MCP_SERVERS.html">MCP</a><a href="docs/DESIGN_DECISIONS.html">Decisions</a><a href="docs/DEMO.html">Demo</a><a href="docs/CHANGELOG.html">Changelog</a><a href="docs/TESTS.html">Tests</a>
+<a href="docs/index.html">Home</a><a href="README.html">Overview</a><a href="docs/ARCHITECTURE.html">Architecture</a><a href="docs/AGENTS.html">Agents</a><a href="docs/MCP_SERVERS.html">MCP</a><a href="docs/DESIGN_DECISIONS.html">Decisions</a><a href="docs/CHANGELOG.html">Changelog</a><a href="docs/TESTS.html">Tests</a>
 </div>
 
 <h1>FinSight &mdash; Multi-Agent Investment Research System</h1>
@@ -45,7 +45,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <ul>
 <li><strong>Multi-framework orchestration</strong>: Google ADK orchestrator delegates to LlamaIndex (RAG), LangGraph (Quant), and CrewAI (Market Context) agents</li>
 <li><strong>A2A protocol</strong>: Standard-compliant agent discovery and streaming communication via JSON-RPC over HTTP</li>
-<li><strong>Multi-tier caching</strong>: TTL-based tool-result cache in the MCP server (1 min prices, 1 h financials, 5 min news, permanent filings, 24h peers, 7d scenario shocks), LangChain SQLiteCache for LLM responses, and semantic cache using ChromaDB cosine similarity</li>
+<li><strong>Multi-tier caching + LLM priority queue</strong>: TTL-based tool-result cache in the MCP server (1 min prices, 1 h financials, 5 min news, permanent filings, 24h peers, 7d scenario shocks), LangChain SQLiteCache for LLM responses, semantic cache using ChromaDB cosine similarity, and a priority semaphore (<code>CRITICAL &gt; NORMAL &gt; LOW</code>) to prevent RAGAS eval from starving production inference</li>
 <li><strong>Input/output guardrails</strong>: Off-topic filter, pre-flight ticker validation, empty-response guard, and BUY/HOLD/SELL signal enforcement with auto-retry</li>
 <li><strong>Persistent memory layer</strong>: SQLite-backed session storage, cross-session memory search, ticker brief history, portfolio persistence, and recommendation tracking with live price snapshots</li>
 <li><strong>Incremental RAG ingestion</strong>: Tracks ingested filing URLs in SQLite &mdash; restarts never re-ingest already-indexed documents</li>
@@ -79,7 +79,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 │  ┌─────────────────┐  ┌─────────────────────────────────┐   │
 │  │ Agent Registry  │  │  Data Sources                 │   │
 │  │ find_agent()    │  │  get_prices, get_financials,  │   │
-│  │ resource://cards│  │  get_options_chain,           │   │
+│  │ resource://agent_cards│  │  get_options_chain,           │   │
 │  └─────────────────┘  │  get_company_filings,         │   │
 │                        │  get_financial_filings,       │   │
 │                        │  get_filing_content,          │   │
@@ -90,6 +90,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 │                        │  get_earnings_calendar,       │   │
 │                        │  get_insider_transactions,    │   │
 │                        │  get_peers,                   │   │
+│                        │  get_macro_indicators,        │   │
 │                        │  get_scenario_shocks,         │   │
 │                        │  execute_python, ...          │   │
 │                        └─────────────────────────────────┘   │
@@ -159,7 +160,7 @@ uv run python -m uvicorn agent_3_langgraph.server:app --host 0.0.0.0 --port 8003
 uv run python -m uvicorn agent_4_crewai.server:app --host 0.0.0.0 --port 8004
 
 # Terminal 5: ADK Web UI
-uv run adk web --port 8080 --session_service_uri sqlite://./db/finsight_memory.db --memory_service_uri finsight:// agents</pre>
+uv run adk web --port 8080 --session_service_uri sqlite://./db/adk_sessions.db --memory_service_uri finsight:// agents</pre>
 
 <p><strong>Startup order:</strong> LM Studio &rarr; MCP Server &rarr; RAG &rarr; Quant &rarr; Market Context &rarr; ADK Web UI</p>
 
@@ -173,7 +174,7 @@ uv run adk web --port 8080 --session_service_uri sqlite://./db/finsight_memory.d
 <h2>Configuration</h2>
 <table>
 <tr><th>Variable</th><th>Default</th><th>Description</th></tr>
-<tr><td><code>ADK_MODEL</code></td><td><code>openai/qwen/qwen3-30b-a3b-2507</code></td><td>LLM model for the orchestrator</td></tr>
+<tr><td><code>ADK_MODEL</code></td><td><code>openai/mistralai/ministral-3-14b-reasoning</code></td><td>LLM model for the orchestrator (default <code>openai/qwen/qwen3-30b-a3b-2507</code> in <code>config.py</code>)</td></tr>
 <tr><td><code>AGENT_SEED_URLS</code></td><td><code>http://localhost:8002,http://localhost:8003,http://localhost:8004</code></td><td>A2A agent discovery URLs</td></tr>
 <tr><td><code>A2A_TIMEOUT</code></td><td><code>680.0</code></td><td>Timeout for A2A communication (seconds)</td></tr>
 <tr><td><code>LLM_BASE_URL</code></td><td><code>http://localhost:1234/v1</code></td><td>LM Studio OpenAI-compatible endpoint</td></tr>
@@ -191,7 +192,6 @@ uv run adk web --port 8080 --session_service_uri sqlite://./db/finsight_memory.d
 <tr><td><a href="docs/AGENTS.html">AGENTS.html</a></td><td>Detailed agent reference (skills, architecture, streaming flow)</td></tr>
 <tr><td><a href="docs/MCP_SERVERS.html">MCP_SERVERS.html</a></td><td>MCP server tools, registry, client usage</td></tr>
 <tr><td><a href="docs/DESIGN_DECISIONS.html">DESIGN_DECISIONS.html</a></td><td>Evolution log: why each design choice was made</td></tr>
-<tr><td><a href="docs/DEMO.html">DEMO.html</a></td><td>End-to-end walkthrough with example queries</td></tr>
 <tr><td><a href="docs/CHANGELOG.html">CHANGELOG.html</a></td><td>Version history</td></tr>
 <tr><td><a href="docs/TESTS.html">TESTS.html</a></td><td>Test coverage, patterns, running instructions</td></tr>
 </table>

@@ -38,9 +38,7 @@ logger = logging.getLogger(__name__)
 _EVAL_USER_ID = "eval_user"
 
 
-# Format an AG-UI event as a Server-Sent Events data frame
-def _sse(event_obj) -> str:
-    return f"data: {event_obj.model_dump_json()}\n\n"
+from shared.agui_sse import sse as _sse
 
 
 # Stream AG-UI protocol: RunStarted → tool calls / text chunks → RunFinished
@@ -49,6 +47,7 @@ async def _stream(
     user_text: str,
     thread_id: str,
     run_id: str,
+    payload: RunAgentInput,
 ) -> AsyncGenerator[str, None]:
     session_id = run_id
 
@@ -68,6 +67,7 @@ async def _stream(
         type=EventType.RUN_STARTED,
         thread_id=thread_id,
         run_id=run_id,
+        input=payload.model_dump(by_alias=True),
     ))
 
     content = types.Content(role="user", parts=[types.Part.from_text(text=user_text)])
@@ -185,7 +185,7 @@ def make_agui_endpoint(runner: Runner):
             return JSONResponse({"error": "No user message in payload"}, status_code=400)
 
         return StreamingResponse(
-            _stream(runner, user_text, thread_id, run_id),
+            _stream(runner, user_text, thread_id, run_id, payload),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",

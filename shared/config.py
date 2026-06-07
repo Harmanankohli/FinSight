@@ -44,6 +44,8 @@ ADK_MODEL = os.environ.get("ADK_MODEL", "openai/qwen/qwen3-30b-a3b-2507")
 LLM_SUMMARY_MODEL = os.environ.get("LLM_SUMMARY_MODEL", LLM_MODEL)
 # Separate eval model for RAGAS so it doesn't contend with production inference
 LLM_EVAL_MODEL = os.environ.get("LLM_EVAL_MODEL", LLM_MODEL)
+# Max concurrent LLM calls per process — priority queue throttles eval when full
+LLM_MAX_CONCURRENT = int(os.environ.get("LLM_MAX_CONCURRENT", "2"))
 
 # ── Embedding ─────────────────────────────────────────────────────────────
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "all-MiniLM-L6-v2")

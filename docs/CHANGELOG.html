@@ -36,6 +36,124 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 
 <h1>Changelog</h1>
 
+<h2>v1.38 &mdash; Deferred Eval Gate + AG-UI Bridge Auto-Save + Confidence Extraction</h2>
+
+<h3 class="version">Infrastructure &mdash; Deferred Sub-Agent Eval Gate</h3>
+<ul>
+<li><strong><code>shared/eval_gate.py</code> (new, 74 lines)</strong>: Per-process deferred eval queue that holds sub-agent eval LLM calls until the orchestrator finishes its final answer synthesis. Sub-agent evals were firing immediately via <code>asyncio.create_task()</code>, hitting LM Studio from 3 separate processes right when the orchestrator needed it for synthesis. The process-local <code>LLMPriorityQueue</code> couldn't coordinate across processes.</li>
+<li><strong><code>defer_eval(fn, *args, **kwargs)</code></strong>: Replaces <code>asyncio.create_task(eval_fn(...))</code> in all three sub-agent executors (RAG, Quant, Market Context). Queues the eval coroutine in a module-level list instead of executing immediately.</li>
+<li><strong><code>release_evals()</code></strong>: Fires all deferred evals as <code>asyncio.create_task()</code> calls. Returns count of evals released. Cancels the auto-release safety-net when called explicitly.</li>
+<li><strong><code>_auto_release()</code></strong>: Safety-net background task that fires after <code>EVAL_DEFER_TIMEOUT</code> (120s) if the orchestrator never calls <code>/release-evals</code>. Prevents evals from being silently dropped if the orchestrator crashes mid-synthesis.</li>
+</ul>
+<ul>
+<li><strong><code>POST /release-evals</code> endpoint</strong> added to all three sub-agent servers (<code>agent_2_llamaindex/server.py</code>, <code>agent_3_langgraph/server.py</code>, <code>agent_4_crewai/server.py</code>): Calls <code>release_evals()</code> and returns <code>{"released": N}</code>.</li>
+<li><strong>Orchestrator fires release after synthesis</strong> &mdash; both <code>agents/finsight_agent/agent.py</code> (<code>after_agent_callback</code>) and <code>agent_1_adk/agent_executor.py</code> (<code>FinSightAgentExecutor</code>) call <code>_release_sub_agent_evals()</code> as a fire-and-forget <code>asyncio.create_task()</code> after scheduling the orchestrator's own eval. The helper POSTs to each sub-agent's <code>/release-evals</code> endpoint with a 5-second HTTP timeout.</li>
+</ul>
+
+<h3 class="version">AG-UI Bridge &mdash; Null-Stripping + Auto-Save Briefs</h3>
+<ul>
+<li><strong>RunStartedEvent no longer echoes input</strong> (<code>agent_1_adk/agui_bridge.py</code>): Removed <code>input=payload.model_dump(by_alias=True)</code> from RunStartedEvent construction. CopilotKit Cloud injected <code>encryptedValue: null</code> into the input payload, causing Zod validation failures downstream.</li>
+<li><strong>Bridge auto-saves investment briefs</strong>: After the orchestrator stream completes, <code>_auto_save_brief()</code> extracts ticker, recommendation, and confidence from the synthesis text via regex, then persists to <code>TickerMemory</code> via <code>store_minimal()</code> and <code>PerformanceTracker</code>. Checks for today's existing brief &mdash; if found and the stored text is shorter, calls <code>update_response_text()</code> to overwrite with the longer synthesis.</li>
+<li><strong>Recursive <code>_clean()</code> null stripping</strong> (<code>shared/agui_sse.py</code>): Replaced the flat <code>_strip_message_nulls()</code> approach with a depth-aware recursive cleaner that strips null-valued optional fields at any nesting depth. <code>_STRIP_KEYS</code> expanded to include <code>"input"</code>. The old <code>_strip_message_nulls()</code> helper removed.</li>
+</ul>
+
+<h3 class="version">Confidence Score Extraction &mdash; "Confidence Score: X" Format</h3>
+<ul>
+<li><strong><code>_CONF_PATTERN</code> updated</strong> (<code>agents/finsight_agent/agent.py</code>): Regex changed from <code>(?:confidence|conf)[:\s]*...</code> to <code>(?:confidence|conf)(?:\s+score)?[:\s]*...</code>. The LLM output uses "Confidence Score: 0.75" (with the word "Score") but the regex only matched "confidence: 0.75" and "75% confidence". The optional <code>(?:\s+score)?</code> group handles the new format without breaking existing matches.</li>
+<li><strong>A2A executor path extracts real confidence</strong> (<code>agent_1_adk/agent_executor.py</code>): Replaced hardcoded <code>confidence=0.5</code> with regex extraction from response text. Both <code>store_minimal()</code> and <code>record_recommendation()</code> now receive <code>confidence=round(confidence, 2)</code> instead of a constant 0.5.</li>
+</ul>
+
+<h2>v1.37 &mdash; Priority Queue for LLM Calls to Prevent Eval Starvation of Production</h2>
+
+<h3 class="version">Shared &mdash; LLM Priority Queue</h3>
+<ul>
+<li><strong><code>shared/llm_queue.py</code> (new, 105 lines)</strong>: Process-local async priority semaphore with three tiers: <code>CRITICAL</code> (production inference), <code>NORMAL</code> (warmup), <code>LOW</code> (RAGAS eval scoring). Serves highest-priority waiters first (FIFO tie-breaking within same priority). Sized by <code>LLM_MAX_CONCURRENT</code> env var (default 2).</li>
+<li><strong><code>LLMPriorityQueue</code> implementation</strong>: Uses <code>heapq</code> + <code>asyncio.Future</code> for O(log n) scheduling. <code>_leave()</code> hands off the slot to the next queued waiter instead of releasing immediately &mdash; prevents priority inversion when high-priority callers arrive after the queue is saturated.</li>
+<li><strong>Module-level singleton</strong> (<code>llm_queue = LLMPriorityQueue()</code>): Imported where needed; no global state management beyond the singleton pattern.</li>
+</ul>
+
+<h3 class="version">Config &mdash; <code>LLM_MAX_CONCURRENT</code></h3>
+<ul>
+<li><strong>New env var</strong> (<code>shared/config.py</code>): <code>LLM_MAX_CONCURRENT</code> &mdash; controls the maximum concurrent LLM calls per process (default 2). Tunes how aggressively LM Studio is parallelised.</li>
+</ul>
+
+<h3 class="version">Quant Agent &mdash; CRITICAL Priority for Summary</h3>
+<ul>
+<li><strong><code>llm_summary_node</code></strong> (<code>agent_3_langgraph/nodes.py</code>): Wraps <code>llm.ainvoke(prompt)</code> in <code>async with llm_queue.acquire(Priority.CRITICAL, "quant-summary")</code>. Production inference never starved by background eval.</li>
+</ul>
+
+<h3 class="version">Quant Server Warmup &mdash; NORMAL Priority</h3>
+<ul>
+<li><strong><code>_prewarm_llm()</code></strong> (<code>agent_3_langgraph/server.py</code>): Warmup ping wrapped in <code>async with llm_queue.acquire(Priority.NORMAL, "quant-warmup")</code>. Yields to production calls when all slots are occupied.</li>
+</ul>
+
+<h3 class="version">Market Context Agent &mdash; CRITICAL Priority for Kickoff</h3>
+<ul>
+<li><strong><code>MarketContextCrew.analyze()</code></strong> (<code>agent_4_crewai/crew.py</code>): Wraps <code>crew.kickoff()</code> in <code>async with llm_queue.acquire(Priority.CRITICAL, "crewai-kickoff")</code>. Ensures user-facing analysis is prioritised over eval scoring.</li>
+</ul>
+
+<h3 class="version">RAGAS Eval &mdash; LOW Priority (Yields to Production)</h3>
+<ul>
+<li><strong><code>_score_metric()</code></strong> (<code>shared/runtime_eval.py</code>): Wraps <code>metric.ascore()</code> in <code>async with llm_queue.acquire(Priority.LOW, f"eval/{metric.name}")</code>. When the queue is full with CRITICAL callers, eval waits. When a CRITICAL slot frees, the next production caller is served before eval.</li>
+</ul>
+
+<h2>v1.36 &mdash; AG-UI Bridge + Next.js CopilotKit Frontend + Auto-Save Brief Fallback</h2>
+
+<h3 class="version">FEATURE &mdash; AG-UI Bridge &amp; Next.js Frontend</h3>
+<h4>AG-UI bridge layer</h4>
+<ul>
+<li><strong><code>POST /a2a-agui</code> endpoint</strong> (<code>agent_1_adk/agui_bridge.py</code>): Streams AG-UI-compatible events from the ADK runner with off-topic guardrail, today's brief cache, memory context injection, and <code>active_agents</code> state tracking via <code>STATE_DELTA</code>/<code>STATE_SNAPSHOT</code>.</li>
+<li><strong><code>shared/agui_sse.py</code></strong>: SSE framing utility with camelCase aliases, timestamp stamping, and null-stripping for CopilotKit Zod compatibility.</li>
+<li><strong><code>agent_1_adk/api_routes.py</code></strong>: REST routes for <code>/api/memory/ticker</code>, <code>/api/sessions</code>, <code>/api/agents</code> with direct SQLite queries.</li>
+<li><strong><code>agent_1_adk/agui_endpoint.py</code></strong>: Uses shared SSE helper, passes input to <code>RunStartedEvent</code>.</li>
+<li><strong><code>agent_1_adk/main.py</code></strong>: Wires bridge, REST routes, CORS for <code>localhost:3000</code>.</li>
+<li><strong><code>ui_sample/</code></strong> (6 new files): Sample HTML pages — <code>index.html</code>, <code>research.html</code>, <code>operator.html</code>, <code>trace.html</code>, <code>memory.html</code> plus <code>finsight.css</code>.</li>
+</ul>
+<h4>Next.js frontend</h4>
+<ul>
+<li><strong>Next.js 16 + CopilotKit 1.59 + @ag-ui/client</strong>: 5-page app — Overview, Research (CopilotKit chat + agent tiles + trace strip), Trace (Langfuse span visualization), Memory (expandable ticker briefs), Operator (service health dashboard).</li>
+<li><strong>Design system</strong>: Clay/ivory palette matching <code>ui_sample/</code>, serif headings, JetBrains Mono, agent color-coding, signal badges (BUY/HOLD/SELL).</li>
+<li><strong>Server-side proxies</strong>: <code>/api/copilotkit</code> — CopilotRuntime with <code>HttpAgent</code> &rarr; <code>/a2a-agui</code>; <code>/api/traces</code> — Langfuse proxy (keys from env); <code>/api/health</code> — CORS-safe health check.</li>
+<li><strong>Scripts</strong>: <code>run_ui.bat</code> / <code>stop_ui.bat</code> — start/stop all services including Next.js on <code>:3000</code>.</li>
+</ul>
+
+<h3 class="version">Agent &mdash; Auto-Save Brief Fallback</h3>
+<ul>
+<li><strong><code>_auto_save_brief()</code></strong> (<code>agents/finsight_agent/agent.py</code>): Detects <code>send_message</code> usage as the analysis signal when the LLM skips <code>save_brief</code> (common with smaller local models). Programmatically persists brief via <code>TickerMemory</code> + <code>PerformanceTracker</code> with recommendation/confidence extracted from response text via regex.</li>
+<li><strong><code>_extract_recommendation_from_text()</code></strong>: Regex extraction of <code>BUY|HOLD|SELL</code> + confidence from freeform LLM text. Handles <code>"confidence: 85%"</code>, <code>"conf: 0.85"</code>, <code>"75% confidence"</code> formats.</li>
+<li><strong>Callback gate updated</strong>: <code>_is_analysis_turn() or _has_send_message_call()</code> — non-analysis turns are still skipped.</li>
+</ul>
+
+<h3 class="version">After-Turn Callback &mdash; Full Synthesis Persistence + Case-Insensitive Ticker</h3>
+<ul>
+<li><strong>Full analysis overwrite</strong> (<code>agents/finsight_agent/agent.py</code>): <code>_persist_memory_callback</code> now extracts the longest LLM text from the current turn and calls <code>TickerMemory.update_response_text()</code> when longer than what <code>save_brief</code> stored. Fixes same-day cache returning only &ldquo;Brief saved for NVDA: BUY&rdquo;.</li>
+<li><strong>Case-insensitive ticker extraction</strong> (<code>shared/ticker_utils.py</code>): <code>extract_ticker()</code> uppercases output so <code>wmt</code> matches cached <code>WMT</code> brief.</li>
+</ul>
+
+<h3 class="version">Quant &mdash; Weighted Vote Normalization &amp; Misc Fixes</h3>
+<ul>
+<li><strong>FCF period sorting</strong> (<code>agent_3_langgraph/nodes.py</code>): FCF data sorted descending by period so most recent year is used first in DCF.</li>
+<li><strong>Weight redistribution</strong>: Absent signal group weights redistributed proportionally across remaining groups instead of being dropped.</li>
+<li><strong><code>golden_cross</code> defaults to <code>False</code></strong>: Prevents downstream <code>None</code> comparison errors when the indicator is absent.</li>
+</ul>
+
+<h3 class="version">Infrastructure &mdash; DB Paths, Connection Cleanup, Misc Fixes</h3>
+<ul>
+<li><strong><code>agent_1_adk/api_routes.py</code></strong>: Uses <code>_ADK_SESSION_DB</code> constant. Proper <code>try/finally</code> connection cleanup. Dead code removed.</li>
+<li><strong><code>shared/a2a_store.py</code></strong>: Task preload uses public <code>upsert()</code> API instead of touching private <code>_impl</code> attribute.</li>
+<li><strong><code>shared/generic_executor.py</code></strong>: Corrected <code>TaskState</code> enum value for cancellation handling.</li>
+<li><strong><code>shared/mcp_client.py</code></strong>: Transient error tuple extracted to module level.</li>
+<li><strong><code>shared/memory/store.py</code></strong>: <code>prune_old_records()</code> uses <code>_ALLOWED_TABLES</code> whitelist for defensive hardening.</li>
+<li><strong><code>shared/memory/ticker_memory.py</code></strong>: Change detection identifies both upgrades and downgrades.</li>
+<li><strong><code>shared/semantic_cache.py</code></strong>: <code>_init_started</code> guard prevents re-entrancy during <code>__init__</code>.</li>
+</ul>
+
+<h3 class="version">Model &mdash; Local Switch to Ministral-3-14b</h3>
+<ul>
+<li><strong><code>.env</code> model changed to <code>mistralai/ministral-3-14b-reasoning</code></strong>: Active development model switched from <code>qwen/qwen3-30b-a3b-2507</code> to <code>ministral-3-14b-reasoning</code> for faster inference (~3-5s vs ~8-12s per call) and lower RAM (~3-4GB vs ~6-8GB). The <code>config.py</code> default remains <code>qwen3-30b-a3b-2507</code> as the reference model — developers override via <code>.env</code>.</li>
+<li><strong>Impact</strong>: Ministral&rsquo;s inconsistent <code>save_brief</code> calling directly motivated the auto-save brief fallback and full-synthesis after-turn update features above. Trade-off (speed/efficiency vs tool-calling reliability) acceptable for local development.</li>
+</ul>
+
 <h2>v1.35 &mdash; Async Event-Loop Fixes: yfinance Executor, Peer Concurrency Cap, Redis Auto-Start</h2>
 
 <h3 class="version">MCP Server &mdash; yfinance Blocking Calls Moved to Thread Executor</h3>

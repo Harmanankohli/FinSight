@@ -6,7 +6,7 @@ Single unified MCP server (`mcp_servers/finsight_server.py`) hosting both agent 
 
 | Port | Tools | Registry |
 |---|---|---|---|
-| 8010 | `get_prices`, `get_financials`, `get_options_chain`, `get_company_filings`, `get_financial_filings`, `get_filing_content`, `validate_ticker`, `resolve_company_ticker`, `full_text_search`, `get_news_sentiment`, `get_earnings_calendar`, `get_insider_transactions`, `get_peers`, `get_scenario_shocks`, `execute_python` | `find_agent`, `resource://agent_cards/list`, `resource://agent_cards/{name}` |
+| 8010 | `get_prices`, `get_financials`, `get_options_chain`, `get_company_filings`, `get_financial_filings`, `get_filing_content`, `validate_ticker`, `resolve_company_ticker`, `full_text_search`, `get_news_sentiment`, `get_earnings_calendar`, `get_insider_transactions`, `get_peers`, `get_macro_indicators`, `get_scenario_shocks`, `get_sentiment_indicators`, `get_earnings_history`, `execute_python` | `find_agent`, `resource://agent_cards/list`, `resource://agent_cards/{name}` |
 
 No API keys required (SEC uses public API, news uses RSS feeds). Windows-compatible — `import resource` guarded by platform check.
 
@@ -25,8 +25,10 @@ Health check: `GET http://localhost:8010/health` → `{"status":"ok","agent":"mc
 | Cache | TTL | Notes |
 |---|---|---|
 | `get_prices` | 1 min | Key: `(ticker, period, interval)` |
+| `get_benchmark` | 1 h | Key: ticker — index benchmarks (^GSPC, ^VIX, etc.) |
 | `get_financials` | 1 h | Key: `(ticker,)` |
 | `get_news_sentiment` | 5 min | Only cached when articles found |
+| `get_macro_indicators` | 15 min | Key: `"macro"` — Treasury yields, VIX, DXY, sector ETFs |
 | `get_filing_content` | Permanent (LRU-200) | Filings are immutable |
 | `_fetch_submissions` | 6 h | Shared by `get_company_filings` + `get_financial_filings` |
 | `get_peers` | 24 h | yfinance Industry/Sector peer lists |
@@ -84,8 +86,11 @@ RSS feeds: Yahoo Finance, CNBC, MarketWatch, Seeking Alpha. VADER sentiment scor
 | Tool | Parameters | Returns |
 |---|---|---|
 | `get_peers` | `ticker` | List of up to 8 peer tickers via yfinance Industry/Sector `top_companies`. Dynamic discovery — no static mapping needed. Cached 24h. |
+| `get_macro_indicators` | — | Treasury yields (10Y, 2Y), VIX, DXY, yield-curve regime, sector ETF 1mo performance. Cached 15 min. |
 | `get_scenario_shocks` | `sector` (optional) | Historical crash returns for 4 scenarios (2008, 2020, dot-com, 2022 mild recession) using sector-specific ETFs (QQQ/XLP/XLF/etc). Cached 7 days. |
 | `get_insider_transactions` | `ticker`, `days` (90) | Structured insider buy/sell data from yfinance `Ticker.insider_transactions`. Returns `transactions` array + `summary` dict with total, buys, sells, direction, net_shares, net_value. |
+| `get_sentiment_indicators` | `ticker` | Short interest %, analyst consensus breakdown (buy/hold/sell), institutional ownership %. |
+| `get_earnings_history` | `ticker` | Last N quarters EPS estimates vs actuals, beat rate, average surprise %. |
 
 ### Python Runner Tool
 
