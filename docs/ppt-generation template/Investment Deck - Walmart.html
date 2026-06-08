@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Investment Recommendation | Walmart (WMT)</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;0,9..40,800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>deck-stage:not(:defined){visibility:hidden}</style>
+<style>
+  :root {
+    --navy: #0c1425;
+    --navy-mid: #162036;
+    --blue: #3b7dfa;
+    --blue-light: #e8f0fe;
+    --green: #22c55e;
+    --green-dark: #15803d;
+    --amber: #f59e0b;
+    --red: #ef4444;
+    --text: #1a2236;
+    --text-mid: #475569;
+    --text-light: #94a3b8;
+    --border: #e2e8f0;
+    --surface: #f1f5f9;
+  }
+
+  section {
+    font-family: 'DM Sans', system-ui, sans-serif;
+    padding: 100px 120px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    background: #fff;
+    color: var(--text);
+  }
+
+  /* ── Slide Label ── */
+  .slide-label {
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 2.5px;
+    text-transform: uppercase;
+    color: var(--blue);
+    margin-bottom: 18px;
+  }
+  .slide-label.light {
+    color: rgba(255,255,255,0.5);
+  }
+
+  /* ── Typography ── */
+  .slide-title {
+    font-size: 52px;
+    font-weight: 800;
+    line-height: 1.1;
+    letter-spacing: -1.5px;
+    color: var(--text);
+    margin-bottom: 24px;
+  }
+  .slide-title.light {
+    color: #fff;
+  }
+
+  .slide-subtitle {
+    font-size: 22px;
+    font-weight: 400;
+    color: var(--text-mid);
+    line-height: 1.5;
+    max-width: 900px;
+  }
+  .slide-subtitle.light {
+    color: rgba(255,255,255,0.7);
+  }
+
+  /* ── KPI Chips ── */
+  .kpi-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 28px;
+  }
+  .kpi-chip {
+    background: var(--surface);
+    border-radius: 16px;
+    padding: 36px 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .kpi-chip .label {
+    font-size: 15px;
+    font-weight: 500;
+    color: var(--text-mid);
+    letter-spacing: 0.3px;
+  }
+  .kpi-chip .value {
+    font-family: 'DM Mono', monospace;
+    font-size: 44px;
+    font-weight: 500;
+    letter-spacing: -1px;
+    color: var(--text);
+  }
+  .kpi-chip .value.pos { color: var(--green-dark); }
+  .kpi-chip .value.neg { color: var(--red); }
+  .kpi-chip .context {
+    font-size: 14px;
+    color: var(--text-light);
+  }
+
+  /* ── Dark slide ── */
+  .dark {
+    background: var(--navy);
+    color: #fff;
+  }
+  .dark .kpi-chip {
+    background: var(--navy-mid);
+  }
+  .dark .kpi-chip .label {
+    color: rgba(255,255,255,0.5);
+  }
+  .dark .kpi-chip .value {
+    color: #fff;
+  }
+
+  /* ── Tables ── */
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 20px;
+  }
+  .data-table th {
+    text-align: left;
+    font-weight: 600;
+    font-size: 14px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--text-light);
+    padding: 16px 24px;
+    border-bottom: 2px solid var(--border);
+  }
+  .data-table td {
+    padding: 22px 24px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+  }
+  .data-table tr:last-child td {
+    border-bottom: none;
+  }
+  .data-table .metric-name {
+    font-weight: 600;
+    color: var(--text);
+  }
+  .data-table .mono {
+    font-family: 'DM Mono', monospace;
+    font-weight: 400;
+    letter-spacing: -0.5px;
+  }
+
+  /* ── Scorecard ── */
+  .score-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+  }
+  .score-item {
+    background: var(--surface);
+    border-radius: 14px;
+    padding: 32px 28px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .score-item .dim {
+    font-size: 15px;
+    font-weight: 500;
+    color: var(--text-mid);
+  }
+  .score-item .rating-badge {
+    font-size: 18px;
+    font-weight: 700;
+    padding: 6px 18px;
+    border-radius: 8px;
+    display: inline-block;
+    width: fit-content;
+  }
+  .badge-strong {
+    background: #dcfce7;
+    color: var(--green-dark);
+  }
+  .badge-bullish {
+    background: #dbeafe;
+    color: #1d4ed8;
+  }
+  .badge-expensive {
+    background: #fef3c7;
+    color: #92400e;
+  }
+  .badge-moderate {
+    background: #f1f5f9;
+    color: #475569;
+  }
+  .badge-hold {
+    background: #dbeafe;
+    color: #1d4ed8;
+  }
+
+  /* ── Risk/Reward columns ── */
+  .rr-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 36px;
+    flex: 1;
+  }
+  .rr-col {
+    border-radius: 18px;
+    padding: 40px 36px;
+  }
+  .rr-col.opp {
+    background: #f0fdf4;
+    border: 1.5px solid #bbf7d0;
+  }
+  .rr-col.risk {
+    background: #fef2f2;
+    border: 1.5px solid #fecaca;
+  }
+  .rr-col h3 {
+    font-size: 22px;
+    font-weight: 700;
+    margin-bottom: 24px;
+  }
+  .rr-col.opp h3 { color: var(--green-dark); }
+  .rr-col.risk h3 { color: #b91c1c; }
+
+  .rr-col ul {
+    list-style: none;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+  .rr-col li {
+    font-size: 19px;
+    line-height: 1.4;
+    padding-left: 28px;
+    position: relative;
+    color: var(--text);
+  }
+  .rr-col li::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 8px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+  }
+  .rr-col.opp li::before { background: var(--green); }
+  .rr-col.risk li::before { background: var(--red); }
+
+  /* ── Thesis block ── */
+  .thesis-block {
+    background: var(--surface);
+    border-radius: 18px;
+    padding: 48px 56px;
+    font-size: 24px;
+    line-height: 1.7;
+    color: var(--text);
+    border-left: 5px solid var(--blue);
+    max-width: 1400px;
+  }
+
+  /* ── Conclusion ── */
+  .conclusion-center {
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+  }
+  .rec-badge {
+    font-family: 'DM Mono', monospace;
+    font-size: 64px;
+    font-weight: 500;
+    letter-spacing: -2px;
+    color: var(--blue);
+    margin-bottom: 8px;
+  }
+  .rec-conf {
+    font-size: 20px;
+    color: var(--text-light);
+    font-weight: 500;
+  }
+  .rec-text {
+    font-size: 22px;
+    line-height: 1.7;
+    color: var(--text-mid);
+    max-width: 880px;
+    text-wrap: pretty;
+  }
+
+  /* ── Peer table ── */
+  .peer-table th:not(:first-child),
+  .peer-table td:not(:first-child) {
+    text-align: center;
+  }
+  .peer-table .highlight {
+    background: rgba(59, 125, 250, 0.06);
+  }
+  .peer-table .highlight td {
+    font-weight: 600;
+  }
+
+  /* ── Footer ── */
+  .slide-footer {
+    position: absolute;
+    bottom: 36px;
+    left: 120px;
+    right: 120px;
+    display: flex;
+    justify-content: space-between;
+    font-size: 13px;
+    color: var(--text-light);
+  }
+  .dark .slide-footer {
+    color: rgba(255,255,255,0.3);
+  }
+
+  /* ── Divider ── */
+  .divider {
+    width: 60px;
+    height: 4px;
+    background: var(--blue);
+    border-radius: 2px;
+    margin-bottom: 28px;
+  }
+
+  /* ── Two-col layout ── */
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 48px;
+    align-items: start;
+  }
+
+  /* ── Animations ── */
+  @media (prefers-reduced-motion: no-preference) {
+    [data-deck-active] .anim-up {
+      animation: slideUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+    }
+    [data-deck-active] .anim-up:nth-child(2) { animation-delay: 0.08s; }
+    [data-deck-active] .anim-up:nth-child(3) { animation-delay: 0.14s; }
+    [data-deck-active] .anim-up:nth-child(4) { animation-delay: 0.20s; }
+    [data-deck-active] .anim-up:nth-child(5) { animation-delay: 0.26s; }
+    [data-deck-active] .anim-up:nth-child(6) { animation-delay: 0.32s; }
+
+    @keyframes slideUp {
+      from { opacity: 0; transform: translateY(32px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+  }
+</style>
+</head>
+<body>
+
+<deck-stage width="1920" height="1080">
+
+  <!-- ─── SLIDE 1: TITLE ─── -->
+  <section class="dark" data-label="Title" style="padding: 100px 120px; justify-content: space-between;">
+    <div>
+      <div class="slide-label light anim-up">Equity Research Report</div>
+      <h1 class="slide-title light anim-up" style="font-size: 72px; letter-spacing: -3px; margin-bottom: 16px;">
+        Walmart Inc.
+      </h1>
+      <p class="slide-subtitle light anim-up" style="font-size: 28px;">
+        NYSE: WMT · Consumer Defensive · Discount Retail
+      </p>
+    </div>
+
+    <div class="kpi-row anim-up" style="grid-template-columns: repeat(3, auto); gap: 40px; justify-content: start;">
+      <div style="display:flex;flex-direction:column;gap:4px;">
+        <span style="font-size:14px;color:rgba(255,255,255,0.45);font-weight:500;">Recommendation</span>
+        <span style="font-family:'DM Mono',monospace;font-size:36px;font-weight:500;color:var(--blue);">HOLD</span>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:4px;">
+        <span style="font-size:14px;color:rgba(255,255,255,0.45);font-weight:500;">Confidence</span>
+        <span style="font-family:'DM Mono',monospace;font-size:36px;font-weight:500;color:#fff;">58%</span>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:4px;">
+        <span style="font-size:14px;color:rgba(255,255,255,0.45);font-weight:500;">Median Target</span>
+        <span style="font-family:'DM Mono',monospace;font-size:36px;font-weight:500;color:#fff;">$145.25</span>
+      </div>
+    </div>
+
+    <div class="slide-footer">
+      <span>© 2026 Institutional Equity Research</span>
+      <span>For informational purposes only</span>
+    </div>
+  </section>
+
+  <!-- ─── SLIDE 2: KEY METRICS ─── -->
+  <section data-label="Key Metrics">
+    <div class="slide-label anim-up">Key Metrics</div>
+    <h2 class="slide-title anim-up" style="margin-bottom: 48px;">Performance Snapshot</h2>
+
+    <div class="kpi-row">
+      <div class="kpi-chip anim-up">
+        <span class="label">Revenue Growth</span>
+        <span class="value pos">+7.3%</span>
+        <span class="context">Year-over-year</span>
+      </div>
+      <div class="kpi-chip anim-up">
+        <span class="label">Return on Equity</span>
+        <span class="value">24.1%</span>
+        <span class="context">Strong capital efficiency</span>
+      </div>
+      <div class="kpi-chip anim-up">
+        <span class="label">Probability of Profit</span>
+        <span class="value">81.8%</span>
+        <span class="context">Monte Carlo simulation</span>
+      </div>
+      <div class="kpi-chip anim-up">
+        <span class="label">Median Upside</span>
+        <span class="value pos">+22.2%</span>
+        <span class="context">To target price</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── SLIDE 3: INVESTMENT THESIS ─── -->
+  <section data-label="Investment Thesis">
+    <div class="slide-label anim-up">Investment Thesis</div>
+    <h2 class="slide-title anim-up" style="margin-bottom: 40px;">Executive Summary</h2>
+
+    <div class="thesis-block anim-up">
+      Walmart continues to demonstrate resilient earnings growth, strong capital efficiency, and expanding omnichannel capabilities. The company remains one of the highest-quality defensive retail franchises globally. While current valuation appears rich relative to intrinsic value estimates, strong operational execution, improving profitability, and favorable technical indicators support maintaining exposure.
+    </div>
+  </section>
+
+  <!-- ─── SLIDE 4: FINANCIAL PERFORMANCE ─── -->
+  <section data-label="Financials">
+    <div class="slide-label anim-up">Financial Performance</div>
+    <h2 class="slide-title anim-up" style="margin-bottom: 40px;">Earnings &amp; Growth</h2>
+
+    <table class="data-table anim-up">
+      <thead>
+        <tr>
+          <th style="width:40%;">Metric</th>
+          <th style="width:30%;">Current</th>
+          <th style="width:30%;">YoY Change</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="metric-name">Revenue</td>
+          <td class="mono">$177.8B</td>
+          <td class="mono" style="color:var(--green-dark);">+7.3%</td>
+        </tr>
+        <tr>
+          <td class="metric-name">Operating Income</td>
+          <td class="mono">$7.5B</td>
+          <td class="mono" style="color:var(--green-dark);">+5.6%</td>
+        </tr>
+        <tr>
+          <td class="metric-name">Net Income</td>
+          <td class="mono">—</td>
+          <td class="mono" style="color:var(--green-dark);">+18.3%</td>
+        </tr>
+        <tr>
+          <td class="metric-name">Diluted EPS</td>
+          <td class="mono">$0.67</td>
+          <td class="mono" style="color:var(--green-dark);">Growth</td>
+        </tr>
+        <tr>
+          <td class="metric-name">Dividend Per Share</td>
+          <td class="mono">$0.99</td>
+          <td class="mono" style="color:var(--green-dark);">+5.3%</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ─── SLIDE 5: VALUATION ─── -->
+  <section data-label="Valuation">
+    <div class="slide-label anim-up">Valuation</div>
+    <h2 class="slide-title anim-up" style="margin-bottom: 40px;">Scenario Analysis</h2>
+
+    <div class="two-col anim-up">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Metric</th>
+            <th>Value</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="metric-name">Prob. of Positive Return</td>
+            <td class="mono">81.8%</td>
+          </tr>
+          <tr>
+            <td class="metric-name">Median Target Price</td>
+            <td class="mono">$145.25</td>
+          </tr>
+          <tr>
+            <td class="metric-name">Expected Upside</td>
+            <td class="mono" style="color:var(--green-dark);">+22.2%</td>
+          </tr>
+          <tr>
+            <td class="metric-name">Bull Case Target</td>
+            <td class="mono">$193.41</td>
+          </tr>
+          <tr>
+            <td class="metric-name">DCF Fair Value</td>
+            <td class="mono">$73.77</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div style="display:flex;flex-direction:column;gap:20px;padding-top:16px;">
+        <div style="background:var(--surface);border-radius:16px;padding:32px;">
+          <div style="font-size:14px;color:var(--text-light);font-weight:500;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:12px;">Bull Case</div>
+          <div style="font-family:'DM Mono',monospace;font-size:40px;font-weight:500;color:var(--green-dark);">$193.41</div>
+        </div>
+        <div style="background:var(--surface);border-radius:16px;padding:32px;">
+          <div style="font-size:14px;color:var(--text-light);font-weight:500;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:12px;">Base Case</div>
+          <div style="font-family:'DM Mono',monospace;font-size:40px;font-weight:500;color:var(--blue);">$145.25</div>
+        </div>
+        <div style="background:var(--surface);border-radius:16px;padding:32px;">
+          <div style="font-size:14px;color:var(--text-light);font-weight:500;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:12px;">DCF Fair Value</div>
+          <div style="font-family:'DM Mono',monospace;font-size:40px;font-weight:500;color:var(--amber);">$73.77</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── SLIDE 6: SCORECARD ─── -->
+  <section data-label="Scorecard">
+    <div class="slide-label anim-up">Assessment</div>
+    <h2 class="slide-title anim-up" style="margin-bottom: 40px;">Investment Scorecard</h2>
+
+    <div class="score-grid anim-up">
+      <div class="score-item">
+        <span class="dim">Fundamentals</span>
+        <span class="rating-badge badge-strong">Strong</span>
+      </div>
+      <div class="score-item">
+        <span class="dim">Profitability</span>
+        <span class="rating-badge badge-strong">Strong</span>
+      </div>
+      <div class="score-item">
+        <span class="dim">Technical Outlook</span>
+        <span class="rating-badge badge-bullish">Bullish</span>
+      </div>
+      <div class="score-item">
+        <span class="dim">Valuation</span>
+        <span class="rating-badge badge-expensive">Expensive</span>
+      </div>
+      <div class="score-item">
+        <span class="dim">Risk Profile</span>
+        <span class="rating-badge badge-moderate">Moderate</span>
+      </div>
+      <div class="score-item">
+        <span class="dim">Recommendation</span>
+        <span class="rating-badge badge-hold">HOLD</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── SLIDE 7: PEER COMPARISON ─── -->
+  <section data-label="Peer Comparison">
+    <div class="slide-label anim-up">Competitive Landscape</div>
+    <h2 class="slide-title anim-up" style="margin-bottom: 40px;">Peer Comparison</h2>
+
+    <table class="data-table peer-table anim-up">
+      <thead>
+        <tr>
+          <th style="width:30%;">Metric</th>
+          <th style="width:23%;">Walmart</th>
+          <th style="width:23%;">Costco</th>
+          <th style="width:23%;">Dollar Tree</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="highlight">
+          <td class="metric-name">Revenue Growth</td>
+          <td class="mono">7.3%</td>
+          <td class="mono">21.5%</td>
+          <td class="mono" style="color:var(--text-light);">N/A</td>
+        </tr>
+        <tr>
+          <td class="metric-name">ROE</td>
+          <td class="mono">24.1%</td>
+          <td class="mono">29.2%</td>
+          <td class="mono" style="color:var(--text-light);">N/A</td>
+        </tr>
+        <tr class="highlight">
+          <td class="metric-name">Operating Margin</td>
+          <td class="mono">4.2%</td>
+          <td class="mono" style="color:var(--text-light);">N/A</td>
+          <td class="mono">9.1%</td>
+        </tr>
+        <tr>
+          <td class="metric-name">P/E Ratio</td>
+          <td class="mono">41.9x</td>
+          <td class="mono" style="color:var(--text-light);">N/A</td>
+          <td class="mono" style="color:var(--text-light);">N/A</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ─── SLIDE 8: RISK-REWARD ─── -->
+  <section data-label="Risk-Reward">
+    <div class="slide-label anim-up">Risk–Reward</div>
+    <h2 class="slide-title anim-up" style="margin-bottom: 40px;">Assessment</h2>
+
+    <div class="rr-grid anim-up">
+      <div class="rr-col opp">
+        <h3>Growth Opportunities</h3>
+        <ul>
+          <li>Expansion of digital commerce platform</li>
+          <li>Advertising and membership revenue growth</li>
+          <li>Margin improvement initiatives</li>
+          <li>Dividend growth trajectory</li>
+          <li>Strong consumer demand resilience</li>
+        </ul>
+      </div>
+      <div class="rr-col risk">
+        <h3>Key Risks</h3>
+        <ul>
+          <li>Premium valuation multiples</li>
+          <li>MACD bearish momentum signal</li>
+          <li>Competitive pressure from Costco</li>
+          <li>Elevated market volatility</li>
+          <li>Potential earnings multiple compression</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── SLIDE 9: CONCLUSION ─── -->
+  <section class="dark" data-label="Conclusion" style="justify-content: center; align-items: center; text-align: center;">
+    <div class="slide-label light anim-up">Conclusion</div>
+    <div class="divider anim-up" style="margin-left:auto;margin-right:auto;background:var(--blue);margin-bottom:20px;"></div>
+
+    <div class="rec-badge anim-up">HOLD</div>
+    <div class="rec-conf anim-up" style="color:rgba(255,255,255,0.45);margin-bottom:32px;">58% Confidence</div>
+
+    <p class="rec-text anim-up" style="color:rgba(255,255,255,0.7);">
+      Walmart remains a high-quality, defensive retail franchise with attractive long-term fundamentals and strong operating execution. However, current valuation levels limit near-term upside, supporting a HOLD recommendation while monitoring future opportunities for accumulation on market weakness.
+    </p>
+
+    <div class="slide-footer">
+      <span>© 2026 Institutional Equity Research</span>
+      <span>For informational purposes only</span>
+    </div>
+  </section>
+
+</deck-stage>
+
+<script src="deck-stage.js"></script>
+</body>
+</html>

@@ -61,6 +61,7 @@ class SentimentIntelligence(BaseModel):
     confidence_score: float
     key_risks: list[str]
     key_catalysts: list[str]
+    peer_comparison: list[dict] = []
 
 
 # ── InvestmentBrief: final aggregation → output to user ──

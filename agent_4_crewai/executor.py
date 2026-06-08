@@ -93,6 +93,22 @@ class MarketContextAgent(BaseAgent):
         crew_builder = MarketContextCrew(wrapper)
         result = await crew_builder.analyze(ticker, precollected_data=data)
         result["_retrieved_contexts"] = _extract_context_contexts(data)
+        peer_comparison = []
+        for sym, pdata in data.get("peers", {}).items():
+            pinfo = (pdata.get("financials") or {}).get("info", {})
+            if pinfo:
+                metrics = {}
+                for key, label, pct in [
+                    ("revenueGrowth", "Revenue Growth", True),
+                    ("returnOnEquity", "ROE", True),
+                    ("operatingMargins", "Operating Margin", True),
+                    ("trailingPE", "P/E Ratio", False),
+                ]:
+                    if pinfo.get(key) is not None:
+                        metrics[label] = f"{pinfo[key]*100:.1f}%" if pct else f"{pinfo[key]:.1f}x"
+                if metrics:
+                    peer_comparison.append({"ticker": sym, "metrics": metrics})
+        result["peer_comparison"] = peer_comparison[:3]
         return result
 
     async def stream(
