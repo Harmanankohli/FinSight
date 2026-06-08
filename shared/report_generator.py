@@ -1534,3 +1534,57 @@ def generate_docx(
     doc.save(buf)
     buf.seek(0)
     return buf
+
+
+# ── Jinja2 HTML Generation ─────────────────────────────────────────────────────
+
+
+def _deck_to_template_context(deck: DeckData) -> dict:
+    """Build Jinja2 template context from DeckData."""
+    rec_colors = {"BUY": "var(--green)", "HOLD": "var(--blue)", "SELL": "var(--red)"}
+    confidence_pct = f"{deck.confidence:.0%}"
+
+    scenario_cards = []
+    if deck.scenarios.get("bull"):
+        scenario_cards.append(("Bull Case", deck.scenarios["bull"], "var(--green-dark)"))
+    if deck.scenarios.get("base"):
+        scenario_cards.append(("Base Case", deck.scenarios["base"], "var(--blue)"))
+    if deck.scenarios.get("dcf"):
+        scenario_cards.append(("DCF Fair Value", deck.scenarios["dcf"], "var(--amber)"))
+
+    return {
+        "deck": deck,
+        "rec_colors": rec_colors,
+        "confidence_pct": confidence_pct,
+        "scenario_cards": scenario_cards,
+    }
+
+
+_jinja_env: "jinja2.Environment | None" = None
+
+
+def _get_jinja_env() -> "jinja2.Environment":
+    global _jinja_env
+    if _jinja_env is None:
+        from pathlib import Path
+        import jinja2
+        template_dir = Path(__file__).parent / "templates"
+        _jinja_env = jinja2.Environment(
+            loader=jinja2.FileSystemLoader(str(template_dir)),
+            autoescape=True,
+        )
+    return _jinja_env
+
+
+def generate_html(
+    brief_data: dict,
+    ticker: str,
+    recommendation: str,
+    confidence: float,
+    analysis_date: str,
+) -> str:
+    """Generate a standalone HTML investment deck. Returns HTML string."""
+    deck = _extract_deck_data(brief_data, ticker, recommendation, confidence, analysis_date)
+    ctx = _deck_to_template_context(deck)
+    template = _get_jinja_env().get_template("investment_deck.html")
+    return template.render(**ctx)

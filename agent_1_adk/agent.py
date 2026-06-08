@@ -172,7 +172,7 @@ async def generate_report(
     format: str = "pptx",
     tool_context: ToolContext = None,
 ) -> str:
-    """Generate a downloadable investment report (PPTX or DOCX) for a ticker.
+    """Generate a downloadable investment report (PPTX, DOCX, or HTML) for a ticker.
 
     Call this when the user asks for a report, presentation, document, export,
     or download of their investment analysis. The report is generated from the
@@ -180,15 +180,15 @@ async def generate_report(
 
     Args:
         ticker: The stock ticker symbol (e.g. "NVDA", "AAPL").
-        format: Report format — either "pptx" (PowerPoint) or "docx" (Word).
+        format: Report format — "pptx" (PowerPoint), "docx" (Word), or "html" (browser deck).
             Defaults to "pptx".
 
     Returns:
         A message with the download URL, or an error if no brief exists.
     """
     fmt = format.lower().strip()
-    if fmt not in ("pptx", "docx"):
-        return f"Invalid format '{format}'. Use 'pptx' or 'docx'."
+    if fmt not in ("pptx", "docx", "html"):
+        return f"Invalid format '{format}'. Use 'pptx', 'docx', or 'html'."
 
     ticker = ticker.upper().strip()
 
@@ -208,23 +208,32 @@ async def generate_report(
     except json.JSONDecodeError:
         brief_data = {}
 
-    from shared.report_generator import generate_pptx, generate_docx
-    generator = generate_pptx if fmt == "pptx" else generate_docx
-    buf = generator(
-        brief_data,
-        ticker,
-        latest.get("recommendation", "UNKNOWN"),
-        latest.get("confidence") or 0.0,
-        latest.get("analysis_date") or "",
-    )
+    from shared.report_generator import generate_pptx, generate_docx, generate_html
 
     analysis_date = (latest.get("analysis_date") or "report").replace(":", "-")
     filename = f"FinSight_{ticker}_{analysis_date}.{fmt}"
     filepath = _REPORTS_DIR / filename
-    filepath.write_bytes(buf.getvalue())
+
+    if fmt == "html":
+        content = generate_html(
+            brief_data, ticker,
+            latest.get("recommendation", "UNKNOWN"),
+            latest.get("confidence") or 0.0,
+            latest.get("analysis_date") or "",
+        )
+        filepath.write_text(content, encoding="utf-8")
+    else:
+        generator = generate_pptx if fmt == "pptx" else generate_docx
+        buf = generator(
+            brief_data, ticker,
+            latest.get("recommendation", "UNKNOWN"),
+            latest.get("confidence") or 0.0,
+            latest.get("analysis_date") or "",
+        )
+        filepath.write_bytes(buf.getvalue())
 
     download_path = f"/reports/{filename}"
-    fmt_label = "PowerPoint" if fmt == "pptx" else "Word"
+    fmt_label = {"pptx": "PowerPoint", "docx": "Word", "html": "HTML Deck"}[fmt]
     return (
         f"{fmt_label} report generated for {ticker}.\n"
         f"Download: {_HOST_PORT}{download_path}"

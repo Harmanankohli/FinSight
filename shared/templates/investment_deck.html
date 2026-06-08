@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Investment Recommendation | {{ deck.company_name }} ({{ deck.ticker }})</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;0,9..40,800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>deck-stage:not(:defined){visibility:hidden}</style>
+<style>
+  :root {
+    --navy: #0c1425;
+    --navy-mid: #162036;
+    --blue: #3b7dfa;
+    --blue-light: #e8f0fe;
+    --green: #22c55e;
+    --green-dark: #15803d;
+    --amber: #f59e0b;
+    --red: #ef4444;
+    --text: #1a2236;
+    --text-mid: #475569;
+    --text-light: #94a3b8;
+    --border: #e2e8f0;
+    --surface: #f1f5f9;
+  }
+
+  section {
+    font-family: 'DM Sans', system-ui, sans-serif;
+    padding: 100px 120px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    background: #fff;
+    color: var(--text);
+  }
+
+  .slide-label {
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 2.5px;
+    text-transform: uppercase;
+    color: var(--blue);
+    margin-bottom: 18px;
+  }
+  .slide-label.light {
+    color: rgba(255,255,255,0.5);
+  }
+
+  .slide-title {
+    font-size: 52px;
+    font-weight: 800;
+    line-height: 1.1;
+    letter-spacing: -1.5px;
+    color: var(--text);
+    margin-bottom: 24px;
+  }
+  .slide-title.light {
+    color: #fff;
+  }
+
+  .slide-subtitle {
+    font-size: 22px;
+    font-weight: 400;
+    color: var(--text-mid);
+    line-height: 1.5;
+    max-width: 900px;
+  }
+  .slide-subtitle.light {
+    color: rgba(255,255,255,0.7);
+  }
+
+  .kpi-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 28px;
+  }
+  .kpi-chip {
+    background: var(--surface);
+    border-radius: 16px;
+    padding: 36px 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .kpi-chip .label {
+    font-size: 15px;
+    font-weight: 500;
+    color: var(--text-mid);
+    letter-spacing: 0.3px;
+  }
+  .kpi-chip .value {
+    font-family: 'DM Mono', monospace;
+    font-size: 44px;
+    font-weight: 500;
+    letter-spacing: -1px;
+    color: var(--text);
+  }
+  .kpi-chip .value.pos { color: var(--green-dark); }
+  .kpi-chip .value.neg { color: var(--red); }
+  .kpi-chip .context {
+    font-size: 14px;
+    color: var(--text-light);
+  }
+
+  .dark {
+    background: var(--navy);
+    color: #fff;
+  }
+  .dark .kpi-chip {
+    background: var(--navy-mid);
+  }
+  .dark .kpi-chip .label {
+    color: rgba(255,255,255,0.5);
+  }
+  .dark .kpi-chip .value {
+    color: #fff;
+  }
+
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 20px;
+  }
+  .data-table th {
+    text-align: left;
+    font-weight: 600;
+    font-size: 14px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--text-light);
+    padding: 16px 24px;
+    border-bottom: 2px solid var(--border);
+  }
+  .data-table td {
+    padding: 22px 24px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+  }
+  .data-table tr:last-child td {
+    border-bottom: none;
+  }
+  .data-table .metric-name {
+    font-weight: 600;
+    color: var(--text);
+  }
+  .data-table .mono {
+    font-family: 'DM Mono', monospace;
+    font-weight: 400;
+    letter-spacing: -0.5px;
+  }
+
+  .score-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+  }
+  .score-item {
+    background: var(--surface);
+    border-radius: 14px;
+    padding: 32px 28px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .score-item .dim {
+    font-size: 15px;
+    font-weight: 500;
+    color: var(--text-mid);
+  }
+  .score-item .rating-badge {
+    font-size: 18px;
+    font-weight: 700;
+    padding: 6px 18px;
+    border-radius: 8px;
+    display: inline-block;
+    width: fit-content;
+  }
+  .badge-strong {
+    background: #dcfce7;
+    color: var(--green-dark);
+  }
+  .badge-bullish {
+    background: #dbeafe;
+    color: #1d4ed8;
+  }
+  .badge-expensive {
+    background: #fef3c7;
+    color: #92400e;
+  }
+  .badge-moderate {
+    background: #f1f5f9;
+    color: #475569;
+  }
+  .badge-hold {
+    background: #dbeafe;
+    color: #1d4ed8;
+  }
+
+  .rr-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 36px;
+    flex: 1;
+  }
+  .rr-col {
+    border-radius: 18px;
+    padding: 40px 36px;
+  }
+  .rr-col.opp {
+    background: #f0fdf4;
+    border: 1.5px solid #bbf7d0;
+  }
+  .rr-col.risk {
+    background: #fef2f2;
+    border: 1.5px solid #fecaca;
+  }
+  .rr-col h3 {
+    font-size: 22px;
+    font-weight: 700;
+    margin-bottom: 24px;
+  }
+  .rr-col.opp h3 { color: var(--green-dark); }
+  .rr-col.risk h3 { color: #b91c1c; }
+
+  .rr-col ul {
+    list-style: none;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+  .rr-col li {
+    font-size: 19px;
+    line-height: 1.4;
+    padding-left: 28px;
+    position: relative;
+    color: var(--text);
+  }
+  .rr-col li::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 8px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+  }
+  .rr-col.opp li::before { background: var(--green); }
+  .rr-col.risk li::before { background: var(--red); }
+
+  .thesis-block {
+    background: var(--surface);
+    border-radius: 18px;
+    padding: 48px 56px;
+    font-size: 24px;
+    line-height: 1.7;
+    color: var(--text);
+    border-left: 5px solid var(--blue);
+    max-width: 1400px;
+  }
+
+  .conclusion-center {
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+  }
+  .rec-badge {
+    font-family: 'DM Mono', monospace;
+    font-size: 64px;
+    font-weight: 500;
+    letter-spacing: -2px;
+    color: var(--blue);
+    margin-bottom: 8px;
+  }
+  .rec-conf {
+    font-size: 20px;
+    color: var(--text-light);
+    font-weight: 500;
+  }
+  .rec-text {
+    font-size: 22px;
+    line-height: 1.7;
+    color: var(--text-mid);
+    max-width: 880px;
+    text-wrap: pretty;
+  }
+
+  .peer-table th:not(:first-child),
+  .peer-table td:not(:first-child) {
+    text-align: center;
+  }
+  .peer-table .highlight {
+    background: rgba(59, 125, 250, 0.06);
+  }
+  .peer-table .highlight td {
+    font-weight: 600;
+  }
+
+  .slide-footer {
+    position: absolute;
+    bottom: 36px;
+    left: 120px;
+    right: 120px;
+    display: flex;
+    justify-content: space-between;
+    font-size: 13px;
+    color: var(--text-light);
+  }
+  .dark .slide-footer {
+    color: rgba(255,255,255,0.3);
+  }
+
+  .divider {
+    width: 60px;
+    height: 4px;
+    background: var(--blue);
+    border-radius: 2px;
+    margin-bottom: 28px;
+  }
+
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 48px;
+    align-items: start;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    [data-deck-active] .anim-up {
+      animation: slideUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+    }
+    [data-deck-active] .anim-up:nth-child(2) { animation-delay: 0.08s; }
+    [data-deck-active] .anim-up:nth-child(3) { animation-delay: 0.14s; }
+    [data-deck-active] .anim-up:nth-child(4) { animation-delay: 0.20s; }
+    [data-deck-active] .anim-up:nth-child(5) { animation-delay: 0.26s; }
+    [data-deck-active] .anim-up:nth-child(6) { animation-delay: 0.32s; }
+
+    @keyframes slideUp {
+      from { opacity: 0; transform: translateY(32px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+  }
+</style>
+</head>
+<body>
+
+<deck-stage width="1920" height="1080">
+
+  <!-- ─── SLIDE 1: TITLE ─── -->
+  <section class="dark" data-label="Title" style="padding:100px 120px;justify-content:space-between;">
+    <div>
+      <div class="slide-label light anim-up">Equity Research Report</div>
+      <h1 class="slide-title light anim-up" style="font-size:72px;letter-spacing:-3px;margin-bottom:16px;">
+        {{ deck.company_name }}
+      </h1>
+      <p class="slide-subtitle light anim-up" style="font-size:28px;">
+        {{ deck.exchange }}: {{ deck.ticker }}{% if deck.sector %} · {{ deck.sector }}{% endif %}
+      </p>
+    </div>
+
+    <div class="kpi-row anim-up" style="grid-template-columns:repeat(3,auto);gap:40px;justify-content:start;">
+      <div style="display:flex;flex-direction:column;gap:4px;">
+        <span style="font-size:14px;color:rgba(255,255,255,0.45);font-weight:500;">Recommendation</span>
+        <span style="font-family:'DM Mono',monospace;font-size:36px;font-weight:500;color:{{ rec_colors.get(deck.recommendation, 'var(--blue)') }};">{{ deck.recommendation }}</span>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:4px;">
+        <span style="font-size:14px;color:rgba(255,255,255,0.45);font-weight:500;">Confidence</span>
+        <span style="font-family:'DM Mono',monospace;font-size:36px;font-weight:500;color:#fff;">{{ confidence_pct }}</span>
+      </div>
+      {% if deck.scenarios.get('base') %}
+      <div style="display:flex;flex-direction:column;gap:4px;">
+        <span style="font-size:14px;color:rgba(255,255,255,0.45);font-weight:500;">Median Target</span>
+        <span style="font-family:'DM Mono',monospace;font-size:36px;font-weight:500;color:#fff;">{{ deck.scenarios['base'] }}</span>
+      </div>
+      {% endif %}
+    </div>
+
+    <div class="slide-footer"><span>© 2026 Institutional Equity Research</span><span>For informational purposes only</span></div>
+  </section>
+
+  <!-- ─── SLIDE 2: KEY METRICS ─── -->
+  {% if deck.kpi_chips %}
+  <section data-label="Key Metrics">
+    <div class="slide-label anim-up">Key Metrics</div>
+    <h2 class="slide-title anim-up" style="margin-bottom:48px;">Performance Snapshot</h2>
+
+    <div class="kpi-row">
+      {% for chip in deck.kpi_chips[:4] %}
+      <div class="kpi-chip anim-up">
+        <span class="label">{{ chip.label }}</span>
+        <span class="value {{ 'pos' if chip.positive else 'neg' }}">{{ chip.value }}</span>
+        <span class="context">{{ chip.context }}</span>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  <!-- ─── SLIDE 3: INVESTMENT THESIS ─── -->
+  {% if deck.executive_summary %}
+  <section data-label="Investment Thesis">
+    <div class="slide-label anim-up">Investment Thesis</div>
+    <h2 class="slide-title anim-up" style="margin-bottom:40px;">Executive Summary</h2>
+
+    <div class="thesis-block anim-up">
+      {{ deck.executive_summary }}
+    </div>
+  </section>
+  {% endif %}
+
+  <!-- ─── SLIDE 4: FINANCIAL PERFORMANCE ─── -->
+  {% if deck.financials %}
+  <section data-label="Financials">
+    <div class="slide-label anim-up">Financial Performance</div>
+    <h2 class="slide-title anim-up" style="margin-bottom:40px;">Earnings &amp; Growth</h2>
+
+    <table class="data-table anim-up">
+      <thead>
+        <tr>
+          <th style="width:40%;">Metric</th>
+          <th style="width:30%;">Current</th>
+          <th style="width:30%;">Context</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for metric, current, context in deck.financials[:8] %}
+        <tr>
+          <td class="metric-name">{{ metric }}</td>
+          <td class="mono">{{ current }}</td>
+          <td class="mono" {% if context and context.startswith('+') %}style="color:var(--green-dark);"{% endif %}>{{ context }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+  {% endif %}
+
+  <!-- ─── SLIDE 5: VALUATION ─── -->
+  {% if deck.valuation_table or deck.scenarios %}
+  <section data-label="Valuation">
+    <div class="slide-label anim-up">Valuation</div>
+    <h2 class="slide-title anim-up" style="margin-bottom:40px;">Scenario Analysis</h2>
+
+    <div class="two-col anim-up">
+      {% if deck.valuation_table %}
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Metric</th>
+            <th>Value</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for label, value in deck.valuation_table %}
+          <tr>
+            <td class="metric-name">{{ label }}</td>
+            <td class="mono">{{ value }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div></div>
+      {% endif %}
+
+      {% if scenario_cards %}
+      <div style="display:flex;flex-direction:column;gap:20px;padding-top:16px;">
+        {% for label, value, color in scenario_cards %}
+        <div style="background:var(--surface);border-radius:16px;padding:32px;">
+          <div style="font-size:14px;color:var(--text-light);font-weight:500;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:12px;">{{ label }}</div>
+          <div style="font-family:'DM Mono',monospace;font-size:40px;font-weight:500;color:{{ color }};">{{ value }}</div>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+  </section>
+  {% endif %}
+
+  <!-- ─── SLIDE 6: SCORECARD ─── -->
+  {% if deck.scorecard|length > 1 %}
+  <section data-label="Scorecard">
+    <div class="slide-label anim-up">Assessment</div>
+    <h2 class="slide-title anim-up" style="margin-bottom:40px;">Investment Scorecard</h2>
+
+    <div class="score-grid anim-up">
+      {% for dim, rating, badge_type in deck.scorecard[:6] %}
+      <div class="score-item">
+        <span class="dim">{{ dim }}</span>
+        <span class="rating-badge badge-{{ badge_type }}">{{ rating }}</span>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  <!-- ─── SLIDE 7: PEER COMPARISON ─── -->
+  {% if deck.peers and deck.peer_names %}
+  <section data-label="Peer Comparison">
+    <div class="slide-label anim-up">Competitive Landscape</div>
+    <h2 class="slide-title anim-up" style="margin-bottom:40px;">Peer Comparison</h2>
+
+    <table class="data-table peer-table anim-up">
+      <thead>
+        <tr>
+          <th style="width:30%;">Metric</th>
+          <th style="width:23%;">{{ deck.ticker }}</th>
+          {% for pname in deck.peer_names[:2] %}
+          <th style="width:23%;">{{ pname }}</th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for peer_row in deck.peers %}
+        <tr class="{{ 'highlight' if loop.index is odd }}">
+          <td class="metric-name">{{ peer_row.get('metric', '') }}</td>
+          <td class="mono">{{ peer_row.get('col0', 'N/A') }}</td>
+          <td class="mono">{{ peer_row.get('col1', 'N/A') }}</td>
+          {% if deck.peer_names|length > 1 %}
+          <td class="mono" style="color:var(--text-light);">{{ peer_row.get('col2', 'N/A') }}</td>
+          {% endif %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+  {% endif %}
+
+  <!-- ─── SLIDE 8: RISK-REWARD ─── -->
+  {% if deck.opportunities or deck.risks %}
+  <section data-label="Risk-Reward">
+    <div class="slide-label anim-up">Risk–Reward</div>
+    <h2 class="slide-title anim-up" style="margin-bottom:40px;">Assessment</h2>
+
+    <div class="rr-grid anim-up">
+      {% if deck.opportunities %}
+      <div class="rr-col opp">
+        <h3>Growth Opportunities</h3>
+        <ul>
+          {% for opp in deck.opportunities[:5] %}
+          <li>{{ opp }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% endif %}
+      {% if deck.risks %}
+      <div class="rr-col risk">
+        <h3>Key Risks</h3>
+        <ul>
+          {% for risk in deck.risks[:5] %}
+          <li>{{ risk }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% endif %}
+    </div>
+  </section>
+  {% endif %}
+
+  <!-- ─── SLIDE 9: CONCLUSION ─── -->
+  <section class="dark" data-label="Conclusion" style="justify-content: center; align-items: center; text-align: center;">
+    <div class="slide-label light anim-up">Conclusion</div>
+    <div class="divider anim-up" style="margin-left:auto;margin-right:auto;background:var(--blue);margin-bottom:20px;"></div>
+
+    <div class="rec-badge anim-up">{{ deck.recommendation }}</div>
+    <div class="rec-conf anim-up" style="color:rgba(255,255,255,0.45);margin-bottom:32px;">{{ confidence_pct }} Confidence</div>
+
+    {% if deck.executive_summary %}
+    <p class="rec-text anim-up" style="color:rgba(255,255,255,0.7);">
+      {{ deck.executive_summary }}
+    </p>
+    {% endif %}
+
+    <div class="slide-footer">
+      <span>© 2026 Institutional Equity Research</span>
+      <span>For informational purposes only</span>
+    </div>
+  </section>
+
+</deck-stage>
+
+<script>
+/* deck-stage.js embedded inline */
+{% include "deck-stage.js" %}
+</script>
+</body>
+</html>

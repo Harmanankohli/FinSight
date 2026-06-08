@@ -153,6 +153,7 @@ async def session_events(request: Request) -> JSONResponse:
 _REPORT_CONTENT_TYPES = {
     "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "html": "text/html",
 }
 
 
@@ -164,7 +165,7 @@ async def _build_report_response(
     analysis_date: str,
     fmt: str,
 ) -> Response:
-    from shared.report_generator import generate_pptx, generate_docx
+    from shared.report_generator import generate_pptx, generate_docx, generate_html
 
     brief_data: dict = {}
     if brief_json_str:
@@ -173,12 +174,22 @@ async def _build_report_response(
         except json.JSONDecodeError:
             pass
 
+    safe_date = (analysis_date or "report").replace(":", "-")
+    filename = f"FinSight_{ticker}_{safe_date}.{fmt}"
+
+    if fmt == "html":
+        html_str = generate_html(brief_data, ticker, recommendation or "UNKNOWN",
+                                 confidence or 0.0, analysis_date or "")
+        return Response(
+            content=html_str,
+            media_type="text/html",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
     generator = generate_pptx if fmt == "pptx" else generate_docx
     buf = generator(brief_data, ticker, recommendation or "UNKNOWN",
                     confidence or 0.0, analysis_date or "")
 
-    safe_date = (analysis_date or "report").replace(":", "-")
-    filename = f"FinSight_{ticker}_{safe_date}.{fmt}"
     return Response(
         content=buf.getvalue(),
         media_type=_REPORT_CONTENT_TYPES[fmt],
@@ -191,7 +202,7 @@ async def report_by_id(request: Request) -> Response:
     brief_id = request.path_params["brief_id"]
     fmt = request.path_params["format"].lower()
     if fmt not in _REPORT_CONTENT_TYPES:
-        return JSONResponse({"error": "format must be pptx or docx"}, status_code=400)
+        return JSONResponse({"error": "format must be pptx, docx, or html"}, status_code=400)
 
     conn = await get_db()
     cursor = await conn.execute(
@@ -212,7 +223,7 @@ async def report_latest(request: Request) -> Response:
     symbol = request.path_params["symbol"].upper()
     fmt = request.path_params["format"].lower()
     if fmt not in _REPORT_CONTENT_TYPES:
-        return JSONResponse({"error": "format must be pptx or docx"}, status_code=400)
+        return JSONResponse({"error": "format must be pptx, docx, or html"}, status_code=400)
 
     from shared.memory import TickerMemory
     tm = TickerMemory()
