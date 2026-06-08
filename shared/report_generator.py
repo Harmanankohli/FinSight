@@ -14,6 +14,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from io import BytesIO
+from types import SimpleNamespace
 from typing import Optional
 
 # ── Colour palette — modern navy/blue (matches deck template) ────────────────
@@ -392,6 +393,16 @@ def _enrich_from_markdown(
                 for peer_name in peer_cols[:2]:
                     if peer_name not in data.peer_names:
                         data.peer_names.append(peer_name)
+                # Build deck.peers with expected structure: {metric, col0, col1, col2, ...}
+                peer_row = {"metric": metric}
+                ticker_val = row.get(data.ticker, row.get("Current", row.get("current", "")))
+                if ticker_val:
+                    peer_row["col0"] = ticker_val
+                for ci, pn in enumerate(peer_cols[:2]):
+                    if pn in row:
+                        peer_row[f"col{ci + 1}"] = row[pn]
+                if len(peer_row) > 1:
+                    data.peers.append(peer_row)
 
     # ── Extract numeric metrics ──────────────────────────────────────────────
     # Each pattern list is tried in order; first match wins for that metric.
@@ -777,6 +788,357 @@ def _enrich_from_markdown(
             data.executive_summary = _strip_markdown(" ".join(substance)[:600])
 
 
+# ── PPTX slide generators ──────────────────────────────────────────────────────
+
+def _pptx_slide_title(deck: DeckData, h: SimpleNamespace) -> None:
+    s = h.add_slide(dark=True)
+    h.slide_label(s, "EQUITY RESEARCH REPORT", light=True)
+    h.text(s, 0.83, 1.2, 10, 1.0, deck.company_name, 52, bold=True, color=_WHITE, font=h.FONT)
+    exchange_label = f"NYSE: {deck.ticker}" if not deck.exchange else f"{deck.exchange}: {deck.ticker}"
+    sector_label = f" · {deck.sector}" if deck.sector else ""
+    date_label = f" · {deck.analysis_date}" if deck.analysis_date else ""
+    h.text(s, 0.83, 2.1, 10, 0.4, f"{exchange_label}{sector_label}{date_label}", 18, color=_TEXT_LIGHT, font=h.FONT)
+    kpi_y = 5.5
+    h.text(s, 0.83, kpi_y, 2, 0.2, "Recommendation", 10, color=_TEXT_LIGHT, font=h.FONT, bold=True)
+    rec_color = _BLUE if deck.recommendation == "HOLD" else _GREEN if deck.recommendation == "BUY" else _RED
+    h.text(s, 0.83, kpi_y + 0.25, 2, 0.45, deck.recommendation, 28, bold=True, color=rec_color, font=h.MONO)
+    h.text(s, 3.3, kpi_y, 2, 0.2, "Confidence", 10, color=_TEXT_LIGHT, font=h.FONT, bold=True)
+    h.text(s, 3.3, kpi_y + 0.25, 2, 0.45, f"{deck.confidence:.0%}", 28, bold=True, color=_WHITE, font=h.MONO)
+    if deck.scenarios.get("base"):
+        h.text(s, 5.8, kpi_y, 2.5, 0.2, "Median Target", 10, color=_TEXT_LIGHT, font=h.FONT, bold=True)
+        h.text(s, 5.8, kpi_y + 0.25, 2.5, 0.45, deck.scenarios["base"], 28, bold=True, color=_WHITE, font=h.MONO)
+    h.footer(s, dark=True)
+
+
+def _pptx_slide_key_metrics(deck: DeckData, h: SimpleNamespace) -> None:
+    if not deck.kpi_chips:
+        return
+    s = h.add_slide()
+    h.slide_label(s, "KEY METRICS")
+    h.slide_title(s, "Performance Snapshot")
+    chips = deck.kpi_chips[:4]
+    n = len(chips)
+    chip_w = {1: 5.0, 2: 4.0, 3: 3.3, 4: 2.7}.get(n, 2.7)
+    gap = 0.3
+    total_w = n * chip_w + (n - 1) * gap
+    start_x = (13.33 - total_w) / 2
+    for i, chip in enumerate(chips):
+        x = start_x + i * (chip_w + gap)
+        h.kpi_chip(s, x, 2.4, chip_w, chip["label"], chip["value"],
+                   chip.get("context", ""), chip.get("positive", True))
+    h.footer(s)
+
+
+def _pptx_slide_thesis(deck: DeckData, h: SimpleNamespace) -> None:
+    if not deck.executive_summary:
+        return
+    s = h.add_slide()
+    h.slide_label(s, "INVESTMENT THESIS")
+    h.slide_title(s, "Executive Summary")
+    thesis_top = 2.6
+    thesis_h = 3.5
+    border = s.shapes.add_shape(1, h.Inches(0.83), h.Inches(thesis_top), h.Inches(0.04), h.Inches(thesis_h))
+    border.fill.solid()
+    border.fill.fore_color.rgb = h.rgb(_BLUE)
+    border.line.fill.background()
+    h.rounded_rect(s, 0.87, thesis_top, 11.5, thesis_h, _SURFACE)
+    h.text(s, 1.2, thesis_top + 0.3, 10.8, thesis_h - 0.6, deck.executive_summary, 16, color=_TEXT, font=h.FONT)
+    h.footer(s)
+
+
+def _pptx_slide_financials(deck: DeckData, h: SimpleNamespace) -> None:
+    if not deck.financials:
+        return
+    s = h.add_slide()
+    h.slide_label(s, "FINANCIAL PERFORMANCE")
+    h.slide_title(s, "Earnings & Growth")
+    rows = deck.financials[:8]
+    tbl_shape = s.shapes.add_table(
+        len(rows) + 1, 3,
+        h.Inches(0.83), h.Inches(2.4), h.Inches(11.5), h.Inches(min(4.2, 0.55 + len(rows) * 0.52)),
+    )
+    tbl = tbl_shape.table
+    tbl.columns[0].width = h.Inches(5)
+    tbl.columns[1].width = h.Inches(3.25)
+    tbl.columns[2].width = h.Inches(3.25)
+    for ci, hdr in enumerate(["METRIC", "CURRENT", "CONTEXT"]):
+        cell = tbl.cell(0, ci)
+        cell.fill.solid()
+        cell.fill.fore_color.rgb = h.rgb(_WHITE)
+        p = cell.text_frame.paragraphs[0]
+        run = p.add_run()
+        run.text = hdr
+        run.font.bold = True
+        run.font.size = h.Pt(10)
+        run.font.color.rgb = h.rgb(_TEXT_LIGHT)
+        run.font.name = h.FONT
+        cell.margin_top = h.Pt(8)
+        cell.margin_bottom = h.Pt(8)
+        cell.margin_left = h.Pt(16)
+    for ri, (metric, current, context) in enumerate(rows):
+        for ci, (txt, is_metric) in enumerate([(metric, True), (current, False), (context, False)]):
+            cell = tbl.cell(ri + 1, ci)
+            cell.fill.solid()
+            cell.fill.fore_color.rgb = h.rgb(_WHITE)
+            p = cell.text_frame.paragraphs[0]
+            run = p.add_run()
+            run.text = txt
+            run.font.size = h.Pt(14)
+            run.font.name = h.MONO if not is_metric else h.FONT
+            run.font.bold = is_metric
+            run.font.color.rgb = h.rgb(_TEXT if is_metric else _GREEN_DARK if txt.startswith("+") else _TEXT)
+            cell.margin_top = h.Pt(12)
+            cell.margin_bottom = h.Pt(12)
+            cell.margin_left = h.Pt(16)
+    h.footer(s)
+
+
+def _pptx_slide_valuation(deck: DeckData, h: SimpleNamespace) -> None:
+    if not deck.valuation_table and not deck.scenarios:
+        return
+    s = h.add_slide()
+    h.slide_label(s, "VALUATION")
+    h.slide_title(s, "Scenario Analysis")
+    if deck.valuation_table:
+        vtbl_rows = deck.valuation_table[:6]
+        vtbl_shape = s.shapes.add_table(
+            len(vtbl_rows) + 1, 2,
+            h.Inches(0.83), h.Inches(2.4), h.Inches(5.5), h.Inches(min(4.0, 0.55 + len(vtbl_rows) * 0.52)),
+        )
+        vtbl = vtbl_shape.table
+        vtbl.columns[0].width = h.Inches(3)
+        vtbl.columns[1].width = h.Inches(2.5)
+        for ci, hdr in enumerate(["METRIC", "VALUE"]):
+            cell = vtbl.cell(0, ci)
+            cell.fill.solid()
+            cell.fill.fore_color.rgb = h.rgb(_WHITE)
+            p = cell.text_frame.paragraphs[0]
+            run = p.add_run()
+            run.text = hdr
+            run.font.bold = True
+            run.font.size = h.Pt(10)
+            run.font.color.rgb = h.rgb(_TEXT_LIGHT)
+            run.font.name = h.FONT
+            cell.margin_left = h.Pt(16)
+        for ri, (metric, value) in enumerate(vtbl_rows):
+            for ci, (txt, is_metric) in enumerate([(metric, True), (value, False)]):
+                cell = vtbl.cell(ri + 1, ci)
+                cell.fill.solid()
+                cell.fill.fore_color.rgb = h.rgb(_WHITE)
+                p = cell.text_frame.paragraphs[0]
+                run = p.add_run()
+                run.text = txt
+                run.font.size = h.Pt(13)
+                run.font.name = h.MONO if not is_metric else h.FONT
+                run.font.bold = is_metric
+                val_color = _GREEN_DARK if txt.startswith("+") else _TEXT
+                run.font.color.rgb = h.rgb(_TEXT if is_metric else val_color)
+                cell.margin_top = h.Pt(10)
+                cell.margin_bottom = h.Pt(10)
+                cell.margin_left = h.Pt(16)
+    card_x = 7.0
+    card_w = 5.5
+    card_h = 0.95
+    scenario_list = []
+    if deck.scenarios.get("bull"):
+        scenario_list.append(("Bull Case", deck.scenarios["bull"], _GREEN_DARK))
+    if deck.scenarios.get("base"):
+        scenario_list.append(("Base Case", deck.scenarios["base"], _BLUE))
+    if deck.scenarios.get("dcf"):
+        scenario_list.append(("DCF Fair Value", deck.scenarios["dcf"], _AMBER))
+    for i, (label, value, color) in enumerate(scenario_list):
+        cy = 2.4 + i * (card_h + 0.2)
+        h.rounded_rect(s, card_x, cy, card_w, card_h, _SURFACE)
+        h.text(s, card_x + 0.3, cy + 0.12, card_w - 0.6, 0.2, label.upper(), 10, color=_TEXT_LIGHT, font=h.FONT, bold=True)
+        h.text(s, card_x + 0.3, cy + 0.38, card_w - 0.6, 0.45, value, 28, bold=True, color=color, font=h.MONO)
+    h.footer(s)
+
+
+def _pptx_slide_scorecard(deck: DeckData, h: SimpleNamespace) -> None:
+    if len(deck.scorecard) <= 1:
+        return
+    s = h.add_slide()
+    h.slide_label(s, "ASSESSMENT")
+    h.slide_title(s, "Investment Scorecard")
+    badge_colors = {
+        "strong": (_BADGE_STRONG_FG, _BADGE_STRONG_BG),
+        "bullish": (_BADGE_BULLISH_FG, _BADGE_BULLISH_BG),
+        "expensive": (_BADGE_EXPENSIVE_FG, _BADGE_EXPENSIVE_BG),
+        "moderate": (_BADGE_MODERATE_FG, _BADGE_MODERATE_BG),
+    }
+    items = deck.scorecard[:6]
+    n_items = len(items)
+    if n_items <= 3:
+        cols = n_items
+    elif n_items == 4:
+        cols = 2
+    else:
+        cols = 3
+    card_w = 3.5
+    card_h = 1.2
+    gap_x = 0.35
+    gap_y = 0.25
+    total_w = cols * card_w + (cols - 1) * gap_x
+    start_x = (13.33 - total_w) / 2
+    start_y = 2.4
+    for i, (dim, rating, badge_type) in enumerate(items):
+        col = i % cols
+        row = i // cols
+        cx = start_x + col * (card_w + gap_x)
+        cy = start_y + row * (card_h + gap_y)
+        h.rounded_rect(s, cx, cy, card_w, card_h, _SURFACE)
+        h.text(s, cx + 0.22, cy + 0.18, card_w - 0.4, 0.2, dim, 11, color=_TEXT_MID, font=h.FONT, bold=True)
+        fg, bg = badge_colors.get(badge_type, badge_colors["moderate"])
+        h.rounded_rect(s, cx + 0.22, cy + 0.55, 1.4, 0.38, bg)
+        h.text(s, cx + 0.22, cy + 0.55, 1.4, 0.38, rating, 12, bold=True, color=fg, font=h.FONT,
+               align=h.PP_ALIGN.CENTER, anchor=h.MSO_ANCHOR.MIDDLE)
+    h.footer(s)
+
+
+def _pptx_slide_peers(deck: DeckData, h: SimpleNamespace) -> None:
+    if not deck.peers or not deck.peer_names:
+        return
+    s = h.add_slide()
+    h.slide_label(s, "COMPETITIVE LANDSCAPE")
+    h.slide_title(s, "Peer Comparison")
+    headers = ["METRIC", deck.ticker] + deck.peer_names[:2]
+    n_cols = len(headers)
+    ptbl_shape = s.shapes.add_table(
+        len(deck.peers) + 1, n_cols,
+        h.Inches(0.83), h.Inches(2.4), h.Inches(11.5), h.Inches(min(4.2, 0.55 + len(deck.peers) * 0.52)),
+    )
+    ptbl = ptbl_shape.table
+    col_w = 11.5 / n_cols
+    for ci in range(n_cols):
+        ptbl.columns[ci].width = h.Inches(col_w if ci > 0 else col_w * 1.3)
+    for ci, hdr in enumerate(headers):
+        cell = ptbl.cell(0, ci)
+        cell.fill.solid()
+        cell.fill.fore_color.rgb = h.rgb(_WHITE)
+        p = cell.text_frame.paragraphs[0]
+        p.alignment = h.PP_ALIGN.CENTER if ci > 0 else h.PP_ALIGN.LEFT
+        run = p.add_run()
+        run.text = hdr
+        run.font.bold = True
+        run.font.size = h.Pt(10)
+        run.font.color.rgb = h.rgb(_TEXT_LIGHT)
+        run.font.name = h.FONT
+        cell.margin_left = h.Pt(16)
+    for ri, peer_row in enumerate(deck.peers[:6]):
+        values = [peer_row.get("metric", "")] + [peer_row.get(f"col{ci}", "N/A") for ci in range(n_cols - 1)]
+        is_highlight = ri % 2 == 0
+        for ci, txt in enumerate(values):
+            cell = ptbl.cell(ri + 1, ci)
+            cell.fill.solid()
+            cell.fill.fore_color.rgb = h.rgb(_BLUE_LIGHT if is_highlight else _WHITE)
+            p = cell.text_frame.paragraphs[0]
+            p.alignment = h.PP_ALIGN.CENTER if ci > 0 else h.PP_ALIGN.LEFT
+            run = p.add_run()
+            run.text = str(txt)
+            run.font.size = h.Pt(13)
+            run.font.name = h.MONO if ci > 0 else h.FONT
+            run.font.bold = ci == 0 or (ci == 1 and is_highlight)
+            run.font.color.rgb = h.rgb(_TEXT if txt != "N/A" else _TEXT_LIGHT)
+            cell.margin_top = h.Pt(10)
+            cell.margin_bottom = h.Pt(10)
+            cell.margin_left = h.Pt(16)
+    h.footer(s)
+
+
+def _pptx_slide_risk_reward(deck: DeckData, h: SimpleNamespace) -> None:
+    if not deck.opportunities and not deck.risks:
+        return
+    s = h.add_slide()
+    h.slide_label(s, "RISK–REWARD")
+    h.slide_title(s, "Assessment")
+    col_w = 5.5
+    gap = 0.5
+    total = 2 * col_w + gap
+    sx = (13.33 - total) / 2
+    n_items = max(len(deck.opportunities[:5]), len(deck.risks[:5]), 1)
+    item_h = 0.7
+    col_h = 0.9 + n_items * item_h
+    opp_shape = s.shapes.add_shape(
+        h.MSO_SHAPE.ROUNDED_RECTANGLE, h.Inches(sx), h.Inches(2.4), h.Inches(col_w), h.Inches(col_h),
+    )
+    opp_shape.fill.solid()
+    opp_shape.fill.fore_color.rgb = h.rgb(_OPP_BG)
+    opp_shape.line.color.rgb = h.rgb(_OPP_BORDER)
+    opp_shape.line.width = h.Pt(1.5)
+    h.text(s, sx + 0.3, 2.6, col_w - 0.6, 0.35, "Growth Opportunities", 16, bold=True, color=_GREEN_DARK, font=h.FONT)
+    for i, opp in enumerate(deck.opportunities[:5]):
+        opp_text = (opp[:117] + "...") if len(opp) > 120 else opp
+        bullet_y = 3.15 + i * item_h
+        dot = s.shapes.add_shape(
+            h.MSO_SHAPE.OVAL, h.Inches(sx + 0.4), h.Inches(bullet_y + 0.06), h.Inches(0.08), h.Inches(0.08),
+        )
+        dot.fill.solid()
+        dot.fill.fore_color.rgb = h.rgb(_GREEN)
+        dot.line.fill.background()
+        h.text(s, sx + 0.65, bullet_y, col_w - 1.0, item_h, opp_text, 12, color=_TEXT, font=h.FONT)
+    rx = sx + col_w + gap
+    risk_shape = s.shapes.add_shape(
+        h.MSO_SHAPE.ROUNDED_RECTANGLE, h.Inches(rx), h.Inches(2.4), h.Inches(col_w), h.Inches(col_h),
+    )
+    risk_shape.fill.solid()
+    risk_shape.fill.fore_color.rgb = h.rgb(_RISK_BG)
+    risk_shape.line.color.rgb = h.rgb(_RISK_BORDER)
+    risk_shape.line.width = h.Pt(1.5)
+    h.text(s, rx + 0.3, 2.6, col_w - 0.6, 0.35, "Key Risks", 16, bold=True, color=_RED, font=h.FONT)
+    for i, risk in enumerate(deck.risks[:5]):
+        risk_text = (risk[:117] + "...") if len(risk) > 120 else risk
+        bullet_y = 3.15 + i * item_h
+        dot = s.shapes.add_shape(
+            h.MSO_SHAPE.OVAL, h.Inches(rx + 0.4), h.Inches(bullet_y + 0.06), h.Inches(0.08), h.Inches(0.08),
+        )
+        dot.fill.solid()
+        dot.fill.fore_color.rgb = h.rgb(_RED)
+        dot.line.fill.background()
+        h.text(s, rx + 0.65, bullet_y, col_w - 1.0, item_h, risk_text, 12, color=_TEXT, font=h.FONT)
+    h.footer(s)
+
+
+def _pptx_slide_extra(deck: DeckData, h: SimpleNamespace, section: Section) -> None:
+    if not section.body:
+        return
+    body = section.body
+    chunks: list[str] = []
+    while len(body) > _MAX_SLIDE_CHARS:
+        split_at = body.rfind("\n", 0, _MAX_SLIDE_CHARS)
+        if split_at < 0:
+            split_at = _MAX_SLIDE_CHARS
+        chunks.append(body[:split_at])
+        body = body[split_at:].strip()
+    chunks.append(body)
+    for ci, chunk in enumerate(chunks):
+        sld = h.add_slide()
+        label_text = section.title.upper()
+        h.slide_label(sld, label_text if ci == 0 else f"{label_text} (CONT.)")
+        h.slide_title(sld, section.title if ci == 0 else f"{section.title} (cont.)")
+        border = sld.shapes.add_shape(1, h.Inches(0.83), h.Inches(2.5), h.Inches(0.04), h.Inches(4.0))
+        border.fill.solid()
+        border.fill.fore_color.rgb = h.rgb(_BLUE)
+        border.line.fill.background()
+        h.rounded_rect(sld, 0.87, 2.5, 11.5, 4.0, _SURFACE)
+        h.text(sld, 1.2, 2.7, 10.8, 3.6, chunk, 14, color=_TEXT, font=h.FONT)
+        h.footer(sld)
+
+
+def _pptx_slide_conclusion(deck: DeckData, h: SimpleNamespace) -> None:
+    s = h.add_slide(dark=True)
+    h.slide_label(s, "CONCLUSION", left=0.83, top=2.0, light=True)
+    div = s.shapes.add_shape(1, h.Inches(6.2), h.Inches(2.5), h.Inches(0.9), h.Inches(0.04))
+    div.fill.solid()
+    div.fill.fore_color.rgb = h.rgb(_BLUE)
+    div.line.fill.background()
+    h.text(s, 0, 2.8, 13.33, 0.7, deck.recommendation, 44, bold=True, color=_BLUE, font=h.MONO, align=h.PP_ALIGN.CENTER)
+    h.text(s, 0, 3.5, 13.33, 0.4, f"{deck.confidence:.0%} Confidence", 14, color=_TEXT_LIGHT, font=h.FONT, align=h.PP_ALIGN.CENTER)
+    conclusion_text = deck.executive_summary[:300] if deck.executive_summary else ""
+    if conclusion_text:
+        h.text(s, 2.5, 4.2, 8.33, 1.5, conclusion_text, 15, color=_TEXT_LIGHT, font=h.FONT, align=h.PP_ALIGN.CENTER)
+    h.footer(s, dark=True)
+
+
 # ── PPTX generation ───────────────────────────────────────────────────────────
 
 def generate_pptx(
@@ -789,6 +1151,7 @@ def generate_pptx(
     from pptx import Presentation
     from pptx.dml.color import RGBColor
     from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
+    from pptx.enum.shapes import MSO_SHAPE
     from pptx.util import Inches, Pt, Emu
 
     def rgb(hex_str: str) -> RGBColor:
@@ -834,7 +1197,6 @@ def generate_pptx(
 
     def _multiline(slide, left, top, width, height, lines, size,
                    color=_TEXT, font=FONT, line_spacing=1.5):
-        """Add a textbox with multiple paragraphs."""
         box = slide.shapes.add_textbox(Inches(left), Inches(top), Inches(width), Inches(height))
         tf = box.text_frame
         tf.word_wrap = True
@@ -849,7 +1211,6 @@ def generate_pptx(
         return box
 
     def _rounded_rect(slide, left, top, width, height, fill_color, border_color=None):
-        from pptx.enum.shapes import MSO_SHAPE
         shape = slide.shapes.add_shape(
             MSO_SHAPE.ROUNDED_RECTANGLE,
             Inches(left), Inches(top), Inches(width), Inches(height),
@@ -874,11 +1235,9 @@ def generate_pptx(
     def _footer(slide, dark=False):
         color = _TEXT_LIGHT if not dark else _TEXT_MID
         _text(slide, 0.83, 7.0, 5, 0.3,
-              "© 2026 Institutional Equity Research", 9,
-              color=color)
+              "© 2026 Institutional Equity Research", 9, color=color)
         _text(slide, 7, 7.0, 5.5, 0.3,
-              "For informational purposes only", 9,
-              color=color, align=PP_ALIGN.RIGHT)
+              "For informational purposes only", 9, color=color, align=PP_ALIGN.RIGHT)
 
     def _kpi_chip(slide, left, top, width, label, value, context="",
                   positive=True, dark=False):
@@ -892,425 +1251,36 @@ def generate_pptx(
         _text(slide, left + 0.22, top + 0.5, width - 0.4, 0.45, value, 30,
               bold=True, color=val_color, font=MONO)
         if context:
-            _text(slide, left + 0.22, top + 0.92, width - 0.4, 0.2, context, 10,
-                  color=_TEXT_LIGHT)
+            _text(slide, left + 0.22, top + 0.92, width - 0.4, 0.2, context, 10, color=_TEXT_LIGHT)
 
-    # ═══════════════════════════════════════════════════════════════════════════
-    # SLIDE 1: TITLE (dark)
-    # ═══════════════════════════════════════════════════════════════════════════
-    s1 = add_slide(dark=True)
-    _slide_label(s1, "EQUITY RESEARCH REPORT", light=True)
-    _text(s1, 0.83, 1.2, 10, 1.0, deck.company_name, 52,
-          bold=True, color=_WHITE, font=FONT)
-    exchange_label = f"NYSE: {ticker}" if not deck.exchange else f"{deck.exchange}: {ticker}"
-    sector_label = f" · {deck.sector}" if deck.sector else ""
-    _text(s1, 0.83, 2.1, 10, 0.4, f"{exchange_label}{sector_label}", 18,
-          color=_TEXT_LIGHT, font=FONT)
+    h = SimpleNamespace(
+        add_slide=add_slide,
+        text=_text,
+        multiline=_multiline,
+        rounded_rect=_rounded_rect,
+        kpi_chip=_kpi_chip,
+        slide_label=_slide_label,
+        slide_title=_slide_title,
+        footer=_footer,
+        rgb=rgb,
+        FONT=FONT, MONO=MONO,
+        Inches=Inches, Pt=Pt, Emu=Emu,
+        PP_ALIGN=PP_ALIGN, MSO_ANCHOR=MSO_ANCHOR, MSO_SHAPE=MSO_SHAPE,
+        blank_layout=blank_layout,
+        prs=prs,
+    )
 
-    # Bottom KPI row — Recommendation, Confidence, Target
-    kpi_y = 5.5
-    _text(s1, 0.83, kpi_y, 2, 0.2, "Recommendation", 10,
-          color=_TEXT_LIGHT, font=FONT, bold=True)
-    rec_color = _BLUE if deck.recommendation == "HOLD" else _GREEN if deck.recommendation == "BUY" else _RED
-    _text(s1, 0.83, kpi_y + 0.25, 2, 0.45, deck.recommendation, 28,
-          bold=True, color=rec_color, font=MONO)
-
-    _text(s1, 3.3, kpi_y, 2, 0.2, "Confidence", 10,
-          color=_TEXT_LIGHT, font=FONT, bold=True)
-    _text(s1, 3.3, kpi_y + 0.25, 2, 0.45, f"{deck.confidence:.0%}", 28,
-          bold=True, color=_WHITE, font=MONO)
-
-    if deck.scenarios.get("base"):
-        _text(s1, 5.8, kpi_y, 2.5, 0.2, "Median Target", 10,
-              color=_TEXT_LIGHT, font=FONT, bold=True)
-        _text(s1, 5.8, kpi_y + 0.25, 2.5, 0.45, deck.scenarios["base"], 28,
-              bold=True, color=_WHITE, font=MONO)
-
-    _footer(s1, dark=True)
-
-    # ═══════════════════════════════════════════════════════════════════════════
-    # SLIDE 2: KEY METRICS (4 KPI chips)
-    # ═══════════════════════════════════════════════════════════════════════════
-    if deck.kpi_chips:
-        s2 = add_slide()
-        _slide_label(s2, "KEY METRICS")
-        _slide_title(s2, "Performance Snapshot")
-        chips = deck.kpi_chips[:4]
-        chip_w = 2.7
-        gap = 0.3
-        total_w = len(chips) * chip_w + (len(chips) - 1) * gap
-        start_x = (13.33 - total_w) / 2
-        for i, chip in enumerate(chips):
-            x = start_x + i * (chip_w + gap)
-            _kpi_chip(s2, x, 2.4, chip_w,
-                      chip["label"], chip["value"], chip.get("context", ""),
-                      chip.get("positive", True))
-        _footer(s2)
-
-    # ═══════════════════════════════════════════════════════════════════════════
-    # SLIDE 3: INVESTMENT THESIS
-    # ═══════════════════════════════════════════════════════════════════════════
-    if deck.executive_summary:
-        s3 = add_slide()
-        _slide_label(s3, "INVESTMENT THESIS")
-        _slide_title(s3, "Executive Summary")
-
-        # Blue left-border thesis block
-        thesis_top = 2.6
-        thesis_h = 3.5
-        # Left border accent
-        border = s3.shapes.add_shape(1, Inches(0.83), Inches(thesis_top), Inches(0.04), Inches(thesis_h))
-        border.fill.solid()
-        border.fill.fore_color.rgb = rgb(_BLUE)
-        border.line.fill.background()
-        # Background
-        _rounded_rect(s3, 0.87, thesis_top, 11.5, thesis_h, _SURFACE)
-        # Text
-        _text(s3, 1.2, thesis_top + 0.3, 10.8, thesis_h - 0.6,
-              deck.executive_summary, 16, color=_TEXT, font=FONT)
-        _footer(s3)
-
-    # ═══════════════════════════════════════════════════════════════════════════
-    # SLIDE 4: FINANCIAL PERFORMANCE (table)
-    # ═══════════════════════════════════════════════════════════════════════════
-    if deck.financials:
-        s4 = add_slide()
-        _slide_label(s4, "FINANCIAL PERFORMANCE")
-        _slide_title(s4, "Earnings & Growth")
-
-        rows = deck.financials[:8]
-        tbl_shape = s4.shapes.add_table(
-            len(rows) + 1, 3,
-            Inches(0.83), Inches(2.4), Inches(11.5), Inches(min(4.2, 0.55 + len(rows) * 0.52)),
-        )
-        tbl = tbl_shape.table
-        # Set column widths
-        tbl.columns[0].width = Inches(5)
-        tbl.columns[1].width = Inches(3.25)
-        tbl.columns[2].width = Inches(3.25)
-
-        # Header
-        for ci, hdr in enumerate(["METRIC", "CURRENT", "CONTEXT"]):
-            cell = tbl.cell(0, ci)
-            cell.fill.solid()
-            cell.fill.fore_color.rgb = rgb(_WHITE)
-            p = cell.text_frame.paragraphs[0]
-            run = p.add_run()
-            run.text = hdr
-            run.font.bold = True
-            run.font.size = Pt(10)
-            run.font.color.rgb = rgb(_TEXT_LIGHT)
-            run.font.name = FONT
-            # Bottom border via cell margin
-            cell.margin_top = Pt(8)
-            cell.margin_bottom = Pt(8)
-            cell.margin_left = Pt(16)
-
-        for ri, (metric, current, context) in enumerate(rows):
-            for ci, (txt, is_metric) in enumerate([(metric, True), (current, False), (context, False)]):
-                cell = tbl.cell(ri + 1, ci)
-                cell.fill.solid()
-                cell.fill.fore_color.rgb = rgb(_WHITE)
-                p = cell.text_frame.paragraphs[0]
-                run = p.add_run()
-                run.text = txt
-                run.font.size = Pt(14)
-                run.font.name = MONO if not is_metric else FONT
-                run.font.bold = is_metric
-                run.font.color.rgb = rgb(_TEXT if is_metric else _GREEN_DARK if txt.startswith("+") else _TEXT)
-                cell.margin_top = Pt(12)
-                cell.margin_bottom = Pt(12)
-                cell.margin_left = Pt(16)
-        _footer(s4)
-
-    # ═══════════════════════════════════════════════════════════════════════════
-    # SLIDE 5: VALUATION / SCENARIO ANALYSIS
-    # ═══════════════════════════════════════════════════════════════════════════
-    if deck.valuation_table or deck.scenarios:
-        s5 = add_slide()
-        _slide_label(s5, "VALUATION")
-        _slide_title(s5, "Scenario Analysis")
-
-        # Left side: valuation table
-        if deck.valuation_table:
-            vtbl_rows = deck.valuation_table[:6]
-            vtbl_shape = s5.shapes.add_table(
-                len(vtbl_rows) + 1, 2,
-                Inches(0.83), Inches(2.4), Inches(5.5), Inches(min(4.0, 0.55 + len(vtbl_rows) * 0.52)),
-            )
-            vtbl = vtbl_shape.table
-            vtbl.columns[0].width = Inches(3)
-            vtbl.columns[1].width = Inches(2.5)
-            for ci, hdr in enumerate(["METRIC", "VALUE"]):
-                cell = vtbl.cell(0, ci)
-                cell.fill.solid()
-                cell.fill.fore_color.rgb = rgb(_WHITE)
-                p = cell.text_frame.paragraphs[0]
-                run = p.add_run()
-                run.text = hdr
-                run.font.bold = True
-                run.font.size = Pt(10)
-                run.font.color.rgb = rgb(_TEXT_LIGHT)
-                run.font.name = FONT
-                cell.margin_left = Pt(16)
-            for ri, (metric, value) in enumerate(vtbl_rows):
-                for ci, (txt, is_metric) in enumerate([(metric, True), (value, False)]):
-                    cell = vtbl.cell(ri + 1, ci)
-                    cell.fill.solid()
-                    cell.fill.fore_color.rgb = rgb(_WHITE)
-                    p = cell.text_frame.paragraphs[0]
-                    run = p.add_run()
-                    run.text = txt
-                    run.font.size = Pt(13)
-                    run.font.name = MONO if not is_metric else FONT
-                    run.font.bold = is_metric
-                    val_color = _GREEN_DARK if txt.startswith("+") else _TEXT
-                    run.font.color.rgb = rgb(_TEXT if is_metric else val_color)
-                    cell.margin_top = Pt(10)
-                    cell.margin_bottom = Pt(10)
-                    cell.margin_left = Pt(16)
-
-        # Right side: scenario cards
-        card_x = 7.0
-        card_w = 5.5
-        card_h = 0.95
-        scenario_list = []
-        if deck.scenarios.get("bull"):
-            scenario_list.append(("Bull Case", deck.scenarios["bull"], _GREEN_DARK))
-        if deck.scenarios.get("base"):
-            scenario_list.append(("Base Case", deck.scenarios["base"], _BLUE))
-        if deck.scenarios.get("dcf"):
-            scenario_list.append(("DCF Fair Value", deck.scenarios["dcf"], _AMBER))
-
-        for i, (label, value, color) in enumerate(scenario_list):
-            cy = 2.4 + i * (card_h + 0.2)
-            _rounded_rect(s5, card_x, cy, card_w, card_h, _SURFACE)
-            _text(s5, card_x + 0.3, cy + 0.12, card_w - 0.6, 0.2, label.upper(), 10,
-                  color=_TEXT_LIGHT, font=FONT, bold=True)
-            _text(s5, card_x + 0.3, cy + 0.38, card_w - 0.6, 0.45, value, 28,
-                  bold=True, color=color, font=MONO)
-        _footer(s5)
-
-    # ═══════════════════════════════════════════════════════════════════════════
-    # SLIDE 6: INVESTMENT SCORECARD (grid)
-    # ═══════════════════════════════════════════════════════════════════════════
-    if deck.scorecard:
-        s6 = add_slide()
-        _slide_label(s6, "ASSESSMENT")
-        _slide_title(s6, "Investment Scorecard")
-
-        badge_colors = {
-            "strong": (_BADGE_STRONG_FG, _BADGE_STRONG_BG),
-            "bullish": (_BADGE_BULLISH_FG, _BADGE_BULLISH_BG),
-            "expensive": (_BADGE_EXPENSIVE_FG, _BADGE_EXPENSIVE_BG),
-            "moderate": (_BADGE_MODERATE_FG, _BADGE_MODERATE_BG),
-        }
-
-        items = deck.scorecard[:6]
-        cols = 3
-        card_w = 3.5
-        card_h = 1.2
-        gap_x = 0.35
-        gap_y = 0.25
-        total_w = cols * card_w + (cols - 1) * gap_x
-        start_x = (13.33 - total_w) / 2
-        start_y = 2.4
-
-        for i, (dim, rating, badge_type) in enumerate(items):
-            col = i % cols
-            row = i // cols
-            cx = start_x + col * (card_w + gap_x)
-            cy = start_y + row * (card_h + gap_y)
-
-            _rounded_rect(s6, cx, cy, card_w, card_h, _SURFACE)
-            _text(s6, cx + 0.22, cy + 0.18, card_w - 0.4, 0.2, dim, 11,
-                  color=_TEXT_MID, font=FONT, bold=True)
-
-            fg, bg = badge_colors.get(badge_type, badge_colors["moderate"])
-            badge_shape = _rounded_rect(s6, cx + 0.22, cy + 0.55, 1.4, 0.38, bg)
-            _text(s6, cx + 0.22, cy + 0.55, 1.4, 0.38, rating, 12,
-                  bold=True, color=fg, font=FONT, align=PP_ALIGN.CENTER,
-                  anchor=MSO_ANCHOR.MIDDLE)
-        _footer(s6)
-
-    # ═══════════════════════════════════════════════════════════════════════════
-    # SLIDE 7: PEER COMPARISON (table) — only if peer data exists
-    # ═══════════════════════════════════════════════════════════════════════════
-    if deck.peers and deck.peer_names:
-        s7 = add_slide()
-        _slide_label(s7, "COMPETITIVE LANDSCAPE")
-        _slide_title(s7, "Peer Comparison")
-
-        headers = ["METRIC", ticker] + deck.peer_names[:2]
-        n_cols = len(headers)
-        ptbl_shape = s7.shapes.add_table(
-            len(deck.peers) + 1, n_cols,
-            Inches(0.83), Inches(2.4), Inches(11.5),
-            Inches(min(4.2, 0.55 + len(deck.peers) * 0.52)),
-        )
-        ptbl = ptbl_shape.table
-        col_w = 11.5 / n_cols
-        for ci in range(n_cols):
-            ptbl.columns[ci].width = Inches(col_w if ci > 0 else col_w * 1.3)
-
-        for ci, hdr in enumerate(headers):
-            cell = ptbl.cell(0, ci)
-            cell.fill.solid()
-            cell.fill.fore_color.rgb = rgb(_WHITE)
-            p = cell.text_frame.paragraphs[0]
-            p.alignment = PP_ALIGN.CENTER if ci > 0 else PP_ALIGN.LEFT
-            run = p.add_run()
-            run.text = hdr
-            run.font.bold = True
-            run.font.size = Pt(10)
-            run.font.color.rgb = rgb(_TEXT_LIGHT)
-            run.font.name = FONT
-            cell.margin_left = Pt(16)
-
-        for ri, peer_row in enumerate(deck.peers[:6]):
-            values = [peer_row.get("metric", "")] + [peer_row.get(f"col{ci}", "N/A") for ci in range(n_cols - 1)]
-            is_highlight = ri % 2 == 0
-            for ci, txt in enumerate(values):
-                cell = ptbl.cell(ri + 1, ci)
-                cell.fill.solid()
-                cell.fill.fore_color.rgb = rgb(_BLUE_LIGHT if is_highlight else _WHITE)
-                p = cell.text_frame.paragraphs[0]
-                p.alignment = PP_ALIGN.CENTER if ci > 0 else PP_ALIGN.LEFT
-                run = p.add_run()
-                run.text = str(txt)
-                run.font.size = Pt(13)
-                run.font.name = MONO if ci > 0 else FONT
-                run.font.bold = ci == 0 or (ci == 1 and is_highlight)
-                run.font.color.rgb = rgb(_TEXT if txt != "N/A" else _TEXT_LIGHT)
-                cell.margin_top = Pt(10)
-                cell.margin_bottom = Pt(10)
-                cell.margin_left = Pt(16)
-        _footer(s7)
-
-    # ═══════════════════════════════════════════════════════════════════════════
-    # SLIDE 8: RISK-REWARD (two columns)
-    # ═══════════════════════════════════════════════════════════════════════════
-    if deck.opportunities or deck.risks:
-        s8 = add_slide()
-        _slide_label(s8, "RISK–REWARD")
-        _slide_title(s8, "Assessment")
-
-        col_w = 5.5
-        gap = 0.5
-        total = 2 * col_w + gap
-        sx = (13.33 - total) / 2
-        n_items = max(len(deck.opportunities[:5]), len(deck.risks[:5]), 1)
-        item_h = 0.7
-        col_h = 0.9 + n_items * item_h
-
-        # Opportunities column (green)
-        from pptx.enum.shapes import MSO_SHAPE
-        opp_shape = s8.shapes.add_shape(
-            MSO_SHAPE.ROUNDED_RECTANGLE,
-            Inches(sx), Inches(2.4), Inches(col_w), Inches(col_h),
-        )
-        opp_shape.fill.solid()
-        opp_shape.fill.fore_color.rgb = rgb(_OPP_BG)
-        opp_shape.line.color.rgb = rgb(_OPP_BORDER)
-        opp_shape.line.width = Pt(1.5)
-
-        _text(s8, sx + 0.3, 2.6, col_w - 0.6, 0.35, "Growth Opportunities", 16,
-              bold=True, color=_GREEN_DARK, font=FONT)
-
-        for i, opp in enumerate(deck.opportunities[:5]):
-            bullet_y = 3.15 + i * item_h
-            dot = s8.shapes.add_shape(
-                MSO_SHAPE.OVAL,
-                Inches(sx + 0.4), Inches(bullet_y + 0.06), Inches(0.08), Inches(0.08),
-            )
-            dot.fill.solid()
-            dot.fill.fore_color.rgb = rgb(_GREEN)
-            dot.line.fill.background()
-            _text(s8, sx + 0.65, bullet_y, col_w - 1.0, item_h, opp, 12,
-                  color=_TEXT, font=FONT)
-
-        # Risks column (red)
-        rx = sx + col_w + gap
-        risk_shape = s8.shapes.add_shape(
-            MSO_SHAPE.ROUNDED_RECTANGLE,
-            Inches(rx), Inches(2.4), Inches(col_w), Inches(col_h),
-        )
-        risk_shape.fill.solid()
-        risk_shape.fill.fore_color.rgb = rgb(_RISK_BG)
-        risk_shape.line.color.rgb = rgb(_RISK_BORDER)
-        risk_shape.line.width = Pt(1.5)
-
-        _text(s8, rx + 0.3, 2.6, col_w - 0.6, 0.35, "Key Risks", 16,
-              bold=True, color=_RED, font=FONT)
-
-        for i, risk in enumerate(deck.risks[:5]):
-            bullet_y = 3.15 + i * item_h
-            dot = s8.shapes.add_shape(
-                MSO_SHAPE.OVAL,
-                Inches(rx + 0.4), Inches(bullet_y + 0.06), Inches(0.08), Inches(0.08),
-            )
-            dot.fill.solid()
-            dot.fill.fore_color.rgb = rgb(_RED)
-            dot.line.fill.background()
-            _text(s8, rx + 0.65, bullet_y, col_w - 1.0, item_h, risk, 12,
-                  color=_TEXT, font=FONT)
-        _footer(s8)
-
-    # ═══════════════════════════════════════════════════════════════════════════
-    # EXTRA SLIDES: remaining analysis sections
-    # ═══════════════════════════════════════════════════════════════════════════
+    _pptx_slide_title(deck, h)
+    _pptx_slide_key_metrics(deck, h)
+    _pptx_slide_thesis(deck, h)
+    _pptx_slide_financials(deck, h)
+    _pptx_slide_valuation(deck, h)
+    _pptx_slide_scorecard(deck, h)
+    _pptx_slide_peers(deck, h)
+    _pptx_slide_risk_reward(deck, h)
     for section in deck.sections[:4]:
-        if not section.body:
-            continue
-        body = section.body
-        chunks: list[str] = []
-        while len(body) > _MAX_SLIDE_CHARS:
-            split_at = body.rfind("\n", 0, _MAX_SLIDE_CHARS)
-            if split_at < 0:
-                split_at = _MAX_SLIDE_CHARS
-            chunks.append(body[:split_at])
-            body = body[split_at:].strip()
-        chunks.append(body)
-
-        for ci, chunk in enumerate(chunks):
-            sld = add_slide()
-            label_text = section.title.upper()
-            _slide_label(sld, label_text if ci == 0 else f"{label_text} (CONT.)")
-            _slide_title(sld, section.title if ci == 0 else f"{section.title} (cont.)")
-
-            # Blue left border
-            border = sld.shapes.add_shape(1, Inches(0.83), Inches(2.5), Inches(0.04), Inches(4.0))
-            border.fill.solid()
-            border.fill.fore_color.rgb = rgb(_BLUE)
-            border.line.fill.background()
-            _rounded_rect(sld, 0.87, 2.5, 11.5, 4.0, _SURFACE)
-            _text(sld, 1.2, 2.7, 10.8, 3.6, chunk, 14, color=_TEXT, font=FONT)
-            _footer(sld)
-
-    # ═══════════════════════════════════════════════════════════════════════════
-    # SLIDE 9: CONCLUSION (dark)
-    # ═══════════════════════════════════════════════════════════════════════════
-    s_end = add_slide(dark=True)
-    _slide_label(s_end, "CONCLUSION", left=0.83, top=2.0, light=True)
-
-    # Blue divider centered
-    div = s_end.shapes.add_shape(1, Inches(6.2), Inches(2.5), Inches(0.9), Inches(0.04))
-    div.fill.solid()
-    div.fill.fore_color.rgb = rgb(_BLUE)
-    div.line.fill.background()
-
-    _text(s_end, 0, 2.8, 13.33, 0.7, deck.recommendation, 44,
-          bold=True, color=_BLUE, font=MONO, align=PP_ALIGN.CENTER)
-    _text(s_end, 0, 3.5, 13.33, 0.4, f"{deck.confidence:.0%} Confidence", 14,
-          color=_TEXT_LIGHT, font=FONT, align=PP_ALIGN.CENTER)
-
-    # Conclusion text — use first ~200 chars of executive summary
-    conclusion_text = deck.executive_summary[:300] if deck.executive_summary else ""
-    if conclusion_text:
-        _text(s_end, 2.5, 4.2, 8.33, 1.5, conclusion_text, 15,
-              color=_TEXT_LIGHT, font=FONT, align=PP_ALIGN.CENTER)
-
-    _footer(s_end, dark=True)
+        _pptx_slide_extra(deck, h, section)
+    _pptx_slide_conclusion(deck, h)
 
     buf = BytesIO()
     prs.save(buf)
