@@ -628,7 +628,7 @@ def _enrich_from_markdown(
             r"(sideways)\s+trend",
             r"(?:technical[s]?|trend)\s*[:\s]?\s*(bullish|bearish|neutral|mixed)",
             r"(bullish|bearish|neutral|mixed)\s+(?:signals?|technicals?|momentum)",
-            r"(?<!lack\sof\s(?:a\s)?)(strong\s+uptrend|uptrend|downtrend|golden\s+cross)\b",
+            r"(?<!lack of a )(?<!lack of )(strong\s+uptrend|uptrend|downtrend|golden\s+cross)\b",
         ], {"bullish": "bullish", "strong uptrend": "bullish", "uptrend": "bullish",
             "golden cross": "bullish", "bearish": "expensive", "downtrend": "expensive",
             "neutral": "moderate", "mixed": "moderate", "sideways": "moderate"}),
@@ -790,26 +790,46 @@ def _enrich_from_markdown(
 
     # Lead with key fundamentals
     fund_metrics = []
-    for label in ("Revenue Growth", "ROE", "Operating Margin"):
+    for label in ("Revenue Growth", "ROE", "Operating Margin", "P/E Ratio"):
         if label in extracted:
-            fund_metrics.append(f"{label.lower()} of {extracted[label]}")
+            suffix = "x" if label == "P/E Ratio" else ""
+            display_label = label if label in ("ROE", "P/E Ratio") else label.lower()
+            fund_metrics.append(f"{display_label} of {extracted[label]}{suffix}")
     if fund_metrics:
         summary_parts.append(
-            f"{data.company_name} shows strong fundamentals with {', '.join(fund_metrics)}"
+            f"{data.company_name} demonstrates {', '.join(fund_metrics)}"
         )
 
-    # Add analyst target if available
+    # Valuation context: DCF + current price
+    dcf_val = next((v for l, v in data.valuation_table if "dcf" in l.lower() or "intrinsic" in l.lower()), None)
+    cur_price = next((v for l, v in data.valuation_table if "current price" in l.lower()), None)
+    if dcf_val and cur_price:
+        summary_parts.append(f"DCF analysis estimates intrinsic value at {dcf_val} versus the current trading price of {cur_price}")
+    elif dcf_val:
+        summary_parts.append(f"DCF analysis estimates intrinsic value at {dcf_val}")
+
+    # Analyst target + upside
     for vlabel, vval in data.valuation_table:
         if "target" in vlabel.lower():
             upside_str = ""
             for ul, uv in data.valuation_table:
                 if "upside" in ul.lower():
-                    upside_str = f" ({uv} upside)"
+                    upside_str = f", implying {uv} upside"
                     break
             summary_parts.append(f"Analyst consensus targets {vval}{upside_str}")
             break
 
-    # Add a risk note if we have risks
+    # Technical / scorecard color
+    for dim, rating, _ in data.scorecard:
+        if dim == "Technical Outlook":
+            summary_parts.append(f"Technical outlook is {rating.lower()}")
+            break
+
+    # Top opportunity
+    if data.opportunities and data.opportunities[0] not in ("Strong operational execution", "Market positioning"):
+        summary_parts.append(data.opportunities[0].rstrip("."))
+
+    # Key risk
     if data.risks and data.risks[0] != "Market volatility":
         summary_parts.append(f"Key risk: {data.risks[0].split('.')[0]}")
 

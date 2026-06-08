@@ -283,6 +283,6 @@ def get_api_routes() -> list[Route]:
         Route("/api/sessions/{id}/events", session_events, methods=["GET"]),
         Route("/api/agents", agents_list, methods=["GET"]),
         Route("/api/agents/{name}/health", agent_health, methods=["GET"]),
-        Route("/api/reports/{brief_id}/{format}", report_by_id, methods=["GET"]),
         Route("/api/reports/ticker/{symbol}/latest/{format}", report_latest, methods=["GET"]),
+        Route("/api/reports/{brief_id}/{format}", report_by_id, methods=["GET"]),
     ]
