@@ -1,8 +1,9 @@
-"""Generate PPTX and DOCX investment reports from brief_json data.
+"""Generate PPTX, DOCX, and HTML investment reports from brief_json data.
 
 Public API:
     generate_pptx(brief_data, ticker, recommendation, confidence, analysis_date) -> BytesIO
     generate_docx(brief_data, ticker, recommendation, confidence, analysis_date) -> BytesIO
+    generate_html(brief_data, ticker, recommendation, confidence, analysis_date) -> str
 
 Handles both brief_json shapes:
   - Full InvestmentBrief JSON (has rag_insights, quant_metrics, etc.)
