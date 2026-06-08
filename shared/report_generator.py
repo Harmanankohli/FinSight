@@ -411,49 +411,62 @@ def _enrich_from_markdown(
         ("Revenue Growth", [
             r"revenue\s+growth\s*[\(:]\s*([+-]?\d+\.?\d*)\s*%",
             r"revenue\s+growth[:\s]+([+-]?\d+\.?\d*)\s*%",
+            r"revenue\s+growth\s+(?:of\s+)?([+-]?\d+\.?\d*)\s*%",
         ], True),
         ("ROE", [
             r"ROE\s*[\(:]\s*([+-]?\d+\.?\d*)\s*%",
             r"(?:ROE|return\s+on\s+equity)[:\s]+([+-]?\d+\.?\d*)\s*%",
+            r"ROE\s+of\s+([+-]?\d+\.?\d*)\s*%",
         ], True),
         ("Operating Margin", [
             r"operating\s+margin\s*[\(:]\s*([+-]?\d+\.?\d*)\s*%",
             r"operating\s+margin[:\s]+([+-]?\d+\.?\d*)\s*%",
+            r"operating\s+margin\s+(?:stands?\s+at|of|at)\s+([+-]?\d+\.?\d*)\s*%",
         ], True),
         ("P/E Ratio", [
             r"P/?E\s*[\(:=]\s*([+-]?\d+\.?\d*)",
             r"P/?E\s+(?:ratio\s*)?[:\s]+([+-]?\d+\.?\d*)",
             r"trailing\s+PE\s*[\(:]\s*([+-]?\d+\.?\d*)",
+            r"(?:trailing\s+)?P/?E\s+of\s+([+-]?\d+\.?\d*)",
         ], False),
         ("Beta", [
             r"[Bb]eta\s*[\(:=]\s*([+-]?\d+\.?\d*)",
             r"[Bb]eta[:\s]+([+-]?\d+\.?\d*)",
+            r"[Bb]eta\s+of\s+([+-]?\d+\.?\d*)",
         ], False),
         ("Sharpe Ratio", [
             r"[Ss]harpe\s+[Rr]atio\s*[\(:=]\s*([+-]?\d+\.?\d*)",
             r"[Ss]harpe\s+[Rr]atio[:\s]+([+-]?\d+\.?\d*)",
+            r"[Ss]harpe\s+[Rr]atio\s+of\s+([+-]?\d+\.?\d*)",
         ], False),
         ("RSI", [
             r"RSI\s*[\(:=]\s*([+-]?\d+\.?\d*)",
+            r"RSI\s+of\s+([+-]?\d+\.?\d*)",
         ], False),
         ("Volatility", [
             r"(?:annual\s+)?volatility\s*[\(:]\s*([+-]?\d+\.?\d*)\s*%",
             r"(?:annual\s+)?volatility[:\s]+([+-]?\d+\.?\d*)\s*%",
+            r"(?:annual\s+)?volatility\s+of\s+([+-]?\d+\.?\d*)\s*%",
         ], True),
         ("Debt/Equity", [
             r"(?:debt[/\\]equity|D/E)\s*[\(:=]\s*([+-]?\d+\.?\d*)",
+            r"(?:debt[/\\]equity|D/E)\s+of\s+([+-]?\d+\.?\d*)",
         ], False),
         ("Dividend Yield", [
             r"dividend\s+yield\s*[\(:=]\s*([+-]?\d+\.?\d*)\s*%",
+            r"dividend\s+yield\s+of\s+([+-]?\d+\.?\d*)\s*%",
         ], True),
         ("EPS", [
             r"(?:diluted\s+)?EPS\s*[\(:=]\s*\$?\s*([+-]?\d+\.?\d*)",
+            r"(?:diluted\s+)?EPS\s+of\s+\$?\s*([+-]?\d+\.?\d*)",
         ], False),
         ("Current Ratio", [
             r"current\s+ratio\s*[\(:=]\s*([+-]?\d+\.?\d*)",
+            r"current\s+ratio\s+of\s+([+-]?\d+\.?\d*)",
         ], False),
         ("Net Margin", [
             r"net\s+(?:profit\s+)?margin\s*[\(:=]\s*([+-]?\d+\.?\d*)\s*%",
+            r"net\s+(?:profit\s+)?margin\s+of\s+([+-]?\d+\.?\d*)\s*%",
         ], True),
     ]
 
@@ -500,6 +513,7 @@ def _enrich_from_markdown(
     target_pats = [
         r"(?:avg\.?\s+)?(?:price\s+)?target\s*[:\s]*\$\s*([\d,]+\.?\d*)",
         r"(?:target\s+price|price\s+target|median\s+target)\s*[:\s]*\$\s*([\d,]+\.?\d*)",
+        r"(?:average\s+)?target\s+price\s+of\s+\$\s*([\d,]+\.?\d*)",
     ]
     for pat in target_pats:
         m = re.search(pat, text, re.IGNORECASE)
@@ -515,6 +529,7 @@ def _enrich_from_markdown(
         r"expected\s+(?:upside|return)\s*[\(:]\s*(\d+\.?\d*)\s*%",
         r"expected\s+(?:upside|return)[:\s]+([+-]?\d+\.?\d*)\s*%",
         r"median\s+upside[:\s]+([+-]?\d+\.?\d*)\s*%",
+        r"implying\s+(?:a\s+)?(\d+\.?\d*)\s*%\s+upside",
     ]
     for pat in upside_pats:
         m = re.search(pat, text, re.IGNORECASE)
@@ -525,6 +540,7 @@ def _enrich_from_markdown(
     dcf_pats = [
         r"DCF\s+(?:fair\s+value|intrinsic\s+value)\s*[:\s]*\$\s*([\d,]+\.?\d*)",
         r"(?:fair\s+value|intrinsic\s+value)\s*[:\s]*\$\s*([\d,]+\.?\d*)",
+        r"intrinsic\s+value\s+of\s+\$\s*([\d,]+\.?\d*)",
     ]
     for pat in dcf_pats:
         m = re.search(pat, text, re.IGNORECASE)
@@ -552,6 +568,18 @@ def _enrich_from_markdown(
     cvar_m = re.search(r"CVaR\s*[\(:=]\s*(-?\d+\.?\d*)\s*%", text, re.IGNORECASE)
     if cvar_m:
         data.valuation_table.append(("CVaR (95%)", f"{cvar_m.group(1)}%"))
+
+    # Current price
+    price_pats = [
+        r"current\s+price\s+of\s+\$\s*([\d,]+\.?\d*)",
+        r"current\s+(?:stock\s+)?price\s*[:\s]*\$\s*([\d,]+\.?\d*)",
+        r"(?:trading|priced?)\s+at\s+\$\s*([\d,]+\.?\d*)",
+    ]
+    for pat in price_pats:
+        m = re.search(pat, text, re.IGNORECASE)
+        if m:
+            data.valuation_table.insert(0, ("Current Price", f"${m.group(1)}"))
+            break
 
     # ── Build financials table ───────────────────────────────────────────────
     _fin_context = {
@@ -596,15 +624,19 @@ def _enrich_from_markdown(
             r"fundamental[s]?\s*[:\s]?\s*(strong|weak|moderate|solid|robust)",
         ], _STRONG_MAP),
         ("Technical Outlook", [
-            r"(strong\s+uptrend|uptrend|downtrend|golden\s+cross)\b",
+            r"(?:MACD|macd)\s+(?:indicator\s+)?(?:is\s+)?(bullish|bearish)",
+            r"(sideways)\s+trend",
             r"(?:technical[s]?|trend)\s*[:\s]?\s*(bullish|bearish|neutral|mixed)",
             r"(bullish|bearish|neutral|mixed)\s+(?:signals?|technicals?|momentum)",
+            r"(?<!lack\sof\s(?:a\s)?)(strong\s+uptrend|uptrend|downtrend|golden\s+cross)\b",
         ], {"bullish": "bullish", "strong uptrend": "bullish", "uptrend": "bullish",
             "golden cross": "bullish", "bearish": "expensive", "downtrend": "expensive",
-            "neutral": "moderate", "mixed": "moderate"}),
+            "neutral": "moderate", "mixed": "moderate", "sideways": "moderate"}),
         ("Valuation", [
             r"(extreme|high|elevated|premium|rich|expensive)\s+valuation",
             r"valuation\s*[:\s]?\s*(expensive|cheap|fair|rich|premium|undervalued|overvalued|extreme|high|elevated)",
+            r"(?:stock|company|it)\s+(?:may\s+be|is|appears?)\s+(overvalued|undervalued)",
+            r"(?:may\s+be|is)\s+(overvalued|undervalued)\s+relative",
         ], _VALUATION_MAP),
         ("Risk Profile", [
             r"(significant|elevated|high)\s+(?:tail\s+)?risk",
@@ -618,10 +650,12 @@ def _enrich_from_markdown(
             "moderate": "moderate", "weak": "expensive"}),
         ("Momentum", [
             r"RSI\s*[\(:=]\s*(\d+)",
+            r"RSI\s+of\s+(\d+\.?\d*)",
         ], {"overbought": "expensive", "oversold": "strong"}),
         ("Analyst Sentiment", [
-            r"""recommend[s]?\s+[\"']?(strong\s+buy|buy|hold|sell|outperform|overweight)[\"']?""",
+            r"""consensus\s+[\"']?(strong\s+buy|buy|hold|sell|outperform|overweight)[\"']?\s+recommend""",
             r"(?:analyst[s]?\s+(?:consensus|recommend|sentiment)|consensus)\s*[:\s]?\s*(strong\s+buy|buy|hold|sell|outperform|overweight|underweight|neutral)",
+            r"""recommend[s]?\s+[\"']?(strong\s+buy|buy|hold|sell|outperform|overweight)[\"']?""",
         ], _ANALYST_MAP),
     ]
 
@@ -726,11 +760,26 @@ def _enrich_from_markdown(
         data.opportunities = ["Strong operational execution", "Market positioning"]
 
     # ── Extract peer tickers from narrative text ─────────────────────────────
+    _FINANCIAL_ABBREVS = {
+        "DCF", "MACD", "VIX", "DXY", "SEC", "LLM", "WACC", "RSI", "EPS",
+        "EBITDA", "IPO", "CEO", "CFO", "ETF", "GDP", "CPI", "FOMC", "YOY",
+        "QOQ", "MOM", "ADK", "SSE", "API", "YTD",
+    }
     if not data.peer_names:
+        # "CompanyName (TICKER)" format
         peer_pattern = re.compile(r"([A-Z][A-Za-z\s]+?)\s*\(([A-Z]{2,5})\)")
         for m in peer_pattern.finditer(text):
             sym = m.group(2)
-            if sym != data.ticker and sym not in data.peer_names:
+            if sym != data.ticker and sym not in data.peer_names and sym not in _FINANCIAL_ABBREVS:
+                data.peer_names.append(sym)
+                if len(data.peer_names) >= 2:
+                    break
+    if not data.peer_names:
+        # "TICKER (CompanyName)" format — e.g., "ORCL (Oracle)"
+        reverse_pattern = re.compile(r"\b([A-Z]{2,5})\s*\(([A-Z][A-Za-z\s&.]+?)\)")
+        for m in reverse_pattern.finditer(text):
+            sym = m.group(1)
+            if sym != data.ticker and sym not in data.peer_names and sym not in _FINANCIAL_ABBREVS:
                 data.peer_names.append(sym)
                 if len(data.peer_names) >= 2:
                     break

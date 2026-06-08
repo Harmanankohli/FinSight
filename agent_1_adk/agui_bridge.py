@@ -315,11 +315,15 @@ async def _stream(
             for fn_resp in event.get_function_responses():
                 fn_id = getattr(fn_resp, "id", None) or fn_resp.name
                 call_id = pending_by_fn_id.get(fn_id, str(uuid.uuid4()))
-                result_text = (
-                    fn_resp.response
-                    if isinstance(fn_resp.response, str)
-                    else json.dumps(fn_resp.response)
-                )
+                raw = fn_resp.response
+                if isinstance(raw, str):
+                    result_text = raw
+                elif isinstance(raw, (dict, list, int, float, bool, type(None))):
+                    result_text = json.dumps(raw)
+                elif hasattr(raw, "model_dump"):
+                    result_text = json.dumps(raw.model_dump())
+                else:
+                    result_text = str(raw)
                 yield sse(ToolCallResultEvent(
                     type=EventType.TOOL_CALL_RESULT,
                     message_id=str(uuid.uuid4()),
