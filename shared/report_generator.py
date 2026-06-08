@@ -604,6 +604,9 @@ def _enrich_from_markdown(
             r"(?:profitability|margins?)\s*[:\s]?\s*(strong|weak|moderate|robust|high|improving)",
         ], {"strong": "strong", "robust": "strong", "high": "strong", "improving": "bullish",
             "moderate": "moderate", "weak": "expensive"}),
+        ("Momentum", [
+            r"RSI\s*[\(:=]\s*(\d+)",
+        ], {"overbought": "expensive", "oversold": "strong"}),
         ("Analyst Sentiment", [
             r"""recommend[s]?\s+[\"']?(strong\s+buy|buy|hold|sell|outperform|overweight)[\"']?""",
             r"(?:analyst[s]?\s+(?:consensus|recommend|sentiment)|consensus)\s*[:\s]?\s*(strong\s+buy|buy|hold|sell|outperform|overweight|underweight|neutral)",
@@ -623,6 +626,16 @@ def _enrich_from_markdown(
                         word, badge = "strong", "strong"
                     elif margin_m and float(margin_m.group(1)) > 10:
                         word, badge = "moderate", "moderate"
+                elif dim == "Momentum":
+                    rsi_val = float(m.group(1))
+                    if rsi_val > 70:
+                        word, badge = "Overbought", "expensive"
+                    elif rsi_val >= 50:
+                        word, badge = "Bullish", "bullish"
+                    elif rsi_val >= 30:
+                        word, badge = "Neutral", "moderate"
+                    else:
+                        word, badge = "Oversold", "strong"
                 data.scorecard.append((dim, word.capitalize(), badge))
                 break
     data.scorecard.append(("Recommendation", data.recommendation,
