@@ -4,7 +4,7 @@ import logging
 from collections.abc import AsyncIterable
 
 from shared.base_agent import BaseAgent
-from shared.logging_config import logged
+from shared.logging_config import logged, logged_sync
 from shared.config import EVAL_ENABLED
 from shared.observability import get_langfuse_client
 from shared.runtime_eval import score_sentiment_response as _eval_sentiment_response
@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 class MarketContextAgent(BaseAgent):
+    @logged_sync(log_args=False, log_result=False)
     def __init__(self):
         super().__init__(
             agent_name="Market Context Agent",
@@ -26,6 +27,7 @@ class MarketContextAgent(BaseAgent):
             content_types=["text", "application/json"],
         )
 
+    @logged()
     async def _collect_data_parallel(self, ticker: str, mcp) -> dict:
         async def call(tool, args):
             try:
@@ -85,6 +87,7 @@ class MarketContextAgent(BaseAgent):
             "peers": peers,
         }
 
+    @logged()
     async def analyze(self, ticker: str, query_text: str) -> dict:
         mcp = await get_shared_mcp()
         data = await self._collect_data_parallel(ticker, mcp)
@@ -114,6 +117,7 @@ class MarketContextAgent(BaseAgent):
     async def stream(
         self, query: str, context_id: str, task_id: str
     ) -> AsyncIterable[dict]:
+        logger.info("MarketContextAgent.stream() called: query=%s...", query[:80])
         yield await self._build_response(query)
 
     @logged()
@@ -204,6 +208,7 @@ class MarketContextAgent(BaseAgent):
                 }
 
 
+@logged_sync()
 def _extract_context_contexts(data: dict) -> list[str]:
     contexts: list[str] = []
 

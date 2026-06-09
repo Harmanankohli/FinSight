@@ -14,6 +14,8 @@ try:
 except Exception:
     logging.getLogger(__name__).warning("LangChain SQLiteCache unavailable; LLM caching disabled")
 
+from shared.logging_config import logged, logged_sync
+
 from .state import QuantAnalysisState
 
 logger = logging.getLogger(__name__)
@@ -23,6 +25,7 @@ logger = logging.getLogger(__name__)
 # Helpers
 # ---------------------------------------------------------------------------
 
+@logged_sync()
 def _parse_price_data(mcp_result, ticker: str) -> dict:
     # Extract {date: close_price} dict from MCP tool response content (handles TextContent wrapping)
     if not hasattr(mcp_result, "content"):
@@ -39,6 +42,7 @@ def _parse_price_data(mcp_result, ticker: str) -> dict:
     return {}
 
 
+@logged_sync()
 def _run_monte_carlo(prices: pd.Series, n_simulations: int = 5000, horizon_days: int = 252) -> dict | None:
     """GBM Monte Carlo with Ito-corrected drift. Returns percentile outcomes over horizon_days."""
     returns = prices.pct_change().dropna()
@@ -70,6 +74,7 @@ def _run_monte_carlo(prices: pd.Series, n_simulations: int = 5000, horizon_days:
     }
 
 
+@logged_sync()
 def _get_latest_field(financials: dict, field: str) -> float | None:
     """Walk period-keyed dict (sorted descending), return most recent non-null value for field."""
     for period_key in sorted(financials.keys(), reverse=True):
@@ -82,6 +87,7 @@ def _get_latest_field(financials: dict, field: str) -> float | None:
     return None
 
 
+@logged_sync()
 def _get_fcf_from_financials(financials_dict: dict) -> float | None:
     # Sort periods descending so we return the most recent year's positive FCF
     for period_key in sorted(financials_dict.keys(), reverse=True):
@@ -120,6 +126,7 @@ _SIGNAL_WEIGHTS = {
 }
 
 
+@logged_sync()
 def _score_risk_quality(metrics: dict) -> float:
     sharpe = metrics.get("sharpe_ratio") or 0
     vol = metrics.get("annual_volatility") or 0
@@ -162,6 +169,7 @@ def _score_dcf(dcf: dict | None) -> float:
     return -1.0
 
 
+@logged_sync()
 def _relative_score(value: float, median: float, higher_is_better: bool) -> float:
     """Score a metric relative to its sector median.
 
@@ -188,6 +196,8 @@ def _relative_score(value: float, median: float, higher_is_better: bool) -> floa
         return                   -0.7
 
 
+@logged_sync()
+@logged_sync()
 def _score_fundamental_value(fund: dict | None, medians: dict | None = None) -> float:
     """Score valuation (PE, EV/EBITDA) relative to sector peers when available."""
     if not fund:
@@ -222,6 +232,7 @@ def _score_fundamental_value(fund: dict | None, medians: dict | None = None) -> 
     return max(-1.0, min(1.0, sum(scores) / n)) if n > 0 else 0.0
 
 
+@logged_sync()
 def _score_fundamental_quality(fund: dict | None, medians: dict | None = None) -> float:
     """Score quality (ROE, margin, D/E) relative to sector peers when available."""
     if not fund:
@@ -268,6 +279,7 @@ def _score_fundamental_quality(fund: dict | None, medians: dict | None = None) -
     return max(-1.0, min(1.0, sum(scores) / n)) if n > 0 else 0.0
 
 
+@logged_sync()
 def _score_technicals_trend(tech: dict | None) -> float:
     if not tech:
         return 0.0
@@ -284,6 +296,7 @@ def _score_technicals_trend(tech: dict | None) -> float:
     return score
 
 
+@logged_sync()
 def _score_technicals_momentum(tech: dict | None) -> float:
     if not tech:
         return 0.0
@@ -308,6 +321,7 @@ def _score_technicals_momentum(tech: dict | None) -> float:
     return max(-1.0, min(1.0, sum(scores) / n)) if n > 0 else 0.0
 
 
+@logged_sync()
 def _score_peer_positioning(peer_comp: dict | None) -> float:
     if not peer_comp or not peer_comp.get("rankings"):
         return 0.0
@@ -322,6 +336,7 @@ def _score_peer_positioning(peer_comp: dict | None) -> float:
     return max(-1.0, min(1.0, normalized))
 
 
+@logged_sync()
 def _score_behavioral(options: dict | None, positioning: dict | None, insider: dict | None) -> float:
     scores, n = [], 0
     if options:
@@ -367,6 +382,7 @@ def _score_behavioral(options: dict | None, positioning: dict | None, insider: d
     return max(-1.0, min(1.0, sum(scores) / n)) if n > 0 else 0.0
 
 
+@logged_sync()
 def _weighted_vote(group_scores: dict[str, float]) -> tuple[str, float]:
     """Returns (BUY/HOLD/SELL, confidence 0-1) from group scores weighted by _SIGNAL_WEIGHTS.
 
@@ -406,6 +422,7 @@ def _weighted_vote(group_scores: dict[str, float]) -> tuple[str, float]:
 # Graph nodes
 # ---------------------------------------------------------------------------
 
+@logged()
 async def fetch_price_data_node(state: QuantAnalysisState) -> dict:
     # First graph node: fetches historical daily closes via MCP get_prices tool into state["price_data"]
     ticker = state["ticker"]
@@ -425,6 +442,7 @@ async def fetch_price_data_node(state: QuantAnalysisState) -> dict:
         return {"price_data": {}}
 
 
+@logged()
 async def compute_metrics_node(state: QuantAnalysisState) -> dict:
     # Computes Sharpe ratio, annualized volatility, VaR (95%), max drawdown, and beta vs S&P 500
     prices_dict = state.get("price_data", {})
@@ -512,6 +530,7 @@ async def compute_metrics_node(state: QuantAnalysisState) -> dict:
     return result
 
 
+@logged()
 async def fundamental_analysis_node(state: QuantAnalysisState) -> dict:
     """Fetches get_financials and extracts valuation, profitability, leverage, and growth ratios."""
     ticker = state["ticker"]
@@ -575,6 +594,7 @@ async def fundamental_analysis_node(state: QuantAnalysisState) -> dict:
         return {"fundamentals": None, "_financials_raw": {}}
 
 
+@logged()
 async def technical_analysis_node(state: QuantAnalysisState) -> dict:
     """Computes RSI, MACD, Bollinger, SMAs, EMAs, momentum, support/resistance from price_data."""
     prices_dict = state.get("price_data", {})
@@ -671,6 +691,7 @@ async def technical_analysis_node(state: QuantAnalysisState) -> dict:
         return {"technicals": None}
 
 
+@logged()
 async def stress_test_node(state: QuantAnalysisState) -> dict:
     """Beta-adjusted historical crash scenarios + GBM Monte Carlo simulation."""
     prices_dict = state.get("price_data", {})
@@ -739,6 +760,7 @@ async def stress_test_node(state: QuantAnalysisState) -> dict:
     }
 
 
+@logged()
 async def dcf_valuation_node(state: QuantAnalysisState) -> dict:
     """5-year tapered DCF with data-driven WACC and growth; reuses _financials_raw if available."""
     ticker = state["ticker"]
@@ -867,6 +889,7 @@ async def dcf_valuation_node(state: QuantAnalysisState) -> dict:
         return {"dcf_valuation": None, "dcf_error": str(e)}
 
 
+@logged()
 async def peer_comparison_node(state: QuantAnalysisState) -> dict:
     """Fetches peer financials in parallel and ranks the primary ticker on 5 metrics."""
     ticker = state["ticker"]
@@ -971,6 +994,7 @@ async def peer_comparison_node(state: QuantAnalysisState) -> dict:
     }
 
 
+@logged()
 async def options_flow_node(state: QuantAnalysisState) -> dict:
     """Computes put/call volume and OI ratios from nearest-expiry options chain."""
     ticker = state["ticker"]
@@ -1036,6 +1060,7 @@ async def options_flow_node(state: QuantAnalysisState) -> dict:
         return {"options_signals": None}
 
 
+@logged()
 async def insider_signals_node(state: QuantAnalysisState) -> dict:
     """Fetches insider buy/sell transactions via yfinance (structured data, not keyword matching)."""
     ticker = state["ticker"]
@@ -1075,6 +1100,7 @@ async def insider_signals_node(state: QuantAnalysisState) -> dict:
         return {"insider_signals": None}
 
 
+@logged()
 async def analyst_positioning_node(state: QuantAnalysisState) -> dict:
     """Extracts analyst consensus, price target upside, and short interest from pre-fetched financials."""
     raw_fin = state.get("_financials_raw") or {}
@@ -1123,6 +1149,7 @@ async def analyst_positioning_node(state: QuantAnalysisState) -> dict:
     }
 
 
+@logged()
 async def correlation_node(state: QuantAnalysisState) -> dict:
     # Pairwise Pearson correlation matrix between primary ticker and portfolio holdings
     prices_dict = state.get("price_data", {})
@@ -1166,6 +1193,7 @@ async def correlation_node(state: QuantAnalysisState) -> dict:
         return {"correlation_matrix": {"error": str(e)}}
 
 
+@logged()
 async def format_output_node(state: QuantAnalysisState) -> dict:
     """Weighted 8-group signal voting → BUY/HOLD/SELL with composite score."""
     metrics = state.get("metrics", {})
@@ -1342,6 +1370,7 @@ async def format_output_node(state: QuantAnalysisState) -> dict:
     }
 
 
+@logged()
 async def llm_summary_node(state: QuantAnalysisState) -> dict:
     """Produces a 3-4 sentence investor summary covering all signal groups."""
     from langchain_openai import ChatOpenAI

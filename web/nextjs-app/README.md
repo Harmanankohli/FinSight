@@ -1,36 +1,116 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# FinSight Frontend
 
-## Getting Started
+Next.js 16 (App Router) + React 19 + CopilotKit 1.59 + AG-UI client. Five-page investment research dashboard.
 
-First, run the development server:
+## Quick Start
 
 ```bash
+cd web/nextjs-app
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open `http://localhost:3000`. Requires the backend orchestrator on port 8001.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Pages
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Route | Description |
+|---|---|
+| `/` | Overview landing — architecture diagram, feature grid, CTAs |
+| `/research` | **Primary page** — CopilotKit chat, agent activity tiles, BUY/HOLD/SELL badges, PPTX/DOCX downloads |
+| `/trace` | Langfuse trace inspector — nested span tree, color-coded by agent |
+| `/memory` | Persistent briefs browser — search by ticker, expandable cards, report downloads |
+| `/operator` | Service health dashboard — LED status for all 5 backend services |
 
-## Learn More
+## Architecture
 
-To learn more about Next.js, take a look at the following resources:
+```
+Browser → /api/copilotkit (Next.js) → /a2a-agui (Orchestrator, port 8001)
+                                        ↓ ADK Runner
+                                   Agent Pool (RAG, Quant, Market Context)
+                                        ↓
+                                   MCP Server (port 8010)
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+CopilotKit connects via `HttpAgent` pointing at the orchestrator's AG-UI streaming endpoint. The Next.js layer is a pure pass-through — all LLM inference runs on the backend.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Components
 
-## Deploy on Vercel
+| File | Purpose |
+|---|---|
+| `components/Providers.tsx` | CopilotKit provider + app shell (Sidebar + main content) |
+| `components/Sidebar.tsx` | Left nav — workspace links, recent traces, recent queries |
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## API Routes
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+| Route | Purpose |
+|---|---|
+| `POST /api/copilotkit` | CopilotKit runtime → orchestrator AG-UI bridge |
+| `GET /api/traces` | Langfuse proxy (list or single trace) |
+| `GET /api/health` | Backend health proxy (`?svc=orchestrator\|rag\|quant\|market\|mcp`) |
+
+### Rewrites
+
+| Pattern | Target |
+|---|---|
+| `/api/orch/:path*` | `http://localhost:8001/:path*` (orchestrator REST) |
+| `/reports/:path*` | `http://localhost:8001/reports/:path*` (report downloads) |
+
+## Design System
+
+Warm ivory/clay palette. All CSS in `app/globals.css` — no Tailwind utility classes used despite being installed.
+
+### Colors
+
+| Token | Value | Role |
+|---|---|---|
+| `--clay` | `#8b6f4e` | Primary accent |
+| `--ivory` | `#faf8f5` | Background |
+| `--sand` | `#e0d8cc` | Borders |
+| `--buy` | `#2a6b2a` | BUY signal |
+| `--hold` | `#8b6f00` | HOLD signal |
+| `--sell` | `#7a2c2c` | SELL signal |
+
+### Agent Colors
+
+| Agent | Foreground | Background |
+|---|---|---|
+| RAG | `#2c4a7c` (blue) | `#e0e6f0` |
+| Quant | `#2a6b2a` (green) | `#e3f0e3` |
+| Market Context | `#8b4513` (brown) | `#fce8d9` |
+| Orchestrator | `#8b6f4e` (clay) | `#efe6d8` |
+| MCP | `#5a3e7c` (purple) | `#ece2f4` |
+
+### Typography
+
+- **Headings**: Georgia, Times New Roman (`--serif`)
+- **Body**: System font stack (`--sans`)
+- **Code/Metadata**: JetBrains Mono (`--mono`)
+
+## Lib
+
+| File | Purpose |
+|---|---|
+| `lib/stores/useAppStore.ts` | Zustand store — `traceOpen`, `sidebarOpen`, `userId` |
+| `lib/recentQueries.ts` | localStorage-backed recent query history (max 12) |
+
+## Environment Variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `NEXT_PUBLIC_ORCHESTRATOR_URL` | Yes | Backend orchestrator URL (default `http://localhost:8001`) |
+| `NEXT_PUBLIC_COPILOTKIT_API_KEY` | Yes | CopilotKit public API key |
+| `LANGFUSE_PUBLIC_KEY` | For `/api/traces` | Langfuse public key |
+| `LANGFUSE_SECRET_KEY` | For `/api/traces` | Langfuse secret key |
+| `LANGFUSE_BASE_URL` | For `/api/traces` | Langfuse base URL (default `https://cloud.langfuse.com`) |
+
+## Scripts
+
+```bash
+npm run dev     # Development server (port 3000)
+npm run build   # Production build
+npm run start   # Production server
+npm run lint    # ESLint
+```
+
+Use `run_ui.bat` / `stop_ui.bat` from the project root to start/stop all services including Next.js.

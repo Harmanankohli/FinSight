@@ -14,6 +14,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
+from shared.logging_config import logged
+
 from shared.memory.store import DB_PATH, get_db, write_lock
 
 logger = logging.getLogger(__name__)

@@ -126,8 +126,8 @@ def _strip_markdown(text: str) -> str:
 
 def _parse_markdown_sections(text: str) -> list[Section]:
     """Split text into sections. Handles ## headers and **Bold:** headers."""
-    # First try ## headers
-    parts = re.split(r"\n##\s+", "\n" + text)
+    # First try ## / ### / #### headers
+    parts = re.split(r"\n#{2,6}\s+", "\n" + text)
     if len(parts) > 1:
         sections: list[Section] = []
         for part in parts:
@@ -289,7 +289,7 @@ def _extract_deck_data(
     # ── Structured InvestmentBrief path ──────────────────────────────────────
     if "final_recommendation" in brief_data or "rag_insights" in brief_data:
         rationale = brief_data.get("recommendation_rationale", "")
-        data.executive_summary = _strip_markdown(rationale[:800]) if rationale else ""
+        data.executive_summary = _strip_markdown(rationale[:1200]) if rationale else ""
         data.disclaimer = brief_data.get("disclaimer", _DEFAULT_DISCLAIMER)
 
         qm = brief_data.get("quant_metrics", {})
@@ -324,6 +324,19 @@ def _extract_deck_data(
             data.valuation_table.append(("Analyst Price Target", _fmt_dollar(si["avg_price_target"])))
             data.scenarios["base"] = _fmt_dollar(si["avg_price_target"])
 
+        # Monte Carlo scenarios (future-proofing — currently flows via response_text)
+        mc = qm.get("monte_carlo") or brief_data.get("monte_carlo") or {}
+        if mc:
+            if mc.get("p90") and "bull" not in data.scenarios:
+                data.scenarios["bull"] = _fmt_dollar(mc["p90"])
+                data.valuation_table.append(("Bull Case (MC p90)", _fmt_dollar(mc["p90"])))
+            if mc.get("p50") and "base" not in data.scenarios:
+                data.scenarios["base"] = _fmt_dollar(mc["p50"])
+                data.valuation_table.append(("Base Case (MC p50)", _fmt_dollar(mc["p50"])))
+            if mc.get("p10"):
+                data.scenarios["bear"] = _fmt_dollar(mc["p10"])
+                data.valuation_table.append(("Bear Case (MC p10)", _fmt_dollar(mc["p10"])))
+
         # Scorecard
         data.scorecard.append(("Risk Profile", "Low" if (qm.get("annual_volatility") or 0) < 0.2 else "Moderate" if (qm.get("annual_volatility") or 0) < 0.35 else "High", "moderate"))
         if si.get("analyst_consensus"):
@@ -338,6 +351,53 @@ def _extract_deck_data(
         data.risks = (ri_risks + si_risks)[:5] or ["Market volatility", "Regulatory changes"]
         cats = si.get("key_catalysts", [])
         data.opportunities = cats[:5] or ["Strong operational execution"]
+
+        # ── Peer comparison from structured data ──
+        # Quant agent path (future-proofing — currently doesn't flow through)
+        qm_peers = qm.get("peer_comparison") or brief_data.get("peer_comparison") or {}
+        if isinstance(qm_peers, dict) and qm_peers.get("comparison") and qm_peers.get("peers"):
+            peer_tickers = [p for p in qm_peers["peers"] if p != data.ticker][:2]
+            data.peer_names = peer_tickers
+            comparison = qm_peers["comparison"]
+            _pct_metrics = {"rev_growth", "op_margin", "roe"}
+            metric_labels = [
+                ("pe", "P/E Ratio"), ("ev_ebitda", "EV/EBITDA"),
+                ("rev_growth", "Revenue Growth"), ("op_margin", "Operating Margin"),
+                ("roe", "ROE"), ("debt_to_equity", "D/E Ratio"),
+            ]
+            ticker_data = comparison.get(data.ticker, {})
+            for key, label in metric_labels:
+                row = {"metric": label}
+                tv = ticker_data.get(key)
+                if isinstance(tv, (int, float)):
+                    row["col0"] = f"{tv * 100:.1f}%" if key in _pct_metrics else f"{tv:.1f}"
+                else:
+                    row["col0"] = "N/A"
+                for ci, pt in enumerate(peer_tickers):
+                    pv = comparison.get(pt, {}).get(key)
+                    if isinstance(pv, (int, float)):
+                        row[f"col{ci + 1}"] = f"{pv * 100:.1f}%" if key in _pct_metrics else f"{pv:.1f}"
+                    else:
+                        row[f"col{ci + 1}"] = "N/A"
+                data.peers.append(row)
+
+        # Sentiment agent path (CrewAI — pre-formatted string metrics)
+        if not data.peers and si.get("peer_comparison"):
+            si_peers = si["peer_comparison"]
+            if isinstance(si_peers, list) and si_peers:
+                for pc_entry in si_peers[:2]:
+                    sym = pc_entry.get("ticker", "")
+                    if sym and sym != data.ticker and sym not in data.peer_names:
+                        data.peer_names.append(sym)
+                all_metrics_keys = set()
+                for pc_entry in si_peers[:2]:
+                    all_metrics_keys.update((pc_entry.get("metrics") or {}).keys())
+                for metric_name in sorted(all_metrics_keys):
+                    row = {"metric": metric_name, "col0": "N/A"}
+                    for ci, pc_entry in enumerate(si_peers[:2]):
+                        val = (pc_entry.get("metrics") or {}).get(metric_name, "N/A")
+                        row[f"col{ci + 1}"] = str(val)
+                    data.peers.append(row)
 
         # Extra sections
         if ri.get("forward_guidance"):
@@ -362,10 +422,10 @@ def _extract_deck_data(
 
     if not data.executive_summary and sections:
         first = sections[0]
-        data.executive_summary = (first.body or first.title)[:800]
+        data.executive_summary = (first.body or first.title)[:1200]
         data.sections = sections[1:]
     elif not data.executive_summary:
-        data.executive_summary = _strip_markdown(cleaned_text[:800])
+        data.executive_summary = _strip_markdown(cleaned_text[:1200])
 
     return data
 
@@ -527,14 +587,17 @@ def _enrich_from_markdown(
         r"(\d+\.?\d*)\s*%\s+upside\s+potential",
         r"upside\s+potential\s*[\(:]\s*(\d+\.?\d*)\s*%",
         r"expected\s+(?:upside|return)\s*[\(:]\s*(\d+\.?\d*)\s*%",
-        r"expected\s+(?:upside|return)[:\s]+([+-]?\d+\.?\d*)\s*%",
+        r"expected\s+(?:upside|return)\s*[=:]\s*([+-]?\d+\.?\d*)\s*%",
+        r"(?:analyst|consensus)\s+upside\s*[\(:]\s*(\d+\.?\d*)\s*%",
         r"median\s+upside[:\s]+([+-]?\d+\.?\d*)\s*%",
         r"implying\s+(?:a\s+)?(\d+\.?\d*)\s*%\s+upside",
     ]
     for pat in upside_pats:
         m = re.search(pat, text, re.IGNORECASE)
         if m:
-            data.valuation_table.append(("Expected Upside", f"+{m.group(1)}%"))
+            val = m.group(1)
+            prefix = "" if val.startswith(("+", "-")) else "+"
+            data.valuation_table.append(("Expected Upside", f"{prefix}{val}%"))
             break
 
     dcf_pats = [
@@ -553,6 +616,51 @@ def _enrich_from_markdown(
     if bull_m:
         data.valuation_table.append(("Bull Case Target", f"${bull_m.group(1)}"))
         data.scenarios["bull"] = f"${bull_m.group(1)}"
+
+    bear_m = re.search(r"bear\s+case[:\s]*\$\s*([\d,]+\.?\d*)", text, re.IGNORECASE)
+    if bear_m:
+        data.valuation_table.append(("Bear Case Target", f"${bear_m.group(1)}"))
+        data.scenarios["bear"] = f"${bear_m.group(1)}"
+
+    # Monte Carlo percentile extraction from LLM text
+    mc_p90_pats = [
+        r"p90\s*[=:]\s*\$\s*([\d,]+\.?\d*)",
+        r"90th\s+percentile\s*[:\s]*\$\s*([\d,]+\.?\d*)",
+        r"bull(?:ish)?\s+(?:scenario|outcome)\s*[:\s]*\$\s*([\d,]+\.?\d*)",
+    ]
+    if "bull" not in data.scenarios:
+        for pat in mc_p90_pats:
+            m = re.search(pat, text, re.IGNORECASE)
+            if m:
+                data.valuation_table.append(("Bull Case (p90)", f"${m.group(1)}"))
+                data.scenarios["bull"] = f"${m.group(1)}"
+                break
+
+    mc_p50_pats = [
+        r"p50\s*[=:]\s*\$\s*([\d,]+\.?\d*)",
+        r"50th\s+percentile\s*[:\s]*\$\s*([\d,]+\.?\d*)",
+        r"median\s+(?:outcome|price|target|value)\s*[:\s]*\$\s*([\d,]+\.?\d*)",
+    ]
+    if "base" not in data.scenarios:
+        for pat in mc_p50_pats:
+            m = re.search(pat, text, re.IGNORECASE)
+            if m:
+                data.valuation_table.append(("Base Case (p50)", f"${m.group(1)}"))
+                data.scenarios["base"] = f"${m.group(1)}"
+                break
+
+    mc_p10_pats = [
+        r"p10\s*[=:]\s*\$\s*([\d,]+\.?\d*)",
+        r"10th\s+percentile\s*[:\s]*\$\s*([\d,]+\.?\d*)",
+        r"bear(?:ish)?\s+(?:scenario|outcome)\s*[:\s]*\$\s*([\d,]+\.?\d*)",
+    ]
+    if "bear" not in data.scenarios:
+        for pat in mc_p10_pats:
+            m = re.search(pat, text, re.IGNORECASE)
+            if m:
+                data.valuation_table.append(("Bear Case (p10)", f"${m.group(1)}"))
+                data.scenarios["bear"] = f"${m.group(1)}"
+                break
 
     prob_pats = [
         r"prob(?:ability)?\s+(?:of\s+)?(?:positive\s+)?(?:return|profit)\s*[:\s]+(\d+\.?\d*)\s*%",
@@ -693,9 +801,9 @@ def _enrich_from_markdown(
     # From parsed sections
     for sec in sections:
         lower_title = sec.title.lower()
-        if any(k in lower_title for k in ("risk", "threat", "concern", "challenge")):
+        if any(k in lower_title for k in ("risk", "threat", "concern", "challenge", "bearish", "headwind")):
             data.risks.extend(_extract_bullets(sec.body)[:5])
-        elif any(k in lower_title for k in ("opportunit", "catalyst", "growth", "strength", "upside")):
+        elif any(k in lower_title for k in ("opportunit", "catalyst", "growth", "strength", "upside", "bullish", "tailwind")):
             data.opportunities.extend(_extract_bullets(sec.body)[:5])
 
     # From labelled blocks in text: "Key Risks to Monitor:\n" with per-line items
@@ -754,6 +862,29 @@ def _enrich_from_markdown(
         if opp_block:
             data.opportunities = _extract_bullets(opp_block.group(1))[:5]
 
+    # Inline bold-labeled blocks: "**Bearish Signals:**\n  - items" or "**Headwinds:** inline text"
+    def _extract_labeled_block(label_pat: str) -> list[str]:
+        # Block form: label on its own line, indented bullets follow
+        block_m = re.search(
+            rf"\*\*{label_pat}\s*:\*\*\s*\n((?:\s+[-•*+].*\n?)+)",
+            text, re.IGNORECASE,
+        )
+        if block_m:
+            return _extract_bullets(block_m.group(1))[:5]
+        # Inline form: "**Label:** item1, item2, item3"
+        inline_m = re.search(rf"\*\*{label_pat}\s*:\*\*\s*(.+)", text, re.IGNORECASE)
+        if inline_m:
+            items = re.split(r",\s*(?:and\s+)?", inline_m.group(1))
+            return [i.strip().rstrip(".") for i in items if len(i.strip()) > 5][:5]
+        return []
+
+    if not data.risks:
+        for lbl in (r"bearish\s+signals?", r"headwinds?"):
+            data.risks.extend(_extract_labeled_block(lbl))
+    if not data.opportunities:
+        for lbl in (r"bullish\s+signals?", r"tailwinds?"):
+            data.opportunities.extend(_extract_labeled_block(lbl))
+
     if not data.risks:
         data.risks = ["Market volatility", "Regulatory changes"]
     if not data.opportunities:
@@ -783,6 +914,24 @@ def _enrich_from_markdown(
                 data.peer_names.append(sym)
                 if len(data.peer_names) >= 2:
                     break
+
+    if not data.peer_names:
+        # Bare tickers in peer/comparison context: "peers like DLTR", "from COST", "vs. AAPL"
+        _bare_peer_pats = [
+            r"(?:peers?\s+(?:like|such\s+as|including)|compared?\s+to)\s+([A-Z]{2,5})",
+            r"(?:pressure|competition)\s+from\s+([A-Z]{2,5})",
+            r"(?:vs\.?|versus)\s+([A-Z]{2,5})",
+            r"for\s+([A-Z]{2,5})\s+vs\.",
+        ]
+        for pat in _bare_peer_pats:
+            for m in re.finditer(pat, text):
+                sym = m.group(1)
+                if sym != data.ticker and sym not in data.peer_names and sym not in _FINANCIAL_ABBREVS:
+                    data.peer_names.append(sym)
+                    if len(data.peer_names) >= 2:
+                        break
+            if len(data.peer_names) >= 2:
+                break
 
     # ── Executive summary ────────────────────────────────────────────────────
     # Build a concise synthesized summary from extracted data
@@ -831,10 +980,21 @@ def _enrich_from_markdown(
 
     # Key risk
     if data.risks and data.risks[0] != "Market volatility":
-        summary_parts.append(f"Key risk: {data.risks[0].split('.')[0]}")
+        first_risk = re.split(r"(?<!\d)\.(?!\d)", data.risks[0])[0]
+        summary_parts.append(f"Key risk: {first_risk}")
 
     if summary_parts:
         data.executive_summary = ". ".join(summary_parts) + "."
+        # If metric summary is too short, augment with narrative from Rationale/Thesis section
+        if len(data.executive_summary) < 300:
+            for sec in sections:
+                lt = sec.title.lower()
+                if any(k in lt for k in ("rationale", "thesis", "investment thesis", "summary", "synthesis", "outlook")):
+                    narrative = sec.body.strip()
+                    if len(narrative) > 50:
+                        data.executive_summary = data.executive_summary.rstrip(".") + ". " + narrative
+                        break
+        data.executive_summary = data.executive_summary[:1200]
     else:
         # Fallback: extract from Bull Case or Synthesis block
         bull = re.search(
@@ -905,14 +1065,14 @@ def _pptx_slide_thesis(deck: DeckData, h: SimpleNamespace) -> None:
     s = h.add_slide()
     h.slide_label(s, "INVESTMENT THESIS")
     h.slide_title(s, "Executive Summary")
-    thesis_top = 2.6
-    thesis_h = 3.5
+    thesis_top = 2.4
+    thesis_h = 4.2
     border = s.shapes.add_shape(1, h.Inches(0.83), h.Inches(thesis_top), h.Inches(0.04), h.Inches(thesis_h))
     border.fill.solid()
     border.fill.fore_color.rgb = h.rgb(_BLUE)
     border.line.fill.background()
     h.rounded_rect(s, 0.87, thesis_top, 11.5, thesis_h, _SURFACE)
-    h.text(s, 1.2, thesis_top + 0.3, 10.8, thesis_h - 0.6, deck.executive_summary, 16, color=_TEXT, font=h.FONT)
+    h.text(s, 1.2, thesis_top + 0.3, 10.8, thesis_h - 0.6, deck.executive_summary, 20, color=_TEXT, font=h.FONT)
     h.footer(s)
 
 
@@ -1016,6 +1176,8 @@ def _pptx_slide_valuation(deck: DeckData, h: SimpleNamespace) -> None:
         scenario_list.append(("Base Case", deck.scenarios["base"], _BLUE))
     if deck.scenarios.get("dcf"):
         scenario_list.append(("DCF Fair Value", deck.scenarios["dcf"], _AMBER))
+    if deck.scenarios.get("bear"):
+        scenario_list.append(("Bear Case", deck.scenarios["bear"], _RED))
     for i, (label, value, color) in enumerate(scenario_list):
         cy = 2.4 + i * (card_h + 0.2)
         h.rounded_rect(s, card_x, cy, card_w, card_h, _SURFACE)
@@ -1066,11 +1228,19 @@ def _pptx_slide_scorecard(deck: DeckData, h: SimpleNamespace) -> None:
 
 
 def _pptx_slide_peers(deck: DeckData, h: SimpleNamespace) -> None:
-    if not deck.peers or not deck.peer_names:
+    if not deck.peer_names:
         return
     s = h.add_slide()
     h.slide_label(s, "COMPETITIVE LANDSCAPE")
     h.slide_title(s, "Peer Comparison")
+    if not deck.peers:
+        peer_text = f"Identified peers: {', '.join(deck.peer_names[:5])}"
+        h.rounded_rect(s, 0.83, 2.8, 11.5, 1.5, _SURFACE)
+        h.text(s, 1.2, 3.0, 10.8, 1.0, peer_text, 18, color=_TEXT, font=h.FONT)
+        h.text(s, 1.2, 3.8, 10.8, 0.5, "Detailed metrics not available for this analysis.",
+               14, color=_TEXT_LIGHT, font=h.FONT)
+        h.footer(s)
+        return
     headers = ["METRIC", deck.ticker] + deck.peer_names[:2]
     n_cols = len(headers)
     ptbl_shape = s.shapes.add_table(
@@ -1591,6 +1761,8 @@ def _deck_to_template_context(deck: DeckData) -> dict:
         scenario_cards.append(("Base Case", deck.scenarios["base"], "var(--blue)"))
     if deck.scenarios.get("dcf"):
         scenario_cards.append(("DCF Fair Value", deck.scenarios["dcf"], "var(--amber)"))
+    if deck.scenarios.get("bear"):
+        scenario_cards.append(("Bear Case", deck.scenarios["bear"], "var(--red)"))
 
     return {
         "deck": deck,

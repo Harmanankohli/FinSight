@@ -16,6 +16,7 @@ from a2a.types import (
 from google.protobuf.struct_pb2 import Struct, Value
 
 from shared.base_agent import BaseAgent
+from shared.logging_config import logged, logged_sync
 
 logger = logging.getLogger(__name__)
 

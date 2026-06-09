@@ -17,6 +17,7 @@ import json
 import logging
 from typing import Any, Callable, Awaitable
 
+from shared.logging_config import logged, logged_sync
 from shared.ttl_cache import TTLCache
 
 logger = logging.getLogger(__name__)

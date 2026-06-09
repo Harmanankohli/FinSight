@@ -21,6 +21,7 @@ from contextlib import asynccontextmanager
 from enum import IntEnum
 
 from shared.config import LLM_MAX_CONCURRENT
+from shared.logging_config import logged
 
 logger = logging.getLogger(__name__)
 

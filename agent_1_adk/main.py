@@ -37,7 +37,7 @@ from .agui_endpoint import make_agui_endpoint
 from .agui_bridge import make_agui_bridge_endpoint
 from .api_routes import get_api_routes
 
-from shared.logging_config import setup_file_logging
+from shared.logging_config import logged, logged_sync, setup_file_logging
 setup_file_logging("orchestrator")
 logger = logging.getLogger(__name__)
 

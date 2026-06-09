@@ -15,7 +15,7 @@ from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
 from shared.a2a_store import SQLiteTaskStore
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
 
-from shared.logging_config import setup_file_logging
+from shared.logging_config import logged, logged_sync, setup_file_logging
 from shared.observability import init_langfuse, init_instrumentation, shutdown_langfuse
 
 setup_file_logging("market_context")
@@ -32,10 +32,12 @@ from .executor import MarketContextAgent
 logger = logging.getLogger(__name__)
 
 
+@logged(log_args=False, log_result=False)
 async def health(request):
     return JSONResponse({"status": "ok", "agent": "market_context"})
 
 
+@logged()
 async def release_evals(request):
     from shared.eval_gate import release_evals as _release
     n = await _release()

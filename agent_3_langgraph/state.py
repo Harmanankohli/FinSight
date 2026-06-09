@@ -1,8 +1,10 @@
 from typing import Annotated, Any, TypedDict
 
 from langgraph.graph.message import add_messages
+from shared.logging_config import logged_sync
 
 
+@logged_sync(log_args=False, log_result=False)
 def _merge_dict(a: dict, b: dict) -> dict:
     """Merge two dicts — used as a LangGraph reducer for keys written by multiple nodes."""
     if not a:
@@ -12,11 +14,13 @@ def _merge_dict(a: dict, b: dict) -> dict:
     return {**a, **b}
 
 
+@logged_sync(log_args=False, log_result=False)
 def _last_nonnull(a: Any, b: Any) -> Any:
     """Return b if non-None, else a — last-writer-wins reducer that preserves prior data."""
     return b if b is not None else a
 
 
+@logged_sync(log_args=False, log_result=False)
 def _merge_stress_test(a: Any, b: Any) -> Any:
     """Prefer the stress_test_result with real scenario data over the 'skipped' placeholder.
 
@@ -41,6 +45,7 @@ def _merge_stress_test(a: Any, b: Any) -> Any:
     return a if vol_a >= vol_b else b
 
 
+@logged_sync(log_args=False, log_result=False)
 def _last_str(a: str, b: str) -> str:
     """Return b if non-empty, else a — for string fields written by multiple nodes."""
     return b if b else a

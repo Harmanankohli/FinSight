@@ -23,12 +23,15 @@ from shared.observability import get_langfuse_client
 from shared.runtime_eval import score_response as _eval_score_response
 from shared.ticker_utils import extract_ticker
 
+from shared.logging_config import logged, logged_sync
+
 logger = logging.getLogger(__name__)
 
 _SEMANTIC_CACHE_ENABLED = os.environ.get("SEMANTIC_CACHE_ENABLED", "false").lower() == "true"
 
 _semantic_cache = None
 
+@logged_sync(log_result=False)
 def _get_semantic_cache():
     global _semantic_cache
     if _SEMANTIC_CACHE_ENABLED and _semantic_cache is None:
@@ -73,6 +76,7 @@ class FinSightAgentExecutor(AgentExecutor):
         self._runner = runner
         self._task: asyncio.Task | None = None
 
+    @logged()
     async def _get_today_cached_text(self, ticker: str, user_id: str) -> str | None:
         """Return today's cached analysis text, or None if not available."""
         import json
@@ -110,6 +114,7 @@ class FinSightAgentExecutor(AgentExecutor):
             return f"**{ticker} — {rec}** (confidence: {conf:.0%})"
         return None
 
+    @logged(log_args=False, log_result=False)
     async def execute(
         self, context: RequestContext, event_queue: EventQueue
     ) -> None:
@@ -269,6 +274,7 @@ class FinSightAgentExecutor(AgentExecutor):
                     )
 
     # Output guardrails: reject too-short responses, warn when BUY/HOLD/SELL signal is missing
+    @logged(log_result=False)
     async def _process_response(
         self, event, updater: TaskUpdater, task, span=None, trace_id=None,
         user_input: str = "", user_id: str = "", original_input: str = "",
@@ -340,6 +346,7 @@ class FinSightAgentExecutor(AgentExecutor):
             final=True,
         )
 
+    @logged()
     async def ensure_session(
         self, user_id: str, context_id: str
     ) -> None:
@@ -359,6 +366,7 @@ class FinSightAgentExecutor(AgentExecutor):
         if self._task and not self._task.done():
             self._task.cancel()
 
+    @logged(log_result=False)
     async def _add_events_to_memory(
         self, user_id: str, context_id: str, events: list
     ) -> None:
@@ -406,6 +414,7 @@ class FinSightAgentExecutor(AgentExecutor):
             logger.error("Failed to add session to memory", exc_info=True)
 
     # Label past analysis TODAY (return directly) vs STALE (must re-run agents)
+    @logged(log_result=False)
     async def _build_memory_context(self, user_input: str, user_id: str) -> str:
         """Build compact memory context for prompt injection."""
         from datetime import datetime

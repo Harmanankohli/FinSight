@@ -6,6 +6,8 @@ from crewai import Agent, Crew, Process, Task
 
 from .mcp_tools import MCPClientWrapper
 
+from shared.logging_config import logged, logged_sync
+
 logger = logging.getLogger(__name__)
 
 from crewai import LLM as CrewLLM
@@ -15,9 +17,11 @@ _LLM = CrewLLM(model=ADK_MODEL, base_url=LLM_BASE_URL, api_key=LLM_API_KEY, temp
 
 
 class MarketContextCrew:
+    @logged_sync(log_args=False, log_result=False)
     def __init__(self, mcp_wrapper: MCPClientWrapper):
         self._mcp = mcp_wrapper
 
+    @logged_sync()
     def build_crew(self, ticker: str, data: dict | None = None) -> Crew:
         data = data or {}
         macro = data.get("macro", {})
@@ -95,6 +99,7 @@ class MarketContextCrew:
 
         return Crew(agents=[agent], tasks=[task], process=Process.sequential, verbose=False)
 
+    @logged()
     async def analyze(self, ticker: str, precollected_data: dict | None = None) -> dict:
         crew = self.build_crew(ticker, data=precollected_data)
         try:

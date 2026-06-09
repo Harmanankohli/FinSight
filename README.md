@@ -1,6 +1,6 @@
 ﻿# FinSight — Multi-Agent Investment Research System
 
-An autonomous multi-agent system that answers investment queries like *"Should I invest in NVIDIA?"* by coordinating three specialized agents across different frameworks, communicating via the **Agent-to-Agent (A2A)** protocol, and using **MCP (Model Context Protocol)** servers for external tool access.
+An autonomous multi-agent system that answers investment queries like *"Should I invest in NVIDIA?"* by coordinating four specialized agents across different frameworks, communicating via the **Agent-to-Agent (A2A)** protocol, and using **MCP (Model Context Protocol)** servers for external tool access.
 
 ## Key Features
 
@@ -57,7 +57,7 @@ An autonomous multi-agent system that answers investment queries like *"Should I
 │                        │  execute_python, ...          │   │
 │                        └─────────────────────────────────┘   │
 └──────────────────────────────────────────────────────────────┘
-3. **Synthesizes results** — After all agents respond, the LLM produces a BUY/HOLD/SELL recommendation with supporting evidence.
+```
 
 All A2A communication uses `A2ACardResolver` for standard discovery and `ClientFactory` for transport. Streaming events are handled correctly: intermediate `WORKING`/`SUBMITTED` events are skipped, only actual results (`artifact_update` data or terminal `COMPLETED` status) are returned.
 
@@ -243,11 +243,13 @@ Key environment variables in `.env`:
 |---|---|
 | `docs/ARCHITECTURE.md` | System architecture, communication patterns, caching layer, guardrails, agent internals |
 | `docs/AGENTS.md` | Detailed agent reference (skills, architecture, streaming flow) |
+| `docs/API_REFERENCE.md` | Complete endpoint reference — REST routes, A2A protocol, AG-UI, health checks |
 | `docs/MCP_SERVERS.md` | MCP server tools, TTL caching, registry, client usage |
 | `docs/DESIGN_DECISIONS.md` | Evolution log: why each design choice was made |
 | `docs/CHANGELOG.md` | Version history |
 | `docs/TESTS.md` | Test coverage, patterns, RAGAS evaluation, running instructions |
-| `docs/AGUI_FRONTEND_PLAN.html` | AG-UI Bridge and Next.js frontend plan |
+| `SECURITY.md` | Python sandbox model, restricted imports, responsible disclosure |
+| `web/nextjs-app/README.md` | Frontend architecture — pages, components, design system, data flow |
 
 ## Testing
 

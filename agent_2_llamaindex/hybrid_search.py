@@ -6,6 +6,7 @@ from rank_bm25 import BM25Okapi
 from sentence_transformers import CrossEncoder
 
 from shared.config import RERANKER_MODEL
+from shared.logging_config import logged, logged_sync
 from llama_index.core.schema import NodeWithScore, TextNode
 
 logger = logging.getLogger(__name__)
@@ -13,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 class HybridSearchPipeline:
     # BM25 sparse retrieval + embedding-based dense retrieval → RRF merge → CrossEncoder rerank
+    @logged_sync(log_args=False, log_result=False)
     def __init__(
         self,
         sparse_top_k: int = 10,
@@ -31,12 +33,14 @@ class HybridSearchPipeline:
     @property
     def reranker(self) -> CrossEncoder:
         if self._reranker is None:
+            logger.info("Loading reranker model: %s", RERANKER_MODEL)
             self._reranker = CrossEncoder(
                 RERANKER_MODEL,
                 max_length=512,
             )
         return self._reranker
 
+    @logged_sync(log_args=False, log_result=False)
     def build_sparse_index(self, documents: list[str]) -> None:
         # Pre-tokenize corpus for BM25 Okapi ranking (bag-of-words lexical matching)
         tokenized = [doc.lower().split() for doc in documents]
@@ -44,6 +48,7 @@ class HybridSearchPipeline:
         self._corpus = documents
         logger.info("Built BM25 index with %d documents", len(documents))
 
+    @logged()
     async def sparse_retrieve(self, query: str, top_k: int | None = None) -> list[NodeWithScore]:
         # BM25 lexical retrieval: keyword-based bag-of-words scoring against tokenized corpus
         if self._bm25 is None:
@@ -62,6 +67,7 @@ class HybridSearchPipeline:
             )
         return results
 
+    @logged()
     async def dense_retrieve(
         self, query: str, nodes: list[NodeWithScore], top_k: int | None = None
     ) -> list[NodeWithScore]:
@@ -71,6 +77,7 @@ class HybridSearchPipeline:
         return sorted_nodes[:k]
 
     @staticmethod
+    @logged_sync()
     def _rrf_merge(
         sparse: list[NodeWithScore],
         dense: list[NodeWithScore],
@@ -93,6 +100,7 @@ class HybridSearchPipeline:
             for text, score in merged
         ]
 
+    @logged()
     async def rerank(
         self, query: str, nodes: list[NodeWithScore]
     ) -> list[NodeWithScore]:
@@ -105,6 +113,7 @@ class HybridSearchPipeline:
             node.score = float(score)
         return sorted(nodes, key=lambda n: n.score or 0.0, reverse=True)[:self.rerank_top_n]
 
+    @logged()
     async def retrieve(
         self, query: str, dense_nodes: list[NodeWithScore]
     ) -> list[NodeWithScore]:

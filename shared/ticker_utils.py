@@ -1,6 +1,8 @@
 import json
 import re
 
+from shared.logging_config import logged, logged_sync
+
 _STOCK_TICKER_RE = re.compile(r"^[A-Z]{1,5}(\.[A-Z]{1,2})?$")
 
 # Common financial/tech acronyms that look like tickers but aren't; prevents

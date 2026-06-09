@@ -20,6 +20,7 @@ import chromadb
 from llama_index.core.response_synthesizers import get_response_synthesizer
 
 from shared.config import LLM_MODEL, EMBED_MODEL, CHROMA_DIR, LLM_BASE_URL, LLM_API_KEY
+from shared.logging_config import logged, logged_sync
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +90,7 @@ def _classify_query_intent(query_text: str) -> list[str]:
 
 
 class FinancialIndexManager:
+    @logged_sync(log_args=False, log_result=False)
     def __init__(self):
         self.llm = OpenAILike(
             model=LLM_MODEL,
@@ -107,6 +109,7 @@ class FinancialIndexManager:
         self._chroma = chromadb.PersistentClient(path=CHROMA_DIR)
         self._indexes: dict[str, VectorStoreIndex] = {}
 
+    @logged_sync()
     def _get_or_create_index(self, collection_name: str) -> VectorStoreIndex:
         # Lazy index creation: one ChromaDB collection per document type (sec_filings, earnings, etc.)
         if collection_name in self._indexes:
@@ -123,6 +126,7 @@ class FinancialIndexManager:
         self._indexes[collection_name] = index
         return index
 
+    @logged()
     async def query(self, ticker: str, query_text: str) -> dict:
         """Multi-collection retrieval: routes across sec_filings/news/earnings based on intent."""
         filters = MetadataFilters(
@@ -144,9 +148,12 @@ class FinancialIndexManager:
                 index = self._get_or_create_index(coll)
                 retriever = index.as_retriever(similarity_top_k=5, filters=filters)
                 nodes = await retriever.aretrieve(augmented_query)
+                logger.info("Retrieved %d nodes from %s for %s", len(nodes), coll, ticker)
                 all_nodes.extend(nodes)
             except Exception as e:
                 logger.warning("Retrieval from %s failed for %s: %s", coll, ticker, e)
+
+        logger.info("Total nodes across collections %s for %s: %d", collections, ticker, len(all_nodes))
 
         if not all_nodes:
             return {
@@ -189,12 +196,17 @@ class FinancialIndexManager:
             sources = [n.node.metadata.get("file_name", "unknown") for n in unique]
             scores = [round(n.score or 0.0, 3) for n in unique]
             context_texts = [n.node.get_content() for n in unique]
+            confidence = round(max(scores) if scores else 0.0, 3)
+            logger.info(
+                "query result for %s: nodes=%d, collections=%s, confidence=%.3f",
+                ticker, len(unique), collections, confidence,
+            )
             return {
                 "ticker": ticker,
                 "summary": resp_text,
                 "sources": sources,
                 "relevance_scores": scores,
-                "confidence_score": round(max(scores) if scores else 0.0, 3),
+                "confidence_score": confidence,
                 "context_texts": context_texts,
             }
         except Exception as e:
@@ -208,6 +220,7 @@ class FinancialIndexManager:
                 "context_texts": [],
             }
 
+    @logged()
     async def query_sec_filings(self, ticker: str, query_text: str) -> dict:
         # Same ticker filter but scoped to sec_filings collection; validates first result matches
         filters = MetadataFilters(
@@ -240,6 +253,7 @@ class FinancialIndexManager:
             "confidence_score": round(max(scores) if scores else 0.0, 3),
         }
 
+    @logged()
     async def query_earnings(self, ticker: str, query_text: str) -> dict:
         # Earnings collection uses same metadata filter pattern but no cross-ticker validation
         index = self._get_or_create_index("earnings")
@@ -257,6 +271,7 @@ class FinancialIndexManager:
             "confidence_score": round(max(scores) if scores else 0.0, 3),
         }
 
+    @logged_sync()
     def ingest_documents(
         self, collection_name: str, documents: list[dict]
     ) -> int:

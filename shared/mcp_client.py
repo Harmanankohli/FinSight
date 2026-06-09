@@ -7,6 +7,7 @@ from typing import Any
 
 import yaml
 from mcp import ClientSession
+from shared.logging_config import logged, logged_sync
 from mcp.client.sse import sse_client
 
 logger = logging.getLogger(__name__)

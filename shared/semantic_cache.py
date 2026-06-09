@@ -24,6 +24,8 @@ import time
 from datetime import date
 from uuid import uuid4
 
+from shared.logging_config import logged_sync
+
 logger = logging.getLogger(__name__)
 
 _COLLECTION_NAME = "query_cache"

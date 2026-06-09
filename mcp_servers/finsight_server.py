@@ -37,7 +37,7 @@ from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 from shared.config import SEC_USER_AGENT
 from shared.rate_limiter import TokenBucket
 from shared.redis_cache import make_cache
-from shared.logging_config import logged
+from shared.logging_config import logged, logged_sync
 from shared.observability import init_langfuse, shutdown_langfuse
 init_langfuse(service_name="mcp_server")
 atexit.register(shutdown_langfuse)

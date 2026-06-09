@@ -1,4 +1,5 @@
 import functools
+import inspect
 import json
 import logging
 import os
@@ -8,6 +9,7 @@ import time
 from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from typing import Any
 
 from shared.trace_context import current_trace_id, current_session_id
 
@@ -73,35 +75,125 @@ class SanitizeFilter(logging.Filter):
         return True
 
 
-def logged(level: int = logging.INFO):
-    """Decorator: logs enter/exit/latency for async functions on hot paths.
+def _trunc_repr(obj: Any, max_len: int = 500) -> str:
+    """Safely truncate repr of an object for logging."""
+    try:
+        s = repr(obj)
+        if len(s) > max_len:
+            return s[:max_len] + "..."
+        return s
+    except Exception:
+        return "<repr-error>"
 
-    Apply only to hot-path callables (MCP tools, agent stream(), send_message).
-    Emits 'latency_ms' as a structured field in the JSON file log.
+
+def logged(level: int = logging.INFO, log_args: bool = True, log_result: bool = True):
+    """Decorator: logs enter/exit/latency for async functions.
+
+    Logs function name, arguments (input), return value (output), and elapsed
+    time.  Emits 'latency_ms' as a structured field in the JSON file log.
+
+    Args:
+        level:      Logging level (default INFO).
+        log_args:   Whether to log function arguments (default True).
+        log_result: Whether to log the return value (default True).
     """
     def decorator(fn):
         @functools.wraps(fn)
         async def wrapper(*args, **kwargs):
             _logger = logging.getLogger(fn.__module__)
-            _logger.log(level, "Enter %s", fn.__qualname__)
+            _log_name = fn.__qualname__
+            if log_args:
+                _logger.log(level, "Enter %s — args=%s kwargs=%s", _log_name, _trunc_repr(args), _trunc_repr(kwargs))
+            else:
+                _logger.log(level, "Enter %s", _log_name)
             t0 = time.monotonic()
             try:
                 result = await fn(*args, **kwargs)
                 elapsed = (time.monotonic() - t0) * 1000
-                _logger.log(
-                    level, "Exit %s (%.0fms)", fn.__qualname__, elapsed,
-                    extra={"latency_ms": int(elapsed)},
-                )
+                if log_result:
+                    _logger.log(
+                        level, "Exit %s (%.0fms) → %s", _log_name, elapsed, _trunc_repr(result),
+                        extra={"latency_ms": int(elapsed)},
+                    )
+                else:
+                    _logger.log(
+                        level, "Exit %s (%.0fms)", _log_name, elapsed,
+                        extra={"latency_ms": int(elapsed)},
+                    )
                 return result
             except Exception as exc:
                 elapsed = (time.monotonic() - t0) * 1000
                 _logger.log(
-                    level, "Fail %s (%.0fms): %s", fn.__qualname__, elapsed, exc,
+                    level, "Fail %s (%.0fms): %s", _log_name, elapsed, exc,
                     extra={"latency_ms": int(elapsed)},
                 )
                 raise
         return wrapper
     return decorator
+
+
+def logged_sync(level: int = logging.INFO, log_args: bool = True, log_result: bool = True):
+    """Synchronous version of ``logged()`` — for non-async functions."""
+    def decorator(fn):
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            _logger = logging.getLogger(fn.__module__)
+            _log_name = fn.__qualname__
+            if log_args:
+                _logger.log(level, "Enter %s — args=%s kwargs=%s", _log_name, _trunc_repr(args), _trunc_repr(kwargs))
+            else:
+                _logger.log(level, "Enter %s", _log_name)
+            t0 = time.monotonic()
+            try:
+                result = fn(*args, **kwargs)
+                elapsed = (time.monotonic() - t0) * 1000
+                if log_result:
+                    _logger.log(
+                        level, "Exit %s (%.0fms) → %s", _log_name, elapsed, _trunc_repr(result),
+                        extra={"latency_ms": int(elapsed)},
+                    )
+                else:
+                    _logger.log(
+                        level, "Exit %s (%.0fms)", _log_name, elapsed,
+                        extra={"latency_ms": int(elapsed)},
+                    )
+                return result
+            except Exception as exc:
+                elapsed = (time.monotonic() - t0) * 1000
+                _logger.log(
+                    level, "Fail %s (%.0fms): %s", _log_name, elapsed, exc,
+                    extra={"latency_ms": int(elapsed)},
+                )
+                raise
+        return wrapper
+    return decorator
+
+
+def logged_class(level: int = logging.INFO, log_args: bool = True, log_result: bool = True):
+    """Class-level decorator: applies ``logged()`` to every public method.
+
+    Skips dunder methods and abstract stubs.
+
+    Usage::
+
+        @logged_class()
+        class MyService:
+            async def do_work(self, x: int) -> str:
+                ...
+    """
+    def class_decorator(cls):
+        for attr_name in dir(cls):
+            if attr_name.startswith("_") and attr_name not in ("__init__",):
+                continue
+            attr = getattr(cls, attr_name)
+            if not callable(attr):
+                continue
+            if inspect.iscoroutinefunction(attr):
+                setattr(cls, attr_name, logged(level=level, log_args=log_args, log_result=log_result)(attr))
+            elif not inspect.isbuiltin(attr):
+                setattr(cls, attr_name, logged_sync(level=level, log_args=log_args, log_result=log_result)(attr))
+        return cls
+    return class_decorator
 
 
 def setup_file_logging(service_name: str, level: int | None = None) -> None:

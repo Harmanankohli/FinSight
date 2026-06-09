@@ -4,17 +4,16 @@ import logging
 import os
 import sys
 from datetime import date, datetime
-from pathlib import Path
 
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 from google.adk.agents import LlmAgent
-from google.adk.tools import load_memory
 from google.adk.tools.tool_context import ToolContext
 from google.genai import types as genai_types
 from shared.config import ADK_MODEL, IST, LLM_BASE_URL
 from shared.observability import init_langfuse
+from shared.logging_config import logged, logged_sync
 
 init_langfuse(service_name="orchestrator")
 
@@ -161,83 +160,29 @@ async def save_brief(
     return f"Brief saved for {ticker}: {recommendation.upper()} (confidence: {confidence:.2f})"
 
 
-_REPORTS_DIR = Path("db/reports")
-_REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-
-_HOST_PORT = f"http://{os.environ.get('HOST', 'localhost')}:{os.environ.get('ORCHESTRATOR_PORT', '8001')}"
-
-
-async def generate_report(
-    ticker: str,
-    format: str = "pptx",
-    tool_context: ToolContext = None,
-) -> str:
-    """Generate a downloadable investment report (PPTX, DOCX, or HTML) for a ticker.
-
-    Call this when the user asks for a report, presentation, document, export,
-    or download of their investment analysis. The report is generated from the
-    most recent saved brief for the ticker.
+async def load_memory(query: str, tool_context: ToolContext = None) -> str:
+    """Search past conversations and saved briefs.
 
     Args:
-        ticker: The stock ticker symbol (e.g. "NVDA", "AAPL").
-        format: Report format — "pptx" (PowerPoint), "docx" (Word), or "html" (browser deck).
-            Defaults to "pptx".
+        query: The search query to find relevant memories.
 
     Returns:
-        A message with the download URL, or an error if no brief exists.
+        Matching memory entries as text.
     """
-    fmt = format.lower().strip()
-    if fmt not in ("pptx", "docx", "html"):
-        return f"Invalid format '{format}'. Use 'pptx', 'docx', or 'html'."
-
-    ticker = ticker.upper().strip()
-
-    from shared.memory import TickerMemory
-    tm = TickerMemory()
-    latest = await tm.get_latest(ticker)
-    if not latest:
-        return (
-            f"No saved brief found for {ticker}. Run an analysis first "
-            f"by calling send_message for all agents, then call "
-            f"generate_report again."
-        )
-
-    brief_json_str = latest.get("brief_json", "{}")
     try:
-        brief_data = json.loads(brief_json_str) if isinstance(brief_json_str, str) else brief_json_str
-    except json.JSONDecodeError:
-        brief_data = {}
-
-    from shared.report_generator import generate_pptx, generate_docx, generate_html
-
-    analysis_date = (latest.get("analysis_date") or "report").replace(":", "-")
-    filename = f"FinSight_{ticker}_{analysis_date}.{fmt}"
-    filepath = _REPORTS_DIR / filename
-
-    if fmt == "html":
-        content = generate_html(
-            brief_data, ticker,
-            latest.get("recommendation", "UNKNOWN"),
-            latest.get("confidence") or 0.0,
-            latest.get("analysis_date") or "",
-        )
-        filepath.write_text(content, encoding="utf-8")
-    else:
-        generator = generate_pptx if fmt == "pptx" else generate_docx
-        buf = generator(
-            brief_data, ticker,
-            latest.get("recommendation", "UNKNOWN"),
-            latest.get("confidence") or 0.0,
-            latest.get("analysis_date") or "",
-        )
-        filepath.write_bytes(buf.getvalue())
-
-    download_path = f"/reports/{filename}"
-    fmt_label = {"pptx": "PowerPoint", "docx": "Word", "html": "HTML Deck"}[fmt]
-    return (
-        f"{fmt_label} report generated for {ticker}.\n"
-        f"Download: {_HOST_PORT}{download_path}"
-    )
+        response = await tool_context.search_memory(query)
+        if not response or not response.memories:
+            return "No memories found."
+        parts = []
+        for mem in response.memories:
+            for ev in getattr(mem, "events", []):
+                for part in getattr(getattr(ev, "content", None), "parts", []) or []:
+                    if getattr(part, "text", None):
+                        parts.append(part.text)
+        return "\n---\n".join(parts) if parts else "No relevant memories found."
+    except Exception as e:
+        logger.warning("load_memory failed: %s", e)
+        return f"Memory search unavailable: {e}"
 
 
 # Fire-and-forget: evaluate past recommendations vs current prices without blocking the response
@@ -257,15 +202,14 @@ _STATIC_PREAMBLE = """\
 You are an investment research orchestrator. Your job is to gather analysis
 from specialized agents and produce a BUY/HOLD/SELL recommendation.
 
-PROCEDURE:
+PROCEDURE — follow these steps IN ORDER:
 1.  Identify the stock ticker from the user's question. If the user mentions
     a company name (e.g. "Mastercard", "Apple", "Microsoft"), determine its
     ticker symbol (MA, AAPL, MSFT).
-2.  Call `send_message` for EVERY agent listed under "Available agents" below.
-    You MUST call all of them, and you MUST emit ALL `send_message` calls in a
-    SINGLE assistant response so they execute in PARALLEL. Do NOT wait for one
-    agent's result before issuing the next call. Emit every `send_message` call
-    together in one turn, then synthesize after all responses arrive.
+2.  YOUR VERY FIRST ACTION must be to call `send_message` for EVERY agent
+    listed under "Available agents" below. Do NOT call `load_memory` first.
+    Do NOT call any other tool first. You MUST emit ALL `send_message` calls
+    in a SINGLE assistant response so they execute in PARALLEL.
     Use their EXACT names — never invent agent names.
 3.  Each task MUST include the SAME ticker symbol in ALL CAPS (e.g. "MA").
     Do NOT use different tickers for different agents.
@@ -280,12 +224,12 @@ PROCEDURE:
     recommendation with supporting evidence. Include a confidence score
     (0.0–1.0) in your response. Your analysis is automatically saved after
     you respond — no manual save step needed.
-6.  If the user asks about past analysis or "what did you recommend before",
-    use the `load_memory` tool to search past conversations.
-7.  If the user asks for a report, presentation, document, export, or download,
-    call `generate_report` with the ticker and desired format ("pptx" or "docx").
-    If the user doesn't specify a format, generate both. Present the download
-    link(s) to the user.
+
+TOOL RULES:
+- `send_message`: Use this for ALL stock analysis requests. ALWAYS call it first.
+- `load_memory`: ONLY use this when the user explicitly asks about past
+  recommendations (e.g. "what did you recommend before", "show history").
+  NEVER call load_memory when the user asks to analyze a stock.
 
 MEMORY CONTEXT RULES (applies when [MEMORY CONTEXT] block is present):
 - [TODAY]: analysis was done today — you MUST return it directly without calling agents again.
@@ -315,10 +259,6 @@ PROCEDURE:
     Your analysis is automatically saved after you respond.
 3.  If the user asks about past analysis or "what did you recommend before",
     use the `load_memory` tool to search past conversations.
-4.  If the user asks for a report, presentation, document, export, or download,
-    call `generate_report` with the ticker and desired format ("pptx" or "docx").
-    If the user doesn't specify a format, generate both. Present the download
-    link(s) to the user.
 
 MEMORY CONTEXT RULES (applies when [MEMORY CONTEXT] block is present):
 - [TODAY]: analysis was done today — you MUST return it directly.
@@ -376,7 +316,7 @@ root_agent = LlmAgent(
         "Investment Brief via A2A protocol"
     ),
     instruction=_build_instruction(),
-    tools=[send_message, generate_report, load_memory],
+    tools=[send_message, load_memory],
     generate_content_config=genai_types.GenerateContentConfig(
         temperature=0.0,
     ),

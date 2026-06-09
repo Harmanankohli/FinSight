@@ -5,7 +5,7 @@ from collections.abc import AsyncIterable
 from langfuse.langchain import CallbackHandler
 
 from shared.base_agent import BaseAgent
-from shared.logging_config import logged
+from shared.logging_config import logged, logged_sync
 from shared.config import EVAL_ENABLED
 from shared.observability import get_langfuse_client
 from shared.runtime_eval import score_quant_response as _eval_quant_response
@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 class QuantAgent(BaseAgent):
+    @logged_sync(log_args=False, log_result=False)
     def __init__(self):
         super().__init__(
             agent_name="Quant Analysis Agent",
@@ -28,6 +29,7 @@ class QuantAgent(BaseAgent):
         )
         self.graph = QuantAnalysisGraph()
 
+    @logged()
     async def analyze(self, ticker: str, period: str = "5y", portfolio_holdings: list[str] | None = None, trace_ctx: dict | None = None) -> dict:
         logger.info("Quant analysis starting for %s (period=%s, holdings=%s)", ticker, period, portfolio_holdings)
         mcp = await get_shared_mcp()
@@ -46,6 +48,7 @@ class QuantAgent(BaseAgent):
     async def stream(
         self, query: str, context_id: str, task_id: str
     ) -> AsyncIterable[dict]:
+        logger.info("QuantAgent.stream() called: query=%s...", query[:80])
         yield await self._build_response(query)
 
     @logged()

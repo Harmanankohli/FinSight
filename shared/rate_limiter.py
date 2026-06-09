@@ -1,5 +1,7 @@
 """Async token-bucket rate limiter.
 
+from shared.logging_config import logged
+
 Prevents IP bans from SEC EDGAR (10 req/s hard limit) and Yahoo Finance 429s.
 """
 import asyncio

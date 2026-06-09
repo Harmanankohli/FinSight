@@ -7,6 +7,8 @@ import asyncio
 import time
 from typing import Any, Callable, Awaitable
 
+from shared.logging_config import logged, logged_sync
+
 
 class TTLCache:
     """TTL cache with asyncio single-flight deduplication.

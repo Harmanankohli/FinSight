@@ -34,12 +34,12 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <body>
 <div class="container">
 <div class="header-nav">
-<a href="docs/index.html">Home</a><a href="README.html">Overview</a><a href="docs/ARCHITECTURE.html">Architecture</a><a href="docs/AGENTS.html">Agents</a><a href="docs/MCP_SERVERS.html">MCP</a><a href="docs/DESIGN_DECISIONS.html">Decisions</a><a href="docs/CHANGELOG.html">Changelog</a><a href="docs/TESTS.html">Tests</a>
+<a href="docs/index.html">Home</a><a href="README.html">Overview</a><a href="docs/ARCHITECTURE.html">Architecture</a><a href="docs/AGENTS.html">Agents</a><a href="docs/API_REFERENCE.html">API</a><a href="docs/MCP_SERVERS.html">MCP</a><a href="SECURITY.html">Security</a><a href="docs/DESIGN_DECISIONS.html">Decisions</a><a href="docs/CHANGELOG.html">Changelog</a><a href="docs/TESTS.html">Tests</a>
 </div>
 
 <h1>FinSight &mdash; Multi-Agent Investment Research System</h1>
 
-<p>An autonomous multi-agent system that answers investment queries like <em>&ldquo;Should I invest in NVIDIA?&rdquo;</em> by coordinating three specialized agents across different frameworks, communicating via the <strong>Agent-to-Agent (A2A)</strong> protocol, and using <strong>MCP (Model Context Protocol)</strong> servers for external tool access.</p>
+<p>An autonomous multi-agent system that answers investment queries like <em>&ldquo;Should I invest in NVIDIA?&rdquo;</em> by coordinating <strong>four specialized agents</strong> across different frameworks, communicating via the <strong>Agent-to-Agent (A2A)</strong> protocol, and using <strong>MCP (Model Context Protocol)</strong> servers for external tool access.</p>
 
 <h2>Key Features</h2>
 <ul>
@@ -190,10 +190,12 @@ uv run adk web --port 8080 --session_service_uri sqlite://./db/adk_sessions.db -
 <tr><th>Document</th><th>Description</th></tr>
 <tr><td><a href="docs/ARCHITECTURE.html">ARCHITECTURE.html</a></td><td>System architecture, communication patterns, agent internals</td></tr>
 <tr><td><a href="docs/AGENTS.html">AGENTS.html</a></td><td>Detailed agent reference (skills, architecture, streaming flow)</td></tr>
+<tr><td><a href="docs/API_REFERENCE.html">API_REFERENCE.html</a></td><td>Complete endpoint reference &mdash; REST routes, A2A protocol, AG-UI, health checks</td></tr>
 <tr><td><a href="docs/MCP_SERVERS.html">MCP_SERVERS.html</a></td><td>MCP server tools, registry, client usage</td></tr>
 <tr><td><a href="docs/DESIGN_DECISIONS.html">DESIGN_DECISIONS.html</a></td><td>Evolution log: why each design choice was made</td></tr>
 <tr><td><a href="docs/CHANGELOG.html">CHANGELOG.html</a></td><td>Version history</td></tr>
 <tr><td><a href="docs/TESTS.html">TESTS.html</a></td><td>Test coverage, patterns, running instructions</td></tr>
+<tr><td><a href="SECURITY.html">SECURITY.html</a></td><td>Python sandbox model, restricted imports, responsible disclosure</td></tr>
 </table>
 
 <h2>Testing</h2>

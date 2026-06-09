@@ -100,6 +100,10 @@ EVAL_BURST_LIMIT = int(os.environ.get("EVAL_BURST_LIMIT", "30"))
 EVAL_METRIC_TIMEOUT = float(os.environ.get("EVAL_METRIC_TIMEOUT", "90.0"))
 
 
+from shared.logging_config import logged_sync
+
+
+@logged_sync(log_args=False, log_result=False)
 def validate() -> None:
     """Raise EnvironmentError if required configuration is missing or has placeholder values."""
     issues = []

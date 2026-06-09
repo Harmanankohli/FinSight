@@ -48,6 +48,8 @@ from shared.agui_sse import sse
 
 logger = logging.getLogger(__name__)
 
+from shared.logging_config import logged, logged_sync
+
 _NON_INVESTMENT_RE = re.compile(
     r"\b(weather|recipe|sports score|movie|song|joke|cook(?:ing)?|weather forecast|"
     r"horoscope|gaming|video game|celebrity|fashion|travel destination)\b",

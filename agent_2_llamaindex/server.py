@@ -15,7 +15,7 @@ from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
 from shared.a2a_store import SQLiteTaskStore
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
 
-from shared.logging_config import setup_file_logging
+from shared.logging_config import logged, logged_sync, setup_file_logging
 from shared.observability import init_langfuse, init_instrumentation, shutdown_langfuse
 
 setup_file_logging("rag_agent")
@@ -34,10 +34,12 @@ from .index_manager import FinancialIndexManager
 logger = logging.getLogger(__name__)
 
 
+@logged(log_args=False, log_result=False)
 async def health(request):
     return JSONResponse({"status": "ok", "agent": "rag"})
 
 
+@logged()
 async def release_evals(request):
     from shared.eval_gate import release_evals as _release
     n = await _release()
@@ -91,6 +93,7 @@ _warm_index_manager: FinancialIndexManager | None = None
 _warm_hybrid: HybridSearchPipeline | None = None
 
 
+@logged_sync()
 def _do_prewarm() -> tuple[FinancialIndexManager, HybridSearchPipeline]:
     # Heavy synchronous work — runs once in the executor at startup so the
     # first query doesn't pay the ~3-5s cold-start cost.
@@ -132,6 +135,7 @@ def _do_prewarm() -> tuple[FinancialIndexManager, HybridSearchPipeline]:
     return mgr, pipe
 
 
+@logged()
 async def _prewarm():
     # Off-load to a thread executor so startup doesn't block the event loop.
     global _warm_index_manager, _warm_hybrid

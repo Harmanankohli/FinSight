@@ -7,7 +7,10 @@ from pydantic import BaseModel, Field, create_model
 
 logger = logging.getLogger(__name__)
 
+from shared.logging_config import logged, logged_sync
 
+
+@logged_sync()
 def _build_args_schema(name: str, input_schema: dict) -> type[BaseModel]:
     fields = {}
     props = input_schema.get("properties", {})
@@ -27,6 +30,7 @@ class DynamicMCPTool(BaseTool):
     name: str = ""
     description: str = ""
 
+    @logged_sync(log_args=False, log_result=False)
     def __init__(self, tool_name: str, tool_description: str, input_schema: dict, mcp_wrapper: "MCPClientWrapper"):
         # Dynamically builds a Pydantic args_schema from the MCP tool's JSON input_schema
         args_schema = _build_args_schema(tool_name, input_schema)
@@ -34,6 +38,7 @@ class DynamicMCPTool(BaseTool):
         self._tool_name = tool_name
         self._mcp = mcp_wrapper
 
+    @logged_sync()
     def _run(self, **kwargs: Any) -> str:
         import asyncio
         result = asyncio.run(self._mcp.call_by_name(self._tool_name, kwargs))
@@ -44,10 +49,12 @@ class DynamicMCPTool(BaseTool):
 
 class MCPClientWrapper:
     # Discovers and caches MCP tools lazily; provides a synchronous call interface for CrewAI tools
+    @logged_sync(log_args=False, log_result=False)
     def __init__(self, mcp_client: Any):
         self._client = mcp_client
         self._tool_cache: dict[str, Any] = {}
 
+    @logged()
     async def discover_tools(self) -> list[DynamicMCPTool]:
         # Fetches tool list from MCP server and wraps each as a DynamicMCPTool, caching descriptions
         tools = await self._client.list_tools()
@@ -62,6 +69,7 @@ class MCPClientWrapper:
             logger.info("Discovered MCP tool: %s - %s", name, desc[:60])
         return discovered
 
+    @logged()
     async def call_by_name(self, tool_name: str, params: dict) -> Any:
         try:
             result = await self._client.call_tool_by_name(tool_name, params)
@@ -82,6 +90,7 @@ class MCPClientWrapper:
             logger.warning("MCP tool call %s failed: %s", tool_name, e)
             return {"error": str(e)}
 
+    @logged()
     async def call(self, server: str, tool: str, params: dict) -> Any:
         try:
             result = await self._client.call_tool(server, tool, params)

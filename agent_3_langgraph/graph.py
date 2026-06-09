@@ -19,10 +19,12 @@ from .nodes import (
     technical_analysis_node,
 )
 from .state import QuantAnalysisState
+from shared.logging_config import logged, logged_sync
 
 logger = logging.getLogger(__name__)
 
 
+@logged_sync()
 def _route_on_volatility(state: QuantAnalysisState) -> str:
     # Conditional edge: high volatility (>35%) → stress test (tail-risk focused), low → DCF (fundamental value)
     if state.get("is_high_volatility", False):
@@ -33,9 +35,11 @@ def _route_on_volatility(state: QuantAnalysisState) -> str:
 
 
 class QuantAnalysisGraph:
+    @logged_sync(log_args=False, log_result=False)
     def __init__(self):
         self._graph = self._build_graph()
 
+    @logged_sync(log_result=False)
     def _build_graph(self) -> StateGraph:
         """
         Fan-out topology:
@@ -108,6 +112,7 @@ class QuantAnalysisGraph:
 
         return builder.compile()
 
+    @logged()
     async def run(
         self, ticker: str, period: str = "5y", portfolio_holdings: list[str] | None = None,
         mcp_client: Any | None = None, langfuse_handler: Any | None = None,

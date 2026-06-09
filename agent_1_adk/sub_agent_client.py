@@ -33,7 +33,7 @@ _TERMINAL_STATES = {
 }
 
 from shared.config import AGENT_SEED_URLS, A2A_TIMEOUT, A2A_TIMEOUT_RAG, A2A_TIMEOUT_QUANT, A2A_TIMEOUT_MARKET_CONTEXT
-from shared.logging_config import logged
+from shared.logging_config import logged, logged_sync
 from shared.observability import get_langfuse_client
 from shared.trace_context import inject_trace_context, current_trace_id
 

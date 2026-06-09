@@ -5,7 +5,7 @@ from collections.abc import AsyncIterable
 from datetime import date, datetime, timezone
 
 from shared.base_agent import BaseAgent
-from shared.logging_config import logged
+from shared.logging_config import logged, logged_sync
 from shared.mcp_client import get_shared_mcp
 from shared.config import EVAL_ENABLED
 from shared.memory.store import is_filing_ingested, mark_filing_ingested
@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 class RAGAgent(BaseAgent):
+    @logged_sync(log_args=False, log_result=False)
     def __init__(self):
         super().__init__(
             agent_name="Financial RAG Agent",
@@ -31,6 +32,7 @@ class RAGAgent(BaseAgent):
         self._ingestion: DocumentIngestionPipeline | None = None
         self._last_ingestion: dict[str, date] = {}
 
+    @logged(log_result=False)
     async def _ensure_ingested(self, ticker: str) -> None:
         # Daily dedup: skip if already ingested today (avoids re-fetching filings every call)
         today = datetime.now(timezone.utc).date()
@@ -109,6 +111,7 @@ class RAGAgent(BaseAgent):
         except Exception as e:
             logger.warning("Auto-ingest failed for %s: %s", ticker, e)
 
+    @logged(log_result=False)
     async def _ensure_news_ingested(self, ticker: str) -> None:
         """Fetches recent news via MCP and ingests articles into the 'news' ChromaDB collection."""
         today = datetime.now(timezone.utc).date()
@@ -159,6 +162,7 @@ class RAGAgent(BaseAgent):
         except Exception as e:
             logger.warning("News ingestion failed for %s: %s", ticker, e)
 
+    @logged()
     async def query(self, ticker: str, query_text: str) -> dict:
         """Await ingestion (if needed) then query. Used by direct callers."""
         await self._ensure_ingested(ticker)
@@ -172,6 +176,7 @@ class RAGAgent(BaseAgent):
         # client keeps the connection open rather than receiving a hollow
         # "index warming" placeholder. The orchestrator's SubAgentClient
         # already skips WORKING events and waits for the terminal state.
+        logger.info("stream() called for query=%s...", query[:100])
         ticker = extract_ticker(query)
         if ticker:
             today_ingested = self._last_ingestion.get(ticker)
@@ -186,6 +191,7 @@ class RAGAgent(BaseAgent):
                 await self._ensure_ingested(ticker)
                 await self._ensure_news_ingested(ticker)
 
+        logger.info("stream() complete for query=%s...", query[:100])
         yield await self._build_response(query)
 
     @logged()

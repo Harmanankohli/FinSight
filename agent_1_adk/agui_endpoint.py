@@ -35,6 +35,8 @@ from starlette.responses import JSONResponse, StreamingResponse
 
 logger = logging.getLogger(__name__)
 
+from shared.logging_config import logged, logged_sync
+
 _EVAL_USER_ID = "eval_user"
 
 

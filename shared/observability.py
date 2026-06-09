@@ -6,6 +6,8 @@ from typing import Any
 from langfuse.span_filter import is_default_export_span
 from shared.config import LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_HOST
 
+from shared.logging_config import logged_sync
+
 logger = logging.getLogger(__name__)
 
 # Lazy singleton: _langfuse_client is created once on first init_langfuse() call.
