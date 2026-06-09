@@ -5,9 +5,12 @@ Merges holdings over time — users never need to explicitly "set" their portfol
 """
 
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from shared.config import IST
 from shared.memory.store import DB_PATH, get_db, write_lock
@@ -28,14 +31,17 @@ class PortfolioStore:
         )
         row = await cursor.fetchone()
         if not row:
+            logger.debug("Profile for user %s: not found", user_id)
             return None
-        return {
+        result = {
             "user_id": row[0],
             "risk_profile": row[1],
             "holdings": json.loads(row[2]),
             "horizon": row[3],
             "updated_at": row[4],
         }
+        logger.debug("Profile for user %s: found (%d holdings)", user_id, len(result["holdings"]))
+        return result
 
     # Called on each query. Merges new holdings with existing ones (union), updates risk/horizon only when non-empty.
     async def upsert_from_context(self, ctx: QueryContext) -> None:
@@ -78,6 +84,7 @@ class PortfolioStore:
                     (ctx.session_id, risk, json.dumps(new_holdings), horizon, now),
                 )
             await conn.commit()
+        logger.debug("Portfolio upserted for user %s (%d holdings)", ctx.session_id, len(new_holdings))
 
     # Simple read — returns the user's current holdings list from their profile.
     async def get_holdings(self, user_id: str) -> list[str]:

@@ -650,3 +650,81 @@ All databases are stored under the `db/` folder at the project root — the enti
 - `db/chroma_db/` — ChromaDB vector store for SEC filing RAG and semantic cache
 - `db/.langchain_cache.db` — LangChain SQLiteCache for quant agent LLM responses
 - All files auto-created on first run; `db/` directory created by `get_db()` via `path.parent.mkdir(parents=True, exist_ok=True)`
+
+## Report Generation
+
+Report generation is a separate subsystem in `shared/report_generator.py` that produces three output formats (PPTX, DOCX, HTML) from the same shared data extraction pipeline. It is invoked via HTTP API routes in `agent_1_adk/api_routes.py`.
+
+### API Routes
+
+| Route | Method | Format | Description |
+|---|---|---|---|
+| `/api/reports/ticker/{symbol}/latest/{format}` | GET | pptx, docx, html | Generate report for ticker's latest brief |
+| `/api/reports/{brief_id}/{format}` | GET | pptx, docx, html | Generate report from a specific brief by ID |
+| `/api/reports/stream/{brief_id}` | GET | SSE | Stream deck-stage.js HTML as Server-Sent Events |
+
+Route ordering is significant: `/ticker/{symbol}/latest/{format}` must be declared before `/{brief_id}/{format}` in the Starlette route list. Otherwise `/{brief_id}` captures `"ticker"` and `{format}` captures `"{symbol}"`.
+
+### Data Flow
+
+```
+HTTP Request → api_routes.py handler
+  → _load_brief_data(brief_id_or_symbol)  — loads from TickerMemory
+  → generate_pptx / generate_docx / generate_html
+    → _extract_deck_data(brief)  — shared pipeline
+      ├── _extract_metric(deck, "sharpe_ratio")   → 1.45
+      ├── _extract_recommendation(brief)           → "BUY"
+      ├── _extract_scorecards(metrics)             → Momentum, RSI scorecards
+      ├── _extract_advanced_scorecard(metrics)     → VaR, beta, volatility
+      ├── _extract_fundamentals(metrics)           → PE, ROE, margins
+      ├── _extract_executive_sections(brief)       → [Price Target, Thesis, Recommendation]
+      └── _extract_holdings(metrics)               → portfolio table
+    → format-specific generator
+```
+
+### Format-Specific Generators
+
+**PPTX** (`generate_pptx`):
+- Instantiates `_SlidesHelper(prs, deck_data, style, charts)` — a namespace class holding shared state
+- Calls 9 slide builder methods in order:
+  1. `_add_title_slide()` — ticker, company, date
+  2. `_add_executive_summary()` — Price Target, Thesis, Recommendation sections
+  3. `_add_scorecard()` — Momentum (RSI, MACD, SMA50/200) + RSI classification
+  4. `_add_metrics_slide()` — Sharpe, volatility, VaR, beta with color thresholds
+  5. `_add_advanced_metrics_slide()` — alpha, Treynor, Sortino, max drawdown
+  6. `_add_analysis_slide()` — analyst consensus, short interest, earnings surprise
+  7. `_add_fundamentals_slide()` — PE, ROE, margins, D/E table
+  8. `_add_holdings_slide()` — portfolio composition table
+  9. `_add_disclaimer_slide()` — required legal disclaimer
+- Each method creates one `Slide`, populates shapes, and applies `_style` (color scheme, font sizes)
+- Uses python-pptx for `.pptx` output with `Content-Type: application/vnd.openxmlformats-officedocument.presentationml.presentation`
+
+**DOCX** (`generate_docx`):
+- Builds sections sequentially using python-docx
+- Title section → Scorecard tables → Metrics section → Analysis section → Fundamentals table → Holdings table → Disclaimer
+- Uses `_add_table_to_doc()` helper for uniform table formatting
+- Returns `Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document`
+
+**HTML** (`generate_html`):
+- Uses `_get_jinja_env()` — lazy-loaded `Jinja2` `Environment` with `FileSystemLoader("shared/templates/")`
+- Renders `investment_deck.html` template, which:
+  - Extends `base.html` for full-page layout with CSS
+  - Emits deck-stage.js web component structure
+  - Each slide section becomes a `<section data-slide>` inside `<deck-stage>` custom element
+- `deck-stage.js` web component:
+  - Shows one slide at a time (`display: block` / `display: none`)
+  - Keyboard navigation: ArrowLeft (previous), ArrowRight (next)
+  - `connectedCallback()` hides all sections except the first
+- Full HTML includes CSS styles, deck-stage.js inline, and `<deck-stage>` wrapper
+- Returns `text/html` with `Content-Type: text/html`
+
+### Shared Components
+
+| Component | File | Purpose |
+|---|---|---|
+| `_extract_deck_data()` | `shared/report_generator.py` | Shared extraction pipeline — returns `DeckData` dataclass |
+| `_rsi_status()` | `shared/report_generator.py` | Classifies RSI (Overbought/Bullish/Neutral/Oversold) |
+| `_SlidesHelper` | `shared/report_generator.py` | PPTX namespace class — shared state + 9 slide builders |
+| `_get_jinja_env()` | `shared/report_generator.py` | Lazy-loaded Jinja2 environment for HTML templates |
+| `investment_deck.html` | `shared/templates/` | HTML template with slide blocks |
+| `deck-stage.js` | `shared/templates/` | Web component for interactive slide navigation |

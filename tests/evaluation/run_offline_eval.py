@@ -23,7 +23,7 @@ import sys
 from pathlib import Path
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-logger = logging.getLogger("offline_eval")
+logger = logging.getLogger(__name__)
 
 GOLDEN_SET = Path(__file__).parent / "golden_set.jsonl"
 

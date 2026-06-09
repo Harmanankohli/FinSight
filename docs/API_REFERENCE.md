@@ -205,22 +205,25 @@ GET /api/agents/{name}/health
 #### Reports
 
 ```
-GET /api/reports/{brief_id}/{format}
 GET /api/reports/ticker/{symbol}/latest/{format}
+GET /api/reports/{brief_id}/{format}
 ```
 
 | Endpoint | Parameters | Returns |
 |---|---|---|
-| `/api/reports/{brief_id}/{format}` | `format`: `pptx` or `docx` | Binary file download (PPTX or DOCX) |
-| `/api/reports/ticker/{symbol}/latest/{format}` | `format`: `pptx` or `docx` | Binary file download for most recent brief |
+| `/api/reports/ticker/{symbol}/latest/{format}` | `format`: `pptx`, `docx`, or `html` | Binary file download or HTML string |
+| `/api/reports/{brief_id}/{format}` | `format`: `pptx`, `docx`, or `html` | Binary file download or HTML string for specified brief |
 
 **Response headers**:
 
 ```
 Content-Type: application/vnd.openxmlformats-officedocument.presentationml.presentation (PPTX)
               application/vnd.openxmlformats-officedocument.wordprocessingml.document (DOCX)
-Content-Disposition: attachment; filename="FinSight_{ticker}_{date}.{format}"
+              text/html (HTML)
+Content-Disposition: attachment; filename="FinSight_{ticker}_{date}.{format}" (PPTX/DOCX)
 ```
+
+**Report format endpoints** are served via `generate_pptx()`, `generate_docx()`, and `generate_html()` in `shared/report_generator.py`. The HTML format uses a Jinja2 template (`shared/templates/investment_deck.html`) with an embedded `deck-stage.js` web component for slide navigation. All three formats share a common `_extract_deck_data()` extraction pipeline.
 
 ---
 

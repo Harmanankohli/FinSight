@@ -1,7 +1,10 @@
 """Shared AG-UI SSE framing helper."""
 
 import json
+import logging
 import time
+
+logger = logging.getLogger(__name__)
 
 # Optional event keys where null must be omitted (Zod .optional() rejects null).
 # Data-carrying keys like 'snapshot', 'delta', 'content' are NOT listed here

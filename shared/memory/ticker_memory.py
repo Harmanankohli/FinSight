@@ -5,10 +5,13 @@ summaries for prompt injection (~100-300 tokens max).
 """
 
 import json
+import logging
 import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from shared.config import IST
 from shared.memory.store import DB_PATH, get_db, write_lock
@@ -46,6 +49,8 @@ class TickerMemory:
                 ),
             )
             await conn.commit()
+        logger.info("Stored brief for %s (id=%s, rec=%s, conf=%.2f)",
+                    brief.ticker, record_id, brief.final_recommendation, brief.confidence_score)
         return record_id
 
     # Stores a lightweight text-only brief when no structured InvestmentBrief is available (e.g. fallback or non-agent responses).
@@ -82,6 +87,7 @@ class TickerMemory:
                 ),
             )
             await conn.commit()
+        logger.info("Stored minimal brief for %s (id=%s)", ticker, record_id)
         return record_id
 
     # Replaces brief_json.response_text on an existing record. Used to overwrite the LLM's short
@@ -93,6 +99,7 @@ class TickerMemory:
         )
         row = await cursor.fetchone()
         if not row:
+            logger.debug("Brief %s not found for update", record_id)
             return False
         try:
             data = json.loads(row[0]) if row[0] else {}
@@ -106,6 +113,7 @@ class TickerMemory:
                 (json.dumps(data), record_id),
             )
             await conn.commit()
+        logger.debug("Updated response_text for %s", record_id)
         return True
 
     # Fetches most recent brief for a ticker, ordered by analysis_date then created_at descending.
@@ -252,7 +260,7 @@ class TickerMemory:
                 thesis = rationale[:200]
                 lines.append(f"Thesis: {thesis}")
         except (json.JSONDecodeError, AttributeError):
-            pass
+            logger.debug("Could not parse brief_json for %s context summary", ticker)
 
         result = " ".join(lines)
         max_chars = max_tokens * 4

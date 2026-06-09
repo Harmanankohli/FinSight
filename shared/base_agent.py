@@ -1,7 +1,10 @@
+import logging
 from abc import ABC
 from collections.abc import AsyncIterable
 
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 
 class BaseAgent(BaseModel, ABC):

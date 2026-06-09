@@ -1,11 +1,12 @@
 """Async token-bucket rate limiter.
 
-from shared.logging_config import logged
-
 Prevents IP bans from SEC EDGAR (10 req/s hard limit) and Yahoo Finance 429s.
 """
 import asyncio
+import logging
 import time
+
+logger = logging.getLogger(__name__)
 
 
 class TokenBucket:
@@ -29,4 +30,5 @@ class TokenBucket:
                     self.tokens -= 1
                     return
                 deficit = 1 - self.tokens
+            logger.debug("Rate limiter sleeping %.2fs (%.1f tokens available)", deficit / self.rate, self.tokens)
             await asyncio.sleep(deficit / self.rate)

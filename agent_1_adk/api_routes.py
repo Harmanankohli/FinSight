@@ -174,7 +174,7 @@ async def _build_report_response(
         try:
             brief_data = json.loads(brief_json_str)
         except json.JSONDecodeError:
-            pass
+            logger.debug("Could not parse brief_json for ticker report")
 
     safe_date = (analysis_date or "report").replace(":", "-")
     filename = f"FinSight_{ticker}_{safe_date}.{fmt}"

@@ -4,10 +4,13 @@ Records each BUY/HOLD/SELL recommendation with optional price snapshot.
 Can evaluate past recommendations against current market prices via yfinance.
 """
 
+import logging
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from shared.config import IST
 from shared.memory.store import DB_PATH, get_db, write_lock
@@ -55,6 +58,8 @@ class PerformanceTracker:
                 ),
             )
             await conn.commit()
+        logger.info("Recorded %s recommendation for %s (conf=%.2f, price=%s)",
+                    recommendation.upper(), ticker, confidence, price)
         return record_id
 
     # Batch-evaluates all unevaluated recommendations by fetching current prices and computing realized_return for each.
@@ -70,12 +75,14 @@ class PerformanceTracker:
                WHERE evaluated_at IS NULL AND price_at_rec IS NOT NULL"""
         )
         rows = await cursor.fetchall()
+        logger.info("Evaluating %d unevaluated recommendations", len(rows))
 
         results = []
         for row in rows:
             record_id, ticker, recommendation, price_at_rec = row
             current_price = self._fetch_current_price(ticker)
             if current_price is None:
+                logger.debug("Skipping %s evaluation: no current price", ticker)
                 continue
 
             realized_return = (current_price - price_at_rec) / price_at_rec
@@ -100,6 +107,7 @@ class PerformanceTracker:
                 "realized_return": round(realized_return, 4),
             })
 
+        logger.info("Evaluation complete: %d updated", len(results))
         return results
 
     # Computes win rate per recommendation type. BUY correct if price rose (ret > 0), SELL correct if price fell (ret < 0). HOLD always counted as correct.
@@ -204,4 +212,5 @@ class PerformanceTracker:
             info = ticker_obj.info
             return info.get("currentPrice") or info.get("regularMarketPrice")
         except Exception:
+            logger.warning("Price fetch failed for %s, returning None", ticker)
             return None

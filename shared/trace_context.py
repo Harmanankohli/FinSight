@@ -55,7 +55,7 @@ def extract_trace_context(task_text: str) -> tuple[dict | None, str]:
         if trace_ctx and "trace_id" in trace_ctx and "parent_span_id" in trace_ctx:
             return trace_ctx, clean_task
     except (json.JSONDecodeError, AttributeError):
-        pass
+        logger.debug("Malformed trace prefix, proceeding without trace context")
     return None, task_text
 
 

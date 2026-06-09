@@ -1,6 +1,6 @@
 # Test Coverage
 
-**~105 test functions (~160 parametrized cases) across 15 test files + offline eval driver. No new tests added in v1.34 — the commits focused on production bug fixes and feature work.**
+**~125 test functions (~180 parametrized cases) across 18 test files + offline evaluation driver. v1.39 adds 3 regression test files covering DOCX, HTML, and PPTX output formats.**
 
 ## Running Tests
 
@@ -26,6 +26,13 @@ tests/
 │                                        #       peer comparison, Monte Carlo (Phase 4)
 ├── security/
 │   └── test_sandbox.py                  #  11 (parametrized ~45+) — AST gate + subprocess
+├── regression/                          # Report generator regression tests (v1.39)
+│   ├── test_docx_regression.py          #   5 — DOCX: valid output, empty, unknown,
+│                                        #       unicode, markdown tables
+│   ├── test_html_regression.py          #   8 — HTML: valid, empty, unknown, non-std rec,
+│                                        #       unicode, tables, deck-stage embedded, XSS
+│   └── test_pptx_regression.py          #   7 — PPTX: valid, empty, unknown, non-std rec,
+│                                        #       unicode, tables, long summary
 └── unit/
     ├── test_models.py                   #  10 — Pydantic model construction, round-trip
     ├── test_quant_graph_nodes.py        #  18 — compute_metrics, stress_test, Monte Carlo,
@@ -43,7 +50,7 @@ tests/
         ├── test_ticker_memory.py        #   7 — store/get_latest, history, flip detection
         └── test_save_brief_persists_synthesis.py  # 2 — synthesis-wins, rationale-fallback
 
-**Total: ~160 parametrized test cases across 15 test files.**
+**Total: ~180 parametrized test cases across 18 test files.**
 
 ## Key Patterns
 
@@ -61,6 +68,28 @@ pytest -m integration
 ```
 
 These verify the MCP server (port 8010) and agent card endpoints (ports 8002–8004) are reachable. Requires all services running (`run_adk_web.bat`).
+
+## Report Generation Regression Tests (v1.39)
+
+3 new test files validate all three output formats against realistic data patterns. All use `unittest.mock.patch("yfinance.Ticker", ...)` to avoid real network calls.
+
+### Running
+
+```bash
+pytest tests/regression/ -v
+```
+
+### DOCX (`test_docx_regression.py`)
+
+Tests `generate_docx()` with the shared `_extract_deck_data()` extraction pipeline. Validates output is valid `BytesIO`, non-empty, and handles edge cases (empty brief, unknown ticker, unicode, markdown tables).
+
+### HTML (`test_html_regression.py`)
+
+Tests `generate_html()` — verifies HTML structure (`<section>`, `</deck-stage>`), company name in title, deck-stage.js embedded inline (no external `src=`), CSS custom properties present, unicode encoding, and XSS prevention (`<script>` tags escaped as `&lt;script&gt;`).
+
+### PPTX (`test_pptx_regression.py`)
+
+Tests `generate_pptx()` — slide count verification via `_count_slides()` (parses PPTX zip structure for `ppt/slides/slide*.xml`). Validates ≥6 slides for realistic data, ≥3 slides for empty brief, handles long summaries without overflow.
 
 ## Test Configuration
 

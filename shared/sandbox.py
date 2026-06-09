@@ -13,10 +13,13 @@ from __future__ import annotations
 
 import ast
 import json
+import logging
 import os
 import subprocess
 import sys
 import tempfile
+
+logger = logging.getLogger(__name__)
 
 
 # ── Identifier restriction sets ───────────────────────────────────────────────
@@ -196,7 +199,7 @@ def _sandbox_preexec() -> None:
         _res.setrlimit(_res.RLIMIT_AS, (512 * 1024 * 1024, 512 * 1024 * 1024))
         _res.setrlimit(_res.RLIMIT_NOFILE, (0, 0))
     except Exception:
-        pass
+        logger.debug("Resource limits unavailable (expected on Windows)")
 
 
 async def run_sandbox(code: str, timeout: int = 30) -> dict:
@@ -208,7 +211,10 @@ async def run_sandbox(code: str, timeout: int = 30) -> dict:
     """
     safe, reason = _check_code_safety(code)
     if not safe:
+        logger.warning("Sandbox blocked code: %s", reason)
         return {"success": False, "stdout": "", "stderr": reason, "result": None}
+
+    logger.info("Sandbox executing %d chars of code (timeout=%ds)", len(code), timeout)
 
     runner_fd, runner_path = tempfile.mkstemp(suffix=".py", text=True)
     try:
@@ -227,17 +233,19 @@ async def run_sandbox(code: str, timeout: int = 30) -> dict:
             preexec_fn=preexec,
         )
     except subprocess.TimeoutExpired:
+        logger.warning("Sandbox timed out after %ds", timeout)
         return {
             "success": False, "stdout": "",
             "stderr": f"Timed out after {timeout}s", "result": None,
         }
     except Exception as exc:
+        logger.warning("Sandbox subprocess failed: %s", exc)
         return {"success": False, "stdout": "", "stderr": str(exc), "result": None}
     finally:
         try:
             os.unlink(runner_path)
         except OSError:
-            pass
+            logger.debug("Could not unlink temp runner %s", runner_path)
 
     result = None
     clean_lines: list[str] = []
@@ -255,8 +263,10 @@ async def run_sandbox(code: str, timeout: int = 30) -> dict:
         for line in proc.stderr.splitlines()
     )
 
+    success = proc.returncode == 0
+    logger.info("Sandbox completed (success=%s, returncode=%d)", success, proc.returncode)
     return {
-        "success": proc.returncode == 0,
+        "success": success,
         "stdout": "\n".join(clean_lines),
         "stderr": cleaned_stderr,
         "result": result,

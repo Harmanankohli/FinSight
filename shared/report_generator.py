@@ -12,7 +12,10 @@ Handles both brief_json shapes:
 
 from __future__ import annotations
 
+import logging
 import re
+
+logger = logging.getLogger(__name__)
 from dataclasses import dataclass, field
 from io import BytesIO
 from types import SimpleNamespace
@@ -230,7 +233,7 @@ def _resolve_ticker_info(ticker: str, text: str) -> tuple[str, str, str]:
             _ticker_cache[ticker] = (name, sector, exchange)
             return _ticker_cache[ticker]
     except Exception:
-        pass
+        logger.debug("yfinance ticker info lookup failed for report enrichment")
     for pat in [
         r"(?:for|about|of)\s+([A-Z][A-Za-z\s&.]+?)\s*\(" + re.escape(ticker) + r"\)",
         r"([A-Z][A-Za-z\s&.]+?)\s*\(" + re.escape(ticker) + r"\)",
@@ -1397,6 +1400,7 @@ def generate_pptx(
     def rgb(hex_str: str) -> RGBColor:
         return RGBColor.from_string(hex_str)
 
+    logger.info("Generating PPTX report for %s", ticker)
     deck = _extract_deck_data(brief_data, ticker, recommendation, confidence, analysis_date)
     prs = Presentation()
     prs.slide_width = Inches(13.33)
@@ -1424,7 +1428,7 @@ def generate_pptx(
         try:
             tf.vertical_anchor = anchor
         except Exception:
-            pass
+            logger.debug("Could not set vertical_anchor on text frame")
         p = tf.paragraphs[0]
         p.alignment = align
         run = p.add_run()
@@ -1525,6 +1529,7 @@ def generate_pptx(
     buf = BytesIO()
     prs.save(buf)
     buf.seek(0)
+    logger.info("PPTX report generated for %s (%d bytes)", ticker, buf.getbuffer().nbytes)
     return buf
 
 
@@ -1560,6 +1565,7 @@ def generate_docx(
         b = int(hex_str[4:6], 16)
         return RGBColor(r, g, b)
 
+    logger.info("Generating DOCX report for %s", ticker)
     deck = _extract_docx_content(brief_data, ticker, recommendation, confidence, analysis_date)
     doc = Document()
 
@@ -1743,6 +1749,7 @@ def generate_docx(
     buf = BytesIO()
     doc.save(buf)
     buf.seek(0)
+    logger.info("DOCX report generated for %s (%d bytes)", ticker, buf.getbuffer().nbytes)
     return buf
 
 
@@ -1796,7 +1803,10 @@ def generate_html(
     analysis_date: str,
 ) -> str:
     """Generate a standalone HTML investment deck. Returns HTML string."""
+    logger.info("Generating HTML report for %s", ticker)
     deck = _extract_deck_data(brief_data, ticker, recommendation, confidence, analysis_date)
     ctx = _deck_to_template_context(deck)
     template = _get_jinja_env().get_template("investment_deck.html")
-    return template.render(**ctx)
+    result = template.render(**ctx)
+    logger.info("HTML report generated for %s (%d bytes)", ticker, len(result))
+    return result

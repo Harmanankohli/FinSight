@@ -34,6 +34,7 @@ class GenericAgentExecutor(AgentExecutor):
         self.agent = agent
         self._task: asyncio.Task | None = None
 
+    @logged(log_args=False, log_result=False)
     async def execute(
         self,
         context: RequestContext,

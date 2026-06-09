@@ -13,6 +13,13 @@ from typing import Any
 
 from shared.trace_context import current_trace_id, current_session_id
 
+# Canonical log files written by setup_file_logging():
+#   logs/orchestrator.log   — agent_1_adk
+#   logs/rag_agent.log      — agent_2_llamaindex
+#   logs/quant.log          — agent_3_langgraph
+#   logs/market_context.log — agent_4_crewai
+#   logs/mcp.log            — mcp_servers
+
 # Logs directory: one level up from shared/ at project-root/logs/
 _LOGS_DIR = Path(__file__).resolve().parent.parent / "logs"
 
@@ -240,3 +247,19 @@ def setup_file_logging(service_name: str, level: int | None = None) -> None:
     fh.setFormatter(JsonFormatter(service_name))
     fh.addFilter(sanitize)
     root.addHandler(fh)
+
+    # Suppress noisy third-party loggers to WARNING unless explicitly overridden.
+    # Override individual libraries with LOG_LEVEL_HTTPX=DEBUG etc.
+    _NOISY_LOGGERS = [
+        "httpx", "httpcore", "urllib3", "asyncio",
+        "aiosqlite", "chromadb", "sentence_transformers",
+        "langfuse", "opentelemetry", "grpc",
+    ]
+    for _lib in _NOISY_LOGGERS:
+        _lib_logger = logging.getLogger(_lib)
+        _env_key = f"LOG_LEVEL_{_lib.upper().replace('.', '_')}"
+        _override = os.environ.get(_env_key)
+        if _override:
+            _lib_logger.setLevel(getattr(logging, _override.upper(), logging.WARNING))
+        elif _lib_logger.level == logging.NOTSET or _lib_logger.level < logging.WARNING:
+            _lib_logger.setLevel(logging.WARNING)

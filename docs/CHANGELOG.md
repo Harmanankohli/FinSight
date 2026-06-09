@@ -1,5 +1,112 @@
 # Changelog
 
+## v1.39 — Report Generation: Data Layer, HTML Engine, Modular Slides, Regression Tests
+
+### Phase 1 — Robust DeckData Extraction (`_extract_deck_data`)
+
+**`shared/report_generator.py`** (72733d0):
+
+- **`_extract_content()` → `_extract_deck_data()`**: Complete rewrite from fragile dict-based extraction to a `DeckData` dataclass with typed fields. New robust regex pipeline enumerates all extraction dimensions sequentially and fills every `DeckData` field with fallback defaults — no more silent empty slides.
+- **`DeckData` dataclass**: 16+ typed fields (`company_name`, `ticker`, `recommendation`, `confidence`, `analysis_date`, `exchange`, `sector`, `executive_summary`, `kpi_chips`, `financials`, `valuation_table`, `scenarios`, `scorecard`, `peers`, `peer_names`, `risks`, `opportunities`, `sections`, `disclaimer`). All fields have safe defaults (empty lists/strings/dicts).
+- **Metric extraction**: 12+ metric patterns with breadth-first matching — `Revenue Growth`, `ROE`, `Operating Margin`, `P/E Ratio`, `Beta`, `Sharpe Ratio`, `RSI`, `Volatility`, `Debt/Equity`, `Dividend Yield`, `EPS`, `Current Ratio`, `Net Margin`. Additional natural-language pattern variants ("X of Y", "X stands at Y") for `f90e40d`.
+- **Scorecard extraction**: 7 dimensions (`Fundamentals`, `Technical Outlook`, `Valuation`, `Risk Profile`, `Profitability`, `Momentum`, `Analyst Sentiment`) with regex + mapping logic for badge assignment (`strong`/`bullish`/`expensive`/`moderate`).
+- **Risk/opportunity extraction**: Multi-strategy pipeline — parsed sections → labelled blocks → inline comma-separated → Bull Case/Bear Case paragraphs → growth drivers → fallback defaults.
+- **Peer name extraction**: Two formats: `CompanyName (TICKER)` and `TICKER (CompanyName)`. Financial abbreviation filter prevents DCF, MACD, RSI from being mis-identified as tickers.
+- **Executive summary synthesis**: Graceful cascade — structured fundamental metrics → DCF vs price comparison → analyst target → technical outlook → top opportunity → key risk → fallback to raw text extraction.
+
+**`shared/report_generator.py`** (f90e40d, 6f5cc13):
+
+- **Additional regex patterns**: Added "X of Y" variants for all 13 metrics (e.g. `"operating margin of 4.2%"`), improving extraction from prose-format LLM output.
+- **Current price extraction**: `"current price of $X"`, `"trading at $X"` patterns inserted at position 0 of valuation table.
+- **Analyst Sentiment: consensus recommendation ordering**: `"consensus 'buy' recommend"` pattern must match before general `"recommends 'buy'"` to prevent false positives from sub-agent task text.
+- **Technical Outlook lookbehind fix**: `(?<!lack of a)(?<!lack of )` prevents `"lack of uptrend"` from being identified as a bullish signal.
+- **Valuation: overvalued/undervalued patterns**: `"may be overvalued"`, `"appears undervalued"`, `"may be overvalued relative"`.
+- **Executive summary expansion**: P/E Ratio included in fundamental metrics (with "x" suffix). DCF vs current price comparison injected. Technical outlook from scorecard. Top opportunity and key risk inserted. Summary now reads as a cohesive narrative rather than a formulaic template.
+- **Peer extraction: financial abbreviation filter**: `_FINANCIAL_ABBREVS` set blocks DCF, MACD, VIX, RSI, EPS, EBITDA, etc. from being extracted as peer tickers.
+
+### Phase 2 — Momentum/RSI Scorecard Dimension
+
+**`shared/report_generator.py`** (2b65ade):
+
+- **"Momentum" dimension** added to scorecard: `RSI=85` → Overbought/expensive, `RSI=65` → Bullish/bullish, `RSI=40` → Neutral/moderate, `RSI=25` → Oversold/strong. Two regex patterns: `RSI(= X)` and `RSI of X`.
+
+### Phase 3 — Jinja2 HTML Template Engine
+
+**`shared/report_generator.py`** + **`shared/templates/`** (6e6dc9f):
+
+- **`generate_html()`**: New public function returning a standalone HTML string. Uses `_extract_deck_data()` → `_deck_to_template_context()` → Jinja2 render. Signature matches `generate_pptx()`/`generate_docx()` for interchangeability.
+- **`_deck_to_template_context()`**: Builds a context dict with `deck`, `rec_colors`, `confidence_pct`, `scenario_cards` for template rendering.
+- **`_get_jinja_env()`**: Lazy Jinja2 `Environment` loader — first call loads once, subsequent calls return cached. Template directory is `shared/templates/`.
+- **`shared/templates/investment_deck.html`** (~589 lines): `<deck-stage>` custom element wrapping 8 slide sections (title, key metrics, thesis, financials, valuation/scenarios, scorecard, peer comparison, risk-reward). Embedded `deck-stage.js` web component with keyboard navigation (arrow keys), slide indicator, expand/collapse sections.
+- **CSS design system**: CSS custom properties for the clay/ivory/blue palette, responsive grid, rounded cards, Consolas for KPI values, serif headings.
+- **`shared/templates/deck-stage.js`** (~1818 lines): `DeckStage` web component — slide management, keyboard nav, section visibility, standalone HTML. Inlined into the HTML output (no separate `src=` reference).
+
+### Phase 4 — Modular Slide Generators
+
+**`shared/report_generator.py`** (3be2e4d):
+
+- **`generate_pptx()` refactored**: Monolithic slide generation (800+ lines of inline code) broken into 9 slide functions: `_pptx_slide_title`, `_pptx_slide_metrics`, `_pptx_slide_thesis` (executive summary), `_pptx_slide_financials`, `_pptx_slide_valuation`, `_pptx_slide_scorecard`, `_pptx_slide_peers`, `_pptx_slide_risk_reward`, `_pptx_slide_conclusion`.
+- **`_SlidesHelper` namespace**: `SimpleNamespace` bundling shared slide helpers (`_text`, `_rounded_rect`, `_slide_label`, `_slide_title`, `_kpi_chip`, `_footer`) passed to each function. Eliminates repetitive parameter passing.
+- **Constants extracted to module level**: Color constants (`_NAVY`, `_BLUE`, `_GREEN_DARK`, `_RED`, `_AMBER`, `_SURFACE`, etc.), font names (`_FONT`, `_MONO`), badge color maps. All previously inline in `generate_pptx()`.
+- **DOCX generator updated**: Reuses `_extract_deck_data()` via `_extract_docx_content()` wrapper. DOCX-specific rendering preserves the existing Word document structure.
+
+### Phase 5 — PPTX Visual Redesign
+
+**`shared/report_generator.py`** (72733d0):
+
+- **Dark title slide**: Navy background (`#1A1D23`), white text, exchange/sector subtitle, bottom KPI row (Recommendation, Confidence, Median Target). `_CLAY`/`_IVORY` color scheme replaced with professional dark theme.
+- **Key Metrics slide**: Centered KPI chips (rounded rects) with label + value + context. Monospace values, green for positive, red for negative. Dynamic horizontal centering based on chip count.
+- **Investment Thesis slide**: Blue left-border accent, surface-gray background card, 16pt serif text.
+- **Financial Performance slide**: Clean table with `METRIC | CURRENT | CONTEXT` columns. Monospace for numbers, serif for labels. Alternating row highlighting.
+- **Scenario Analysis slide**: Left-side valuation table + right-side scenario cards (Bull/Base/DCF). Color-coded by scenario (green/blue/amber).
+- **Investment Scorecard slide**: 3×2 grid of dimension cards with colored badge pills. Badge type determines background + text color (strong=green, bullish=blue, expensive=red, moderate=gray).
+- **Peer Comparison slide**: Table with `METRIC | TICKER | PEER1 | PEER2` columns. Centered numeric values in monospace. Highlighted rows for the primary ticker.
+- **Risk-Reward slide**: Two-column layout — green-tinted Growth Opportunities column with bullet dots, red-tinted Key Risks column. Rounded border containers.
+- **Conclusion slide**: Dark background, centered recommendation in large monospace text, confidence percentage, shortened executive summary excerpt.
+
+### Phase 6 — DOCX & HTML Regression Tests
+
+**`tests/regression/test_docx_regression.py`** (dbb0625, new, 145 lines):
+
+- `test_docx_generates_valid_output` — Realistic WMT brief → DOCX non-empty (> 2000 bytes)
+- `test_docx_with_empty_brief` — Empty dict → still generates minimal DOCX
+- `test_docx_with_unknown_ticker` — PLTR with yfinance mock → valid output
+- `test_docx_with_unicode` — São Paulo → no encoding errors
+- `test_docx_with_markdown_tables` — Markdown tables parsed into structured data
+
+**`tests/regression/test_html_regression.py`** (12c4670, new, 184 lines):
+
+- `test_html_generates_valid_output` — Company name in title, all sections present
+- `test_html_with_empty_brief` — Minimal HTML, no crash
+- `test_html_with_unknown_ticker` — yfinance fallback, still generates
+- `test_html_with_nonstandard_rec` — "STRONG BUY" → renders without crash
+- `test_html_with_unicode` — Unicode characters properly encoded
+- `test_html_with_markdown_tables` — Markdown tables → rendered sections
+- `test_html_deck_stage_js_embedded` — deck-stage.js is inline, no external `src=`
+- `test_html_autoescape_prevents_xss` — `<script>` tags escaped as `&lt;script&gt;`
+
+**`tests/regression/test_pptx_regression.py`** (12c4670, new, 185 lines):
+
+- `test_pptx_generates_valid_output` — ≥6 slides, non-empty
+- `test_pptx_with_empty_brief` — ≥3 slides, no crash
+- `test_pptx_with_unknown_ticker` — yfinance fallback
+- `test_pptx_with_nonstandard_rec` — Default color mapping
+- `test_pptx_with_unicode` — Unicode in company name → no encoding errors
+- `test_pptx_with_markdown_tables` — Markdown tables → rendered without empty slides
+- `test_pptx_very_long_summary` — Long text truncated, no overflow
+
+### API Fix — Route Ordering
+
+**`agent_1_adk/api_routes.py`** (6f5cc13): `/api/reports/ticker/{symbol}/latest/{format}` moved before `/api/reports/{brief_id}/{format}`. Starlette resolves routes top-to-bottom — without ordering, a request to `/api/reports/ticker/WMT/latest/pptx` matched `{brief_id}` as "ticker" and failed. The `/ticker/{symbol}/latest/{format}` route must appear first.
+
+### AG-UI Bridge — Serialize ADK Responses
+
+**`agent_1_adk/agui_bridge.py`** (f90e40d): Function response serialization now handles non-string types — `dict`, `list`, `int`, `float`, `bool`, `None` are JSON-serialized. Pydantic models with `model_dump()` are converted to dicts first. Previously only `str` responses were accepted; structured tool results caused `TypeError` in CopilotKit's event stream.
+
+### Module Docstring Update
+
+**`shared/report_generator.py`** (97a1edc): Docstring updated to include `generate_html` in the Public API section. Now lists all three output formats.
+
 ## v1.38 — Deferred Eval Gate + AG-UI Bridge Auto-Save + Confidence Extraction
 
 ### Infrastructure — Deferred Sub-Agent Eval Gate

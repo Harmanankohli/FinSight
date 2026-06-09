@@ -6,11 +6,14 @@ in the same SQLite database file.
 """
 
 import asyncio
+import logging
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import aiosqlite
+
+logger = logging.getLogger(__name__)
 
 DB_PATH = Path(__file__).resolve().parent.parent.parent / "db" / "finsight_memory.db"
 
@@ -114,6 +117,7 @@ async def get_db(path: Path = DB_PATH) -> aiosqlite.Connection:
         await conn.execute("PRAGMA busy_timeout=5000")
         await init_db(conn)
         _db_conn = conn
+        logger.info("SQLite memory DB opened at %s", path)
     return _db_conn
 
 
@@ -128,6 +132,7 @@ async def close_db() -> None:
     if _db_conn is not None:
         await _db_conn.close()
         _db_conn = None
+        logger.info("SQLite memory DB closed")
 
 
 # Version-based migration — schema_version tracks current version, CREATE TABLEs are idempotent, ALTER TABLEs use try/except for additive changes.
@@ -145,20 +150,21 @@ async def init_db(conn: aiosqlite.Connection) -> None:
             (SCHEMA_VERSION,),
         )
         await conn.commit()
+        logger.info("Schema initialized (version %d)", SCHEMA_VERSION)
 
     # Migration v1→v2: adds search_text column for BM25 full-text search. Safe to re-run — noop if column exists.
     try:
         await conn.execute("ALTER TABLE memory_entries ADD COLUMN search_text TEXT NOT NULL DEFAULT ''")
         await conn.commit()
     except Exception:
-        pass  # Column already exists
+        logger.debug("Migration v2: table/column already exists, skipping")
 
     # Migration v2→v3: adds analysis_date column to support date-ordered lookups independent of created_at.
     try:
         await conn.execute("ALTER TABLE ticker_briefs ADD COLUMN analysis_date TEXT")
         await conn.commit()
     except Exception:
-        pass  # Column already exists
+        logger.debug("Migration v3: table/column already exists, skipping")
 
     # Migration v3→v4: creates ingested_filings table for SEC filing dedup. Added after initial schema release.
     try:
@@ -170,7 +176,7 @@ async def init_db(conn: aiosqlite.Connection) -> None:
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_ingested_ticker ON ingested_filings(ticker)")
         await conn.commit()
     except Exception:
-        pass
+        logger.debug("Migration v4: table/column already exists, skipping")
 
     # Migration v4→v5: creates a2a_tasks table for persistent A2A task storage.
     try:
@@ -183,7 +189,7 @@ async def init_db(conn: aiosqlite.Connection) -> None:
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_a2a_tasks_owner ON a2a_tasks(owner)")
         await conn.commit()
     except Exception:
-        pass
+        logger.debug("Migration v5: table/column already exists, skipping")
 
 
 async def prune_old_records(days: int | None = None) -> dict[str, int]:
@@ -208,6 +214,7 @@ async def prune_old_records(days: int | None = None) -> dict[str, int]:
             )
             deleted[table] = cur.rowcount
         await conn.commit()
+    logger.info("Pruned old records: %s", deleted)
     return deleted
 
 
@@ -231,3 +238,4 @@ async def mark_filing_ingested(edgar_url: str, ticker: str, db_path: Path = DB_P
             (edgar_url, ticker.upper(), datetime.now(IST).isoformat()),
         )
         await conn.commit()
+    logger.debug("Marked filing ingested: %s (%s)", edgar_url, ticker)

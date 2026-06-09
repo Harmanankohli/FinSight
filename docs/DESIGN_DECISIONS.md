@@ -2625,3 +2625,91 @@ Each path extracts the brief from different sources, making a shared function aw
 - ✅ Bridge path now saves briefs — same-day cache works for CopilotKit queries too
 - ✅ `update_response_text()` overwrites with longer text — best version cached
 - ✅ Self-contained per-path save logic — clear, no shared context coupling
+
+## Report Generation — Shared DeckData Extraction (v1.39)
+
+### Why a shared `_extract_deck_data()` instead of per-format extraction?
+
+Each output format (PPTX, DOCX, HTML) previously had its own copy of metric extraction, scorecard building, and executive summary logic. Adding the HTML format would have meant duplicating the extraction code a third time. `_extract_deck_data()` returns a `DeckData` dataclass (ticker, metrics, scorecards, recommendation, executive sections) consumed by all three generators. The per-format functions became thin wrappers around a shared pipeline — adding a new format only requires writing the rendering layer.
+
+### Why module-level metric pattern dicts?
+
+Metric definitions (value, label, thresholds, source) were scattered across `_extract_metrics()`, scorecard helpers, and format-specific code. Consolidating into module-level dicts (`_METRIC_DISPLAY_CONFIG`, `_SCORECARD_METRICS`, `_ADVANCED_SCORECARD_METRICS`) centralizes the canonical metric list in one place. Each format iterates the same dicts — consistency is guaranteed by construction.
+
+### Key properties
+
+- ✅ Single `_extract_deck_data()` sourced by all three formats — PPTX/DOCX/HTML
+- ✅ `DeckData` dataclass provides typed access (no dict key typos)
+- ✅ Metric patterns defined once at module level — cross-format consistency
+- ✅ Adding a new output format only requires building the renderer
+
+## Report Generation — Scorecard RSI Classification (v1.39)
+
+### Why map RSI to qualitative labels instead of raw values?
+
+Quantitative RSI values (0-100) are meaningful to traders but abstract in a narrative report. Classifying into Overbought (≥ 70, expensive), Bullish (55-70, bullish), Neutral (45-55, moderate), and Oversold (≤ 30, strong) transforms raw numbers into actionable signals. The `_rsi_status()` helper is used consistently across all three format scorecards.
+
+### Key properties
+
+- ✅ Overbought → expensive, Bullish → bullish, Neutral → moderate, Oversold → strong
+- ✅ Same classification used in PPTX/DOCX/HTML scorecards
+- ✅ Consistent with common technical analysis interpretation (70/30 overbought/oversold thresholds)
+
+## Report Generation — Jinja2 HTML Engine (v1.39)
+
+### Why Jinja2 instead of f-strings or Mako?
+
+HTML templates grow beyond what string formatting handles safely. Jinja2 provides autoescaping (XSS prevention), template inheritance (base layout + content blocks), and `FileSystemLoader` (templates live in `shared/templates/` separate from code). The environment is lazy-loaded — first call to `generate_html()` creates it once via `_get_jinja_env()` — so the import cost is paid exactly once per process lifetime.
+
+### Why a web component for slide rendering?
+
+`deck-stage.js` is a vanilla JS custom element that renders a multi-slide deck with keyboard navigation (`ArrowLeft`/`ArrowRight`) and a single active `<section>` at a time. A pure-HTML approach would require either server-side slide splitting or CSS scroll-based pagination. The web component is framework-agnostic, bundle-free (no npm dependency), and works with any backend that emits the correct `<template>` structure.
+
+### Key properties
+
+- ✅ Jinja2 with `FileSystemLoader` — templates in `shared/templates/`, not inline strings
+- ✅ Lazy-loaded environment — single creation per process
+- ✅ Autoescaping on by default — XSS protection for ticker/company names in reports
+- ✅ `deck-stage.js` web component — keyboard-navigable slides, zero dependencies
+- ✅ Template supports inheritance — `investment_deck.html` defines slide blocks, `base.html` provides layout
+
+## Report Generation — Modular Slide Functions (v1.39)
+
+### Why break `generate_pptx()` into 9 standalone functions?
+
+The original `generate_pptx()` was a single 800+ line function with slides built inline. Every slide mixed data extraction, positioning logic, and style application — adding a new metric or reformatting a slide required reading the entire function. The refactored version delegates each slide to a dedicated function (`_add_title_slide()`, `_add_executive_summary()`, `_add_scorecard()`, etc.) collected under `_SlidesHelper` (a namespace class holding shared state: `prs`, `deck_data`, `style`). Each slide function is independently testable and readable in isolation.
+
+### Why `_SlidesHelper` as a namespace class instead of passing parameters?
+
+Nine slide functions would each need the same 3-5 parameters (`prs`, `deck_data`, `style`, `charts`). A namespace class avoids parameter explosion, makes it easy to add shared helpers (`_add_table()`, `_add_bullet_frame()`, `_row_colors()`), and keeps the slide functions focused on their specific layout. The class is instantiated once at the top of `generate_pptx()` and passed to each slide builder.
+
+### Key properties
+
+- ✅ 9 standalone slide functions (title, exec summary, scorecard, metrics, advanced, analysis, fundamentals, holdings, disclaimer)
+- ✅ `_SlidesHelper` namespace reduces per-function parameter count from 5+ to 0 (shared via `self`)
+- ✅ Each function independently testable
+- ✅ Original 800+ line function reduced to ~90 lines of orchestration
+
+## Report Generation — API Route Ordering Fix (v1.39)
+
+### Why does `/ticker/{symbol}/latest/{format}` need to precede `/{brief_id}/{format}`?
+
+Starlette (FastAPI) matches routes top-down. `/{brief_id}/{format}` matches any two-segment path, including `/ticker/{symbol}/latest/{format}` — but `brief_id` would capture `"ticker"` and `format` would capture `"{symbol}"`. Defining the specific route before the parameterized route ensures the ticker endpoint is matched first. The bug only manifests when both routes are registered; the fix is simply reordering the route definitions.
+
+### Key properties
+
+- ✅ `/ticker/{symbol}/latest/{format}` defined before `/{brief_id}/{format}` in route list
+- ✅ No Starlette route priority or regex needed — just declaration order
+
+## Report Generation — Append-Only Executive Summary (v1.39)
+
+### Why build executive summary sections by appending to a list?
+
+The executive summary has three sections: Price Target, Thesis Statement, Investment Recommendation. Each format renders them differently (PPTX: 3 text boxes on one slide; DOCX: 3 paragraphs; HTML: 3 `<div>` blocks). Building the sections as a plain list of dicts (`{"heading": ..., "body": ...}`) in `_extract_deck_data()` allows each renderer to iterate and format independently. Adding a fourth section (e.g., Risk Summary) requires appending to the list in one place rather than modifying three format-specific rendering blocks.
+
+### Key properties
+
+- ✅ Executive sections as a list — iterated by all three format renderers
+- ✅ Adding a new section = one list append in `_extract_deck_data()`
+- ✅ PPTX: 3 text boxes on one slide; DOCX: 3 paragraphs; HTML: 3 `<div>` blocks
+- ✅ No format-specific section ordering logic
