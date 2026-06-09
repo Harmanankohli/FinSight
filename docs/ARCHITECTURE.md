@@ -514,7 +514,7 @@ from shared.logging_config import setup_file_logging
 setup_file_logging("orchestrator")  # → logs/orchestrator.log
 ```
 
-`setup_file_logging(service_name)` attaches a `RotatingFileHandler` (10 MB max, 5 backups) and a `StreamHandler` to the root logger. It is called at module level in each server entry point so logging is configured whether the process is started via uvicorn or run directly. Duplicate handler registration is guarded.
+`setup_file_logging(service_name)` attaches a `RotatingFileHandler` (10 MB max, 5 backups) and a `StreamHandler` to the root logger. Called at module level in each server entry point. Duplicate handler registration is guarded.
 
 | Service | Log file |
 |---|---|
@@ -523,7 +523,32 @@ setup_file_logging("orchestrator")  # → logs/orchestrator.log
 | Quant Agent | `logs/quant.log` |
 | Market Context Agent | `logs/market_context.log` |
 | MCP Server | `logs/mcp.log` |
-| Memory callback | `logs/memory_callback.log` |
+
+### Decorators
+
+`shared/logging_config.py` exports two timing decorators:
+
+- **`@logged`**: For async functions. Emits `Enter`/`Exit`/`Fail` structured log lines with `latency_ms` using `time.monotonic()` and `fn.__qualname__`. Applied to `GenericAgentExecutor.execute()`.
+- **`@logged_sync`**: Same behaviour for synchronous functions.
+
+### Third-party Logger Suppression
+
+`setup_file_logging()` sets `httpx`, `chromadb`, `langfuse`, `hpack`, `urllib3`, and `asyncio` to `WARNING` by default. Each is overridable via a `LOG_LEVEL_<LIB>` env var:
+
+```
+LOG_LEVEL_HTTPX=DEBUG    # verbose HTTP traces
+LOG_LEVEL_CHROMADB=INFO  # ChromaDB query details
+```
+
+### Operational Coverage
+
+Key events emit structured log lines (visible in service log files):
+
+- **Cache**: hit/miss/eviction in `shared/ttl_cache.py`
+- **Sandbox**: entry/exit in `shared/code_sandbox.py`
+- **Database**: open/close/migrate/prune in `shared/memory/store.py`
+- **Memory**: brief store/update in `ticker_memory.py`; portfolio upsert in `portfolio_store.py`; recommendation record in `performance_tracker.py`
+- **Reports**: format + byte count for each generated report in `api_routes.py`
 
 ### SQLite Schema
 

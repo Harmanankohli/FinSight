@@ -31,18 +31,19 @@ UI("ADK Web / Next.js")
 LLM("LM Studio")
 MCP("MCP Server")
 subgraph Orchestrator["Orchestrator (agent_1_adk/)"]
-A2AEntry("① A2A Entry\nPOST /a2a or /a2a-agui")
+A2AEntry("① A2A / AG-UI Entry\nPOST /a2a · POST /a2a-agui\nAGUIBridge: guardrail + auto-save")
 InputGuard("② Input Guardrails\nOff-topic regex + MCP validate_ticker\n→ rejects in &lt; 2s")
 SemCache("③ Semantic Cache\nChromaDB cosine > 0.95\nDate-scoped, 1h TTL")
 BriefCache("④ Today Brief Cache\nSQLite TickerMemory.get_latest()\nSame-day → 200ms")
 MemCtx("⑤ Memory Context\nInject [TODAY]/[STALE] labels\n+ portfolio holdings")
 AgentList("Agent Discovery\nSubAgentClient.discover()\n→ available agents prompt")
-ADKEngine("⑥ ADK LlmAgent\nTools: send_message\nload_memory, generate_report")
+ADKEngine("⑥ ADK LlmAgent\nTools: send_message\nload_memory")
 ParallelDispatch("⑦ Parallel A2A\nsend_message(RAG, Quant, MktCtx)\nAll in one LLM turn")
 Synthesis("⑧ LLM Synthesis\nCollect 3 outputs\n→ BUY/HOLD/SELL + confidence")
 OutGuard("⑨ Output Guardrails\n≥50 chars + signal check\nAuto-retry × 3")
 Persist("⑩ Memory Persistence\nTickerMemory + Portfolio\n+ PerformanceTracker")
 EvalFire("⑪ Background Eval\nRAGAS score_response()\nPOST /release-evals")
+ReportGen("⑫ Report Generator\nGET /api/reports/{id}/{fmt}\npptx · docx · html")
 end
 UI -- "POST" --> A2AEntry
 A2AEntry --> InputGuard
@@ -56,6 +57,8 @@ ParallelDispatch --> Synthesis
 Synthesis --> OutGuard
 OutGuard --> Persist
 Persist --> EvalFire
+Persist -. "GET /api/reports" .-> ReportGen
+style ReportGen fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
 InputGuard -. "validate_ticker" .-> MCP
 SemCache -. "ChromaDB" .-> MCP
 ADKEngine -- "LLM" --> LLM

@@ -46,11 +46,13 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <li><strong>Multi-framework orchestration</strong>: Google ADK orchestrator delegates to LlamaIndex (RAG), LangGraph (Quant), and CrewAI (Market Context) agents</li>
 <li><strong>A2A protocol</strong>: Standard-compliant agent discovery and streaming communication via JSON-RPC over HTTP</li>
 <li><strong>Multi-tier caching + LLM priority queue</strong>: TTL-based tool-result cache in the MCP server (1 min prices, 1 h financials, 5 min news, permanent filings, 24h peers, 7d scenario shocks), LangChain SQLiteCache for LLM responses, semantic cache using ChromaDB cosine similarity, and a priority semaphore (<code>CRITICAL &gt; NORMAL &gt; LOW</code>) to prevent RAGAS eval from starving production inference</li>
+<li><strong>Investment deck generation</strong>: PPTX, DOCX, and self-contained HTML reports generated from any stored brief via <code>generate_pptx()</code>, <code>generate_docx()</code>, <code>generate_html()</code> &mdash; served at <code>/api/reports/{brief_id}/{format}</code> and <code>/api/reports/ticker/{symbol}/latest/{format}</code></li>
+<li><strong>AG-UI / CopilotKit frontend</strong>: Next.js 16 + CopilotKit 1.59 streaming chat interface (<code>web/nextjs-app/</code>) via <code>POST /a2a-agui</code>; AG-UI bridge with off-topic guardrail, brief auto-save, and <code>active_agents</code> state tracking</li>
 <li><strong>Input/output guardrails</strong>: Off-topic filter, pre-flight ticker validation, empty-response guard, and BUY/HOLD/SELL signal enforcement with auto-retry</li>
 <li><strong>Persistent memory layer</strong>: SQLite-backed session storage, cross-session memory search, ticker brief history, portfolio persistence, and recommendation tracking with live price snapshots</li>
 <li><strong>Incremental RAG ingestion</strong>: Tracks ingested filing URLs in SQLite &mdash; restarts never re-ingest already-indexed documents</li>
 <li><strong>RAGAS evaluation pipeline</strong>: Offline batch evaluation (Faithfulness, ResponseRelevancy, ContextPrecision, ContextRecall, ToolCallAccuracy, AgentGoalAccuracy) + runtime per-query eval with per-metric streaming, client caching, and 180s LLM timeout</li>
-<li><strong>Debuggable runtime eval</strong>: Entry/exit logs on every scoring function, per-metric streaming via <code>asyncio.wait(FIRST_COMPLETED)</code>, <code>sys.stdout.reconfigure(encoding='utf-8')</code> to prevent UnicodeEncodeError, and early-return fallbacks on missing contexts</li>
+<li><strong>Structured logging</strong>: <code>@logged</code>/<code>@logged_sync</code> timing decorators emit <code>Enter</code>/<code>Exit</code>/<code>Fail</code> with <code>latency_ms</code>; operational log statements at cache, DB, sandbox, and report-generation boundaries; noisy third-party loggers suppressed by default, overridable via <code>LOG_LEVEL_&lt;LIB&gt;</code> env vars</li>
 <li><strong>Portfolio correlation analysis</strong>: When you explicitly mention portfolio holdings (e.g. &ldquo;My portfolio holds AAPL, MSFT&rdquo;), the quant agent computes cross-stock correlation matrices alongside the primary analysis</li>
 <li><strong>Distributed tracing</strong>: Langfuse traces span all four agent processes in a single trace tree via text-based context propagation, with automatic filtering of noisy A2A internal spans</li>
 <li><strong>Health monitoring</strong>: <code>/health</code> endpoints on all five services with docker-compose healthcheck integration</li>
@@ -63,7 +65,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 │              ADK Web UI (port 8080)                           │
 │           Orchestrator (ADK LlmAgent)                        │
 │         Discovers agents &rarr; LLM routes via send_message       │
-│         Single tool: send_message(name, task)                │
+│         Tools: send_message(name, task), load_memory(query)  │
 └──────────────────────┬───────────────────────────────────────┘
                        │ A2A Protocol (JSON-RPC over HTTP, streaming)
                        &darr;
@@ -105,12 +107,14 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <tr><td>Orchestrator</td><td>Google ADK <code>LlmAgent</code> with <code>send_message</code> tool</td></tr>
 <tr><td>Sub-agent Executor</td><td><code>GenericAgentExecutor</code> + <code>BaseAgent</code> pattern</td></tr>
 <tr><td>Memory Layer</td><td>SQLite (<code>aiosqlite</code>) &mdash; sessions, ticker briefs, portfolio, performance, ingested filings</td></tr>
-<tr><td>Caching</td><td><code>_TTLCache</code> (MCP tools), LangChain <code>SQLiteCache</code> (LLM), ChromaDB semantic cache</td></tr>
+<tr><td>Caching</td><td><code>_TTLCache</code> (MCP tools), LangChain <code>SQLiteCache</code> (LLM), ChromaDB semantic cache, <code>LLMPriorityQueue</code> (3 tiers)</td></tr>
 <tr><td>Guardrails</td><td>Regex off-topic filter + MCP ticker pre-check (input), signal check + retry (output)</td></tr>
 <tr><td>RAG</td><td>LlamaIndex + ChromaDB (local) + HuggingFace embeddings, incremental ingestion</td></tr>
 <tr><td>Quant</td><td>LangChain + LangGraph (state machine, MCP data) + LangChain SQLiteCache</td></tr>
 <tr><td>Market Context</td><td>CrewAI (macro regime + peer landscape synthesis)</td></tr>
 <tr><td>MCP Server</td><td>FastMCP (agent registry + data tools + TTL caching)</td></tr>
+<tr><td>Report Generator</td><td><code>shared/report_generator.py</code> &mdash; python-pptx (PPTX), python-docx (DOCX), Jinja2 (HTML)</td></tr>
+<tr><td>Frontend</td><td>Next.js 16 + CopilotKit 1.59 + @ag-ui/client (<code>web/nextjs-app/</code>) via <code>POST /a2a-agui</code></td></tr>
 <tr><td>Evaluation</td><td>RAGAS offline pipeline + runtime per-query eval (per-metric streaming, client caching, 180s timeout) + custom financial rubrics</td></tr>
 <tr><td>LLM</td><td>LM Studio (local, OpenAI-compatible)</td></tr>
 <tr><td>Embeddings</td><td>sentence-transformers (all-MiniLM-L6-v2, local)</td></tr>
@@ -118,6 +122,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <tr><td>Vector Store</td><td>ChromaDB (local, persisted)</td></tr>
 <tr><td>Agent Discovery</td><td><code>A2ACardResolver</code> via <code>AGENT_SEED_URLS</code></td></tr>
 <tr><td>Observability</td><td>Langfuse + LangChainInstrumentor + sub-agent latency spans</td></tr>
+<tr><td>Logging</td><td><code>shared/logging_config.py</code> &mdash; <code>@logged</code>/<code>@logged_sync</code> decorators, third-party suppression, <code>LOG_LEVEL_&lt;LIB&gt;</code> overrides</td></tr>
 </table>
 
 <h2>Quick Start</h2>
@@ -183,6 +188,8 @@ uv run adk web --port 8080 --session_service_uri sqlite://./db/adk_sessions.db -
 <tr><td><code>SEMANTIC_CACHE_ENABLED</code></td><td><code>false</code></td><td>Enable ChromaDB semantic cache for repeated investment queries</td></tr>
 <tr><td><code>EVAL_TRACE_ENABLED</code></td><td><code>True</code></td><td>Master switch for sidecar RAGAS evals. Set to <code>False</code> to disable all per-agent runtime scoring with no code changes</td></tr>
 <tr><td><code>MCP_SERVER_URL</code></td><td><code>http://localhost:8010/sse</code></td><td>Unified MCP server SSE endpoint</td></tr>
+<tr><td><code>LOG_LEVEL</code></td><td><code>INFO</code></td><td>Root log level for all FinSight services</td></tr>
+<tr><td><code>LOG_LEVEL_&lt;LIB&gt;</code></td><td><code>WARNING</code></td><td>Per-library override (e.g. <code>LOG_LEVEL_HTTPX=DEBUG</code>, <code>LOG_LEVEL_CHROMADB=INFO</code>)</td></tr>
 </table>
 
 <h2>Documentation</h2>
@@ -196,10 +203,11 @@ uv run adk web --port 8080 --session_service_uri sqlite://./db/adk_sessions.db -
 <tr><td><a href="docs/CHANGELOG.html">CHANGELOG.html</a></td><td>Version history</td></tr>
 <tr><td><a href="docs/TESTS.html">TESTS.html</a></td><td>Test coverage, patterns, running instructions</td></tr>
 <tr><td><a href="SECURITY.html">SECURITY.html</a></td><td>Python sandbox model, restricted imports, responsible disclosure</td></tr>
+<tr><td><a href="web/nextjs-app/README.md">web/nextjs-app/README.md</a></td><td>Frontend architecture &mdash; pages, components, design system, data flow</td></tr>
 </table>
 
 <h2>Testing</h2>
-<p><strong>~160 parametrized test cases</strong> across 15 test files &mdash; see <a href="docs/TESTS.html">TESTS.html</a> for details.</p>
+<p><strong>~220 parametrized test cases</strong> across 19 test files &mdash; see <a href="docs/TESTS.html">TESTS.html</a> for details.</p>
 
 <hr>
 <p style="font-size:.85rem;color:#888">Apache 2.0 License</p>

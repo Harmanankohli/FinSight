@@ -561,6 +561,35 @@ ingested_filings (edgar_url PRIMARY KEY, ticker, ingested_at)  -- v1.18</pre>
   &#x2514;&#x2500;&#x2500; PerformanceTracker.record_recommendation(ticker, rec, confidence)</pre>
 <p>The LLM does not need to call any tool to persist memory &mdash; auto-save happens on every response.</p>
 
+<h2>Report Generator</h2>
+<p><code>shared/report_generator.py</code> converts a stored investment brief into a downloadable PPTX, DOCX, or self-contained HTML deck. The orchestrator's <code>generate_report</code> tool dispatches to the appropriate public function based on the requested format.</p>
+
+<h3>Public API</h3>
+<table>
+<tr><th>Function</th><th>Output</th><th>Notes</th></tr>
+<tr><td><code>generate_pptx(brief, output_path)</code></td><td><code>.pptx</code> binary</td><td>9 modular slide functions via <code>python-pptx</code></td></tr>
+<tr><td><code>generate_docx(brief, output_path)</code></td><td><code>.docx</code> binary</td><td>Reuses <code>_extract_deck_data()</code> with <code>python-docx</code></td></tr>
+<tr><td><code>generate_html(brief, output_path)</code></td><td>self-contained <code>.html</code></td><td>Jinja2 + inlined <code>deck-stage.js</code> web component</td></tr>
+</table>
+
+<h3>DeckData Pipeline</h3>
+<pre>InvestmentBrief (response_text)
+  &rarr; _parse_markdown_tables()    &mdash; extract structured table data before cleanup
+  &rarr; _strip_markdown()          &mdash; remove remaining markdown
+  &rarr; _parse_markdown_sections() &mdash; split text into named sections
+  &rarr; _resolve_ticker_info()     &mdash; yfinance lookup for company name, sector, exchange
+  &rarr; _enrich_from_markdown()    &mdash; regex extraction of 13+ metrics, 6 scorecard dims, peers
+  &rarr; DeckData                   &mdash; typed dataclass passed to all three generators</pre>
+
+<h3>Key design points</h3>
+<ul>
+<li><strong>Table-first extraction</strong>: <code>_parse_markdown_tables()</code> runs before <code>_strip_markdown()</code>. LLM output often contains financial tables in markdown; stripping first destroyed structured data and left Financial Performance slides empty.</li>
+<li><strong>yfinance ticker resolution</strong>: <code>_resolve_ticker_info()</code> resolves any ticker to company name/sector/exchange via a live yfinance call with regex + symbol fallbacks. The old 28-symbol hardcoded dict is gone.</li>
+<li><strong>Separator-agnostic metric patterns</strong>: Regex patterns match <code>:</code>, <code>(</code>, <code>=</code>, and <code>of</code> separators (e.g. <code>ROE of 34.0%</code>) because LLM prose output uses the English "of" form rather than structured notation.</li>
+<li><strong>HTML self-containment</strong>: <code>deck-stage.js</code> is read from <code>shared/templates/</code> and inlined into the rendered HTML at generation time. The output file has zero external dependencies and can be emailed or shared as a single file.</li>
+<li><strong>Jinja2 XSS safety</strong>: Autoescaping is enabled — user-supplied text (ticker names, recommendation text) is HTML-escaped automatically.</li>
+</ul>
+
 <h2>Health Endpoints</h2>
 <p>All five services expose <code>GET /health</code>:</p>
 <table>
@@ -577,7 +606,7 @@ ingested_filings (edgar_url PRIMARY KEY, ticker, ingested_at)  -- v1.18</pre>
 <p>All services write structured logs to the <code>logs/</code> directory via <code>shared/logging_config.py</code>:</p>
 <pre>from shared.logging_config import setup_file_logging
 setup_file_logging("orchestrator")  # &rarr; logs/orchestrator.log</pre>
-<p><code>setup_file_logging(service_name)</code> attaches a <code>RotatingFileHandler</code> (10 MB max, 5 backups) and a <code>StreamHandler</code> to the root logger. It is called at module level in each server entry point so logging is configured whether the process is started via uvicorn or run directly. Duplicate handler registration is guarded.</p>
+<p><code>setup_file_logging(service_name)</code> attaches a <code>RotatingFileHandler</code> (10 MB max, 5 backups) and a <code>StreamHandler</code> to the root logger. It is called at module level in each server entry point. Duplicate handler registration is guarded.</p>
 <table>
 <tr><th>Service</th><th>Log file</th></tr>
 <tr><td>Orchestrator</td><td><code>logs/orchestrator.log</code></td></tr>
@@ -585,8 +614,29 @@ setup_file_logging("orchestrator")  # &rarr; logs/orchestrator.log</pre>
 <tr><td>Quant Agent</td><td><code>logs/quant.log</code></td></tr>
 <tr><td>Market Context Agent</td><td><code>logs/market_context.log</code></td></tr>
 <tr><td>MCP Server</td><td><code>logs/mcp.log</code></td></tr>
-<tr><td>Memory callback</td><td><code>logs/memory_callback.log</code></td></tr>
 </table>
+
+<h3>Decorators</h3>
+<p><code>shared/logging_config.py</code> exports two timing decorators:</p>
+<ul>
+<li><strong><code>@logged</code></strong>: For async functions. Emits <code>Enter</code>/<code>Exit</code>/<code>Fail</code> structured log lines with <code>latency_ms</code> using <code>time.monotonic()</code> and <code>fn.__qualname__</code>. Applied to <code>GenericAgentExecutor.execute()</code>.</li>
+<li><strong><code>@logged_sync</code></strong>: Same behaviour for synchronous functions.</li>
+</ul>
+
+<h3>Third-party Logger Suppression</h3>
+<p><code>setup_file_logging()</code> sets <code>httpx</code>, <code>chromadb</code>, <code>langfuse</code>, <code>hpack</code>, <code>urllib3</code>, and <code>asyncio</code> to <code>WARNING</code> by default. Each is overridable via a <code>LOG_LEVEL_&lt;LIB&gt;</code> env var:</p>
+<pre>LOG_LEVEL_HTTPX=DEBUG    # verbose HTTP traces
+LOG_LEVEL_CHROMADB=INFO  # ChromaDB query details</pre>
+
+<h3>Operational Coverage</h3>
+<p>Key events now emit structured log lines (visible in service log files):</p>
+<ul>
+<li><strong>Cache</strong>: hit/miss/eviction in <code>shared/ttl_cache.py</code></li>
+<li><strong>Sandbox</strong>: entry/exit in <code>shared/code_sandbox.py</code></li>
+<li><strong>Database</strong>: open/close/migrate/prune in <code>shared/memory/store.py</code></li>
+<li><strong>Memory</strong>: brief store/update in <code>ticker_memory.py</code>; portfolio upsert in <code>portfolio_store.py</code>; recommendation record in <code>performance_tracker.py</code></li>
+<li><strong>Reports</strong>: format + byte count for each generated report in <code>api_routes.py</code></li>
+</ul>
 
 <hr>
 <p style="font-size:.85rem;color:#888"><a href="index.html">Back to docs hub</a></p>

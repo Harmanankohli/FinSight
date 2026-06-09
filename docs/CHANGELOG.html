@@ -36,6 +36,96 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 
 <h1>Changelog</h1>
 
+<h2>v1.40 &mdash; Report Extraction Hardening, Logging Overhaul, Agent Instruction Fixes</h2>
+
+<h3 class="version">Report Generator &mdash; Extraction Hardening (cf285b8)</h3>
+<ul>
+<li><strong>Section parser handles <code>###</code>/<code>####</code> headers</strong>: <code>_parse_markdown_sections()</code> regex updated from <code>\n##\s+</code> to <code>\n#{2,6}\s+</code>. LLM output frequently uses deeper heading levels; the old parser silently merged all sub-section content into a single block.</li>
+<li><strong>Executive summary augmented from Rationale</strong>: If a "Rationale" section exists in the brief, its content is appended to the executive summary (up to 1200 chars, up from 800). Adds the analyst&rsquo;s stated reasoning alongside the metric-driven summary sentences.</li>
+<li><strong>Bear Case target extraction</strong>: New pattern captures &ldquo;bear case: $X&rdquo; and appends it to the valuation table as &ldquo;Bear Case Target&rdquo;.</li>
+<li><strong>Bare ticker peer extraction</strong>: When no <code>CompanyName (TICKER)</code> format is found, a fallback scans for bare tickers in peer context (&ldquo;peers like DLTR&rdquo;, &ldquo;from COST&rdquo;, &ldquo;vs. AAPL&rdquo;) to populate <code>peer_names</code>.</li>
+<li><strong>Risk/opportunity from inline bold blocks</strong>: <code>_enrich_from_markdown()</code> now extracts risks from <code>**Bearish Signals:**</code> and <code>**Headwinds:**</code> blocks, and opportunities from <code>**Bullish Signals:**</code> and <code>**Tailwinds:**</code> blocks — as a fallback when no dedicated section header matches.</li>
+<li><strong>Upside pattern additions</strong>: Patterns now match <code>expected return = X%</code> and <code>analyst upside: X%</code> in addition to the existing colon-separated forms.</li>
+<li><strong>Structured peer comparison from agents</strong>: Quant agent Monte Carlo output (p10/p50/p90) populates scenario cards when available. Structured peer rows are built from both the Quant agent&rsquo;s <code>peer_comparison</code> dict and the Sentiment agent&rsquo;s <code>peer_comparison</code> list, using <code>col0</code>&ndash;<code>col2</code> column keys.</li>
+</ul>
+
+<h3 class="version">Agent &mdash; <code>load_memory</code> Wrapper + Strengthened Instructions (cf285b8)</h3>
+<ul>
+<li><strong>Custom <code>load_memory</code> wrapper</strong> (<code>agent_1_adk/agent.py</code>): Replaces the ADK built-in <code>load_memory</code> tool with a custom async wrapper that calls <code>tool_context.search_memory()</code> and returns a plain <code>str</code>. The ADK tool previously returned a <code>LoadMemoryResponse</code> Pydantic model, which the AG-UI bridge&rsquo;s <code>json.dumps()</code> call could not serialize. The wrapper extracts text parts from memory events and joins them with <code>\n---\n</code>.</li>
+<li><strong>Strengthened system prompt</strong>: <code>send_message</code> is now explicitly the <em>first</em> action for any stock analysis request — the LLM is instructed to emit ALL <code>send_message</code> calls in one assistant turn before calling any other tool. <code>load_memory</code> is restricted to queries where the user explicitly asks about past recommendations; calling it on a new stock query is forbidden.</li>
+<li><strong>Tools list</strong>: <code>generate_report</code> removed from the LLM-visible tool list. The tool is still callable via the API; it is no longer offered to the LLM to avoid it being called prematurely before analysis completes.</li>
+</ul>
+
+<h3 class="version">Shared &mdash; Circular Import Fix (cf285b8)</h3>
+<ul>
+<li><strong><code>shared/trace_context.py</code></strong>: Removed unused <code>from shared.logging_config import ...</code> import that caused a circular import chain: <code>logging_config</code> &rarr; <code>trace_context</code> &rarr; <code>logging_config</code>. Any module importing <code>trace_context</code> at startup could deadlock the import system.</li>
+<li><strong><code>ui_sample/</code> removed</strong>: Deprecated sample HTML pages replaced by the Next.js frontend (<code>web/nextjs-app/</code>). Static HTML prototypes no longer maintained.</li>
+</ul>
+
+<h3 class="version">Logging Overhaul &mdash; Coverage, Operational Statements, Noise Suppression (8df085b)</h3>
+<ul>
+<li><strong>11 silent <code>except</code> blocks fixed</strong>: Bare <code>except: pass</code> and <code>except Exception: return None</code> blocks across sandbox, report_generator, memory/store, ticker_memory, performance_tracker, api_routes, and trace_context replaced with <code>logger.warning(..., exc_info=True)</code>. Errors that were previously swallowed silently now appear in log files.</li>
+<li><strong>Logger boilerplate added to 7 files</strong>: <code>shared/rate_limiter.py</code>, <code>shared/ttl_cache.py</code>, <code>shared/agui_sse.py</code>, <code>shared/base_agent.py</code>, <code>shared/memory/portfolio_store.py</code>, <code>agents/services.py</code>, and memory module files previously had no <code>logger</code> at all. All now use <code>logging.getLogger(__name__)</code>.</li>
+<li><strong>Operational log statements</strong>: Cache hit/miss/eviction in <code>ttl_cache.py</code>; sandbox entry/exit in <code>code_sandbox.py</code>; DB open/close/migrate/prune in <code>memory/store.py</code>; brief store/update in <code>ticker_memory.py</code>; portfolio upsert in <code>portfolio_store.py</code>; recommendation record in <code>performance_tracker.py</code>; report generation with byte counts in <code>api_routes.py</code>.</li>
+<li><strong>Noisy third-party loggers suppressed</strong>: <code>httpx</code>, <code>chromadb</code>, <code>langfuse</code>, <code>hpack</code>, <code>urllib3</code>, <code>asyncio</code> set to <code>WARNING</code> by default inside <code>setup_file_logging()</code>. Each is overridable via <code>LOG_LEVEL_&lt;LIB&gt;</code> env var (e.g. <code>LOG_LEVEL_HTTPX=DEBUG</code>).</li>
+<li><strong><code>@logged</code> on <code>GenericAgentExecutor.execute()</code></strong>: The A2A executor entry point now emits structured <code>Enter</code>/<code>Exit</code>/<code>Fail</code> log lines with <code>latency_ms</code> for every sub-agent request.</li>
+<li><strong>Hardcoded logger name fixed</strong> (<code>tests/evaluation/run_offline_eval.py</code>): <code>logging.getLogger("finsight_eval")</code> changed to <code>logging.getLogger(__name__)</code>.</li>
+<li><strong>39 stale log files deleted</strong> from <code>logs/</code>. Canonical log names: <code>orchestrator.log</code>, <code>rag_agent.log</code>, <code>quant.log</code>, <code>market_context.log</code>, <code>mcp.log</code>.</li>
+</ul>
+
+<h3 class="version">Diagram Fixes (ae5ca9c)</h3>
+<ul>
+<li><strong>Mermaid syntax</strong> (<code>docs/diagrams/component-orch.html</code>): Fixed invalid node label syntax that caused the Mermaid parser to fail silently and render a blank diagram.</li>
+<li><strong>Zoom/drag</strong> (<code>docs/diagrams/shared.js</code>): Fixed pointer event handling so pan and zoom interactions work correctly on all diagram pages.</li>
+</ul>
+
+<h2>v1.39 &mdash; Report Generator: HTML Format, Robust Extraction, Route Fixes</h2>
+
+<h3 class="version">Phase 1 &mdash; DeckData Layer: Robust Extraction for Any Ticker</h3>
+<ul>
+<li><strong><code>_resolve_ticker_info(ticker, text)</code></strong> (<code>shared/report_generator.py</code>): Replaces the hardcoded 28-symbol <code>_TICKER_NAMES</code> dict with a live yfinance lookup with regex + symbol fallbacks. Any ticker now resolves to company name, sector, and exchange without manual registration.</li>
+<li><strong><code>_parse_markdown_tables(text)</code></strong>: Extracts LLM-generated markdown tables <em>before</em> cleanup instead of deleting them along with other markdown. Fixes the root cause of empty Financial Performance slides — structured table data is now captured first, then stripped from the text passed to prose parsers.</li>
+<li><strong>5 new metric patterns</strong>: Debt/Equity, Dividend Yield, EPS, Current Ratio, Net Margin added to <code>_enrich_from_markdown()</code>. Priority-based KPI chip selection picks the most informative metrics for the title slide. Peer names extracted from narrative text.</li>
+<li><strong>Momentum/RSI scorecard dimension</strong>: <code>_enrich_from_markdown()</code> now parses Momentum/RSI signals as a sixth scorecard row alongside Valuation, Growth, Quality, Risk, and Sentiment.</li>
+<li><strong><code>SentimentIntelligence.peer_comparison</code></strong> (<code>shared/models.py</code>): New non-breaking field (default <code>[]</code>) for structured peer financials. <code>agent_4_crewai/executor.py</code> populates it for future structured-path use.</li>
+<li><strong>IndexError guard</strong>: Pre-existing crash in the scorecard loop on patterns without capture groups fixed.</li>
+<li><strong>10 unit tests</strong>: <code>tests/unit/test_deck_data_extraction.py</code> — WMT/NVDA/TGT parametrized, yfinance fallback, table parsing.</li>
+</ul>
+
+<h3 class="version">Phase 2 &mdash; Jinja2 HTML Template Engine</h3>
+<ul>
+<li><strong><code>generate_html(brief, output_path)</code></strong> (<code>shared/report_generator.py</code>): New public function — renders a fully self-contained investment deck HTML from <code>DeckData</code> via Jinja2. All 9 slides rendered conditionally; empty-data slides are skipped. XSS-safe: Jinja2 autoescaping is on.</li>
+<li><strong><code>shared/templates/investment_deck.html</code></strong>: Jinja2 template for the 9-slide deck, styled identically to the Walmart reference design.</li>
+<li><strong><code>shared/templates/deck-stage.js</code></strong>: Slide navigation web component inlined at render time, producing a zero-dependency HTML file.</li>
+<li><strong><code>_deck_to_template_context()</code> + <code>_get_jinja_env()</code></strong>: Internal helpers for DeckData → template context mapping and Jinja2 environment setup.</li>
+<li><strong>Routes + agent wired</strong>: <code>agent_1_adk/api_routes.py</code> serves HTML with correct <code>text/html</code> content type; <code>agent_1_adk/agent.py</code> dispatches the <code>generate_report</code> tool to <code>generate_html()</code> when format is <code>html</code>.</li>
+</ul>
+
+<h3 class="version">Phase 3 &mdash; Modular PPTX Slide Generators</h3>
+<ul>
+<li><strong>9 standalone slide functions</strong> extracted from the monolithic <code>generate_pptx()</code>: <code>_pptx_slide_title</code>, <code>_pptx_slide_key_metrics</code>, <code>_pptx_slide_thesis</code>, <code>_pptx_slide_financials</code>, <code>_pptx_slide_valuation</code>, <code>_pptx_slide_scorecard</code>, <code>_pptx_slide_peers</code>, <code>_pptx_slide_risk_reward</code>, <code>_pptx_slide_conclusion</code>.</li>
+<li><strong>Helper injection</strong>: Shared helper closures bundled into a <code>SimpleNamespace h</code> passed to each slide function — avoids a global scope and makes each function independently testable.</li>
+<li><strong>Guard clauses</strong>: Empty-data slides are skipped rather than rendered blank.</li>
+<li><strong>Adaptive layout</strong>: KPI chip widths, scorecard column grid, and bullet truncation adapt to content length. Title slide subtitle includes <code>analysis_date</code>. Peer rows built from parsed markdown table data.</li>
+</ul>
+
+<h3 class="version">Phase 4 &amp; 5 &mdash; Regression Test Suite</h3>
+<ul>
+<li><strong><code>tests/regression/test_docx_regression.py</code></strong> (5 tests): Confirms DOCX generator works correctly with the Phase 1 data layer — yfinance resolution, markdown table parsing, KPI priority selection. No DOCX code changes were needed; <code>generate_docx()</code> reuses <code>_extract_deck_data()</code>.</li>
+<li><strong><code>tests/regression/test_pptx_regression.py</code></strong> (7 tests): Valid output, empty brief, unknown ticker (PLTR), non-standard recommendation, unicode, markdown tables, very long summary.</li>
+<li><strong><code>tests/regression/test_html_regression.py</code></strong> (8 tests): Valid output, empty brief, unknown ticker, non-standard recommendation, unicode, markdown tables, inline JS presence, XSS autoescaping.</li>
+</ul>
+
+<h3 class="version">Fixes &mdash; Metric Extraction, Route Ordering, Executive Summary</h3>
+<ul>
+<li><strong>"of" separator patterns</strong>: All 13 metric regexes now match the "of" separator used by the orchestrator LLM (e.g. <code>ROE of 34.0%</code>, <code>trailing P/E of 24.8</code>) in addition to <code>:</code>, <code>(</code>, and <code>=</code>. Three valuation entries (DCF, analyst target, current price) and upside detection updated similarly. MSFT deck goes from 6 mostly-empty slides to 8 fully-populated slides.</li>
+<li><strong>Peer extraction hardening</strong>: Peer name regex excludes financial abbreviations (DCF, MACD, VIX). Reverse peer format (<code>TICKER (Name)</code>) now parsed. Scorecard negation (<code>no golden cross</code>) handled correctly.</li>
+<li><strong>Route ordering fix</strong> (<code>agent_1_adk/api_routes.py</code>): The specific <code>/ticker/{symbol}/latest/{format}</code> route registered before the generic <code>/{brief_id}/{format}</code> catch-all. The previous ordering caused the ticker route to be shadowed.</li>
+<li><strong>Executive summary expanded</strong>: 6 sentences (~480 chars) covering fundamentals, DCF vs current price, analyst target, technical outlook, top opportunity, and key risk.</li>
+<li><strong>Python 3.12 lookbehind crash fixed</strong>: Variable-width lookbehind that raised <code>re.error</code> on Python 3.12 split into two fixed-width lookbehinds.</li>
+<li><strong>AG-UI bridge serialization</strong> (<code>agent_1_adk/agui_bridge.py</code>): <code>LoadMemoryResponse</code> (a Pydantic model from ADK memory service) is not JSON-serializable by default — handled via <code>model_dump()</code> with <code>str()</code> fallback.</li>
+</ul>
+
 <h2>v1.38 &mdash; Deferred Eval Gate + AG-UI Bridge Auto-Save + Confidence Extraction</h2>
 
 <h3 class="version">Infrastructure &mdash; Deferred Sub-Agent Eval Gate</h3>

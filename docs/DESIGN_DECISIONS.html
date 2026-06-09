@@ -2077,6 +2077,95 @@ finally:
 <li>Self-contained per-path save logic &mdash; clear, no shared context coupling</li>
 </ul>
 
+<h2>Logging &mdash; Silent <code>except</code> Blocks (v1.40)</h2>
+
+<h3>Why replace bare <code>except: pass</code> with <code>logger.warning(exc_info=True)</code>?</h3>
+<p>Eleven functions across sandbox, report_generator, memory/store, ticker_memory, performance_tracker, api_routes, and trace_context had bare <code>except: pass</code> or <code>except Exception: return None</code> blocks. These patterns hide bugs permanently: an extraction that silently returns an empty value looks identical in production to one that correctly returns no data. The only way to diagnose a silent failure is to add logging retroactively after realising something is wrong — by which point the original context is lost. Replacing with <code>logger.warning(msg, exc_info=True)</code> costs nothing when everything works and surfaces the full traceback when it doesn&rsquo;t.</p>
+<h3>Key properties</h3>
+<ul>
+<li>All 11 previously-silent exceptions now appear in service log files with full stack traces</li>
+<li>Default level is <code>WARNING</code> — noisy in development, actionable in production</li>
+<li>Return values are preserved (still return <code>None</code>/default where appropriate)</li>
+</ul>
+
+<h2>Logging &mdash; Third-party Logger Suppression (v1.40)</h2>
+
+<h3>Why suppress <code>httpx</code>, <code>chromadb</code>, <code>langfuse</code>, etc. to <code>WARNING</code>?</h3>
+<p>Third-party libraries default to <code>DEBUG</code> or <code>INFO</code>, which fills log files with HTTP request traces, ChromaDB collection scans, and Langfuse event acknowledgements on every query. A typical FinSight request generates 50&ndash;200 third-party log lines for every 5&ndash;10 application lines. The signal-to-noise ratio makes logs unusable for debugging. Setting these to <code>WARNING</code> inside <code>setup_file_logging()</code> applies the suppression once, globally, without requiring every call site to manage it. Per-library overrides (<code>LOG_LEVEL_HTTPX=DEBUG</code>) restore full verbosity when needed without changing code.</p>
+<h3>Key properties</h3>
+<ul>
+<li>Suppression applied in <code>setup_file_logging()</code> — all services inherit it automatically</li>
+<li><code>LOG_LEVEL_&lt;LIB&gt;</code> env vars restore per-library verbosity without code changes</li>
+<li>Application logger still uses service-level <code>LOG_LEVEL</code> (default <code>INFO</code>)</li>
+</ul>
+
+<h2>Agent &mdash; Custom <code>load_memory</code> Wrapper (v1.40)</h2>
+
+<h3>Why replace the ADK built-in <code>load_memory</code> with a custom wrapper?</h3>
+<p>The ADK built-in <code>load_memory</code> tool returns a <code>LoadMemoryResponse</code> Pydantic model. When the AG-UI bridge serializes tool results to JSON for the CopilotKit event stream, it calls <code>json.dumps()</code> on the response &mdash; which throws <code>TypeError</code> on any non-primitive type. The fix defines a custom async <code>load_memory(query, tool_context)</code> function that calls <code>tool_context.search_memory()</code> and manually extracts text parts, returning a plain <code>str</code>. The LLM sees the same tool interface; the bridge sees a serializable return value.</p>
+<h3>Key properties</h3>
+<ul>
+<li>Same tool signature as ADK built-in &mdash; no LLM prompt changes needed</li>
+<li>Returns <code>"\n---\n".join(parts)</code> or <code>"No relevant memories found."</code> — always a plain <code>str</code></li>
+<li>Exception fallback returns <code>f"Memory search unavailable: {e}"</code> rather than crashing the bridge</li>
+</ul>
+
+<h2>Agent &mdash; <code>send_message</code>-First Instruction (v1.40)</h2>
+
+<h3>Why strengthen the instruction to call <code>send_message</code> before any other tool?</h3>
+<p>Smaller local models (mistral-3b, qwen-2.5) sometimes call <code>load_memory</code> as their first action on a stock analysis request, spending an LLM turn retrieving memory before dispatching to sub-agents. This adds a full round-trip delay and can stall the conversation if memory returns nothing useful. The system prompt previously said &ldquo;call send_message for every agent&rdquo; but didn&rsquo;t explicitly prohibit calling other tools first. Adding &ldquo;your VERY FIRST ACTION must be send_message&rdquo; and &ldquo;do NOT call load_memory when the user asks to analyze a stock&rdquo; eliminates the ambiguity that causes the model to hedge with a memory lookup.</p>
+<h3>Key properties</h3>
+<ul>
+<li>All <code>send_message</code> calls must be emitted in a single assistant turn (parallel execution)</li>
+<li><code>load_memory</code> is gated to explicit user requests about history (&ldquo;what did you recommend before?&rdquo;)</li>
+<li><code>generate_report</code> removed from LLM tool list &mdash; prevents premature invocation before analysis</li>
+</ul>
+
+<h2>Report Generator &mdash; Table-First Extraction (v1.39)</h2>
+
+<h3>Why extract markdown tables before stripping markdown?</h3>
+<p>The LLM frequently returns financial data as a markdown table (e.g. a three-column "Metric / Value / Notes" table inside the financial section). The old pipeline called <code>_strip_markdown()</code> first, which deleted every line containing <code>|</code> characters. <code>_enrich_from_markdown()</code> then received clean prose with no structured data, leaving the Financial Performance slide empty for every deck. The fix is ordering: <code>_parse_markdown_tables()</code> captures table rows into a structured dict <em>before</em> cleanup. Stripping then removes the now-redundant raw table text without any data loss.</p>
+<h3>Key properties</h3>
+<ul>
+<li>Table rows captured before any markdown cleanup runs</li>
+<li>Extracted table data takes priority over prose-regex extraction in <code>_enrich_from_markdown()</code></li>
+<li>Financial Performance slide is populated even when the LLM uses table format exclusively</li>
+</ul>
+
+<h2>Report Generator &mdash; Jinja2 for HTML Output (v1.39)</h2>
+
+<h3>Why Jinja2 instead of f-strings or string concatenation?</h3>
+<p>The HTML deck has 9 conditional slides, each with a distinct layout, nested loops over peers and scorecard rows, and template logic for empty-state hiding. Generating this with Python string operations produces code that is hard to read, impossible to preview, and error-prone when adding new slides. Jinja2 separates structure from data: the template is a readable HTML file with familiar <code>{% if %}</code>/<code>{% for %}</code> blocks, and the Python side only builds a context dict and calls <code>render()</code>. Autoescaping is on by default for <code>.html</code> files, so user-supplied ticker names and recommendation text are XSS-safe without manual escaping at every insertion point.</p>
+<h3>Why inline <code>deck-stage.js</code> at render time?</h3>
+<p>The JS web component handles slide navigation. Referencing it as an external script would break the file when moved or emailed — the browser would look for <code>deck-stage.js</code> relative to wherever the HTML is opened. Inlining at render time (reading the file from <code>shared/templates/</code> once) produces a zero-dependency artifact that works from disk, email attachment, or any CDN path without configuration.</p>
+<h3>Key properties</h3>
+<ul>
+<li>Jinja2 with autoescaping &mdash; XSS-safe for all user-derived text</li>
+<li>Template lives in <code>shared/templates/investment_deck.html</code> &mdash; editable without touching Python</li>
+<li>Generated HTML is fully self-contained &mdash; zero external dependencies</li>
+</ul>
+
+<h2>Report Generator &mdash; &ldquo;of&rdquo; Separator in Metric Patterns (v1.39)</h2>
+
+<h3>Why add an &ldquo;of&rdquo; pattern when <code>:</code>, <code>=</code>, and <code>(</code> were already covered?</h3>
+<p>The orchestrator LLM writes financial metrics in prose form: <em>&ldquo;ROE of 34.0%&rdquo;</em>, <em>&ldquo;trailing P/E of 24.8&rdquo;</em>, <em>&ldquo;upside of 18%&rdquo;</em>. The original regex patterns only matched structured notation (<code>ROE: 34%</code>, <code>ROE = 34%</code>, <code>ROE (34%)</code>). Prose "of" constructions are common in analyst writing and appear consistently in the LLM&rsquo;s output, but were silently skipped. Adding <code>of</code> as a fourth separator to all 13 metric patterns, 3 valuation entries, and upside detection turned a mostly-empty MSFT deck (6 slides with placeholder text) into a fully-populated 8-slide deck with no other changes.</p>
+<h3>Key properties</h3>
+<ul>
+<li>Patterns now match: <code>metric: value</code>, <code>metric = value</code>, <code>metric (value)</code>, <code>metric of value</code></li>
+<li>Peer extraction updated to exclude financial abbreviations (DCF, MACD, VIX) that matched the old peer regex</li>
+<li>Reverse peer format <code>TICKER (Name)</code> also parsed in addition to <code>Name (TICKER)</code></li>
+</ul>
+
+<h2>Report Route Ordering Fix (v1.39)</h2>
+
+<h3>Why does route order matter for <code>/ticker/{symbol}/latest/{format}</code> vs <code>/{brief_id}/{format}</code>?</h3>
+<p>Starlette (and FastAPI) matches routes in registration order and returns the first match. The specific <code>/ticker/{symbol}/latest/{format}</code> path shares the same number of segments as the generic <code>/{brief_id}/{format}</code> catch-all &mdash; both match a three-segment path. When the catch-all was registered first, a request for <code>/ticker/MSFT/latest/pptx</code> was captured by the catch-all with <code>brief_id="ticker"</code> and <code>format="MSFT"</code>, causing a database lookup miss and a 404. Registering the specific route first means it is tried (and matched) before the catch-all is even reached.</p>
+<h3>Key properties</h3>
+<ul>
+<li>Specific routes always registered before catch-alls in <code>api_routes.py</code></li>
+<li>No functional change to the generic endpoint &mdash; brief IDs that are not <code>ticker</code> still fall through correctly</li>
+</ul>
+
 <hr>
 <p style="font-size:.85rem;color:#888"><a href="index.html">Back to docs hub</a></p>
 </div>

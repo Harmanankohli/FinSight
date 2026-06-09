@@ -184,15 +184,18 @@ GET /api/agents/{name}/health</code></pre>
 <h4>Reports</h4>
 <pre><code>GET /api/reports/{brief_id}/{format}
 GET /api/reports/ticker/{symbol}/latest/{format}</code></pre>
+<p><strong>Route ordering</strong>: The <code>/ticker/{symbol}/latest/{format}</code> route is registered before the generic <code>/{brief_id}/{format}</code> catch-all to prevent shadowing.</p>
 <table>
 <tr><th>Endpoint</th><th>Parameters</th><th>Returns</th></tr>
-<tr><td><code>/api/reports/{brief_id}/{format}</code></td><td><code>format</code>: <code>pptx</code> or <code>docx</code></td><td>Binary file download (PPTX or DOCX)</td></tr>
-<tr><td><code>/api/reports/ticker/{symbol}/latest/{format}</code></td><td><code>format</code>: <code>pptx</code> or <code>docx</code></td><td>Binary file download for most recent brief</td></tr>
+<tr><td><code>/api/reports/{brief_id}/{format}</code></td><td><code>format</code>: <code>pptx</code>, <code>docx</code>, or <code>html</code></td><td>Binary file (PPTX/DOCX) or HTML page</td></tr>
+<tr><td><code>/api/reports/ticker/{symbol}/latest/{format}</code></td><td><code>format</code>: <code>pptx</code>, <code>docx</code>, or <code>html</code></td><td>Most recent brief as PPTX, DOCX, or HTML</td></tr>
 </table>
 <p><strong>Response headers</strong>:</p>
-<pre><code>Content-Type: application/vnd.openxmlformats-officedocument.presentationml.presentation (PPTX)
-              application/vnd.openxmlformats-officedocument.wordprocessingml.document (DOCX)
-Content-Disposition: attachment; filename="FinSight_{ticker}_{date}.{format}"</code></pre>
+<pre><code>Content-Type: application/vnd.openxmlformats-officedocument.presentationml.presentation (pptx)
+              application/vnd.openxmlformats-officedocument.wordprocessingml.document (docx)
+              text/html (html)
+Content-Disposition: attachment; filename="FinSight_{ticker}_{date}.{format}"  (pptx/docx only)</code></pre>
+<p>The HTML format produces a fully self-contained, zero-dependency file rendered via Jinja2 (<code>shared/templates/investment_deck.html</code> + inlined <code>deck-stage.js</code>). All 9 slides are rendered conditionally; empty-data slides are omitted.</p>
 
 <hr>
 

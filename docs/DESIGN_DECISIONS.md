@@ -2626,6 +2626,54 @@ Each path extracts the brief from different sources, making a shared function aw
 - ✅ `update_response_text()` overwrites with longer text — best version cached
 - ✅ Self-contained per-path save logic — clear, no shared context coupling
 
+## Logging — Silent `except` Blocks (v1.40)
+
+### Why replace bare `except: pass` with `logger.warning(exc_info=True)`?
+
+Eleven functions across sandbox, report_generator, memory/store, ticker_memory, performance_tracker, api_routes, and trace_context had bare `except: pass` or `except Exception: return None` blocks. These hide bugs permanently: a silent empty return looks identical in production to a correct no-data result. The only way to diagnose a silent failure is to add logging retroactively — by which point context is gone. Replacing with `logger.warning(msg, exc_info=True)` costs nothing when everything works and surfaces the full traceback when it doesn't.
+
+### Key properties
+
+- ✅ All 11 previously-silent exceptions now appear in service log files with full stack traces
+- ✅ Default level is `WARNING` — noisy in development, actionable in production
+- ✅ Return values preserved (still return `None`/default where appropriate)
+
+## Logging — Third-party Logger Suppression (v1.40)
+
+### Why suppress `httpx`, `chromadb`, `langfuse`, etc. to `WARNING`?
+
+Third-party libraries default to `DEBUG` or `INFO`, filling log files with HTTP request traces, ChromaDB collection scans, and Langfuse event acknowledgements on every query. A typical FinSight request generates 50–200 third-party log lines for every 5–10 application lines. The signal-to-noise ratio makes logs unusable for debugging. Setting these to `WARNING` inside `setup_file_logging()` applies suppression once, globally, without requiring every call site to manage it. Per-library overrides (`LOG_LEVEL_HTTPX=DEBUG`) restore full verbosity when needed without code changes.
+
+### Key properties
+
+- ✅ Suppression applied in `setup_file_logging()` — all services inherit it automatically
+- ✅ `LOG_LEVEL_<LIB>` env vars restore per-library verbosity without code changes
+- ✅ Application logger still uses service-level `LOG_LEVEL` (default `INFO`)
+
+## Agent — Custom `load_memory` Wrapper (v1.40)
+
+### Why replace the ADK built-in `load_memory` with a custom wrapper?
+
+The ADK built-in `load_memory` returns a `LoadMemoryResponse` Pydantic model. When the AG-UI bridge serializes tool results for the CopilotKit event stream, `json.dumps()` throws `TypeError` on any non-primitive type. The custom async wrapper calls `tool_context.search_memory()` and extracts text parts, returning a plain `str`. The LLM sees the same tool interface; the bridge sees a serializable value.
+
+### Key properties
+
+- ✅ Same tool signature as ADK built-in — no LLM prompt changes needed
+- ✅ Returns `"\n---\n".join(parts)` or `"No relevant memories found."` — always a plain `str`
+- ✅ Exception fallback returns `f"Memory search unavailable: {e}"` rather than crashing the bridge
+
+## Agent — `send_message`-First Instruction (v1.40)
+
+### Why strengthen the instruction to call `send_message` before any other tool?
+
+Smaller local models sometimes call `load_memory` as their first action on a stock analysis request, spending a full LLM turn retrieving memory before dispatching to sub-agents. The system prompt previously said "call send_message for every agent" but didn't prohibit calling other tools first. Adding "your VERY FIRST ACTION must be send_message" and "do NOT call load_memory when the user asks to analyze a stock" eliminates the ambiguity that causes the model to hedge with a memory lookup before analysis begins.
+
+### Key properties
+
+- ✅ All `send_message` calls emitted in a single turn (parallel execution)
+- ✅ `load_memory` gated to explicit user requests about history ("what did you recommend before?")
+- ✅ `generate_report` removed from LLM tool list — prevents premature invocation before analysis
+
 ## Report Generation — Shared DeckData Extraction (v1.39)
 
 ### Why a shared `_extract_deck_data()` instead of per-format extraction?

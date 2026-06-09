@@ -29,6 +29,7 @@
 graph TB
 subgraph Orch["Orchestrator"]
 Exec("FinSightAgentExecutor")
+AGUIBridge("AG-UI Bridge\nPOST /a2a-agui\nCopilotKit SSE + auto-save")
 Guard("Guardrails (off-topic + validate)")
 SCache("SemanticCache (ChromaDB)")
 SubClient("SubAgentClient (A2A dispatch)")
@@ -38,6 +39,7 @@ BriefCache("Today Brief Cache (SQLite)")
 OutGuard("Output Guardrails (≥50 chars + signal)")
 MemPersist("Memory Persist\nTickerMemory + Portfolio + Perf")
 EvalFire("Background Evals\nRAGAS + /release-evals")
+ReportGen("Report Generator\npptx · docx · html\nJinja2 + DeckData pipeline")
 end
 subgraph RAGComp["RAG Agent (port 8002)"]
 RAGExec("RAGAgent")
@@ -86,6 +88,7 @@ SubClient -- "A2A" --> MExec
 RAGExec -- "MCP" --> Tools
 QExec -- "MCP" --> Tools
 MExec -- "MCP" --> Tools
+Exec --> AGUIBridge
 Exec --> Guard
 Guard --> SCache
 SCache --> BriefCache
@@ -96,6 +99,7 @@ SubClient --> ADKEngine
 ADKEngine --> OutGuard
 OutGuard --> MemPersist
 MemPersist --> EvalFire
+MemPersist -. "GET /api/reports" .-> ReportGen
 RAGExec --> IndexMgr
 IndexMgr --> Hybrid
 QExec --> QGraph
@@ -124,6 +128,8 @@ style BriefCache fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
 style OutGuard fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
 style MemPersist fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
 style EvalFire fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
+style AGUIBridge fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
+style ReportGen fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
 style RAGExec fill:#d4e6f1,stroke:#2980b9,color:#1a1a1a
 style IndexMgr fill:#d4e6f1,stroke:#2980b9,color:#1a1a1a
 style Ingest fill:#d4e6f1,stroke:#2980b9,color:#1a1a1a

@@ -7,11 +7,13 @@ An autonomous multi-agent system that answers investment queries like *"Should I
 - **Multi-framework orchestration**: Google ADK orchestrator delegates to LlamaIndex (RAG), LangGraph (Quant), and CrewAI (Market Context) agents
 - **A2A protocol**: Standard-compliant agent discovery and streaming communication via JSON-RPC over HTTP
 - **Multi-tier caching**: TTL-based tool-result cache in the MCP server (1 min prices, 1 h financials, 5 min news, permanent filings, 24h peers, 7d scenario shocks), LangChain SQLiteCache for LLM responses, semantic cache using ChromaDB cosine similarity, and LLM priority queue (`CRITICAL`/`NORMAL`/`LOW`) to prevent eval starvation of production inference
+- **Investment deck generation**: PPTX, DOCX, and self-contained HTML reports generated from any stored brief via `generate_pptx()`, `generate_docx()`, `generate_html()` — served at `/api/reports/{brief_id}/{format}` and `/api/reports/ticker/{symbol}/latest/{format}`
+- **AG-UI / CopilotKit frontend**: Next.js 16 + CopilotKit 1.59 streaming chat interface (`web/nextjs-app/`) via `POST /a2a-agui`; AG-UI bridge with off-topic guardrail, brief auto-save, and `active_agents` state tracking
 - **Input/output guardrails**: Off-topic filter, pre-flight ticker validation, empty-response guard, and BUY/HOLD/SELL signal enforcement with auto-retry
 - **Persistent memory layer**: SQLite-backed session storage, cross-session memory search, ticker brief history, portfolio persistence, and recommendation tracking with live price snapshots
 - **Incremental RAG ingestion**: Tracks ingested filing URLs in SQLite — restarts never re-ingest already-indexed documents
 - **RAGAS evaluation pipeline**: Offline batch evaluation (Faithfulness, ResponseRelevancy, ContextPrecision, ContextRecall, ToolCallAccuracy, AgentGoalAccuracy) with Langfuse score push. Runtime per-query evaluation on live production responses with per-metric streaming, client caching, and 180s LLM timeout
-- **Debuggable runtime eval**: Entry/exit logs on every scoring function, per-metric streaming via `asyncio.wait(FIRST_COMPLETED)`, `sys.stdout.reconfigure(encoding='utf-8')` to prevent UnicodeEncodeError, and early-return fallbacks on missing contexts
+- **Structured logging**: `@logged`/`@logged_sync` timing decorators emit `Enter`/`Exit`/`Fail` with `latency_ms`; operational log statements at cache, DB, sandbox, and report-generation boundaries; noisy third-party loggers suppressed by default, overridable via `LOG_LEVEL_<LIB>` env vars
 - **Portfolio correlation analysis**: When you explicitly mention portfolio holdings (e.g. "My portfolio holds AAPL, MSFT"), the quant agent computes cross-stock correlation matrices alongside the primary analysis
 - **Distributed tracing**: Langfuse traces span all four agent processes in a single trace tree via text-based context propagation, with automatic filtering of noisy A2A internal spans
 - **Health monitoring**: `/health` endpoints on all five services with docker-compose healthcheck integration
@@ -25,7 +27,7 @@ An autonomous multi-agent system that answers investment queries like *"Should I
 │              ADK Web UI (port 8080)                           │
 │           Orchestrator (ADK LlmAgent)                        │
 │         Discovers agents → LLM routes via send_message       │
-│         Single tool: send_message(name, task)                │
+│         Tools: send_message(name, task), load_memory(query)  │
 └──────────────────────┬───────────────────────────────────────┘
                        │ A2A Protocol (JSON-RPC over HTTP, streaming)
                        ▼
@@ -75,6 +77,8 @@ All A2A communication uses `A2ACardResolver` for standard discovery and `ClientF
 | Quant | LangChain + LangGraph (state machine, MCP data) + LangChain SQLiteCache |
 | Market Context | CrewAI (macro regime + peer landscape synthesis) |
 | MCP Server | FastMCP (agent registry + data tools + TTL caching) |
+| Report Generator | `shared/report_generator.py` — python-pptx (PPTX), python-docx (DOCX), Jinja2 (HTML) |
+| Frontend | Next.js 16 + CopilotKit 1.59 + @ag-ui/client (`web/nextjs-app/`) via `POST /a2a-agui` |
 | Evaluation | RAGAS offline pipeline + runtime per-query eval (per-metric streaming, client caching, 180s timeout) + custom financial rubrics |
 | LLM | LM Studio (local, OpenAI-compatible) |
 | Embeddings | sentence-transformers (all-MiniLM-L6-v2, local) |
@@ -82,6 +86,7 @@ All A2A communication uses `A2ACardResolver` for standard discovery and `ClientF
 | Vector Store | ChromaDB (local, persisted) |
 | Agent Discovery | `A2ACardResolver` via `AGENT_SEED_URLS` |
 | Observability | Langfuse + LangChainInstrumentor + sub-agent latency spans |
+| Logging | `shared/logging_config.py` — `@logged`/`@logged_sync` decorators, third-party suppression, `LOG_LEVEL_<LIB>` overrides |
 
 ## Quick Start
 
@@ -196,15 +201,19 @@ stop_servers.bat
 │
 ├── shared/                   # Shared libraries
 │   ├── base_agent.py         # BaseAgent abstract class
-│   ├── generic_executor.py   # GenericAgentExecutor
+│   ├── generic_executor.py   # GenericAgentExecutor (@logged entry point)
 │   ├── ticker_utils.py       # Ticker extraction, holdings parsing, MCP ticker validation
-│   ├── logging_config.py     # setup_file_logging() — writes to logs/<service>.log
+│   ├── logging_config.py     # setup_file_logging(), @logged/@logged_sync decorators
 │   ├── trace_context.py      # Distributed trace context injection/extraction
 │   ├── observability.py      # Langfuse singleton initialization
 │   ├── config.py             # Centralized .env configuration + startup validation
 │   ├── mcp_client.py         # MCP client with dynamic tool discovery
-│   ├── models.py             # Pydantic data models
+│   ├── models.py             # Pydantic data models (DeckData, SentimentIntelligence, …)
+│   ├── report_generator.py   # generate_pptx / generate_docx / generate_html
 │   ├── semantic_cache.py     # ChromaDB-backed semantic cache (cosine sim, TTL 1h)
+│   ├── templates/            # Jinja2 templates for HTML report generation
+│   │   ├── investment_deck.html  # 9-slide deck template
+│   │   └── deck-stage.js     # Web component for slide navigation (inlined at render)
 │   └── memory/               # Persistent memory layer
 │       ├── store.py          # SQLite foundation, auto-migration, ingested_filings table
 │       ├── ticker_memory.py  # Per-ticker brief storage, format_context()
@@ -213,7 +222,11 @@ stop_servers.bat
 │       ├── memory_service.py # ADK BaseMemoryService (load_memory tool)
 │       └── __init__.py       # Exports
 │
-├── tests/                    # Test directory (cleared in v1.24)
+├── web/nextjs-app/           # Next.js 16 + CopilotKit 1.59 frontend
+│
+├── tests/
+│   ├── regression/           # Report generator regression tests (PPTX, DOCX, HTML)
+│   └── unit/                 # Unit tests
 │
 ├── run_adk_web.bat           # Start all services
 ├── stop_servers.bat          # Stop all services
@@ -236,6 +249,8 @@ Key environment variables in `.env`:
 | `SEMANTIC_CACHE_ENABLED` | `false` | Enable ChromaDB semantic cache for repeated investment queries |
 | `EVAL_TRACE_ENABLED` | `True` | Master switch for sidecar RAGAS evals. Set to `False` to disable all per-agent runtime scoring with no code changes |
 | `MCP_SERVER_URL` | `http://localhost:8010/sse` | Unified MCP server SSE endpoint |
+| `LOG_LEVEL` | `INFO` | Root log level for all FinSight services |
+| `LOG_LEVEL_<LIB>` | `WARNING` | Per-library override (e.g. `LOG_LEVEL_HTTPX=DEBUG`, `LOG_LEVEL_CHROMADB=INFO`) |
 
 ## Documentation
 
@@ -253,7 +268,7 @@ Key environment variables in `.env`:
 
 ## Testing
 
-**~160 parametrized test cases** across 15 test files — see [TESTS.md](docs/TESTS.md) for details.
+**~220 parametrized test cases** across 19 test files — see [TESTS.md](docs/TESTS.md) for details.
 
 ## License
 

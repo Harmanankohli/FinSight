@@ -38,7 +38,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 
 <h1>Test Coverage</h1>
 
-<p><strong>~105 test functions (~160 parametrized cases)</strong> across 15 test files + offline evaluation driver. No new tests added in v1.34 &mdash; the commits focused on production bug fixes and feature work.</p>
+<p><strong>~135 test functions (~220 parametrized cases)</strong> across 19 test files + offline evaluation driver. v1.39 added 30 tests: 10 unit tests for DeckData extraction and 20 regression tests covering DOCX, PPTX, and HTML report generation.</p>
 
 <h2>Running Tests</h2>
 <pre><code>pytest                          # all unit tests
@@ -57,9 +57,20 @@ pytest -m "not integration"     # unit tests only (default)</code></pre>
 &crarr;   &crarr; test_mcp_server_smoke.py         # 4 &mdash; MCP + agent card endpoint reachability
 &crarr;   &crarr; test_behavioral_signals_e2e.py   # 5 &mdash; options, insider, positioning,
 &crarr;   &crarr;                                 #     peer comparison, Monte Carlo (Phase 4)
+&crarr; regression/
+&crarr;   &crarr; test_docx_regression.py          # 5 &mdash; DOCX output with Phase 1 data layer
+&crarr;   &crarr;                                 #     (yfinance resolution, table parsing, KPI priority)
+&crarr;   &crarr; test_pptx_regression.py          # 7 &mdash; PPTX: valid output, empty brief,
+&crarr;   &crarr;                                 #     unknown ticker (PLTR), non-standard rec,
+&crarr;   &crarr;                                 #     unicode, markdown tables, very long summary
+&crarr;   &crarr; test_html_regression.py          # 8 &mdash; HTML: valid output, empty brief,
+&crarr;   &crarr;                                 #     unknown ticker, non-standard rec, unicode,
+&crarr;   &crarr;                                 #     markdown tables, inline JS, XSS autoescaping
 &crarr; security/
 &crarr;   &crarr; test_sandbox.py                  # 11 (parametrized ~45+) &mdash; AST gate + subprocess
 &crarr; unit/
+&crarr;   &crarr; test_deck_data_extraction.py     # 10 (parametrized) &mdash; WMT/NVDA/TGT DeckData,
+&crarr;   &crarr;                                 #     yfinance fallback, table parsing
 &crarr;   &crarr; test_models.py                   # 10 &mdash; Pydantic model construction, round-trip
 &crarr;   &crarr; test_quant_graph_nodes.py        # 18 &mdash; compute_metrics, stress_test, Monte Carlo,
 &crarr;   &crarr;                                 #     format_output, peer_comparison, behavioral
@@ -78,7 +89,7 @@ pytest -m "not integration"     # unit tests only (default)</code></pre>
 &crarr;       &crarr; test_ticker_memory.py        # 7 &mdash; store/get_latest, history, flip detection
 &crarr;       &crarr; test_save_brief_persists_synthesis.py  # 2 &mdash; synthesis-wins, rationale-fallback</code></pre>
 
-<p><strong>Total: ~160 parametrized test cases across 15 test files.</strong></p>
+<p><strong>Total: ~220 parametrized test cases across 19 test files.</strong></p>
 
 <h2>Key Patterns</h2>
 <ul>
@@ -87,6 +98,14 @@ pytest -m "not integration"     # unit tests only (default)</code></pre>
 <li><strong>No network calls</strong>: Quant graph tests call LangGraph nodes directly with synthetic <code>numpy</code> price data. <code>mcp_client=None</code> forces beta to <code>1.0</code>.</li>
 <li><strong>Asyncio</strong>: All tests use <code>pytest-asyncio</code> with <code>asyncio_mode = "auto"</code> and <code>asyncio_default_fixture_loop_scope = "function"</code>.</li>
 <li><strong>Runtime eval gated</strong>: <code>test_runtime_eval_gates.py</code> verifies circuit breaker, SHA-256 dedup, burst limiter, kill switch, unified gate, and <code>score_quant_deterministic</code> schema validation without LLM calls.</li>
+</ul>
+
+<h2>Regression Tests</h2>
+<p>20 tests across 3 files in <code>tests/regression/</code>. Run without service dependencies &mdash; all generators operate offline against synthetic brief data:</p>
+<ul>
+<li><code>test_docx_regression.py</code> (5): Confirms DOCX generator is unaffected by Phase 1 data-layer changes. Verifies yfinance resolution, table parsing, and KPI priority selection produce valid <code>.docx</code> output.</li>
+<li><code>test_pptx_regression.py</code> (7): Valid output, empty brief, unknown ticker (PLTR), non-standard recommendation, unicode, markdown tables, very long summary.</li>
+<li><code>test_html_regression.py</code> (8): Valid output, empty brief, unknown ticker, non-standard recommendation, unicode, markdown tables, inline JS presence, XSS autoescaping via Jinja2.</li>
 </ul>
 
 <h2>Integration Tests</h2>

@@ -1,5 +1,43 @@
 # Changelog
 
+## v1.40 — Report Extraction Hardening, Logging Overhaul, Agent Instruction Fixes
+
+### Report Generator — Extraction Hardening (cf285b8)
+
+- **Section parser handles `###`/`####` headers**: `_parse_markdown_sections()` regex updated from `\n##\s+` to `\n#{2,6}\s+`. LLM output frequently uses deeper heading levels; the old parser silently merged all sub-section content into a single block.
+- **Executive summary augmented from Rationale**: If a "Rationale" section exists in the brief, its content is appended to the executive summary (up to 1200 chars, up from 800). Adds the analyst's stated reasoning alongside the metric-driven summary sentences.
+- **Bear Case target extraction**: New pattern captures "bear case: $X" and appends it to the valuation table as "Bear Case Target".
+- **Bare ticker peer extraction**: When no `CompanyName (TICKER)` format is found, a fallback scans for bare tickers in peer context ("peers like DLTR", "from COST", "vs. AAPL") to populate `peer_names`.
+- **Risk/opportunity from inline bold blocks**: `_enrich_from_markdown()` now extracts risks from `**Bearish Signals:**` and `**Headwinds:**` blocks, and opportunities from `**Bullish Signals:**` and `**Tailwinds:**` blocks — as a fallback when no dedicated section header matches.
+- **Upside pattern additions**: Patterns now match `expected return = X%` and `analyst upside: X%` in addition to existing colon-separated forms.
+- **Structured peer comparison from agents**: Quant agent Monte Carlo output (p10/p50/p90) populates scenario cards when available. Structured peer rows built from both Quant agent `peer_comparison` dict and Sentiment agent `peer_comparison` list, using `col0`–`col2` column keys.
+
+### Agent — `load_memory` Wrapper + Strengthened Instructions (cf285b8)
+
+- **Custom `load_memory` wrapper** (`agent_1_adk/agent.py`): Replaces the ADK built-in `load_memory` tool with a custom async wrapper that calls `tool_context.search_memory()` and returns a plain `str`. The ADK tool previously returned a `LoadMemoryResponse` Pydantic model which the AG-UI bridge's `json.dumps()` could not serialize. The wrapper extracts text parts from memory events and joins them with `\n---\n`.
+- **Strengthened system prompt**: `send_message` is now explicitly the *first* action for any stock analysis request — the LLM must emit ALL `send_message` calls in one turn before calling any other tool. `load_memory` is restricted to queries where the user explicitly asks about past recommendations.
+- **Tools list**: `generate_report` removed from the LLM-visible tool list. Still callable via API; removed to prevent premature LLM invocation before analysis completes.
+
+### Shared — Circular Import Fix + ui_sample Removal (cf285b8)
+
+- **`shared/trace_context.py`**: Removed unused `from shared.logging_config import ...` that created a circular import chain `logging_config → trace_context → logging_config`. Any module importing `trace_context` at startup could deadlock the import system.
+- **`ui_sample/` removed**: Deprecated static HTML prototypes replaced by the Next.js frontend (`web/nextjs-app/`).
+
+### Logging Overhaul — Coverage, Operational Statements, Noise Suppression (8df085b)
+
+- **11 silent `except` blocks fixed**: Bare `except: pass` and `except Exception: return None` across sandbox, report_generator, memory/store, ticker_memory, performance_tracker, api_routes, and trace_context replaced with `logger.warning(..., exc_info=True)`. Errors swallowed silently now appear in log files.
+- **Logger boilerplate added to 7 files**: `shared/rate_limiter.py`, `shared/ttl_cache.py`, `shared/agui_sse.py`, `shared/base_agent.py`, `shared/memory/portfolio_store.py`, `agents/services.py`, and memory module files — all now use `logging.getLogger(__name__)`.
+- **Operational log statements**: Cache hit/miss/eviction (`ttl_cache.py`); sandbox entry/exit (`code_sandbox.py`); DB open/close/migrate/prune (`memory/store.py`); brief store/update (`ticker_memory.py`); portfolio upsert (`portfolio_store.py`); recommendation record (`performance_tracker.py`); report generation with byte counts (`api_routes.py`).
+- **Noisy third-party loggers suppressed**: `httpx`, `chromadb`, `langfuse`, `hpack`, `urllib3`, `asyncio` set to `WARNING` by default inside `setup_file_logging()`. Overridable via `LOG_LEVEL_<LIB>` env vars (e.g. `LOG_LEVEL_HTTPX=DEBUG`).
+- **`@logged` on `GenericAgentExecutor.execute()`**: Entry point now emits structured `Enter`/`Exit`/`Fail` log lines with `latency_ms` for every sub-agent A2A request.
+- **Hardcoded logger name fixed** (`tests/evaluation/run_offline_eval.py`): `logging.getLogger("finsight_eval")` → `logging.getLogger(__name__)`.
+- **39 stale log files deleted** from `logs/`. Canonical names: `orchestrator.log`, `rag_agent.log`, `quant.log`, `market_context.log`, `mcp.log`.
+
+### Diagram Fixes (ae5ca9c)
+
+- **Mermaid syntax** (`docs/diagrams/component-orch.html`): Fixed invalid node label syntax that caused the Mermaid parser to fail silently and render a blank diagram.
+- **Zoom/drag** (`docs/diagrams/shared.js`): Fixed pointer event handling so pan and zoom interactions work correctly on all diagram pages.
+
 ## v1.39 — Report Generation: Data Layer, HTML Engine, Modular Slides, Regression Tests
 
 ### Phase 1 — Robust DeckData Extraction (`_extract_deck_data`)
