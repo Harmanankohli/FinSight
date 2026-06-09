@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Architecture Diagrams — FinSight</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+.container{max-width:780px}
+h1{font-size:2.2rem;margin-bottom:.25rem}
+h2{font-size:1.3rem;margin-top:2rem;margin-bottom:.5rem}
+h3{font-size:1.1rem;margin-top:1rem;margin-bottom:.25rem}
+.section{border:1px solid #e0d8cc;border-radius:8px;padding:1rem;margin-bottom:1rem;background:#fff;transition:box-shadow .2s,opacity .2s}
+.section:hover{box-shadow:0 2px 8px rgba(0,0,0,.08)}
+.section h3{margin-top:0}
+.section p{font-size:.9rem;margin-bottom:.75rem}
+.section .meta{font-size:.75rem;color:#999;margin-top:.5rem}
+.sub-links{display:flex;gap:.5rem;flex-wrap:wrap}
+.sub-links a{background:#f0ebe3;border:1px solid #e0d8cc;border-radius:4px;padding:3px 8px;font-size:.8rem;color:#2c2c2c;transition:background .15s}
+.sub-links a:hover{background:#e0d8cc}
+.search-box{width:100%;padding:.6rem .8rem;border:1px solid #d5c4a1;border-radius:6px;font-size:.95rem;background:#fff;margin-bottom:1.5rem;outline:none;transition:border-color .2s}
+.search-box:focus{border-color:#8b6f4e}
+.search-box::placeholder{color:#bbb}
+.section.hidden{display:none}
+.count{font-size:.85rem;color:#888;margin-top:.5rem;text-align:right}
+</style>
+</head>
+<body>
+<div class="container">
+<div class="back"><a href="../index.html">&larr; Docs Hub</a> <a href="../../README.html">Overview</a> <a href="../ARCHITECTURE.html">Architecture</a></div>
+
+<h1>Architecture Diagrams</h1>
+<p>C4 model + UML sequence + data flow diagrams. All diagrams have <strong>drag-to-pan</strong>, <strong>scroll-to-zoom</strong>, and <strong>hover tooltips</strong>.</p>
+
+<input type="text" class="search-box" id="searchBox" placeholder="Filter diagrams by name or description..." autofocus>
+
+<div id="diagramList">
+<div class="section" data-tags="context c4 level1 system boundary">
+<h3><span class="badge badge-c4">C4 L1</span> <a href="context.html">Context Diagram</a></h3>
+<p>FinSight as a black box with external actors: users, LM Studio, SEC EDGAR, Yahoo Finance, RSS feeds.</p>
+<div class="meta">Nodes: 6 | Edges: 5 | External interfaces: 4</div>
+</div>
+
+<div class="section" data-tags="container c4 level2 runtime processes ports protocols stores">
+<h3><span class="badge badge-c4">C4 L2</span> <a href="container.html">Container Diagram</a></h3>
+<p>6 runtime processes with ports (8002&ndash;8004, 8010, 8080, 3000), protocols (A2A, MCP, REST), and data stores (ChromaDB, SQLite).</p>
+<div class="meta">Containers: 7 | Data stores: 2 | External: 3</div>
+</div>
+
+<div class="section" data-tags="component c4 level3 internal components orchestrator agents mcp shared">
+<h3><span class="badge badge-c4">C4 L3</span> <a href="component.html">Component Diagram</a></h3>
+<p>Internal components across all containers: orchestrator guardrails/cache/memory, agent internals, MCP server tools, shared infrastructure. <em>Sub-parts for focused views:</em></p>
+<div class="sub-links">
+  <a href="component-orch.html">Orchestrator</a>
+  <a href="component-agents.html">Agents (RAG, Quant, Market)</a>
+  <a href="component-infra.html">MCP + Shared Infra</a>
+</div>
+<div class="meta">Components: 25+ | Sub-views: 3</div>
+</div>
+
+<div class="section" data-tags="code c4 level4 class hierarchy inheritance patterns">
+<h3><span class="badge badge-c4">C4 L4</span> <a href="code.html">Code Diagram</a></h3>
+<p>Class hierarchy: BaseAgent &rarr; RAGAgent/QuantAgent/MarketContextAgent, GenericAgentExecutor, shared infrastructure (TTLCache, TokenBucket, LLMPriorityQueue), and memory layer.</p>
+<div class="meta">Classes: 20+ | Design patterns: 5</div>
+</div>
+
+<div class="section" data-tags="sequence uml lifecycle request flow phases">
+<h3><span class="badge badge-uml">UML</span> <a href="sequence.html">Sequence Diagram</a></h3>
+<p>Complete request lifecycle for "Should I invest in NVIDIA?" — traces the flow from user input through guardrails, cache, parallel A2A dispatch, MCP data, LLM synthesis, memory persistence, and SSE response. <em>Split into 3 phases:</em></p>
+<div class="sub-links">
+  <a href="sequence-phase1.html">Phase 1: Input</a>
+  <a href="sequence-phase2.html">Phase 2: Agent Dispatch</a>
+  <a href="sequence-phase3.html">Phase 3: Synthesis</a>
+</div>
+<div class="meta">Lifelines: 6 | Steps: 11 | Duration: ~45-90s total</div>
+</div>
+
+<div class="section" data-tags="dataflow dfd pipeline stages processing edges">
+<h3><span class="badge badge-dfd">DFD</span> <a href="dataflow.html">Data Flow Diagram</a></h3>
+<p>10-stage pipeline: query &rarr; ticker extraction &rarr; guardrails &rarr; caches &rarr; parallel agents via MCP &rarr; LLM synthesis &rarr; output guard &rarr; memory persist &rarr; SSE response. <em>Split into 2 parts:</em></p>
+<div class="sub-links">
+  <a href="dataflow-input.html">Input Pipeline</a>
+  <a href="dataflow-processing.html">Agent Processing</a>
+</div>
+<div class="meta">Stages: 12 | Data stores: 3 | External APIs: 3</div>
+</div>
+</div>
+
+<div class="count" id="countDisplay">6 of 6 diagrams</div>
+
+<hr>
+
+<h2>Reading Guide</h2>
+<table style="width:100%;border-collapse:collapse;font-size:.9rem">
+<tr><th style="padding:.5rem .75rem;text-align:left;border-bottom:1px solid #e0d8cc;background:#f0ebe3;font-weight:600">Start With</th><th style="padding:.5rem .75rem;text-align:left;border-bottom:1px solid #e0d8cc;background:#f0ebe3;font-weight:600">If You Want To</th></tr>
+<tr><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc">Context Diagram</td><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc">Understand what the system does and depends on</td></tr>
+<tr><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc">Container Diagram</td><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc">Deploy, debug, or configure the runtime services</td></tr>
+<tr><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc">Component sub-parts</td><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc">Understand a specific container's internal components</td></tr>
+<tr><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc">Code Diagram</td><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc">Navigate source files or understand class relationships</td></tr>
+<tr><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc">Sequence sub-parts</td><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc">Trace a specific phase of the request lifecycle</td></tr>
+<tr><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc">Data Flow sub-parts</td><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc">Understand data transformations in the pipeline</td></tr>
+</table>
+
+<hr>
+<p style="font-size:.85rem;color:#888">FinSight — Multi-Agent Investment Research System</p>
+</div>
+
+<script>
+(function(){
+  var search = document.getElementById('searchBox');
+  var sections = document.querySelectorAll('.section');
+  var count = document.getElementById('countDisplay');
+
+  search.addEventListener('input', function() {
+    var q = this.value.toLowerCase().trim();
+    var visible = 0;
+    sections.forEach(function(s) {
+      var tags = (s.getAttribute('data-tags') || '') + ' ' + (s.textContent || '').toLowerCase();
+      var match = q === '' || tags.indexOf(q) !== -1;
+      s.classList.toggle('hidden', !match);
+      if (match) visible++;
+    });
+    count.textContent = visible + ' of ' + sections.length + ' diagrams';
+  });
+})();
+</script>
+</body>
+</html>

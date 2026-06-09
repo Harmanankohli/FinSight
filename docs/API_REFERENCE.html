@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>API Reference &mdash; FinSight</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:1.7;color:#2c2c2c;background:#faf8f5;padding:2rem 1rem}
+.container{max-width:740px;margin:0 auto}
+h1,h2,h3,h4{font-family:Georgia,"Times New Roman",serif;color:#1a1a1a;line-height:1.3}
+h1{font-size:2.2rem;margin-bottom:.25rem;border-bottom:2px solid #e8dcc8;padding-bottom:.5rem}
+h2{font-size:1.5rem;margin-top:2.5rem;margin-bottom:.75rem}
+h3{font-size:1.2rem;margin-top:1.5rem;margin-bottom:.5rem}
+h4{font-size:1.05rem;margin-top:1.2rem;margin-bottom:.4rem}
+p{margin-bottom:1rem;color:#444}
+a{color:#8b6f4e;text-decoration:none;font-weight:500}
+a:hover{text-decoration:underline}
+code{background:#f0ebe3;padding:.15em .4em;border-radius:3px;font-size:.875em;font-family:"SF Mono","Fira Code","Fira Mono",monospace}
+pre{background:#f0ebe3;padding:1rem;border-radius:6px;overflow-x:auto;margin-bottom:1rem;font-size:.875em;line-height:1.5}
+pre code{background:0 0;padding:0}
+table{width:100%;border-collapse:collapse;margin-bottom:1rem;font-size:.925rem}
+th,td{padding:.5rem .75rem;text-align:left;border-bottom:1px solid #e0d8cc}
+th{background:#f0ebe3;font-weight:600}
+ul,ol{margin-bottom:1rem;padding-left:1.5rem}
+li{margin-bottom:.25rem}
+hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
+.header-nav{margin-bottom:2rem;padding-bottom:1rem;border-bottom:1px solid #e0d8cc}
+.header-nav a{margin-right:1.2rem;font-size:.9rem}
+@media(max-width:600px){body{padding:1rem}h1{font-size:1.8rem}table{font-size:.85rem}}
+</style>
+</head>
+<body>
+<div class="container">
+<div class="header-nav">
+<a href="index.html">Home</a><a href="../README.html">Overview</a><a href="ARCHITECTURE.html">Architecture</a><a href="AGENTS.html">Agents</a><a href="API_REFERENCE.html">API</a><a href="MCP_SERVERS.html">MCP</a><a href="SECURITY.html">Security</a><a href="DESIGN_DECISIONS.html">Decisions</a><a href="CHANGELOG.html">Changelog</a><a href="TESTS.html">Tests</a>
+</div>
+
+<h1>API Reference</h1>
+<p>Complete reference for all HTTP endpoints exposed by FinSight services.</p>
+
+<h2>Orchestrator (port 8001)</h2>
+<p>The orchestrator is the primary entry point. It exposes A2A protocol endpoints, REST API routes for the frontend, AG-UI streaming endpoints, and health checks.</p>
+
+<h3>Health</h3>
+<pre><code>GET /health</code></pre>
+<p><strong>Response</strong>: <code>200 OK</code></p>
+<pre><code>{"status": "ok", "agent": "orchestrator"}</code></pre>
+
+<hr>
+
+<h3>A2A Protocol</h3>
+
+<h4>Agent Card Discovery</h4>
+<pre><code>GET /.well-known/agent-card.json</code></pre>
+<p>Returns the orchestrator's A2A agent card (protobuf-encoded JSON). Used by <code>A2ACardResolver</code> for standard agent discovery.</p>
+<p><strong>Response</strong>: <code>200 OK</code> &mdash; AgentCard JSON with name, description, version, capabilities, supported interfaces, and skills.</p>
+
+<h4>JSON-RPC Endpoint</h4>
+<pre><code>POST /a2a
+Headers: A2A-Version: 1.0</code></pre>
+<p>Standard A2A JSON-RPC endpoint for inter-agent communication. Accepts <code>SendMessage</code> method calls from sub-agents or external A2A clients.</p>
+<p><strong>Request body</strong>:</p>
+<pre><code>{
+  "jsonrpc": "2.0",
+  "method": "SendMessage",
+  "id": "abc123",
+  "params": {
+    "message": {
+      "messageId": "def456",
+      "role": "ROLE_USER",
+      "parts": [{"text": "Should I invest in NVDA?"}]
+    }
+  }
+}</code></pre>
+<p><strong>Streaming response</strong>: Yields <code>task</code>, <code>status_update</code>, and <code>artifact_update</code> events. Intermediate <code>SUBMITTED</code>/<code>WORKING</code> events are non-terminal; only <code>artifact_update</code> data and terminal <code>COMPLETED</code>/<code>FAILED</code> states carry results.</p>
+
+<hr>
+
+<h3>AG-UI Endpoints</h3>
+
+<h4>AG-UI Bridge (Production)</h4>
+<pre><code>POST /a2a-agui
+Content-Type: application/json</code></pre>
+<p>Primary endpoint for the Next.js CopilotKit frontend. Streams AG-UI-compatible events through the ADK runner with full guardrails (off-topic filter, today's brief cache, memory context injection, sub-agent tracking).</p>
+<p><strong>Request body</strong> (<code>RunAgentInput</code>):</p>
+<pre><code>{
+  "thread_id": "optional-thread-id",
+  "run_id": "optional-run-id",
+  "messages": [
+    {"role": "user", "content": "Analyze NVDA for long-term hold"}
+  ],
+  "forwarded_props": {"user_id": "user-123"}
+}</code></pre>
+<p><strong>Headers</strong>:</p>
+<ul>
+<li><code>X-FinSight-User-Id</code> (optional) &mdash; user identity; falls back to <code>forwarded_props.user_id</code>, then auto-generated <code>anon-{uuid}</code></li>
+<li><code>Content-Type: application/json</code></li>
+</ul>
+<p><strong>Response</strong>: <code>200 OK</code> &mdash; <code>text/event-stream</code> (SSE)</p>
+<p>Streams AG-UI events:</p>
+<ul>
+<li><code>RunStartedEvent</code> &mdash; run begins</li>
+<li><code>StateSnapshotEvent</code> &mdash; initial state <code>{"active_agents": [], "active_agent": null}</code></li>
+<li><code>StepStartedEvent</code> &mdash; orchestrator step begins</li>
+<li><code>StateDeltaEvent</code> &mdash; updates <code>active_agents</code> array as sub-agents are invoked</li>
+<li><code>ToolCallStartEvent</code> / <code>ToolCallArgsEvent</code> / <code>ToolCallEndEvent</code> &mdash; sub-agent delegation events</li>
+<li><code>ToolCallResultEvent</code> &mdash; sub-agent response received</li>
+<li><code>TextMessageStartEvent</code> / <code>TextMessageContentEvent</code> / <code>TextMessageEndEvent</code> &mdash; streaming synthesis</li>
+<li><code>RunFinishedEvent</code> &mdash; run completes</li>
+</ul>
+<p><strong>CORS</strong>: Allowed origins <code>http://localhost:3000</code>, <code>http://127.0.0.1:3000</code>.</p>
+
+<h4>AG-UI Eval Endpoint</h4>
+<pre><code>POST /agentic_chat
+Content-Type: application/json</code></pre>
+<p>Simplified AG-UI endpoint for RAGAS evaluation. Runs the orchestrator without guardrails or memory injection &mdash; useful for offline batch evaluation.</p>
+<p><strong>Request body</strong>: Same <code>RunAgentInput</code> format as <code>/a2a-agui</code>.</p>
+<p><strong>Response</strong>: <code>200 OK</code> &mdash; <code>text/event-stream</code> (SSE). Same event types as <code>/a2a-agui</code> but without state tracking or auto-save.</p>
+
+<hr>
+
+<h3>REST API Routes</h3>
+<p>All REST routes are read-only JSON endpoints. User identity is read from the <code>X-FinSight-User-Id</code> request header.</p>
+
+<h4>Memory &mdash; Ticker Briefs</h4>
+<pre><code>GET /api/memory/ticker/{symbol}
+GET /api/memory/ticker/{symbol}/latest
+GET /api/memory/ticker/{symbol}/changed</code></pre>
+<table>
+<tr><th>Endpoint</th><th>Parameters</th><th>Returns</th></tr>
+<tr><td><code>/api/memory/ticker/{symbol}</code></td><td><code>?limit=10</code> (query)</td><td>Array of brief objects (history)</td></tr>
+<tr><td><code>/api/memory/ticker/{symbol}/latest</code></td><td>&mdash;</td><td>Single brief object or <code>404</code></td></tr>
+<tr><td><code>/api/memory/ticker/{symbol}/changed</code></td><td>&mdash;</td><td><code>{"changed": bool, "direction": "upgrade"|"downgrade"|"unchanged"}</code> or <code>{"changed": false, "reason": "insufficient_history"}</code></td></tr>
+</table>
+<p><strong>Brief object shape</strong>:</p>
+<pre><code>{
+  "id": 1,
+  "ticker": "NVDA",
+  "recommendation": "BUY",
+  "confidence": 0.85,
+  "response_text": "Full analysis text...",
+  "analysis_date": "2026-06-07",
+  "created_at": "2026-06-07T14:30:00+05:30"
+}</code></pre>
+
+<h4>Sessions</h4>
+<pre><code>GET /api/sessions
+GET /api/sessions/{id}/events</code></pre>
+<table>
+<tr><th>Endpoint</th><th>Parameters</th><th>Returns</th></tr>
+<tr><td><code>/api/sessions</code></td><td><code>?user_id=...</code> (query, optional)</td><td>Array of session objects, max 50, sorted by <code>last_update_time</code> DESC</td></tr>
+<tr><td><code>/api/sessions/{id}/events</code></td><td>&mdash;</td><td><code>{"session_id": "...", "events": [...]}</code> or <code>404</code></td></tr>
+</table>
+<p><strong>Session object shape</strong>:</p>
+<pre><code>{
+  "id": "session-uuid",
+  "user_id": "user-123",
+  "app_name": "orchestrator",
+  "last_update_time": "2026-06-07T14:30:00",
+  "event_count": 12
+}</code></pre>
+<p><strong>Event object shape</strong>:</p>
+<pre><code>{
+  "id": "event-uuid",
+  "author": "orchestrator",
+  "timestamp": "2026-06-07T14:30:00",
+  "content": [
+    {"type": "text", "text": "BUY recommendation for NVDA..."},
+    {"type": "function_call", "name": "send_message", "args": {"agent_name": "rag", "task": "..."}},
+    {"type": "function_response", "name": "send_message", "response": "..."}
+  ]
+}</code></pre>
+
+<h4>Agents</h4>
+<pre><code>GET /api/agents
+GET /api/agents/{name}/health</code></pre>
+<table>
+<tr><th>Endpoint</th><th>Returns</th></tr>
+<tr><td><code>/api/agents</code></td><td>Array of discovered sub-agent objects with <code>name</code>, <code>description</code>, <code>skills</code>, <code>url</code></td></tr>
+<tr><td><code>/api/agents/{name}/health</code></td><td>Fan-out health check: <code>{"status": "ok"|"degraded"|"unreachable", "detail": {...}}</code></td></tr>
+</table>
+
+<h4>Reports</h4>
+<pre><code>GET /api/reports/{brief_id}/{format}
+GET /api/reports/ticker/{symbol}/latest/{format}</code></pre>
+<table>
+<tr><th>Endpoint</th><th>Parameters</th><th>Returns</th></tr>
+<tr><td><code>/api/reports/{brief_id}/{format}</code></td><td><code>format</code>: <code>pptx</code> or <code>docx</code></td><td>Binary file download (PPTX or DOCX)</td></tr>
+<tr><td><code>/api/reports/ticker/{symbol}/latest/{format}</code></td><td><code>format</code>: <code>pptx</code> or <code>docx</code></td><td>Binary file download for most recent brief</td></tr>
+</table>
+<p><strong>Response headers</strong>:</p>
+<pre><code>Content-Type: application/vnd.openxmlformats-officedocument.presentationml.presentation (PPTX)
+              application/vnd.openxmlformats-officedocument.wordprocessingml.document (DOCX)
+Content-Disposition: attachment; filename="FinSight_{ticker}_{date}.{format}"</code></pre>
+
+<hr>
+
+<h3>Static Files</h3>
+<pre><code>GET /reports/{filename}</code></pre>
+<p>Serves generated report files (PPTX/DOCX) from <code>db/reports/</code> as static downloads.</p>
+
+<hr>
+
+<h2>Sub-Agent Servers</h2>
+<p>Each sub-agent exposes the same endpoint pattern.</p>
+
+<h3>Endpoints (ports 8002&ndash;8004)</h3>
+<table>
+<tr><th>Endpoint</th><th>Port 8002 (RAG)</th><th>Port 8003 (Quant)</th><th>Port 8004 (Market Context)</th></tr>
+<tr><td><code>GET /health</code></td><td><code>{"status":"ok","agent":"rag"}</code></td><td><code>{"status":"ok","agent":"quant"}</code></td><td><code>{"status":"ok","agent":"market_context"}</code></td></tr>
+<tr><td><code>POST /a2a</code></td><td>A2A JSON-RPC</td><td>A2A JSON-RPC</td><td>A2A JSON-RPC</td></tr>
+<tr><td><code>GET /.well-known/agent-card.json</code></td><td>Agent card</td><td>Agent card</td><td>Agent card</td></tr>
+<tr><td><code>POST /release-evals</code></td><td><code>{"released": N}</code></td><td><code>{"released": N}</code></td><td><code>{"released": N}</code></td></tr>
+</table>
+
+<h4>Release Evals</h4>
+<pre><code>POST /release-evals</code></pre>
+<p>Triggers deferred RAGAS evaluation coroutines. Called by the orchestrator's <code>after_agent_callback</code> after synthesis completes. Includes a 120s safety-net auto-release if the orchestrator crashes.</p>
+<p><strong>Response</strong>: <code>200 OK</code></p>
+<pre><code>{"released": 3}</code></pre>
+
+<hr>
+
+<h2>MCP Server (port 8010)</h2>
+
+<h3>Health</h3>
+<pre><code>GET /health</code></pre>
+<p><strong>Response</strong>: <code>200 OK</code></p>
+<pre><code>{"status": "ok", "agent": "mcp"}</code></pre>
+
+<h3>MCP Tools</h3>
+<p>The MCP server exposes tools via SSE transport at <code>/sse</code>. Tools are consumed by agents via the MCP client library, not via direct HTTP calls. See <a href="MCP_SERVERS.html">MCP_SERVERS.html</a> for the full tool catalog.</p>
+
+<h3>Agent Registry</h3>
+<table>
+<tr><th>Endpoint</th><th>Description</th></tr>
+<tr><td><code>find_agent(query)</code></td><td>Semantic search via embedding dot-product over agent cards</td></tr>
+<tr><td><code>resource://agent_cards/list</code></td><td>Lists all available agent card URIs</td></tr>
+<tr><td><code>resource://agent_cards/{name}</code></td><td>Retrieves specific agent card</td></tr>
+</table>
+
+<hr>
+
+<h2>Next.js Frontend (port 3000)</h2>
+
+<h3>API Routes</h3>
+<table>
+<tr><th>Route</th><th>Method</th><th>Purpose</th></tr>
+<tr><td><code>/api/copilotkit</code></td><td>POST</td><td>CopilotKit runtime &mdash; proxies to orchestrator <code>/a2a-agui</code> via AG-UI protocol</td></tr>
+<tr><td><code>/api/traces</code></td><td>GET</td><td>Langfuse trace proxy &mdash; <code>?traceId=X</code> for single trace, omit for list</td></tr>
+<tr><td><code>/api/health</code></td><td>GET</td><td>Backend health proxy &mdash; <code>?svc=orchestrator|rag|quant|market|mcp</code></td></tr>
+</table>
+
+<h3>Rewrites</h3>
+<table>
+<tr><th>Pattern</th><th>Target</th><th>Purpose</th></tr>
+<tr><td><code>/api/orch/:path*</code></td><td><code>http://localhost:8001/:path*</code></td><td>Transparent proxy to orchestrator REST API</td></tr>
+<tr><td><code>/reports/:path*</code></td><td><code>http://localhost:8001/reports/:path*</code></td><td>Report file download proxy</td></tr>
+</table>
+
+<hr>
+
+<h2>Error Responses</h2>
+<p>All endpoints return errors as JSON:</p>
+<pre><code>{"error": "Description of the error"}</code></pre>
+<p>Standard HTTP status codes:</p>
+<table>
+<tr><th>Code</th><th>Meaning</th></tr>
+<tr><td><code>200</code></td><td>Success</td></tr>
+<tr><td><code>400</code></td><td>Bad request (invalid parameters, missing body)</td></tr>
+<tr><td><code>404</code></td><td>Resource not found (ticker, session, brief)</td></tr>
+<tr><td><code>500</code></td><td>Internal server error</td></tr>
+</table>
+
+<hr>
+
+<h2>Authentication</h2>
+<p>FinSight does not implement user authentication. User identity is read from the <code>X-FinSight-User-Id</code> request header &mdash; a convention for multi-user differentiation, not a security mechanism. The system is designed for local/single-user deployment.</p>
+
+<hr>
+
+<h2>CORS</h2>
+<p>The orchestrator allows cross-origin requests from:</p>
+<ul>
+<li><code>http://localhost:3000</code></li>
+<li><code>http://127.0.0.1:3000</code></li>
+</ul>
+<p>Allowed methods: <code>GET</code>, <code>POST</code>, <code>OPTIONS</code>. Exposed headers: <code>X-FinSight-User-Id</code>.</p>
+
+<hr>
+
+<h2>Rate Limiting</h2>
+<p>The MCP server applies internal rate limits to upstream data sources:</p>
+<table>
+<tr><th>Source</th><th>Rate</th><th>Burst</th><th>Applies to</th></tr>
+<tr><td>SEC EDGAR</td><td>8 req/s</td><td>10</td><td>Ticker map, submissions, filing content, search</td></tr>
+<tr><td>yfinance</td><td>4 req/s</td><td>8</td><td>Prices, financials, options, earnings</td></tr>
+<tr><td>RSS feeds</td><td>2 req/s</td><td>4</td><td>News sentiment, Yahoo fallback</td></tr>
+</table>
+<p>These limits are applied per-process via <code>TokenBucket</code> in <code>shared/rate_limiter.py</code> and are not exposed to API consumers.</p>
+
+</div>
+</body>
+</html>

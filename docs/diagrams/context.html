@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Context Diagram — FinSight</title>
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+<div class="container">
+<div class="back"><a href="index.html">&larr; Back to Diagrams</a></div>
+<h1>System Context Diagram</h1>
+<p>C4 Level 1 — FinSight as a black box. <strong>Drag to pan, scroll to zoom, hover nodes for details.</strong></p>
+<div class="zoom-controls">
+  <button onclick="zoomIn()">+ Zoom In</button>
+  <button onclick="zoomOut()">- Zoom Out</button>
+  <button onclick="zoomReset()">Reset</button>
+  <span class="zoom-level" id="zoomLevel">100%</span>
+</div>
+<div class="diagram-wrap" id="diagramContainer">
+<div class="mermaid">
+%%{init: {'theme': 'base', 'themeVariables': {'background': '#ffffff', 'primaryColor': '#e8f4f8', 'primaryTextColor': '#1a1a1a', 'primaryBorderColor': '#7fb3d3', 'lineColor': '#8b6f4e', 'secondaryColor': '#fef9e7', 'tertiaryColor': '#fdedec', 'clusterBkg': '#faf8f5', 'clusterBorder': '#d5c4a1', 'fontSize': '14px'}}}%%
+graph TB
+User("Investment Analyst / User")
+subgraph FinSight["FinSight Multi-Agent Investment System"]
+
+
+System("FinSight System")
+end
+subgraph External["External Data Sources"]
+
+
+SEC("SEC EDGAR\n10-K, 10-Q, 8-K, XBRL")
+YF("Yahoo Finance\nPrices, financials, options")
+RSS("RSS News Feeds\nYahoo, CNBC, MarketWatch")
+end
+DDG("DuckDuckGo News\nFallback search source")
+LLM("LM Studio\nLocal LLM\nPort 1234")
+LF("Langfuse\nObservability & Tracing")
+User -- "① Types investment query" --> System
+System -- "② LLM inference (OpenAI API)" --> LLM
+System -- "③ SEC filings (REST)" --> SEC
+System -- "④ Market data (REST)" --> YF
+System -- "⑤ News headlines (RSS)" --> RSS
+RSS -. "↷ Fallback ①" .-> YF
+YF -. "↷ Fallback ②" .-> DDG
+System -- "⑥ Telemetry & eval scores" --> LF
+System -- "⑦ Returns BUY/HOLD/SELL + brief" --> User
+style User fill:#d4e6f1,stroke:#2980b9,stroke-width:2px,color:#1a1a1a
+style System fill:#d5f5e3,stroke:#27ae60,stroke-width:2px,color:#1a1a1a
+style SEC fill:#fadbd8,stroke:#c0392b,stroke-width:2px,color:#1a1a1a
+style YF fill:#fadbd8,stroke:#c0392b,stroke-width:2px,color:#1a1a1a
+style RSS fill:#fadbd8,stroke:#c0392b,stroke-width:2px,color:#1a1a1a
+style DDG fill:#fadbd8,stroke:#c0392b,stroke-width:2px,color:#1a1a1a
+style LLM fill:#f9e79f,stroke:#f39c12,stroke-width:2px,color:#1a1a1a
+style LF fill:#e8daef,stroke:#8e44ad,stroke-width:2px,color:#1a1a1a
+</div>
+</div>
+<h2>External Interfaces</h2>
+<table>
+<tr><th>Interface</th><th>Protocol</th><th>Rate Limit</th><th>Data Types</th></tr>
+<tr><td>LM Studio LLM</td><td>HTTP (OpenAI-compatible)</td><td>Priority semaphore (CRITICAL/NORMAL/LOW)</td><td>Inference requests</td></tr>
+<tr><td>SEC EDGAR</td><td>REST (HTTPS)</td><td>8 req/s (TokenBucket)</td><td>10-K, 10-Q, 8-K filings, XBRL</td></tr>
+<tr><td>Yahoo Finance</td><td>REST (unofficial)</td><td>4 req/s (TokenBucket)</td><td>Prices, financials, options, peers</td></tr>
+<tr><td>RSS Feeds</td><td>RSS/Atom</td><td>2 req/s (TokenBucket)</td><td>News headlines ? YF API ? DDG fallback chain</td></tr>
+<tr><td>Langfuse</td><td>HTTP (OTLP/REST)</td><td>Async, no limit</td><td>Traces, spans, evaluation scores</td></tr>
+</table>
+<h2>Data Flow Steps</h2>
+<table>
+<tr><th>Step</th><th>Direction</th><th>Source</th><th>Destination</th><th>Data</th></tr>
+<tr><td>①</td><td>→</td><td>User / Analyst</td><td>FinSight System</td><td>Natural language investment query</td></tr>
+<tr><td>②</td><td>→</td><td>FinSight System</td><td>LM Studio</td><td>LLM inference requests (3 priority tiers)</td></tr>
+<tr><td>③</td><td>→</td><td>FinSight System</td><td>SEC EDGAR</td><td>Filing retrieval requests (8 req/s)</td></tr>
+<tr><td>④</td><td>→</td><td>FinSight System</td><td>Yahoo Finance</td><td>Market data queries (4 req/s)</td></tr>
+<tr><td>⑤</td><td>→</td><td>FinSight System</td><td>RSS Feeds</td><td>News headline polling (2 req/s)</td></tr>
+<tr><td>⑥</td><td>→</td><td>RSS Feeds</td><td>Yahoo Finance Search API</td><td>News fallback when RSS yields 0 articles</td></tr>
+<tr><td>⑦</td><td>→</td><td>Yahoo Finance Search API</td><td>DuckDuckGo</td><td>Final fallback when all prior sources fail</td></tr>
+<tr><td>⑧</td><td>→</td><td>FinSight System</td><td>Langfuse</td><td>Telemetry data, traces, evaluation scores</td></tr>
+<tr><td>⑨</td><td>→</td><td>FinSight System</td><td>User / Analyst</td><td>BUY/HOLD/SELL recommendation + brief</td></tr>
+</table>
+<hr style="margin-top:2rem">
+<p style="font-size:.85rem;color:#888">FinSight — Architecture Diagrams</p>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="shared.js"></script>
+</body>
+</html>

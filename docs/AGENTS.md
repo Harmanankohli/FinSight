@@ -387,7 +387,7 @@ All four agents share a common infrastructure layer:
 
 ## Phase Map
 
-The project evolved through five phases, each adding distinct agent capabilities:
+The project evolved through seven phases, each adding distinct agent capabilities:
 
 | Phase | Version | What Changed |
 |---|---|---|

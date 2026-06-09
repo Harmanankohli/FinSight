@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sequence Diagram — Phase 3: Synthesis</title>
+<link rel="stylesheet" href="shared.css">
+<style>.diagram-wrap{min-height:650px}</style>
+</head>
+<body>
+<div class="container">
+<div class="back"><a href="index.html">&larr; Back to Diagrams</a></div>
+<div class="sub-nav">
+  <a href="sequence.html">Full</a>
+  <a href="sequence-phase1.html">Phase 1: Input</a>
+  <a href="sequence-phase2.html">Phase 2: Agent Dispatch</a>
+  <a href="sequence-phase3.html" class="active">Phase 3: Synthesis</a>
+</div>
+<h1>Sequence Diagram — Phase 3: Synthesis</h1>
+<p>Orchestrator synthesizes sub-agent results, produces recommendation, persists memory, runs eval, returns SSE response. <strong>Drag to pan, scroll to zoom, hover nodes for details.</strong></p>
+<div class="zoom-controls">
+  <button onclick="zoomIn()">+ Zoom In</button>
+  <button onclick="zoomOut()">- Zoom Out</button>
+  <button onclick="zoomReset()">Reset</button>
+  <span class="zoom-level" id="zoomLevel">100%</span>
+</div>
+<div class="diagram-wrap" id="diagramContainer">
+<div class="mermaid">
+%%{init: {'theme': 'base', 'themeVariables': {'background': '#ffffff', 'actorBkg': '#e8daef', 'actorBorder': '#8e44ad', 'actorTextColor': '#1a1a1a', 'signalColor': '#8b6f4e', 'signalTextColor': '#1a1a1a', 'labelBoxBkgColor': '#d5f5e3', 'labelBoxBorderColor': '#27ae60', 'labelTextColor': '#1a1a1a', 'loopTextColor': '#1a1a1a', 'activationBorderColor': '#8b6f4e', 'activationBkgColor': '#f0ebe3'}}}%%
+sequenceDiagram
+participant Orch as Orchestrator
+participant Guard as Guardrails
+participant Cache as SemanticCache
+participant Mem as Memory (SQLite)
+participant LLM as LM Studio
+participant Sub as Sub-Agents
+participant UI as ADK Web / Next.js
+participant User as User
+Note over Orch,User: ══════ Phase 3: Synthesis + Persistence ══════
+
+Orch->>Orch: ⑨ Collect 3 agent outputs
+Note over Orch: RAG: "NVDA revenue grew 125%..."<br/>Quant: "BUY (+0.31), 6/8 groups bullish"<br/>Mkt: "Bullish macro, yield curve steepening"
+Orch->>LLM: ⑩ Synthesize final recommendation
+Note over Orch,LLM: LLM receives 3 agent results + query + memory<br/>Produces BUY/HOLD/SELL + detailed rationale
+LLM-->>Orch: "BUY — Confidence 0.78. Strong quant, positive macro."
+Orch->>Guard: ⑪ Output guardrail check
+Note over Guard: ≥50 chars? ✓ | BUY/HOLD/SELL keyword? ✓<br/>Auto-retry up to 3× on failure
+Guard-->>Orch: Pass
+Orch->>Mem: ⑫ Persist to SQLite
+Note over Orch,Mem: TickerMemory.store_brief("NVDA", "BUY", 0.78)<br/>PerformanceTracker.record() with price snapshot<br/>PortfolioStore.upsert_from_context()
+Orch->>Cache: ⑬ Write semantic cache
+Note over Cache: ChromaDB upsert(query, response)<br/>Tagged with today's date
+Orch->>Orch: ⑭ Fire background evals
+Note over Orch: asyncio.create_task(score_response)<br/>→ circuit breaker | SHA dedup | burst limit<br/>→ RAGAS: AnswerRelevancy, citation_quality,<br/>risk_disclosure, completeness, no_guarantees
+Orch->>Sub: ⑮ POST /release-evals
+Note over Orch,Sub: Releases deferred sub-agent evals<br/>(Faithfulness, ContextPrecision,<br/>FactualCorrectness, macro_regime, etc.)
+Orch->>UI: ⑯ SSE stream response
+Note over Orch,UI: AG-UI events: text + artifacts + metadata
+UI->>User: ⑰ Display investment brief
+Note over User: BUY/HOLD/SELL + confidence (0.78)<br/>Rationale citing RAG + Quant + Market<br/>Agent contribution breakdown
+</div>
+</div>
+<hr style="margin-top:2rem">
+<p style="font-size:.85rem;color:#888">FinSight — Architecture Diagrams</p>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="shared.js"></script>
+</body>
+</html>

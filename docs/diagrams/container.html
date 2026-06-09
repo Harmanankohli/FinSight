@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Container Diagram — FinSight</title>
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+<div class="container">
+<div class="back"><a href="index.html">&larr; Back to Diagrams</a></div>
+<h1>Container Diagram</h1>
+<p>C4 Level 2 — Runtime processes, ports, protocols, and data stores. <strong>Drag to pan, scroll to zoom, hover nodes for details.</strong></p>
+<div class="zoom-controls">
+  <button onclick="zoomIn()">+ Zoom In</button>
+  <button onclick="zoomOut()">- Zoom Out</button>
+  <button onclick="zoomReset()">Reset</button>
+  <span class="zoom-level" id="zoomLevel">100%</span>
+</div>
+<div class="diagram-wrap" id="diagramContainer">
+<div class="mermaid">
+%%{init: {'theme': 'base', 'themeVariables': {'background': '#ffffff', 'primaryColor': '#d4e6f1', 'primaryTextColor': '#1a1a1a', 'primaryBorderColor': '#2980b9', 'lineColor': '#8b6f4e', 'secondaryColor': '#d5f5e3', 'tertiaryColor': '#fadbd8', 'clusterBkg': '#faf8f5', 'clusterBorder': '#d5c4a1', 'fontSize': '13px'}}}%%
+graph TB
+User("User Browser")
+subgraph UI["Presentation Layer"]
+
+
+NextJS("Next.js UI\nPort 3000\nCopilotKit chat")
+ADKWeb("ADK Web UI\nPort 8080\nGoogle ADK built-in")
+end
+subgraph Agents["Agent Layer"]
+
+
+Orch("Orchestrator\nADK LlmAgent\nPort 8080")
+RAG("RAG Agent\nLlamaIndex\nPort 8002")
+Quant("Quant Agent\nLangGraph\nPort 8003")
+MktCtx("Market Context Agent\nCrewAI\nPort 8004")
+end
+subgraph Data["Data Layer"]
+
+
+MCP("MCP Server\nFastMCP SSE\nPort 8010\n18 tools + 3 resources")
+Chroma("ChromaDB\nVector Store\nsec_filings, news, earnings")
+SQLite("SQLite\nMemory Store\ndb/finsight_memory.db")
+Redis("Redis\nOptional cache\nPhase 5+")
+end
+LG("LM Studio\nPort 1234\nLocal LLM")
+SEC("SEC EDGAR")
+Yahoo("Yahoo Finance")
+User --> NextJS
+User --> ADKWeb
+NextJS --> Orch
+ADKWeb --> Orch
+Orch -- "A2A" --> RAG
+Orch -- "A2A" --> Quant
+Orch -- "A2A" --> MktCtx
+RAG -- "MCP" --> MCP
+Quant -- "MCP" --> MCP
+MktCtx -- "MCP" --> MCP
+Orch -- "MCP" --> MCP
+RAG -- "Vectors" --> Chroma
+Orch -- "SQLite" --> SQLite
+RAG -- "SQLite" --> SQLite
+MCP -- "REST" --> SEC
+MCP -- "REST" --> Yahoo
+Orch -- "LLM" --> LG
+RAG -- "LLM" --> LG
+Quant -- "LLM" --> LG
+MktCtx -- "LLM" --> LG
+Redis -. "Optional" .-> Orch
+style User fill:#d4e6f1,stroke:#2980b9,stroke-width:2px,color:#1a1a1a
+style NextJS fill:#d4e6f1,stroke:#2980b9,stroke-width:2px,color:#1a1a1a
+style ADKWeb fill:#d4e6f1,stroke:#2980b9,stroke-width:2px,color:#1a1a1a
+style Orch fill:#d5f5e3,stroke:#27ae60,stroke-width:2px,color:#1a1a1a
+style RAG fill:#d5f5e3,stroke:#27ae60,stroke-width:2px,color:#1a1a1a
+style Quant fill:#d5f5e3,stroke:#27ae60,stroke-width:2px,color:#1a1a1a
+style MktCtx fill:#d5f5e3,stroke:#27ae60,stroke-width:2px,color:#1a1a1a
+style MCP fill:#fdebd0,stroke:#e67e22,stroke-width:2px,color:#1a1a1a
+style Chroma fill:#fadbd8,stroke:#c0392b,stroke-width:2px,color:#1a1a1a
+style SQLite fill:#fadbd8,stroke:#c0392b,stroke-width:2px,color:#1a1a1a
+style Redis fill:#fadbd8,stroke:#c0392b,stroke-width:1px,stroke-dasharray:4 2,color:#1a1a1a
+style LG fill:#f9e79f,stroke:#f39c12,stroke-width:2px,color:#1a1a1a
+style SEC fill:#e8daef,stroke:#8e44ad,stroke-width:2px,color:#1a1a1a
+style Yahoo fill:#e8daef,stroke:#8e44ad,stroke-width:2px,color:#1a1a1a
+</div>
+</div>
+<h2>Container Summary</h2>
+<table>
+<tr><th>Container</th><th>Tech</th><th>Port</th><th>Startup Order</th><th>Protocol</th></tr>
+<tr><td>MCP Server</td><td>FastMCP (Python)</td><td>8010</td><td>1</td><td>SSE + MCP</td></tr>
+<tr><td>RAG Agent</td><td>LlamaIndex</td><td>8002</td><td>2</td><td>A2A + MCP</td></tr>
+<tr><td>Quant Agent</td><td>LangGraph</td><td>8003</td><td>3</td><td>A2A + MCP</td></tr>
+<tr><td>Market Context Agent</td><td>CrewAI</td><td>8004</td><td>4</td><td>A2A + MCP</td></tr>
+<tr><td>Orchestrator</td><td>ADK LlmAgent</td><td>8080</td><td>5</td><td>A2A + MCP</td></tr>
+<tr><td>Next.js UI</td><td>Next.js 16 / React 19</td><td>3000</td><td>6</td><td>HTTP + SSE</td></tr>
+<tr><td>ADK Web UI</td><td>Google ADK</td><td>8080</td><td>6</td><td>HTTP + SSE</td></tr>
+</table>
+<h2>Data Stores</h2>
+<table>
+<tr><th>Store</th><th>Type</th><th>Contents</th><th>Accessed By</th></tr>
+<tr><td>ChromaDB</td><td>Vector DB</td><td>sec_filings, news, earnings collections</td><td>RAG Agent</td></tr>
+<tr><td>SQLite</td><td>Relational (WAL mode)</td><td>TickerMemory, PortfolioStore, PerformanceTracker, SemanticCache</td><td>Orchestrator, RAG</td></tr>
+<tr><td>Redis (opt.)</td><td>Key-value</td><td>Ephemeral cache, rate limit counters</td><td>Orchestrator</td></tr>
+</table>
+<hr style="margin-top:2rem">
+<p style="font-size:.85rem;color:#888">FinSight — Architecture Diagrams</p>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="shared.js"></script>
+</body>
+</html>

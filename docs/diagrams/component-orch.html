@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Component Diagram — Orchestrator</title>
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+<div class="container">
+<div class="back"><a href="index.html">&larr; Back to Diagrams</a></div>
+<div class="sub-nav">
+  <a href="component.html">Full (all)</a>
+  <a href="component-orch.html" class="active">Orchestrator</a>
+  <a href="component-agents.html">Agents (RAG, Quant, Market)</a>
+  <a href="component-infra.html">MCP + Shared Infra</a>
+</div>
+<h1>Component — Orchestrator</h1>
+<p>Orchestrator flow: entry, guardrails, cache, memory, dispatch, synthesis, output guard, persist, eval. <strong>Drag to pan, scroll to zoom, hover nodes for details.</strong></p>
+<div class="zoom-controls">
+  <button onclick="zoomIn()">+ Zoom In</button>
+  <button onclick="zoomOut()">- Zoom Out</button>
+  <button onclick="zoomReset()">Reset</button>
+  <span class="zoom-level" id="zoomLevel">100%</span>
+</div>
+<div class="diagram-wrap" id="diagramContainer">
+<div class="mermaid">
+%%{init: {'theme': 'base', 'themeVariables': {'background': '#ffffff', 'primaryColor': '#d5f5e3', 'primaryTextColor': '#1a1a1a', 'primaryBorderColor': '#27ae60', 'lineColor': '#8b6f4e', 'secondaryColor': '#f0ebe3', 'tertiaryColor': '#f9e79f', 'clusterBkg': '#faf8f5', 'clusterBorder': '#d5c4a1', 'fontSize': '13px'}}}%%
+graph TB
+UI("ADK Web / Next.js")
+LLM("LM Studio")
+MCP("MCP Server")
+subgraph Orchestrator["Orchestrator (agent_1_adk/)"]
+A2AEntry("① A2A Entry\nPOST /a2a or /a2a-agui")
+InputGuard("② Input Guardrails\nOff-topic regex + MCP validate_ticker\n→ rejects in &lt; 2s")
+SemCache("③ Semantic Cache\nChromaDB cosine > 0.95\nDate-scoped, 1h TTL")
+BriefCache("④ Today Brief Cache\nSQLite TickerMemory.get_latest()\nSame-day → 200ms")
+MemCtx("⑤ Memory Context\nInject [TODAY]/[STALE] labels\n+ portfolio holdings")
+AgentList("Agent Discovery\nSubAgentClient.discover()\n→ available agents prompt")
+ADKEngine("⑥ ADK LlmAgent\nTools: send_message\nload_memory, generate_report")
+ParallelDispatch("⑦ Parallel A2A\nsend_message(RAG, Quant, MktCtx)\nAll in one LLM turn")
+Synthesis("⑧ LLM Synthesis\nCollect 3 outputs\n→ BUY/HOLD/SELL + confidence")
+OutGuard("⑨ Output Guardrails\n≥50 chars + signal check\nAuto-retry × 3")
+Persist("⑩ Memory Persistence\nTickerMemory + Portfolio\n+ PerformanceTracker")
+EvalFire("⑪ Background Eval\nRAGAS score_response()\nPOST /release-evals")
+end
+UI -- "POST" --> A2AEntry
+A2AEntry --> InputGuard
+InputGuard --> SemCache
+SemCache --> BriefCache
+BriefCache --> MemCtx
+MemCtx --> ADKEngine
+AgentList -. "injects prompt" .-> ADKEngine
+ADKEngine --> ParallelDispatch
+ParallelDispatch --> Synthesis
+Synthesis --> OutGuard
+OutGuard --> Persist
+Persist --> EvalFire
+InputGuard -. "validate_ticker" .-> MCP
+SemCache -. "ChromaDB" .-> MCP
+ADKEngine -- "LLM" --> LLM
+Synthesis -- "LLM" --> LLM
+EvalFire -. "LOW priority" .-> LLM
+style UI fill:#d4e6f1,stroke:#2980b9,color:#1a1a1a
+style LLM fill:#f9e79f,stroke:#f39c12,color:#1a1a1a
+style MCP fill:#f9e79f,stroke:#f39c12,color:#1a1a1a
+style A2AEntry fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
+style InputGuard fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
+style SemCache fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
+style BriefCache fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
+style MemCtx fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
+style AgentList fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
+style ADKEngine fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
+style ParallelDispatch fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
+style Synthesis fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
+style OutGuard fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
+style Persist fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
+style EvalFire fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
+</div>
+</div>
+<hr style="margin-top:2rem">
+<p style="font-size:.85rem;color:#888">FinSight — Architecture Diagrams</p>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="shared.js"></script>
+</body>
+</html>

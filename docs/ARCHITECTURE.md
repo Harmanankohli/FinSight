@@ -207,10 +207,7 @@ Four independent caching tiers reduce latency and external API load:
 | `_cache_macro` | 15 min | `"macro"` | Treasury yields, VIX, DXY, sector ETFs |
 | `_cache_filing` | permanent (LRU-200) | `edgar_url` | filings are immutable |
 | `_cache_submissions` | 6 h | `cik` | EDGAR CIK submissions |
-| `_cache_benchmark` | 1 h | ticker | `^GSPC` and other index benchmarks |
 | `_cache_peers` | 24 h | ticker | yfinance Industry/Sector peer lists |
-| `_cache_shocks` | 7 days | sector | Historical crash returns per sector ETF |
-| `_cache_peers` | 24 h | ticker | Yahoo Finance Industry/Sector peer lists |
 | `_cache_shocks` | 7 days | sector | Historical crash returns per sector ETF |
 
 ### Redis Two-Level Cache (Tier 1C, v1.31)

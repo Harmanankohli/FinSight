@@ -1,0 +1,320 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FinSight - Logging Audit Report</title>
+<style>
+:root{--ivory:#FAF8F5;--clay:#C4956A;--navy:#1B2A4A;--text:#2D2D2D;--tl:#6B7280;--surf:#F3F0EB;--green:#16A34A;--red:#DC2626;--amber:#D97706;--blue:#2563EB;--bdr:#E5E1DB}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:Georgia,serif;background:var(--ivory);color:var(--text);line-height:1.7;padding:2rem;max-width:1100px;margin:0 auto}
+h1{font-size:2rem;color:var(--navy);margin-bottom:.5rem;border-bottom:3px solid var(--clay);padding-bottom:.5rem}
+h2{font-size:1.5rem;color:var(--navy);margin-top:2.5rem;margin-bottom:1rem}
+h3{font-size:1.15rem;color:var(--clay);margin-top:1.5rem;margin-bottom:.5rem}
+.sub{color:var(--tl);font-style:italic;margin-bottom:2rem}
+.sg{display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;margin:1.5rem 0}
+.sc{background:var(--surf);border:1px solid var(--bdr);border-radius:8px;padding:1rem;text-align:center}
+.sc .n{font-size:2rem;font-weight:700;color:var(--navy)}
+.sc .l{font-size:.85rem;color:var(--tl);text-transform:uppercase;letter-spacing:.05em}
+table{width:100%;border-collapse:collapse;margin:1rem 0;font-size:.95rem}
+th{background:var(--navy);color:#fff;padding:.6rem .8rem;text-align:left;font-family:Consolas,monospace;font-size:.85rem}
+td{padding:.5rem .8rem;border-bottom:1px solid var(--bdr);vertical-align:top}
+tr:hover td{background:#f9f6f2}
+code{font-family:Consolas,monospace;background:var(--surf);padding:.15em .4em;border-radius:3px;font-size:.9em}
+.fp{color:var(--blue);font-weight:700}
+.ld{color:#6B7280}.li{color:var(--green)}.lw{color:var(--amber)}.le{color:var(--red)}
+.pb{display:inline-block;padding:.15em .5em;border-radius:4px;font-size:.8em;font-weight:700}
+.p1{background:#FEE2E2;color:#991B1B}.p2{background:#FEF3C7;color:#92400E}.p3{background:#DBEAFE;color:#1E40AF}.p4{background:#E0E7FF;color:#3730A3}
+.card{background:#fff;border:1px solid var(--bdr);border-radius:8px;padding:1.5rem;margin:1rem 0}
+.card h3{margin-top:0}
+.cb{background:#1E293B;color:#E2E8F0;padding:1rem;border-radius:6px;font-family:Consolas,monospace;font-size:.85rem;overflow-x:auto;margin:.5rem 0;line-height:1.5}
+.kw{color:#C084FC}.str{color:#86EFAC}.fn{color:#7DD3FC}.cmt{color:#64748B}
+.toc{background:var(--surf);border:1px solid var(--bdr);border-radius:8px;padding:1.5rem;margin:1.5rem 0}
+.toc ul{list-style:none;padding-left:0}.toc li{padding:.3rem 0}.toc a{color:var(--blue);text-decoration:none}.toc a:hover{text-decoration:underline}
+@media(max-width:700px){.sg{grid-template-columns:repeat(2,1fr)}body{padding:1rem}}
+</style>
+</head>
+<body>
+<h1>FinSight Logging Audit Report</h1>
+<p class="sub">Comprehensive analysis of logging gaps across the multi-agent investment system - 47 source files audited</p>
+<div class="sg">
+<div class="sc"><div class="n">13</div><div class="l">Files with zero logging</div></div>
+<div class="sc"><div class="n">~20</div><div class="l">Files with logging gaps</div></div>
+<div class="sc"><div class="n">15</div><div class="l">Silent except blocks</div></div>
+<div class="sc"><div class="n">~110</div><div class="l">Total log statements needed</div></div>
+</div>
+<div class="toc"><strong>Contents</strong>
+<ul>
+<li><a href="#infra">1. Current Logging Infrastructure</a></li>
+<li><a href="#silent">2. Silent Exception Blocks (P1 - Highest Risk)</a></li>
+<li><a href="#nolog">3. Files with Zero Logging (P2)</a></li>
+<li><a href="#gaps">4. Files with Logging Gaps (P3)</a></li>
+<li><a href="#agents">5. Agent-Specific Gaps (P4)</a></li>
+<li><a href="#examples">6. Implementation Examples</a></li>
+<li><a href="#checklist">7. Implementation Checklist</a></li>
+</ul></div>
+<h2 id="infra">1. Current Logging Infrastructure</h2>
+<div class="card">
+<h3>What exists</h3>
+<ul>
+<li><code>shared/logging_config.py</code> - JSON formatter, SanitizeFilter, @logged decorator, setup_file_logging()</li>
+<li>~30 modules have <code>logger = logging.getLogger(__name__)</code></li>
+<li>File output: <code>logs/&lt;service&gt;.log</code> (JSON lines, 10MB rotating, 5 backups)</li>
+<li>Console handler: plaintext to stderr</li>
+<li>Trace context: current_trace_id / current_session_id ContextVars auto-injected</li>
+</ul>
+<h3>What is missing</h3>
+<ul>
+<li>13 files have no <code>import logging</code> at all</li>
+<li>~15 <code>except</code> blocks silently swallow errors (pass or no log call)</li>
+<li>Cache hit/miss, DB operations, and state transitions are mostly unlogged</li>
+<li>No @logged decorator usage outside of logging_config.py itself</li>
+</ul></div>
+<h2 id="silent">2. Silent Exception Blocks <span class="pb p1">P1 - HIGHEST RISK</span></h2>
+<p>These catch exceptions and either <code>pass</code> or have no logging, making failures invisible.</p>
+<table>
+<tr><th>File</th><th>Line</th><th>Context</th><th>Recommended Log</th></tr>
+<tr><td class="fp">shared/sandbox.py</td><td>198</td><td><code>_sandbox_preexec</code>: except Exception: pass - OS resource limits failed</td><td><span class="lw">logger.warning</span>: "Failed to set sandbox resource limits: %s"</td></tr>
+<tr><td class="fp">shared/sandbox.py</td><td>239</td><td><code>os.unlink(runner_path)</code>: except OSError: pass - temp file cleanup failed</td><td><span class="ld">logger.debug</span>: "Failed to clean up runner %s: %s"</td></tr>
+<tr><td class="fp">shared/memory/store.py</td><td>153</td><td>Migration v1-v2: except Exception: pass - column already exists</td><td><span class="ld">logger.debug</span>: "Migration v1-v2: %s (expected if column exists)"</td></tr>
+<tr><td class="fp">shared/memory/store.py</td><td>160</td><td>Migration v2-v3: except Exception: pass</td><td><span class="ld">logger.debug</span>: "Migration v2-v3: %s"</td></tr>
+<tr><td class="fp">shared/memory/store.py</td><td>172</td><td>Migration v3-v4: except Exception: pass</td><td><span class="ld">logger.debug</span>: "Migration v3-v4: %s"</td></tr>
+<tr><td class="fp">shared/memory/store.py</td><td>185</td><td>Migration v4-v5: except Exception: pass</td><td><span class="ld">logger.debug</span>: "Migration v4-v5: %s"</td></tr>
+<tr><td class="fp">shared/memory/ticker_memory.py</td><td>99</td><td><code>update_response_text</code>: except (JSONDecodeError, TypeError): data = {}</td><td><span class="lw">logger.warning</span>: "Corrupt brief_json for record %s, resetting"</td></tr>
+<tr><td class="fp">shared/memory/ticker_memory.py</td><td>254</td><td><code>format_context</code>: except (JSONDecodeError, AttributeError): pass</td><td><span class="ld">logger.debug</span>: "Could not parse brief_json for context formatting"</td></tr>
+<tr><td class="fp">shared/memory/performance_tracker.py</td><td>206</td><td><code>_fetch_current_price</code>: except Exception: return None</td><td><span class="lw">logger.warning</span>: "Failed to fetch price for %s: %s"</td></tr>
+<tr><td class="fp">shared/trace_context.py</td><td>57</td><td><code>extract_trace_ids</code>: except (JSONDecodeError, AttributeError)</td><td><span class="ld">logger.debug</span>: "Failed to extract trace IDs from headers"</td></tr>
+<tr><td class="fp">agent_1_adk/agent.py</td><td>194</td><td><code>_is_analysis_turn</code>: except Exception: continue</td><td><span class="ld">logger.debug</span>: "get_function_calls() failed on event"</td></tr>
+<tr><td class="fp">agent_1_adk/agent.py</td><td>265</td><td><code>_auto_save_brief</code>: except Exception: pass on JSON parse</td><td><span class="ld">logger.debug</span>: "Failed to parse existing brief_json"</td></tr>
+<tr><td class="fp">agent_1_adk/agent.py</td><td>380</td><td>Module-level: except RuntimeError on event loop</td><td><span class="ld">logger.debug</span>: "No running event loop, using asyncio.run()"</td></tr>
+<tr><td class="fp">agent_1_adk/agui_bridge.py</td><td>99</td><td>except Exception: pass - bridge error</td><td><span class="lw">logger.warning</span>: "AG-UI bridge error: %s"</td></tr>
+<tr><td class="fp">shared/redis_cache.py</td><td>85</td><td>except Exception: pass on cache get decode</td><td><span class="ld">logger.debug</span>: "Redis cache decode failed for %s: %s"</td></tr>
+</table>
+<h2 id="nolog">3. Files with Zero Logging <span class="pb p2">P2 - NO INFRASTRUCTURE</span></h2>
+<p>These files need <code>import logging</code> + <code>logger = logging.getLogger(__name__)</code> added at the top, then log statements throughout.</p>
+<div class="card"><h3>shared/sandbox.py</h3>
+<table><tr><th>Line(s)</th><th>What to log</th><th>Level</th></tr>
+<tr><td>64</td><td><code>_check_code_safety</code> entry - code length</td><td class="ld">DEBUG</td></tr>
+<tr><td>72</td><td>Syntax error in user code</td><td class="li">INFO</td></tr>
+<tr><td>81,86,94,98,113,118,131</td><td>Each restricted construct detected</td><td class="li">INFO</td></tr>
+<tr><td>133</td><td>Code passed safety check</td><td class="ld">DEBUG</td></tr>
+<tr><td>202</td><td><code>run_sandbox</code> entry - code length, timeout</td><td class="li">INFO</td></tr>
+<tr><td>210</td><td>Safety check rejected code</td><td class="lw">WARNING</td></tr>
+<tr><td>229</td><td>Subprocess timeout</td><td class="lw">WARNING</td></tr>
+<tr><td>234</td><td>Subprocess exception</td><td class="le">ERROR</td></tr>
+<tr><td>258</td><td>Sandbox result - success/fail, returncode</td><td class="li">INFO</td></tr>
+</table></div>
+<div class="card"><h3>shared/rate_limiter.py</h3>
+<table><tr><th>Line(s)</th><th>What to log</th><th>Level</th></tr>
+<tr><td>17</td><td><code>acquire</code> - token available, no wait</td><td class="ld">DEBUG</td></tr>
+<tr><td>29-30</td><td>Rate limit hit - sleeping for deficit</td><td class="ld">DEBUG</td></tr>
+</table></div>
+<div class="card"><h3>shared/ttl_cache.py</h3>
+<table><tr><th>Line(s)</th><th>What to log</th><th>Level</th></tr>
+<tr><td>30-31</td><td>Cache hit</td><td class="ld">DEBUG</td></tr>
+<tr><td>37</td><td>Single-flight dedup (inflight key)</td><td class="ld">DEBUG</td></tr>
+<tr><td>53-57</td><td>Fetch success, cache set</td><td class="ld">DEBUG</td></tr>
+<tr><td>58-59</td><td>Fetch failure</td><td class="lw">WARNING</td></tr>
+<tr><td>55-56</td><td>Cache eviction (over capacity)</td><td class="ld">DEBUG</td></tr>
+</table></div>
+<div class="card"><h3>shared/peer_sets.py</h3>
+<table><tr><th>Line(s)</th><th>What to log</th><th>Level</th></tr>
+<tr><td>122</td><td><code>get_peer_tickers</code> - lookup result (hit, miss, normalized)</td><td class="ld">DEBUG</td></tr>
+</table></div>
+<div class="card"><h3>shared/memory/store.py</h3>
+<table><tr><th>Line(s)</th><th>What to log</th><th>Level</th></tr>
+<tr><td>102-117</td><td><code>get_db</code> - DB connection created/opened</td><td class="li">INFO</td></tr>
+<tr><td>125-130</td><td><code>close_db</code> - connection closed</td><td class="li">INFO</td></tr>
+<tr><td>134-186</td><td><code>init_db</code> - migration steps executed</td><td class="li">INFO</td></tr>
+<tr><td>189-211</td><td><code>prune_old_records</code> - rows deleted per table</td><td class="li">INFO</td></tr>
+<tr><td>214-220</td><td><code>is_filing_ingested</code> - check result</td><td class="ld">DEBUG</td></tr>
+<tr><td>223-233</td><td><code>mark_filing_ingested</code> - recorded</td><td class="ld">DEBUG</td></tr>
+</table></div>
+<div class="card"><h3>shared/memory/ticker_memory.py</h3>
+<table><tr><th>Line(s)</th><th>What to log</th><th>Level</th></tr>
+<tr><td>23-49</td><td><code>store_brief</code> - stored brief for ticker</td><td class="li">INFO</td></tr>
+<tr><td>52-85</td><td><code>store_minimal</code> - stored minimal brief</td><td class="li">INFO</td></tr>
+<tr><td>89-109</td><td><code>update_response_text</code> - updated or not found</td><td class="li">INFO</td></tr>
+<tr><td>112-149</td><td><code>get_latest</code> - found or not</td><td class="ld">DEBUG</td></tr>
+<tr><td>152-190</td><td><code>get_history</code> - count of results</td><td class="ld">DEBUG</td></tr>
+<tr><td>211-261</td><td><code>format_context</code> - output length</td><td class="ld">DEBUG</td></tr>
+</table></div>
+<div class="card"><h3>shared/memory/portfolio_store.py</h3>
+<table><tr><th>Line(s)</th><th>What to log</th><th>Level</th></tr>
+<tr><td>21-38</td><td><code>get_profile</code> - found or not</td><td class="ld">DEBUG</td></tr>
+<tr><td>41-80</td><td><code>upsert_from_context</code> - insert vs update, merged holdings</td><td class="li">INFO</td></tr>
+<tr><td>83-88</td><td><code>get_holdings</code> - count returned</td><td class="ld">DEBUG</td></tr>
+<tr><td>91-109</td><td><code>update_holdings</code> - replaced</td><td class="li">INFO</td></tr>
+</table></div>
+<div class="card"><h3>shared/memory/performance_tracker.py</h3>
+<table><tr><th>Line(s)</th><th>What to log</th><th>Level</th></tr>
+<tr><td>21-58</td><td><code>record_recommendation</code> - ticker, rec, price</td><td class="li">INFO</td></tr>
+<tr><td>61-103</td><td><code>evaluate_all</code> - count evaluated, failures</td><td class="li">INFO</td></tr>
+<tr><td>106-156</td><td><code>get_accuracy_stats</code> - summary stats</td><td class="li">INFO</td></tr>
+<tr><td>158-196</td><td><code>get_past_recommendations</code> - count returned</td><td class="ld">DEBUG</td></tr>
+</table></div>
+<div class="card"><h3>shared/agui_sse.py</h3>
+<table><tr><th>Line(s)</th><th>What to log</th><th>Level</th></tr>
+<tr><td>49-55</td><td><code>sse()</code> - event type being formatted</td><td class="ld">DEBUG</td></tr>
+</table></div>
+<div class="card"><h3>shared/report_generator.py</h3>
+<table><tr><th>Line(s)</th><th>What to log</th><th>Level</th></tr>
+<tr><td>~700</td><td>PPTX generation start - ticker, format</td><td class="li">INFO</td></tr>
+<tr><td>1225-1228</td><td>PPTX generation complete - slide count</td><td class="li">INFO</td></tr>
+<tr><td>1244-1446</td><td>DOCX generation start/complete</td><td class="li">INFO</td></tr>
+<tr><td>731-733</td><td><code>try/except</code> on vertical anchor - silent</td><td class="ld">DEBUG</td></tr>
+</table></div>
+<div class="card"><h3>agents/services.py</h3>
+<table><tr><th>Line(s)</th><th>What to log</th><th>Level</th></tr>
+<tr><td>25-27</td><td><code>finsight_memory_factory</code> - service created</td><td class="li">INFO</td></tr>
+<tr><td>30</td><td>Module-level - registration complete</td><td class="li">INFO</td></tr>
+</table></div>
+<div class="card"><h3>shared/base_agent.py</h3>
+<p>Pure abstract base class - logging is optional here. Add <code>logger.debug("stream() called for %s", self.agent_name)</code> in the abstract method if desired for tracing.</p>
+</div>
+<h2 id="gaps">4. Files with Existing Logging but Gaps <span class="pb p3">P3 - FILL GAPS</span></h2>
+<table>
+<tr><th>File</th><th>What is missing</th><th>Level</th></tr>
+<tr><td class="fp">shared/semantic_cache.py</td><td><code>__init__</code>: log cache availability. <code>set</code>: log success path (not just failure).</td><td class="li">INFO / DEBUG</td></tr>
+<tr><td class="fp">shared/redis_cache.py</td><td><code>get</code>: log hit/miss. <code>close</code>: log shutdown. <code>set</code>: log success.</td><td class="ld">DEBUG</td></tr>
+<tr><td class="fp">shared/trace_context.py</td><td><code>extract_trace_ids</code>: log success with extracted IDs.</td><td class="ld">DEBUG</td></tr>
+<tr><td class="fp">shared/memory/memory_service.py</td><td><code>save_brief</code>: log entry + success. <code>search_memory</code>: log query + result count.</td><td class="li">INFO</td></tr>
+<tr><td class="fp">shared/mcp_client.py</td><td>Tool call success path. Session lifecycle (connect/disconnect). Resource read results.</td><td class="ld">DEBUG</td></tr>
+<tr><td class="fp">shared/generic_executor.py</td><td>Task creation, completion with result summary, cancellation reason.</td><td class="li">INFO</td></tr>
+<tr><td class="fp">shared/llm_queue.py</td><td>Queue depth on enqueue/dequeue. Worker lifecycle events.</td><td class="ld">DEBUG</td></tr>
+<tr><td class="fp">shared/eval_gate.py</td><td>Gate open/close decisions with reason.</td><td class="li">INFO</td></tr>
+<tr><td class="fp">shared/config.py</td><td>Config loading path, env var fallback warnings (already partially logged).</td><td class="li">INFO</td></tr>
+<tr><td class="fp">shared/runtime_eval.py</td><td>Already well-logged. Add: metric import failures at DEBUG, client setup success.</td><td class="ld">DEBUG</td></tr>
+</table>
+
+<h2 id="agents">5. Agent-Specific Gaps <span class="pb p4">P4 - AGENT LAYER</span></h2>
+<table>
+<tr><th>File</th><th>What is missing</th><th>Level</th></tr>
+<tr><td class="fp">agent_1_adk/agent.py</td><td><code>send_message</code>: log dispatch (agent_name, task length). <code>save_brief</code>: log entry, dedup skip, success. <code>generate_report</code>: log format, file path, success. <code>_build_instruction</code>: log agent count in prompt.</td><td class="li">INFO</td></tr>
+<tr><td class="fp">agent_1_adk/agent_executor.py</td><td>Task state transitions (pending -> running -> complete/error). Error recovery paths. Cancelled task reasons.</td><td class="li">INFO / WARNING</td></tr>
+<tr><td class="fp">agent_1_adk/sub_agent_client.py</td><td>Discovery results (agent count, names). Agent resolution (name -> URL). Send timeout vs success.</td><td class="li">INFO</td></tr>
+<tr><td class="fp">agent_1_adk/api_routes.py</td><td>Route entry (method, path). Request/response status codes.</td><td class="ld">DEBUG</td></tr>
+<tr><td class="fp">agent_1_adk/agui_bridge.py</td><td>Bridge lifecycle (open/close). Event forwarding count. Error recovery.</td><td class="li">INFO</td></tr>
+<tr><td class="fp">agent_1_adk/agui_endpoint.py</td><td>SSE stream open/close. Stream error details.</td><td class="li">INFO</td></tr>
+<tr><td class="fp">agent_1_adk/main.py</td><td>Server startup (port, host). Shutdown signal.</td><td class="li">INFO</td></tr>
+<tr><td class="fp">agent_2_llamaindex/index_manager.py</td><td>Index build/search operations.</td><td class="li">INFO</td></tr>
+<tr><td class="fp">agent_2_llamaindex/hybrid_search.py</td><td>Search query, result count, latency.</td><td class="ld">DEBUG</td></tr>
+<tr><td class="fp">agent_2_llamaindex/document_ingestion.py</td><td>Ingestion count, failures.</td><td class="li">INFO</td></tr>
+<tr><td class="fp">agent_3_langgraph/nodes.py</td><td>Node entry/exit, state transitions.</td><td class="ld">DEBUG</td></tr>
+<tr><td class="fp">agent_3_langgraph/graph.py</td><td>Graph compilation, edge decisions.</td><td class="li">INFO</td></tr>
+<tr><td class="fp">agent_4_crewai/crew.py</td><td>Crew execution start/end, task assignment.</td><td class="li">INFO</td></tr>
+<tr><td class="fp">agent_4_crewai/mcp_tools.py</td><td>Tool invocation, parameters, result summary.</td><td class="ld">DEBUG</td></tr>
+<tr><td class="fp">mcp_servers/finsight_server.py</td><td>Tool dispatch, parameter validation, response size.</td><td class="ld">DEBUG</td></tr>
+</table>
+<h2 id="examples">6. Implementation Examples</h2>
+<div class="card"><h3>Example: Adding logging to a file with zero infrastructure</h3>
+<div class="cb">
+<span class="kw">import</span> logging<br><br>
+logger = logging.getLogger(__name__)<br><br>
+<span class="cmt"># Before:</span><br>
+<span class="kw">async def</span> <span class="fn">store_brief</span>(self, brief, user_id, session_id):<br>
+&nbsp;&nbsp;&nbsp;&nbsp;record_id = str(uuid.uuid4())<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">async with</span> write_lock():<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;...<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">return</span> record_id<br><br>
+<span class="cmt"># After:</span><br>
+<span class="kw">async def</span> <span class="fn">store_brief</span>(self, brief, user_id, session_id):<br>
+&nbsp;&nbsp;&nbsp;&nbsp;record_id = str(uuid.uuid4())<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">async with</span> write_lock():<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;...<br>
+&nbsp;&nbsp;&nbsp;&nbsp;logger.info(<span class="str">"Stored brief %s for %s (rec=%s, conf=%.2f)"</span>,<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;record_id, brief.ticker, brief.final_recommendation,<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;brief.confidence_score)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">return</span> record_id
+</div></div>
+
+<div class="card"><h3>Example: Fixing a silent except block</h3>
+<div class="cb">
+<span class="cmt"># Before:</span><br>
+<span class="kw">except</span> Exception:<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">pass</span><br><br>
+<span class="cmt"># After:</span><br>
+<span class="kw">except</span> Exception <span class="kw">as</span> exc:<br>
+&nbsp;&nbsp;&nbsp;&nbsp;logger.warning(<span class="str">"Operation failed: %s"</span>, exc)
+</div></div>
+
+<div class="card"><h3>Example: Using the @logged decorator</h3>
+<div class="cb">
+<span class="kw">from</span> shared.logging_config <span class="kw">import</span> logged<br><br>
+<span class="cmt"># Apply to hot-path async functions (MCP tools, agent stream)</span><br>
+<span class="cmt"># Logs: "Enter fn" / "Exit fn (123ms)" / "Fail fn (123ms): error"</span><br><br>
+<span class="kw">@logged</span>(level=logging.INFO)<br>
+<span class="kw">async def</span> <span class="fn">stream</span>(self, query, context_id, task_id):<br>
+&nbsp;&nbsp;&nbsp;&nbsp;...
+</div></div>
+
+<h2 id="checklist">7. Implementation Checklist</h2>
+<div class="card">
+<p>Implement in this order for maximum debugging value with minimum effort:</p>
+
+<h3>Phase 1: Silent Exception Fixes (15 changes, ~30 min)</h3>
+<table>
+<tr><td style="width:2em">&#9744;</td><td>shared/sandbox.py - lines 198, 239</td></tr>
+<tr><td>&#9744;</td><td>shared/memory/store.py - lines 153, 160, 172, 185</td></tr>
+<tr><td>&#9744;</td><td>shared/memory/ticker_memory.py - lines 99, 254</td></tr>
+<tr><td>&#9744;</td><td>shared/memory/performance_tracker.py - line 206</td></tr>
+<tr><td>&#9744;</td><td>shared/trace_context.py - line 57</td></tr>
+<tr><td>&#9744;</td><td>agent_1_adk/agent.py - lines 194, 265, 380</td></tr>
+<tr><td>&#9744;</td><td>agent_1_adk/agui_bridge.py - line 99</td></tr>
+<tr><td>&#9744;</td><td>shared/redis_cache.py - line 85</td></tr>
+</table>
+
+<h3>Phase 2: New Logger Infrastructure (13 files, ~45 min)</h3>
+<table>
+<tr><td style="width:2em">&#9744;</td><td>shared/sandbox.py</td></tr>
+<tr><td>&#9744;</td><td>shared/rate_limiter.py</td></tr>
+<tr><td>&#9744;</td><td>shared/ttl_cache.py</td></tr>
+<tr><td>&#9744;</td><td>shared/peer_sets.py</td></tr>
+<tr><td>&#9744;</td><td>shared/memory/store.py</td></tr>
+<tr><td>&#9744;</td><td>shared/memory/ticker_memory.py</td></tr>
+<tr><td>&#9744;</td><td>shared/memory/portfolio_store.py</td></tr>
+<tr><td>&#9744;</td><td>shared/memory/performance_tracker.py</td></tr>
+<tr><td>&#9744;</td><td>shared/agui_sse.py</td></tr>
+<tr><td>&#9744;</td><td>shared/report_generator.py</td></tr>
+<tr><td>&#9744;</td><td>agents/services.py</td></tr>
+<tr><td>&#9744;</td><td>shared/base_agent.py</td></tr>
+</table>
+
+<h3>Phase 3: Fill Existing Logging Gaps (~10 files, ~90 min)</h3>
+<table>
+<tr><td style="width:2em">&#9744;</td><td>shared/semantic_cache.py</td></tr>
+<tr><td>&#9744;</td><td>shared/redis_cache.py</td></tr>
+<tr><td>&#9744;</td><td>shared/trace_context.py</td></tr>
+<tr><td>&#9744;</td><td>shared/memory/memory_service.py</td></tr>
+<tr><td>&#9744;</td><td>shared/mcp_client.py</td></tr>
+<tr><td>&#9744;</td><td>shared/generic_executor.py</td></tr>
+<tr><td>&#9744;</td><td>shared/llm_queue.py</td></tr>
+<tr><td>&#9744;</td><td>shared/eval_gate.py</td></tr>
+<tr><td>&#9744;</td><td>shared/config.py</td></tr>
+<tr><td>&#9744;</td><td>shared/runtime_eval.py</td></tr>
+</table>
+
+<h3>Phase 4: Agent Layer (~15 files, ~90 min)</h3>
+<table>
+<tr><td style="width:2em">&#9744;</td><td>agent_1_adk/agent.py</td></tr>
+<tr><td>&#9744;</td><td>agent_1_adk/agent_executor.py</td></tr>
+<tr><td>&#9744;</td><td>agent_1_adk/sub_agent_client.py</td></tr>
+<tr><td>&#9744;</td><td>agent_1_adk/api_routes.py</td></tr>
+<tr><td>&#9744;</td><td>agent_1_adk/agui_bridge.py</td></tr>
+<tr><td>&#9744;</td><td>agent_1_adk/agui_endpoint.py</td></tr>
+<tr><td>&#9744;</td><td>agent_1_adk/main.py</td></tr>
+<tr><td>&#9744;</td><td>agent_2_llamaindex/index_manager.py</td></tr>
+<tr><td>&#9744;</td><td>agent_2_llamaindex/hybrid_search.py</td></tr>
+<tr><td>&#9744;</td><td>agent_2_llamaindex/document_ingestion.py</td></tr>
+<tr><td>&#9744;</td><td>agent_3_langgraph/nodes.py</td></tr>
+<tr><td>&#9744;</td><td>agent_3_langgraph/graph.py</td></tr>
+<tr><td>&#9744;</td><td>agent_4_crewai/crew.py</td></tr>
+<tr><td>&#9744;</td><td>agent_4_crewai/mcp_tools.py</td></tr>
+<tr><td>&#9744;</td><td>mcp_servers/finsight_server.py</td></tr>
+</table>
+</div>
+
+<footer style="margin-top:3rem;padding-top:1rem;border-top:1px solid #E5E1DB;color:#6B7280;font-size:.85rem">
+Generated for FinSight multi-agent-investment-system - Audit date: 2026-06-07
+</footer>
+</body></html>

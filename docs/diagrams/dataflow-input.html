@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Data Flow — Input Pipeline</title>
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+<div class="container">
+<div class="back"><a href="index.html">&larr; Back to Diagrams</a></div>
+<div class="sub-nav">
+  <a href="dataflow.html">Full</a>
+  <a href="dataflow-input.html" class="active">Input Pipeline</a>
+  <a href="dataflow-processing.html">Agent Processing</a>
+</div>
+<h1>Data Flow — Input Pipeline</h1>
+<p>Raw user input through ticker extraction, guardrails, dual caches, and memory context before reaching agents. <strong>Drag to pan, scroll to zoom, hover nodes for details.</strong></p>
+<div class="zoom-controls">
+  <button onclick="zoomIn()">+ Zoom In</button>
+  <button onclick="zoomOut()">- Zoom Out</button>
+  <button onclick="zoomReset()">Reset</button>
+  <span class="zoom-level" id="zoomLevel">100%</span>
+</div>
+<div class="diagram-wrap" id="diagramContainer">
+<div class="mermaid">
+%%{init: {'theme': 'base', 'themeVariables': {'background': '#ffffff', 'primaryColor': '#d4e6f1', 'primaryTextColor': '#1a1a1a', 'primaryBorderColor': '#2980b9', 'lineColor': '#8b6f4e', 'secondaryColor': '#d5f5e3', 'tertiaryColor': '#fadbd8', 'clusterBkg': '#faf8f5', 'clusterBorder': '#d5c4a1', 'fontSize': '13px'}}}%%
+graph TB
+UserRaw("User Input\nNatural language query\n'Should I invest in NVIDIA?'")
+TickerExtract("1. Ticker Extraction\nregex: $NVDA, NVDA, nvidia\nMCP resolve_company_ticker fallback\n→ ticker symbol")
+OffTopic("2. Off-Topic Filter\n_NON_INVESTMENT_RE regex\nRejects weather, recipes, coding\n→ &lt; 100ms rejection")
+TickerValidate("3. Ticker Validation\nMCP validate_ticker()\nSEC EDGAR company_tickers.json\n→ confirmed ticker or rejection (&lt; 2s)")
+SemCache("4. Semantic Cache\nChromaDB cosine > 0.95\nDate-scoped: today only\n→ cached or miss")
+BriefCache("5. Today's Brief Cache\nSQLite TickerMemory.get_latest()\nSame ticker, same day\n→ 200ms or miss")
+MemContext("6. Memory Context\nSQLite: TickerMemory + PortfolioStore\nInject [TODAY] or [STALE]\n→ enriched prompt")
+ToAgents("→ Parallel Agent Processing")
+UserRaw --> TickerExtract
+TickerExtract --> OffTopic
+OffTopic --> TickerValidate
+TickerValidate --> SemCache
+SemCache --> BriefCache
+BriefCache --> MemContext
+MemContext --> ToAgents
+style UserRaw fill:#fadbd8,stroke:#c0392b,color:#1a1a1a
+style TickerExtract fill:#f9e79f,stroke:#f39c12,color:#1a1a1a
+style OffTopic fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
+style TickerValidate fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
+style SemCache fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
+style BriefCache fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
+style MemContext fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
+style ToAgents fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
+</div>
+</div>
+<hr style="margin-top:2rem">
+<p style="font-size:.85rem;color:#888">FinSight — Architecture Diagrams</p>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="shared.js"></script>
+</body>
+</html>

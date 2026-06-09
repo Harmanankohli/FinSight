@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sequence Diagram — Phase 2: Agent Dispatch</title>
+<link rel="stylesheet" href="shared.css">
+<style>.diagram-wrap{min-height:650px}</style>
+</head>
+<body>
+<div class="container">
+<div class="back"><a href="index.html">&larr; Back to Diagrams</a></div>
+<div class="sub-nav">
+  <a href="sequence.html">Full</a>
+  <a href="sequence-phase1.html">Phase 1: Input</a>
+  <a href="sequence-phase2.html" class="active">Phase 2: Agent Dispatch</a>
+  <a href="sequence-phase3.html">Phase 3: Synthesis</a>
+</div>
+<h1>Sequence Diagram — Phase 2: Agent Dispatch</h1>
+<p>Orchestrator dispatches RAG, Quant, and Market Context agents in parallel via A2A protocol. <strong>Drag to pan, scroll to zoom, hover nodes for details.</strong></p>
+<div class="zoom-controls">
+  <button onclick="zoomIn()">+ Zoom In</button>
+  <button onclick="zoomOut()">- Zoom Out</button>
+  <button onclick="zoomReset()">Reset</button>
+  <span class="zoom-level" id="zoomLevel">100%</span>
+</div>
+<div class="diagram-wrap" id="diagramContainer">
+<div class="mermaid">
+%%{init: {'theme': 'base', 'themeVariables': {'background': '#ffffff', 'actorBkg': '#d4e6f1', 'actorBorder': '#2980b9', 'actorTextColor': '#1a1a1a', 'signalColor': '#8b6f4e', 'signalTextColor': '#1a1a1a', 'labelBoxBkgColor': '#fef9e7', 'labelBoxBorderColor': '#f39c12', 'labelTextColor': '#1a1a1a', 'loopTextColor': '#1a1a1a', 'activationBorderColor': '#8b6f4e', 'activationBkgColor': '#f0ebe3'}}}%%
+sequenceDiagram
+participant Orch as Orchestrator
+participant RAG as RAG (LlamaIndex)
+participant Quant as Quant (LangGraph)
+participant Mkt as Market Context (CrewAI)
+participant MCP as MCP Server
+participant LLM as LM Studio
+participant SEC as SEC EDGAR
+participant YF as Yahoo Finance
+Note over Orch,YF: ══════ Phase 2: Parallel A2A Dispatch ══════
+
+par ⑧ All 3 agents fire simultaneously
+Orch->>RAG: A2A SendMessage("Analyze NVDA")
+activate RAG
+RAG->>MCP: get_company_filings("NVDA")
+MCP->>SEC: EDGAR lookup
+SEC-->>MCP: Filing list
+MCP->>SEC: get_filing_content()
+SEC-->>MCP: Text (25k chars)
+MCP-->>RAG: Filing data
+RAG->>RAG: ChromaDB ingest + hybrid search
+RAG->>LLM: Synthesize (NORMAL)
+LLM-->>RAG: Revenue growth, risks
+RAG-->>Orch: RAG analysis
+deactivate RAG
+Orch->>Quant: A2A SendMessage("Quant NVDA")
+activate Quant
+Quant->>MCP: get_prices + get_financials
+MCP->>YF: OHLCV + statements
+YF-->>MCP: Series + financials
+MCP-->>Quant: Metrics input
+Quant->>Quant: DCF + technicals + voting
+Quant->>LLM: Summary (CRITICAL)
+LLM-->>Quant: BUY (+0.31)
+Quant-->>Orch: Quant analysis
+deactivate Quant
+Orch->>Mkt: A2A SendMessage("Market NVDA")
+activate Mkt
+Mkt->>MCP: get_macro_indicators + get_peers
+MCP->>YF: Macro + peer data
+YF-->>MCP: Yields, VIX, peers
+MCP-->>Mkt: Macro + peer data
+Mkt->>LLM: Narrative (CRITICAL)
+LLM-->>Mkt: Bullish macro, leads peers
+Mkt-->>Orch: Market context
+deactivate Mkt
+end
+Note over Orch,YF: ✓ Phase 2 complete → Phase 3: Synthesis
+</div>
+</div>
+<hr style="margin-top:2rem">
+<p style="font-size:.85rem;color:#888">FinSight — Architecture Diagrams</p>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="shared.js"></script>
+</body>
+</html>

@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Code Diagram — FinSight</title>
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+<div class="container">
+<div class="back"><a href="index.html">&larr; Back to Diagrams</a></div>
+<h1>Code Diagram</h1>
+<p>C4 Level 4 — Class hierarchy, inheritance, and key relationships. <strong>Drag to pan, scroll to zoom, hover nodes for details.</strong></p>
+<div class="zoom-controls">
+  <button onclick="zoomIn()">+ Zoom In</button>
+  <button onclick="zoomOut()">- Zoom Out</button>
+  <button onclick="zoomReset()">Reset</button>
+  <span class="zoom-level" id="zoomLevel">100%</span>
+</div>
+<div class="diagram-wrap" id="diagramContainer">
+<div class="mermaid">
+%%{init: {'theme': 'base', 'themeVariables': {'background': '#ffffff', 'primaryColor': '#d4e6f1', 'primaryTextColor': '#1a1a1a', 'primaryBorderColor': '#2980b9', 'lineColor': '#8b6f4e', 'secondaryColor': '#d5f5e3', 'tertiaryColor': '#fadbd8', 'clusterBkg': '#faf8f5', 'clusterBorder': '#d5c4a1', 'fontSize': '11px'}}}%%
+graph TB
+subgraph AgentHierarchy["Agent Class Hierarchy"]
+Base["[abstract] BaseAgent\nshared/base_agent.py\n+ stream(query, ctx, task_id)"]
+GE["GenericAgentExecutor\nshared/generic_executor.py\nWraps BaseAgent → A2A"]
+RAG["RAGAgent\nagent_2_llamaindex/executor.py\n+ query(ticker, query_text)"]
+QuantA["QuantAgent\nagent_3_langgraph/executor.py\n+ analyze(ticker, period...)"]
+Mkt["MarketContextAgent\nagent_4_crewai/executor.py\n+ analyze(ticker, query)"]
+end
+subgraph Orchestrator["Orchestrator Classes"]
+FExec["FinSightAgentExecutor\nagent_1_adk/agent_executor.py\n+ execute() + cancel()"]
+SubClient["SubAgentClient\nagent_1_adk/sub_agent_client.py\nA2A dispatch + streaming"]
+RootAgent["root_agent (LlmAgent)\nagent_1_adk/agent.py\n3 tools + preamble"]
+CacheCB["_memory_cache_callback\nbefore_agent_callback\n200ms short-circuit"]
+AfterCB["after_agent_callback\npersist + eval + release"]
+Prune["prune_old_records()\nMEMORY_RETENTION_DAYS=90"]
+end
+subgraph SharedInfra["Shared Infrastructure"]
+TLC["TTLCache\nshared/ttl_cache.py\nSingle-flight locking"]
+TB["TokenBucket\nshared/rate_limiter.py\nAsync token-bucket"]
+LPQ["LLMPriorityQueue\nshared/llm_queue.py\nCRITICAL > NORMAL > LOW\nLLM_MAX_CONCURRENT=2"]
+SC["SemanticCache\nshared/semantic_cache.py\nChromaDB cosine > 0.95\nDate-scoped get/set"]
+MCPC["MCPClient\nshared/mcp_client.py\nSSE singleton\nAuto-reconnect"]
+EvalG["RuntimeEval\nshared/runtime_eval.py\nCircuit breaker + dedup\nBurst + 90s timeout"]
+EvalD["EvalGate\nshared/eval_gate.py\nDeferred eval release\n120s auto-release"]
+end
+subgraph Storage["Storage / Memory (SQLite)"]
+SMem["SQLiteMemoryService\nBM25 + embedding RRF"]
+TMem["TickerMemory\nstore_brief / get_latest"]
+PStore["PortfolioStore\nupsert / get_holdings"]
+PTrack["PerformanceTracker\nevaluate / accuracy"]
+DB["get_db() singleton\naioSQLite WAL mode"]
+end
+subgraph QuantInternal["Quant Internal"]
+QGraph["QuantAnalysisGraph\n14-node StateGraph\nDAG with conditional edges"]
+end
+GE -. "wraps" .-> RAG
+GE -. "wraps" .-> QuantA
+GE -. "wraps" .-> Mkt
+RAG -. "extends" .-> Base
+QuantA -. "extends" .-> Base
+Mkt -. "extends" .-> Base
+RootAgent --> FExec
+FExec --> SubClient
+FExec --> CacheCB
+FExec --> AfterCB
+AfterCB -. "fires" .-> Prune
+SubClient -. "A2A" .-> GE
+FExec -. "MCP" .-> MCPC
+QuantA -. "runs" .-> QGraph
+FExec -. "cache" .-> SC
+FExec -. "LLM queue" .-> LPQ
+AfterCB -. "LOW priority" .-> LPQ
+MCPC -. "TTL" .-> TLC
+MCPC -. "rate" .-> TB
+FExec -. "briefs" .-> TMem
+FExec -. "portfolio" .-> PStore
+FExec -. "track" .-> PTrack
+FExec -. "chat mem" .-> SMem
+AfterCB -. "eval" .-> EvalG
+AfterCB -. "release evals" .-> EvalD
+TMem -. "SQLite" .-> DB
+PStore -. "SQLite" .-> DB
+SMem -. "SQLite" .-> DB
+PTrack -. "SQLite" .-> DB
+style Base fill:#f9e79f,stroke:#f39c12,stroke-width:3px,color:#1a1a1a
+style RAG fill:#d4e6f1,stroke:#2980b9,color:#1a1a1a
+style QuantA fill:#fdebd0,stroke:#e67e22,color:#1a1a1a
+style Mkt fill:#fadbd8,stroke:#c0392b,color:#1a1a1a
+style GE fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
+style FExec fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
+style SubClient fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
+style RootAgent fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
+style CacheCB fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
+style AfterCB fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
+style Prune fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
+style TLC fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
+style TB fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
+style LPQ fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
+style SC fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
+style MCPC fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
+style EvalG fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
+style EvalD fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
+style QGraph fill:#fdebd0,stroke:#e67e22,color:#1a1a1a
+style SMem fill:#abebc6,stroke:#1e8449,color:#1a1a1a
+style TMem fill:#abebc6,stroke:#1e8449,color:#1a1a1a
+style PStore fill:#abebc6,stroke:#1e8449,color:#1a1a1a
+style PTrack fill:#abebc6,stroke:#1e8449,color:#1a1a1a
+style DB fill:#abebc6,stroke:#1e8449,color:#1a1a1a
+</div>
+</div>
+<hr style="margin-top:2rem">
+<p style="font-size:.85rem;color:#888">FinSight — Architecture Diagrams</p>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="shared.js"></script>
+</body>
+</html>

@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Component Diagram — Agents (RAG, Quant, Market)</title>
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+<div class="container">
+<div class="back"><a href="index.html">&larr; Back to Diagrams</a></div>
+<div class="sub-nav">
+  <a href="component.html">Full (all)</a>
+  <a href="component-orch.html">Orchestrator</a>
+  <a href="component-agents.html" class="active">Agents (RAG, Quant, Market)</a>
+  <a href="component-infra.html">MCP + Shared Infra</a>
+</div>
+<h1>Component — Agents (RAG, Quant, Market)</h1>
+<p>Internal component breakdown of the three sub-agents: RAG (LlamaIndex/ChromaDB), Quant (LangGraph/nodes), Market Context (CrewAI). <strong>Drag to pan, scroll to zoom, hover nodes for details.</strong></p>
+<div class="zoom-controls">
+  <button onclick="zoomIn()">+ Zoom In</button>
+  <button onclick="zoomOut()">- Zoom Out</button>
+  <button onclick="zoomReset()">Reset</button>
+  <span class="zoom-level" id="zoomLevel">100%</span>
+</div>
+<div class="diagram-wrap" id="diagramContainer">
+<div class="mermaid">
+%%{init: {'theme': 'base', 'themeVariables': {'background': '#ffffff', 'primaryColor': '#d4e6f1', 'primaryTextColor': '#1a1a1a', 'primaryBorderColor': '#2980b9', 'lineColor': '#8b6f4e', 'secondaryColor': '#d5f5e3', 'tertiaryColor': '#fadbd8', 'clusterBkg': '#faf8f5', 'clusterBorder': '#d5c4a1', 'fontSize': '12px'}}}%%
+graph TB
+Orch("Orchestrator SubAgentClient")
+LLM("LM Studio")
+MCP("MCP Server")
+Chroma("ChromaDB")
+SQLite("SQLite")
+subgraph RAGAgent["RAG Agent — LlamaIndex (port 8002)"]
+RAG_E("RAGAgent\nensure_ingested(), query()")
+RAG_W("Startup Warm-up\nEmbedder + ChromaDB\n+ CrossEncoder (~3-5s)")
+RAG_I("DocumentIngestionPipeline\nSEC filings → sec_filings\nNews → news\nEarnings → earnings")
+RAG_F("FinancialIndexManager\nIntent classification\nMulti-collection hybrid")
+RAG_H("HybridSearchPipeline\nBM25 + Embedding (RRF)\nCrossEncoder rerank")
+RAG_D("Dedup + Ingestion Check\nis_filing_ingested()\nSingle-flight locking")
+RAG_EVAL("Deferred Eval\nFaithfulness, ContextPrecision\ncross_collection_synthesis")
+end
+subgraph QuantAgent["Quant Agent — LangGraph (port 8003)"]
+Q_E("QuantAgent\nanalyze() → graph.run()")
+Q_W("Startup Warm-up\nLLM ping pre-connect")
+Q_G("QuantAnalysisGraph\n14-node StateGraph")
+Q_N("Nodes\nprices → metrics → DCF/stress\n→ technicals → peers\n→ options → insider\n→ positioning → correlation")
+Q_V("Weighted Voting\n8 groups × weights\nBUY > +0.15, SELL < -0.15\nConfidence = |score|×(1-std)")
+Q_L("LLM Summary Node\nCRITICAL priority queue\n3-4 sentence summary")
+Q_EVAL("Deferred Eval\nFactualCorrectness\nsignal_explanation_quality")
+end
+subgraph MktAgent["Market Context Agent — CrewAI (port 8004)"]
+M_E("MarketContextAgent\nanalyze() → collect → crew")
+M_C("_collect_data_parallel()\nStep 1: macro + financials\nStep 2: get_peers (yfinance)\nStep 3: peer data")
+M_W("MCPClientWrapper\nDiscovers tools\nWraps as CrewAI BaseTool")
+M_R("MarketContextCrew\n1 agent + 1 task\nJSON: narrative, regime,\npeer_positioning, signal")
+M_EVAL("Deferred Eval\nFaithfulness, macro_regime\npeer_landscape_quality")
+end
+Orch -- "① A2A" --> RAG_E
+Orch -- "① A2A" --> Q_E
+Orch -- "① A2A" --> M_E
+RAG_E -- "② MCP" --> MCP
+Q_E -- "② MCP" --> MCP
+M_E -- "② MCP" --> MCP
+RAG_E --> RAG_I
+RAG_I --> RAG_D
+RAG_E --> RAG_F
+RAG_F --> RAG_H
+RAG_H -- "③ ChromaDB" --> Chroma
+RAG_I -- "dedup" --> SQLite
+Q_E --> Q_G
+Q_G --> Q_N
+Q_N --> Q_V
+Q_V --> Q_L
+Q_L -- "④ CRITICAL" --> LLM
+M_E --> M_C
+M_E --> M_R
+M_R -- "④ CRITICAL" --> LLM
+RAG_H -- "④ NORMAL → LLM" --> LLM
+style Orch fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
+style LLM fill:#f9e79f,stroke:#f39c12,color:#1a1a1a
+style MCP fill:#f9e79f,stroke:#f39c12,color:#1a1a1a
+style Chroma fill:#fadbd8,stroke:#c0392b,color:#1a1a1a
+style SQLite fill:#fadbd8,stroke:#c0392b,color:#1a1a1a
+style RAG_E fill:#d4e6f1,stroke:#2980b9,color:#1a1a1a
+style RAG_W fill:#d4e6f1,stroke:#2980b9,color:#1a1a1a
+style RAG_I fill:#d4e6f1,stroke:#2980b9,color:#1a1a1a
+style RAG_F fill:#d4e6f1,stroke:#2980b9,color:#1a1a1a
+style RAG_H fill:#d4e6f1,stroke:#2980b9,color:#1a1a1a
+style RAG_D fill:#d4e6f1,stroke:#2980b9,color:#1a1a1a
+style RAG_EVAL fill:#d4e6f1,stroke:#2980b9,color:#1a1a1a
+style Q_E fill:#fdebd0,stroke:#e67e22,color:#1a1a1a
+style Q_W fill:#fdebd0,stroke:#e67e22,color:#1a1a1a
+style Q_G fill:#fdebd0,stroke:#e67e22,color:#1a1a1a
+style Q_N fill:#fdebd0,stroke:#e67e22,color:#1a1a1a
+style Q_V fill:#fdebd0,stroke:#e67e22,color:#1a1a1a
+style Q_L fill:#fdebd0,stroke:#e67e22,color:#1a1a1a
+style Q_EVAL fill:#fdebd0,stroke:#e67e22,color:#1a1a1a
+style M_E fill:#fadbd8,stroke:#c0392b,color:#1a1a1a
+style M_C fill:#fadbd8,stroke:#c0392b,color:#1a1a1a
+style M_W fill:#fadbd8,stroke:#c0392b,color:#1a1a1a
+style M_R fill:#fadbd8,stroke:#c0392b,color:#1a1a1a
+style M_EVAL fill:#fadbd8,stroke:#c0392b,color:#1a1a1a
+</div>
+</div>
+<hr style="margin-top:2rem">
+<p style="font-size:.85rem;color:#888">FinSight — Architecture Diagrams</p>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="shared.js"></script>
+</body>
+</html>

@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Component Diagram — MCP + Shared Infra</title>
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+<div class="container">
+<div class="back"><a href="index.html">&larr; Back to Diagrams</a></div>
+<div class="sub-nav">
+  <a href="component.html">Full (all)</a>
+  <a href="component-orch.html">Orchestrator</a>
+  <a href="component-agents.html">Agents (RAG, Quant, Market)</a>
+  <a href="component-infra.html" class="active">MCP + Shared Infra</a>
+</div>
+<h1>Component — MCP + Shared Infra</h1>
+<p>MCP server tools, shared infrastructure (LLMPriorityQueue, TokenBucket, eval gate, memory), and data stores. <strong>Drag to pan, scroll to zoom, hover nodes for details.</strong></p>
+<div class="zoom-controls">
+  <button onclick="zoomIn()">+ Zoom In</button>
+  <button onclick="zoomOut()">- Zoom Out</button>
+  <button onclick="zoomReset()">Reset</button>
+  <span class="zoom-level" id="zoomLevel">100%</span>
+</div>
+<div class="diagram-wrap" id="diagramContainer">
+<div class="mermaid">
+%%{init: {'theme': 'base', 'themeVariables': {'background': '#ffffff', 'primaryColor': '#f9e79f', 'primaryTextColor': '#1a1a1a', 'primaryBorderColor': '#f39c12', 'lineColor': '#8b6f4e', 'secondaryColor': '#e8daef', 'tertiaryColor': '#f0ebe3', 'clusterBkg': '#faf8f5', 'clusterBorder': '#d5c4a1', 'fontSize': '12px'}}}%%
+graph TB
+SEC("SEC EDGAR")
+YF("Yahoo Finance")
+RSS("RSS Feeds")
+subgraph MCPServer["MCP Server — FastMCP SSE (port 8010)"]
+MCP_SSE("SSE Endpoint\n/mcp-sse")
+MCP_Tools("Tool Layer\n18 tools registered")
+MCP_Cache("TTL Caches\nprices: 60s | financials: 1h\nnews: 5min | filings: perm\npeers: 24h | shocks: 7d")
+MCP_Rate("Rate Limiters\nTokenBucket\nSEC: 8/s | YF: 4/s | RSS: 2/s")
+MCP_Edgar("_EdgarClient\nTicker→CIK map\nPaginated + 3-retry")
+MCP_Sandbox("Python Sandbox\nAST safety check\nSubprocess isolation\n25s CPU / 512MB / 0 FD")
+end
+subgraph SharedInfra["Shared Infrastructure"]
+SI_TTL("TTLCache\nshared/ttl_cache.py\nAsync dict\nSingle-flight locking")
+SI_TB("TokenBucket\nshared/rate_limiter.py\nAsync token bucket\nacquire() with wait")
+SI_LLM("LLMPriorityQueue\nshared/llm_queue.py\n3-tier heap semaphore\nCRITICAL > NORMAL > LOW\nLLM_MAX_CONCURRENT=2")
+SI_Eval("RuntimeEval\nshared/runtime_eval.py\nRAGAS offline + per-query\nCircuit breaker: 5 consecutive fails\nSHA-256 dedup: 1h TTL\nBurst limiter: EVAL_BURST_LIMIT/min\nPer-metric timeout: 90s")
+SI_Trace("TraceContext\nshared/trace_context.py\nContextVars propagation\nLangfuse span tree")
+SI_MCP("MCPClient\nshared/mcp_client.py\nSSE session singleton\nAuto-reconnect on disconnect\nTransient retry set")
+SI_Gate("Deferred Eval Gate\nshared/eval_gate.py\nSub-agents defer evals\nOrchestrator POST /release-evals\n120s safety-net auto-release")
+end
+subgraph DataTools["MCP Data Tools (18)"]
+T1("Market Data\nget_prices / get_financials")
+T2("SEC Filings\nget_company_filings\nget_filing_content")
+T3("News\nget_news_sentiment")
+T4("Macro\nget_macro_indicators")
+T5("Options\nget_options_chain")
+T6("Insider\nget_insider_transactions")
+T7("Discovery\nget_peers, get_scenario_shocks\nvalidate_ticker, resolve_company_ticker\nfull_text_search\nget_earnings_calendar\nget_sentiment_indicators\nget_earnings_history\nexecute_python, find_agent")
+end
+MCP_SSE --> MCP_Tools
+MCP_Tools --> MCP_Cache
+MCP_Tools --> MCP_Rate
+MCP_Tools --> MCP_Edgar
+MCP_Tools --> MCP_Sandbox
+MCP_Edgar -- "REST" --> SEC
+MCP_Tools -- "REST" --> YF
+MCP_Tools -- "RSS" --> RSS
+SI_MCP -. "connects to" .-> MCP_SSE
+style SEC fill:#fadbd8,stroke:#c0392b,color:#1a1a1a
+style YF fill:#fadbd8,stroke:#c0392b,color:#1a1a1a
+style RSS fill:#fadbd8,stroke:#c0392b,color:#1a1a1a
+style MCP_SSE fill:#f9e79f,stroke:#f39c12,color:#1a1a1a
+style MCP_Tools fill:#f9e79f,stroke:#f39c12,color:#1a1a1a
+style MCP_Cache fill:#f9e79f,stroke:#f39c12,color:#1a1a1a
+style MCP_Rate fill:#f9e79f,stroke:#f39c12,color:#1a1a1a
+style MCP_Edgar fill:#f9e79f,stroke:#f39c12,color:#1a1a1a
+style MCP_Sandbox fill:#f9e79f,stroke:#f39c12,color:#1a1a1a
+style SI_TTL fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
+style SI_TB fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
+style SI_LLM fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
+style SI_Eval fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
+style SI_Trace fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
+style SI_MCP fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
+style SI_Gate fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
+style T1 fill:#f0ebe3,stroke:#888,color:#1a1a1a
+style T2 fill:#f0ebe3,stroke:#888,color:#1a1a1a
+style T3 fill:#f0ebe3,stroke:#888,color:#1a1a1a
+style T4 fill:#f0ebe3,stroke:#888,color:#1a1a1a
+style T5 fill:#f0ebe3,stroke:#888,color:#1a1a1a
+style T6 fill:#f0ebe3,stroke:#888,color:#1a1a1a
+style T7 fill:#f0ebe3,stroke:#888,color:#1a1a1a
+</div>
+</div>
+<hr style="margin-top:2rem">
+<p style="font-size:.85rem;color:#888">FinSight — Architecture Diagrams</p>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="shared.js"></script>
+</body>
+</html>

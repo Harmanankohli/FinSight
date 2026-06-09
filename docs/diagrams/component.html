@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Component Diagram — FinSight</title>
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+<div class="container">
+<div class="back"><a href="index.html">&larr; Back to Diagrams</a></div>
+<div class="sub-nav">
+  <a href="component.html" class="active">Full (all)</a>
+  <a href="component-orch.html">Orchestrator</a>
+  <a href="component-agents.html">Agents (RAG, Quant, Market)</a>
+  <a href="component-infra.html">MCP + Shared Infra</a>
+</div>
+<h1>Component Diagram</h1>
+<p>C4 Level 3 — Internal components across all containers: orchestrator, agents, MCP, shared infrastructure. <strong>Drag to pan, scroll to zoom, hover nodes for details.</strong></p>
+<div class="zoom-controls">
+  <button onclick="zoomIn()">+ Zoom In</button>
+  <button onclick="zoomOut()">- Zoom Out</button>
+  <button onclick="zoomReset()">Reset</button>
+  <span class="zoom-level" id="zoomLevel">100%</span>
+</div>
+<div class="diagram-wrap" id="diagramContainer">
+<div class="mermaid">
+%%{init: {'theme': 'base', 'themeVariables': {'background': '#ffffff', 'primaryColor': '#d4e6f1', 'primaryTextColor': '#1a1a1a', 'primaryBorderColor': '#2980b9', 'lineColor': '#8b6f4e', 'secondaryColor': '#d5f5e3', 'tertiaryColor': '#fadbd8', 'clusterBkg': '#faf8f5', 'clusterBorder': '#d5c4a1', 'fontSize': '11px'}}}%%
+graph TB
+subgraph Orch["Orchestrator"]
+Exec("FinSightAgentExecutor")
+Guard("Guardrails (off-topic + validate)")
+SCache("SemanticCache (ChromaDB)")
+SubClient("SubAgentClient (A2A dispatch)")
+MemCtx("Memory Context Injection")
+ADKEngine("ADK LlmAgent\nTools: send_message, load_memory")
+BriefCache("Today Brief Cache (SQLite)")
+OutGuard("Output Guardrails (≥50 chars + signal)")
+MemPersist("Memory Persist\nTickerMemory + Portfolio + Perf")
+EvalFire("Background Evals\nRAGAS + /release-evals")
+end
+subgraph RAGComp["RAG Agent (port 8002)"]
+RAGExec("RAGAgent")
+IndexMgr("FinancialIndexManager")
+Ingest("IngestionPipeline (SEC + news)")
+Hybrid("HybridSearchPipeline\nBM25 + Embedding RRF + CrossEncoder")
+WarmRAG("Startup Warm-up\nEmbedder + ChromaDB + Reranker")
+end
+subgraph QuantComp["Quant Agent (port 8003)"]
+QExec("QuantAgent")
+QGraph("QuantAnalysisGraph\n14-node StateGraph")
+QWarm("Startup Warm-up\nLLM ping pre-connect")
+QWeight("Weighted Voting\n8 groups × weights → composite")
+QLLMSum("LLM Summary Node\nCRITICAL priority queue")
+end
+subgraph MktComp["Market Context Agent (port 8004)"]
+MExec("MarketContextAgent")
+MData("_collect_data_parallel()\n3-step: macro + peers + data")
+MCPWrap("MCPClientWrapper")
+MCrew("MarketContextCrew\n1 agent + 1 task → JSON")
+end
+subgraph MCPComp["MCP Server (port 8010)"]
+Tools("18 MCP Tools")
+TTL("TTL Caches\nPrices: 60s / Financials: 1h\nFilings: perm / Peers: 24h")
+RL("Rate Limiters (TokenBucket)\nSEC: 8/s | YF: 4/s | RSS: 2/s")
+Edgar("_EdgarClient\nTicker→CIK → paginated fetch")
+Sandbox("Python Sandbox\nAST + subprocess isolation")
+end
+subgraph Shared["Shared Infra"]
+TCache("TTLCache (single-flight)")
+TokenB("TokenBucket (async rate)")
+LLMQ("LLMPriorityQueue\nCRITICAL > NORMAL > LOW")
+Eval("RuntimeEval\nCircuit breaker + SHA dedup\nBurst limit + 90s timeout")
+Trace("TraceContext\nContextVars → Langfuse")
+MCPCli("MCPClient (SSE singleton)\nAuto-reconnect on disconnect")
+end
+subgraph Memory["SQLite Memory Layer"]
+TMem("TickerMemory\nstore_brief / get_latest")
+PStore("PortfolioStore\nupsert / get_holdings")
+PTrack("PerformanceTracker\nevaluate / accuracy")
+SMem("SQLiteMemoryService\nBM25 + embedding RRF")
+end
+SubClient -- "A2A" --> RAGExec
+SubClient -- "A2A" --> QExec
+SubClient -- "A2A" --> MExec
+RAGExec -- "MCP" --> Tools
+QExec -- "MCP" --> Tools
+MExec -- "MCP" --> Tools
+Exec --> Guard
+Guard --> SCache
+SCache --> BriefCache
+BriefCache --> MemCtx
+MemCtx --> ADKEngine
+ADKEngine --> SubClient
+SubClient --> ADKEngine
+ADKEngine --> OutGuard
+OutGuard --> MemPersist
+MemPersist --> EvalFire
+RAGExec --> IndexMgr
+IndexMgr --> Hybrid
+QExec --> QGraph
+QGraph --> QWeight
+QWeight --> QLLMSum
+MExec --> MData
+MExec --> MCrew
+Exec -- "SQLite" --> SMem
+Exec -- "SQLite" --> TMem
+Exec -- "SQLite" --> PStore
+Exec -- "SQLite" --> PTrack
+MCPCli -- "SSE" --> Tools
+MCPCli -- "TTL cache" --> TCache
+MCPCli -- "rate limit" --> TokenB
+Exec -- "LLM queue" --> LLMQ
+QLLMSum -- "CRITICAL" --> LLMQ
+EvalFire -- "LOW" --> LLMQ
+Eval -- "circuit breaker" --> LLMQ
+style Exec fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
+style Guard fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
+style SCache fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
+style SubClient fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
+style MemCtx fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
+style ADKEngine fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
+style BriefCache fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
+style OutGuard fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
+style MemPersist fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
+style EvalFire fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
+style RAGExec fill:#d4e6f1,stroke:#2980b9,color:#1a1a1a
+style IndexMgr fill:#d4e6f1,stroke:#2980b9,color:#1a1a1a
+style Ingest fill:#d4e6f1,stroke:#2980b9,color:#1a1a1a
+style Hybrid fill:#d4e6f1,stroke:#2980b9,color:#1a1a1a
+style WarmRAG fill:#d4e6f1,stroke:#2980b9,color:#1a1a1a
+style QExec fill:#fdebd0,stroke:#e67e22,color:#1a1a1a
+style QGraph fill:#fdebd0,stroke:#e67e22,color:#1a1a1a
+style QWarm fill:#fdebd0,stroke:#e67e22,color:#1a1a1a
+style QWeight fill:#fdebd0,stroke:#e67e22,color:#1a1a1a
+style QLLMSum fill:#fdebd0,stroke:#e67e22,color:#1a1a1a
+style MExec fill:#fadbd8,stroke:#c0392b,color:#1a1a1a
+style MData fill:#fadbd8,stroke:#c0392b,color:#1a1a1a
+style MCPWrap fill:#fadbd8,stroke:#c0392b,color:#1a1a1a
+style MCrew fill:#fadbd8,stroke:#c0392b,color:#1a1a1a
+style Tools fill:#f9e79f,stroke:#f39c12,color:#1a1a1a
+style TTL fill:#f9e79f,stroke:#f39c12,color:#1a1a1a
+style RL fill:#f9e79f,stroke:#f39c12,color:#1a1a1a
+style Edgar fill:#f9e79f,stroke:#f39c12,color:#1a1a1a
+style Sandbox fill:#f9e79f,stroke:#f39c12,color:#1a1a1a
+style TCache fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
+style TokenB fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
+style LLMQ fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
+style Eval fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
+style Trace fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
+style MCPCli fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
+style SMem fill:#abebc6,stroke:#1e8449,color:#1a1a1a
+style TMem fill:#abebc6,stroke:#1e8449,color:#1a1a1a
+style PStore fill:#abebc6,stroke:#1e8449,color:#1a1a1a
+style PTrack fill:#abebc6,stroke:#1e8449,color:#1a1a1a
+</div>
+</div>
+<hr style="margin-top:2rem">
+<p style="font-size:.85rem;color:#888">FinSight — Architecture Diagrams</p>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="shared.js"></script>
+</body>
+</html>

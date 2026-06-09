@@ -37,6 +37,9 @@ a:hover{text-decoration:underline}
 <a href="AGENTS.html">Agents</a>
 <a href="MCP_SERVERS.html">MCP Servers</a>
 <a href="DESIGN_DECISIONS.html">Design Decisions</a>
+<a href="API_REFERENCE.html">API</a>
+<a href="FRONTEND.html">Frontend</a>
+<a href="SECURITY.html">Security</a>
 <a href="CHANGELOG.html">Changelog</a>
 <a href="TESTS.html">Tests</a>
 </div>
@@ -44,7 +47,7 @@ a:hover{text-decoration:underline}
 <h1>FinSight</h1>
 <p class="subtitle">Multi-Agent Investment Research System — documentation hub</p>
 
-<p>An autonomous multi-agent system that answers investment queries by coordinating three specialized agents across different frameworks, communicating via the <strong>Agent-to-Agent (A2A)</strong> protocol, and using <strong>MCP (Model Context Protocol)</strong> servers for external tool access.</p>
+<p>An autonomous multi-agent system that answers investment queries by coordinating <strong>four specialized agents</strong> across different frameworks, communicating via the <strong>Agent-to-Agent (A2A)</strong> protocol, and using <strong>MCP (Model Context Protocol)</strong> servers for external tool access.</p>
 
 <div class="grid">
 <div class="card">
@@ -74,14 +77,45 @@ a:hover{text-decoration:underline}
 </div>
 
 <div class="card">
+<h3><a href="API_REFERENCE.html">API Reference</a></h3>
+<p class="desc">Complete endpoint reference — REST routes, A2A protocol, AG-UI, health checks, reports.</p>
+<p class="meta"><span class="tag">reference</span> endpoints</p>
+</div>
+<div class="card">
+<h3><a href="FRONTEND.html">Frontend Architecture</a></h3>
+<p class="desc">Next.js 16 + CopilotKit + AG-UI — pages, components, design system, data flow.</p>
+<p class="meta"><span class="tag">frontend</span> react</p>
+</div>
+<div class="card">
+<h3><a href="SECURITY.html">Security</a></h3>
+<p class="desc">Python sandbox model, restricted imports, responsible disclosure, hardening history.</p>
+<p class="meta"><span class="tag">security</span> sandbox</p>
+</div>
+
+<div class="card">
 <h3><a href="CHANGELOG.html">Changelog</a></h3>
-<p class="desc">Version history from v0.1 through v1.15 — every change documented.</p>
+<p class="desc">Version history from v1.25 through v1.38 — every change documented.</p>
 <p class="meta"><span class="tag">history</span> versions</p>
 </div>
 <div class="card">
 <h3><a href="TESTS.html">Tests</a></h3>
 <p class="desc">~160 parametrized test cases across 15 files, patterns, running instructions.</p>
 <p class="meta"><span class="tag">qa</span> coverage</p>
+</div>
+<div class="card">
+<h3><a href="code-review-report.html">Code Review Report</a></h3>
+<p class="desc">Full code review findings and remediation status.</p>
+<p class="meta"><span class="tag">report</span> quality</p>
+</div>
+<div class="card">
+<h3><a href="logging-audit-report.html">Logging Audit</a></h3>
+<p class="desc">Structured logging audit — handler coverage, format consistency, rotation config.</p>
+<p class="meta"><span class="tag">report</span> operations</p>
+</div>
+<div class="card">
+<h3><a href="IMPROVEMENT_PLAN.html">Improvement Plan</a></h3>
+<p class="desc">Prioritized improvement roadmap — performance, reliability, features.</p>
+<p class="meta"><span class="tag">report</span> planning</p>
 </div>
 </div>
 

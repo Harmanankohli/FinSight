@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Security &mdash; FinSight</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:1.7;color:#2c2c2c;background:#faf8f5;padding:2rem 1rem}
+.container{max-width:740px;margin:0 auto}
+h1,h2,h3,h4{font-family:Georgia,"Times New Roman",serif;color:#1a1a1a;line-height:1.3}
+h1{font-size:2.2rem;margin-bottom:.25rem;border-bottom:2px solid #e8dcc8;padding-bottom:.5rem}
+h2{font-size:1.5rem;margin-top:2.5rem;margin-bottom:.75rem}
+h3{font-size:1.2rem;margin-top:1.5rem;margin-bottom:.5rem}
+h4{font-size:1.05rem;margin-top:1.2rem;margin-bottom:.4rem}
+p{margin-bottom:1rem;color:#444}
+a{color:#8b6f4e;text-decoration:none;font-weight:500}
+a:hover{text-decoration:underline}
+code{background:#f0ebe3;padding:.15em .4em;border-radius:3px;font-size:.875em;font-family:"SF Mono","Fira Code","Fira Mono",monospace}
+pre{background:#f0ebe3;padding:1rem;border-radius:6px;overflow-x:auto;margin-bottom:1rem;font-size:.875em;line-height:1.5}
+pre code{background:0 0;padding:0}
+table{width:100%;border-collapse:collapse;margin-bottom:1rem;font-size:.925rem}
+th,td{padding:.5rem .75rem;text-align:left;border-bottom:1px solid #e0d8cc}
+th{background:#f0ebe3;font-weight:600}
+ul,ol{margin-bottom:1rem;padding-left:1.5rem}
+li{margin-bottom:.25rem}
+hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
+.header-nav{margin-bottom:2rem;padding-bottom:1rem;border-bottom:1px solid #e0d8cc}
+.header-nav a{margin-right:1.2rem;font-size:.9rem}
+@media(max-width:600px){body{padding:1rem}h1{font-size:1.8rem}table{font-size:.85rem}}
+</style>
+</head>
+<body>
+<div class="container">
+
+<div class="header-nav">
+<a href="docs/index.html">Home</a><a href="README.html">Overview</a><a href="docs/ARCHITECTURE.html">Architecture</a><a href="docs/AGENTS.html">Agents</a><a href="docs/API_REFERENCE.html">API</a><a href="docs/MCP_SERVERS.html">MCP</a><a href="SECURITY.html">Security</a><a href="docs/DESIGN_DECISIONS.html">Decisions</a><a href="docs/CHANGELOG.html">Changelog</a><a href="docs/TESTS.html">Tests</a>
+</div>
+
+<h1>Security</h1>
+<p>FinSight's security model focuses on the Python sandbox (<code>execute_python</code> MCP tool), which is the primary attack surface &mdash; user-supplied code is executed on the host machine.</p>
+
+<h2>Python Sandbox</h2>
+
+<h3>Three-Layer Defense</h3>
+<table>
+<thead>
+<tr><th>Layer</th><th>Mechanism</th><th>Scope</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>1. AST static analysis</strong></td><td><code>_check_code_safety()</code> in <code>shared/sandbox.py</code></td><td>Pre-execution gate &mdash; rejects forbidden constructs before any subprocess is spawned</td></tr>
+<tr><td><strong>2. Subprocess isolation</strong></td><td>User code runs in a separate <code>subprocess.run()</code> with <code>-I -S</code> flags</td><td>Crash/memory error/segfault cannot affect the parent server</td></tr>
+<tr><td><strong>3. OS resource limits</strong></td><td><code>RLIMIT_CPU</code> (25s), <code>RLIMIT_AS</code> (512 MB), <code>RLIMIT_NOFILE</code> (0)</td><td>Unix only &mdash; kills infinite loops, memory bombs, and filesystem writes</td></tr>
+</tbody>
+</table>
+
+<h3>Restricted Imports</h3>
+<p>The AST gate blocks imports of modules that provide filesystem, network, process, or reflection capabilities:</p>
+<table>
+<thead>
+<tr><th>Category</th><th>Blocked Modules</th></tr>
+</thead>
+<tbody>
+<tr><td>OS / process</td><td><code>os</code>, <code>subprocess</code>, <code>shutil</code>, <code>shlex</code>, <code>signal</code>, <code>threading</code>, <code>multiprocessing</code>, <code>concurrent</code>, <code>pty</code>, <code>tty</code>, <code>termios</code>, <code>fcntl</code>, <code>mmap</code>, <code>resource</code>, <code>pwd</code>, <code>grp</code>, <code>crypt</code></td></tr>
+<tr><td>Networking</td><td><code>socket</code>, <code>ssl</code>, <code>http</code>, <code>urllib</code>, <code>requests</code>, <code>ftplib</code>, <code>poplib</code>, <code>smtplib</code>, <code>telnetlib</code>, <code>xmlrpc</code>, <code>socketserver</code></td></tr>
+<tr><td>Filesystem</td><td><code>pathlib</code>, <code>io</code>, <code>glob</code>, <code>fnmatch</code>, <code>tempfile</code>, <code>zipfile</code>, <code>tarfile</code>, <code>gzip</code>, <code>bz2</code>, <code>lzma</code></td></tr>
+<tr><td>Reflection</td><td><code>ctypes</code>, <code>importlib</code>, <code>pickle</code>, <code>inspect</code>, <code>sys</code>, <code>builtins</code>, <code>gc</code>, <code>weakref</code>, <code>atexit</code></td></tr>
+<tr><td>Encoding</td><td><code>base64</code>, <code>codecs</code></td></tr>
+</tbody>
+</table>
+
+<h3>Restricted Builtins</h3>
+<p>The AST gate blocks direct calls to:</p>
+<pre><code>exec, eval, open, __import__, compile, globals, locals, vars, dir, delattr, setattr</code></pre>
+
+<h3>Restricted Attributes</h3>
+<p>The AST gate blocks attribute access and method calls on:</p>
+<pre><code>system, popen, execv, execve, execl, execvp, spawn, spawnl, fork, forkpty, exec, eval, __class__, bases__, __subclasses__, __mro__, __globals__, __builtins__, __code__, __closure__, __wrapped__</code></pre>
+
+<h3>Subprocess Hardening</h3>
+<p>The child process runs with:</p>
+<ul>
+<li><strong><code>-I</code> flag</strong>: Isolated mode &mdash; ignores <code>PYTHONPATH</code>, <code>PYTHONHOME</code>, and user site-packages</li>
+<li><strong><code>-S</code> flag</strong>: No <code>site</code> module &mdash; prevents <code>usercustomize.py</code> and <code>sitecustomize.py</code> injection</li>
+<li><strong>Whitelisted <code>__builtins__</code></strong>: The child's <code>__builtins__</code> dict is replaced with a safe subset (print, len, range, int, float, str, bool, list, dict, etc.) &mdash; no <code>open</code>, <code>exec</code>, <code>__import__</code></li>
+<li><strong>No filesystem FDs</strong>: <code>RLIMIT_NOFILE</code> set to 0 on Unix &mdash; blocks filesystem writes even if the AST gate is bypassed</li>
+<li><strong>Cleaned up</strong>: Temporary runner script deleted via <code>os.unlink()</code> in <code>finally</code> block</li>
+</ul>
+
+<h3>Allowed Libraries</h3>
+<p>The following libraries are available in the sandbox:</p>
+<pre><code>pandas, numpy, math, json, datetime, random, statistics, itertools, collections, functools, typing</code></pre>
+
+<h3>Test Coverage</h3>
+<p><code>tests/security/test_sandbox.py</code> contains <strong>60+ parametrized test cases</strong>:</p>
+<ul>
+<li><strong>Negative cases</strong>: Every restricted import, builtin call, dunder attribute, getattr-with-dunder, and subscript-with-dunder pattern</li>
+<li><strong>Positive cases</strong>: Safe code (math, json, list comprehensions, <code>isinstance</code>, <code>str</code>) is not blocked</li>
+<li><strong>Integration tests</strong> (marked <code>@pytest.mark.integration</code>): Spawn actual subprocess to verify runtime enforcement, timeout handling, and runtime import blocking</li>
+</ul>
+
+<h2>Network Security</h2>
+
+<h3>No Authentication</h3>
+<p>FinSight does not implement user authentication. The <code>X-FinSight-User-Id</code> header is a convention for multi-user differentiation, not a security mechanism. The system is designed for local/single-user deployment.</p>
+
+<h3>CORS</h3>
+<p>The orchestrator allows cross-origin requests from <code>http://localhost:3000</code> and <code>http://127.0.0.1:3000</code> only. No other origins are permitted.</p>
+
+<h3>Internal Rate Limiting</h3>
+<p>The MCP server applies rate limits to upstream data sources:</p>
+<table>
+<thead>
+<tr><th>Source</th><th>Rate</th><th>Burst</th></tr>
+</thead>
+<tbody>
+<tr><td>SEC EDGAR</td><td>8 req/s</td><td>10</td></tr>
+<tr><td>yfinance</td><td>4 req/s</td><td>8</td></tr>
+<tr><td>RSS feeds</td><td>2 req/s</td><td>4</td></tr>
+</tbody>
+</table>
+
+<h3>No Secrets in Code</h3>
+<p>All secrets and API keys are loaded from environment variables via <code>shared/config.py</code>. No hardcoded secrets exist in source code. The <code>.env.example</code> file contains placeholder values.</p>
+
+<h2>Known Limitations</h2>
+<table>
+<thead>
+<tr><th>Limitation</th><th>Impact</th><th>Mitigation</th></tr>
+</thead>
+<tbody>
+<tr><td>No HTTPS</td><td>Traffic is unencrypted</td><td>System is local-only; not exposed to the internet</td></tr>
+<tr><td>No authentication</td><td>Anyone with network access can query</td><td>Deploy behind a firewall or VPN</td></tr>
+<tr><td>No input sanitization on MCP tools</td><td>Tool parameters are passed directly to yfinance/SEC</td><td>yfinance and SEC are public APIs with their own rate limits</td></tr>
+<tr><td>SQLite databases are unencrypted</td><td>DB files on disk are readable</td><td><code>db/</code> is gitignored; deploy with appropriate file permissions</td></tr>
+<tr><td><code>RLIMIT_*</code> not enforced on Windows</td><td>Sandbox on Windows relies on AST gate + subprocess isolation only</td><td>Avoid running <code>execute_python</code> on Windows in untrusted environments</td></tr>
+</tbody>
+</table>
+
+<h2>Responsible Disclosure</h2>
+<p>If you discover a security vulnerability in FinSight:</p>
+<ol>
+<li><strong>Do not</strong> open a public GitHub issue</li>
+<li>Email the maintainers directly (see git log for contact info)</li>
+<li>Include: description, reproduction steps, affected component, potential impact</li>
+<li>Allow 90 days for a fix before public disclosure</li>
+</ol>
+
+<h2>Hardening History</h2>
+<table>
+<thead>
+<tr><th>Version</th><th>Change</th></tr>
+</thead>
+<tbody>
+<tr><td>v1.27</td><td>Sandbox extracted to <code>shared/sandbox.py</code>. Expanded <code>_RESTRICTED_IMPORTS</code> from 12 to 50+ modules. Added <code>shlex</code>, <code>concurrent</code>, <code>ssl</code>, <code>http</code>, <code>urllib</code>, <code>requests</code>, <code>ftplib</code>, <code>poplib</code>, <code>smtplib</code>, <code>telnetlib</code>, <code>xmlrpc</code>, <code>socketserver</code>, <code>pathlib</code>, <code>io</code>, <code>glob</code>, <code>fnmatch</code>, <code>tempfile</code>, <code>zipfile</code>, <code>tarfile</code>, <code>gzip</code>, <code>bz2</code>, <code>lzma</code>, <code>base64</code>, <code>codecs</code>. 60 AST-gate tests added.</td></tr>
+<tr><td>v1.27</td><td><code>preexec_fn</code> moved inside <code>_sandbox_preexec()</code> with try/except for Windows compatibility. Subprocess runs with <code>-I -S</code> isolation flags.</td></tr>
+<tr><td>v1.25</td><td><code>SEC_USER_AGENT</code> and <code>LLM_API_KEY</code> moved to env vars. No hardcoded secrets.</td></tr>
+<tr><td>v1.25</td><td>SQLite WAL mode + busy_timeout set once at singleton init.</td></tr>
+<tr><td>v1.36</td><td><code>_ALLOWED_TABLES</code> whitelist in <code>prune_old_records()</code> prevents SQL injection via table name.</td></tr>
+</tbody>
+</table>
+
+</div>
+</body>
+</html>

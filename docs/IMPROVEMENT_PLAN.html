@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FinSight — Improvement Plan</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:1.7;color:#2c2c2c;background:#faf8f5;padding:2rem 1rem}
+.container{max-width:740px;margin:0 auto}
+h1,h2,h3,h4{font-family:Georgia,"Times New Roman",serif;color:#1a1a1a;line-height:1.3}
+h1{font-size:2.2rem;margin-bottom:.25rem;border-bottom:2px solid #e8dcc8;padding-bottom:.5rem}
+h2{font-size:1.5rem;margin-top:2.5rem;margin-bottom:.75rem}
+h3{font-size:1.2rem;margin-top:1.5rem;margin-bottom:.5rem}
+h4{font-size:1.05rem;margin-top:1.2rem;margin-bottom:.4rem}
+p{margin-bottom:1rem;color:#444}
+a{color:#8b6f4e;text-decoration:none;font-weight:500}
+a:hover{text-decoration:underline}
+code{background:#f0ebe3;padding:.15em .4em;border-radius:3px;font-size:.875em;font-family:"SF Mono","Fira Code","Fira Mono",monospace}
+pre{background:#f0ebe3;padding:1rem;border-radius:6px;overflow-x:auto;margin-bottom:1rem;font-size:.875em;line-height:1.5}
+pre code{background:0 0;padding:0}
+table{width:100%;border-collapse:collapse;margin-bottom:1rem;font-size:.925rem}
+th,td{padding:.5rem .75rem;text-align:left;border-bottom:1px solid #e0d8cc}
+th{background:#f0ebe3;font-weight:600}
+ul,ol{margin-bottom:1rem;padding-left:1.5rem}
+li{margin-bottom:.25rem}
+hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
+.header-nav{margin-bottom:2rem;padding-bottom:1rem;border-bottom:1px solid #e0d8cc}
+.header-nav a{margin-right:1.2rem;font-size:.9rem}
+.tag{display:inline-block;padding:.15em .5em;border-radius:3px;font-size:.8em;font-weight:600;margin-right:.3rem}
+.tag-high{background:#e8d5d5;color:#8b3a3a}
+.tag-med{background:#e8e0d5;color:#8b6f4e}
+.tag-low{background:#d5e0d8;color:#3a6b4a}
+.tag-done{background:#d5e0d8;color:#3a6b4a}
+.tag-todo{background:#e8e0d5;color:#8b6f4e}
+.phase-box{background:#f0ebe3;border-left:3px solid #8b6f4e;padding:1rem 1.25rem;margin-bottom:1.5rem;border-radius:0 6px 6px 0}
+.phase-box h3{margin-top:0}
+.checklist{list-style:none;padding-left:0}
+.checklist li{padding:.4rem 0;border-bottom:1px solid #f0ebe3}
+.checklist li:last-child{border-bottom:none}
+.check::before{content:"☐ ";color:#8b6f4e;font-weight:700}
+.done::before{content:"☑ ";color:#3a6b4a;font-weight:700}
+@media(max-width:600px){body{padding:1rem}h1{font-size:1.8rem}table{font-size:.85rem}}
+</style>
+</head>
+<body>
+<div class="container">
+<div class="header-nav">
+<a href="index.html">Home</a><a href="../README.html">Overview</a><a href="ARCHITECTURE.html">Architecture</a><a href="AGENTS.html">Agents</a><a href="API_REFERENCE.html">API</a><a href="MCP_SERVERS.html">MCP</a><a href="SECURITY.html">Security</a><a href="DESIGN_DECISIONS.html">Decisions</a><a href="CHANGELOG.html">Changelog</a><a href="TESTS.html">Tests</a>
+</div>
+
+<h1>Improvement Plan</h1>
+<p>Systematic improvement roadmap for the FinSight multi-agent investment system. Organized by priority and implementation phase. Each item is actionable with a clear file target and verification step.</p>
+
+<hr>
+
+<h2>Priority Matrix</h2>
+<table>
+<tr><th>Priority</th><th>Category</th><th>Items</th><th>Risk if Ignored</th></tr>
+<tr><td><span class="tag tag-high">HIGH</span></td><td>Production Hardening</td><td>4</td><td>Security exposure, self-healing failure</td></tr>
+<tr><td><span class="tag tag-high">HIGH</span></td><td>Testing Gaps</td><td>3</td><td>Regressions in critical path</td></tr>
+<tr><td><span class="tag tag-med">MED</span></td><td>Code Quality</td><td>4</td><td>Maintenance burden, bugs from duplication</td></tr>
+<tr><td><span class="tag tag-med">MED</span></td><td>Scaling &amp; Persistence</td><td>2</td><td>Cannot scale beyond single instance</td></tr>
+<tr><td><span class="tag tag-low">LOW</span></td><td>Observability</td><td>2</td><td>Blind spots in production</td></tr>
+</table>
+
+<hr>
+
+<h2>Phase 1 &mdash; Production Hardening</h2>
+<p>These changes prevent accidental production exposure and enable self-healing. Estimated effort: 1&ndash;2 hours total.</p>
+
+<div class="phase-box">
+<h3>1.1 Gate <code>debug=True</code> on Environment</h3>
+<p><span class="tag tag-high">HIGH</span> <span class="tag tag-todo">TODO</span></p>
+<p><strong>Problem:</strong> All four agent servers and the MCP server run with <code>debug=True</code>, enabling auto-reload and detailed error pages. This exposes internal state in production.</p>
+<p><strong>Files:</strong></p>
+<ul>
+<li><code>agent_1_adk/main.py</code></li>
+<li><code>agent_2_llamaindex/server.py</code></li>
+<li><code>agent_3_langgraph/server.py</code></li>
+<li><code>agent_4_crewai/server.py</code></li>
+<li><code>mcp_servers/finsight_server.py</code></li>
+</ul>
+<p><strong>Change:</strong> Replace hardcoded <code>debug=True</code> with <code>debug=(ENV != "production")</code>. Add <code>ENV=development</code> as default in <code>shared/config.py</code>.</p>
+<p><strong>Verify:</strong> Set <code>ENV=production</code> and confirm no auto-reload; confirm <code>/health</code> still returns 200.</p>
+</div>
+
+<div class="phase-box">
+<h3>1.2 Add Circuit Breaker Reset Timer</h3>
+<p><span class="tag tag-high">HIGH</span> <span class="tag tag-todo">TODO</span></p>
+<p><strong>Problem:</strong> The eval circuit breaker in <code>shared/runtime_eval.py</code> opens after 5 consecutive RAGAS failures and never resets. A transient LLM outage permanently disables evaluation.</p>
+<p><strong>File:</strong> <code>shared/runtime_eval.py</code></p>
+<p><strong>Change:</strong> Add a <code>_circuit_opened_at</code> timestamp. In <code>_gate_ok()</code>, check if <code>time.time() - _circuit_opened_at &gt; CIRCUIT_RESET_SECONDS</code> (default 300). If so, transition to half-open: allow 1 eval attempt. If it passes, close the circuit; if it fails, reset the timer.</p>
+<p><strong>Verify:</strong> Unit test: open circuit, wait &gt; reset window, confirm one eval attempt is allowed.</p>
+</div>
+
+<div class="phase-box">
+<h3>1.3 Fix MCP Client Singleton at Exit</h3>
+<p><span class="tag tag-high">HIGH</span> <span class="tag tag-todo">TODO</span></p>
+<p><strong>Problem:</strong> <code>get_shared_mcp()</code> registers an <code>atexit</code> handler that creates a new event loop via <code>asyncio.new_event_loop()</code> to close the client. This can fail if the default loop is already running at exit time on some platforms.</p>
+<p><strong>File:</strong> <code>shared/mcp_client.py</code></p>
+<p><strong>Change:</strong> Use <code>weakref.ref</code> for the singleton and register a synchronous <code>close()</code> that sets a flag. The actual async cleanup happens in the running loop via a <code>__del__</code> or explicit <code>aclose()</code> call from server shutdown hooks.</p>
+<p><strong>Verify:</strong> Run server startup/shutdown cycle 10x; confirm no <code>RuntimeError</code> or event loop warnings.</p>
+</div>
+
+<div class="phase-box">
+<h3>1.4 Remove Unused <code>psycopg2-binary</code> Dependency</h3>
+<p><span class="tag tag-med">MED</span> <span class="tag tag-todo">TODO</span></p>
+<p><strong>Problem:</strong> <code>pyproject.toml</code> includes <code>psycopg2-binary</code> but no Postgres service exists in <code>docker-compose.yml</code> and no code imports it. Dead dependency increases image size.</p>
+<p><strong>File:</strong> <code>pyproject.toml</code></p>
+<p><strong>Change:</strong> Remove <code>psycopg2-binary</code> from <code>dependencies</code>. If Postgres is planned, add it as an optional extra instead.</p>
+<p><strong>Verify:</strong> <code>uv sync</code> succeeds; <code>grep -r psycopg2</code> returns no hits.</p>
+</div>
+
+<hr>
+
+<h2>Phase 2 &mdash; Testing Gaps</h2>
+<p>Critical path components lack test coverage. Estimated effort: 3&ndash;4 hours.</p>
+
+<div class="phase-box">
+<h3>2.1 Add Orchestrator Executor Tests</h3>
+<p><span class="tag tag-high">HIGH</span> <span class="tag tag-todo">TODO</span></p>
+<p><strong>Problem:</strong> <code>FinSightAgentExecutor</code> is the most critical component (routes all user queries) but has zero unit tests.</p>
+<p><strong>File:</strong> <code>tests/unit/test_orchestrator_executor.py</code> (new)</p>
+<p><strong>Test cases:</strong></p>
+<ul>
+<li>Off-topic query rejection (regex guardrail)</li>
+<li>Invalid ticker rejection (pre-flight MCP validation)</li>
+<li>Memory cache hit short-circuits LLM</li>
+<li>Memory context injection with [TODAY] vs [STALE] tag</li>
+<li>Per-agent timeout returns clean error JSON</li>
+<li>Output guardrail: response &lt; 50 chars triggers TASK_STATE_FAILED</li>
+<li>Output guardrail: missing BUY/HOLD/SELL emits Langfuse warning</li>
+</ul>
+<p><strong>Verify:</strong> <code>pytest tests/unit/test_orchestrator_executor.py -v</code> passes.</p>
+</div>
+
+<div class="phase-box">
+<h3>2.2 Add AG-UI Bridge Tests</h3>
+<p><span class="tag tag-high">HIGH</span> <span class="tag tag-todo">TODO</span></p>
+<p><strong>Problem:</strong> <code>agent_1_adk/agui_bridge.py</code> handles SSE event generation and memory context for the web frontend. No tests exist.</p>
+<p<strong>File:</strong> <code>tests/unit/test_agui_bridge.py</code> (new)</p>
+<p><strong>Test cases:</strong></p>
+<ul>
+<li><code>_build_memory_context()</code> returns correct prefix with ticker extraction</li>
+<li><code>_get_today_cached_text()</code> returns cached text when brief exists</li>
+<li><code>_auto_save_brief()</code> persists to SQLite with correct fields</li>
+<li>SSE event format matches CopilotKit expected schema</li>
+</ul>
+<p><strong>Verify:</strong> <code>pytest tests/unit/test_agui_bridge.py -v</code> passes.</p>
+</div>
+
+<div class="phase-box">
+<h3>2.3 Add Report Generator Unit Tests</h3>
+<p><span class="tag tag-med">MED</span> <span class="tag tag-todo">TODO</span></p>
+<p><strong>Problem:</strong> <code>shared/report_generator.py</code> (~1400 lines) generates PPTX decks. No tests; regressions in slide rendering go undetected.</p>
+<p><strong>File:</strong> <code>tests/unit/test_report_generator.py</code> (new)</p>
+<p><strong>Test cases:</strong></p>
+<ul>
+<li><code>DeckData</code> extraction from orchestrator response text</li>
+<li>Missing fields produce defaults (not crashes)</li>
+<li>Slide count matches expected layout</li>
+<li>Charts render with valid data</li>
+</ul>
+<p><strong>Verify:</strong> <code>pytest tests/unit/test_report_generator.py -v</code> passes.</p>
+</div>
+
+<hr>
+
+<h2>Phase 3 &mdash; Code Quality</h2>
+<p>Reduce duplication and improve maintainability. Estimated effort: 2&ndash;3 hours.</p>
+
+<div class="phase-box">
+<h3>3.1 Extract Duplicated Agent Utilities</h3>
+<p><span class="tag tag-med">MED</span> <span class="tag tag-todo">TODO</span></p>
+<p><strong>Problem:</strong> <code>_build_memory_context()</code>, <code>_get_today_cached_text()</code>, <code>_auto_save_brief()</code>, and <code>_NON_INVESTMENT_RE</code> are duplicated across <code>agent_1_adk/agent_executor.py</code> and <code>agent_1_adk/agui_bridge.py</code>.</p>
+<p><strong>Files:</strong></p>
+<ul>
+<li>Create: <code>shared/agent_utils.py</code></li>
+<li>Modify: <code>agent_1_adk/agent_executor.py</code></li>
+<li>Modify: <code>agent_1_adk/agui_bridge.py</code></li>
+</ul>
+<p><strong>Change:</strong> Move the four shared functions/regexes to <code>shared/agent_utils.py</code>. Import from both files. Keep function signatures identical.</p>
+<p><strong>Verify:</strong> Existing tests pass; <code>grep -c "_build_memory_context" agent_1_adk/</code> shows 1 definition, 2 imports.</p>
+</div>
+
+<div class="phase-box">
+<h3>3.2 Split <code>report_generator.py</code></h3>
+<p><span class="tag tag-med">MED</span> <span class="tag tag-todo">TODO</span></p>
+<p><strong>Problem:</strong> <code>shared/report_generator.py</code> is ~1400 lines mixing data extraction (<code>DeckData</code>) with slide rendering. Hard to navigate and test in isolation.</p>
+<p><strong>Files:</strong></p>
+<ul>
+<li>Create: <code>shared/deck_data.py</code> (data extraction)</li>
+<li>Modify: <code>shared/report_generator.py</code> (slide rendering only, import from <code>deck_data</code>)</li>
+</ul>
+<p><strong>Change:</strong> Extract <code>DeckData</code> dataclass and its <code>from_response()</code> factory into <code>shared/deck_data.py</code>. Keep all <code>python-pptx</code> slide logic in <code>report_generator.py</code>.</p>
+<p><strong>Verify:</strong> <code>pytest tests/unit/test_report_generator.py -v</code> passes (after 2.3 is done).</p>
+</div>
+
+<div class="phase-box">
+<h3>3.3 Add <code>shared/__init__.py</code></h3>
+<p><span class="tag tag-low">LOW</span> <span class="tag tag-todo">TODO</span></p>
+<p><strong>Problem:</strong> The <code>shared</code> package has no <code>__init__.py</code>, relying on implicit namespace packages. IDE autocompletion and import checking are degraded.</p>
+<p><strong>File:</strong> <code>shared/__init__.py</code> (new)</p>
+<p><strong>Change:</strong> Create with public exports: <code>from shared.config import ...</code>, <code>from shared.models import ...</code>, etc. Keep it minimal &mdash; just re-exports.</p>
+<p><strong>Verify:</strong> <code>python -c "import shared; print(dir(shared))"</code> shows exported names.</p>
+</div>
+
+<div class="phase-box">
+<h3>3.4 Fix Module-Level Mutable State in <code>eval_gate.py</code></h3>
+<p><span class="tag tag-med">MED</span> <span class="tag tag-todo">TODO</span></p>
+<p><strong>Problem:</strong> <code>shared/eval_gate.py</code> uses module-level <code>_deferred</code> list and <code>_auto_release_task</code>. This is not safe for multiple event loops (e.g., testing with <code>pytest-asyncio</code>).</p>
+<p><strong>File:</strong> <code>shared/eval_gate.py</code></p>
+<p><strong>Change:</strong> Wrap state in an <code>EvalGate</code> class with <code>defer()</code> and <code>release()</code> methods. Provide a module-level <code>_default_gate = EvalGate()</code> for backward compatibility.</p>
+<p><strong>Verify:</strong> Existing tests pass; new test confirms two independent <code>EvalGate</code> instances don't share state.</p>
+</div>
+
+<hr>
+
+<h2>Phase 4 &mdash; Scaling &amp; Persistence</h2>
+<p>Enable horizontal scaling beyond a single process. Estimated effort: 4&ndash;6 hours.</p>
+
+<div class="phase-box">
+<h3>4.1 Abstract Persistent Store Interface</h3>
+<p><span class="tag tag-med">MED</span> <span class="tag tag-todo">TODO</span></p>
+<p><strong>Problem:</strong> All persistent state (tasks, memories, recommendations) lives in SQLite via a single connection. Cannot scale to multiple orchestrator instances.</p>
+<p><strong>Files:</strong></p>
+<ul>
+<li>Create: <code>shared/store_interface.py</code> (abstract base)</li>
+<li>Modify: <code>shared/a2a_store.py</code> (implement interface)</li>
+<li>Modify: <code>shared/memory/store.py</code> (implement interface)</li>
+</ul>
+<p><strong>Change:</strong> Define <code>TaskStore</code> and <code>MemoryStore</code> abstract base classes. Refactor existing SQLite implementations to conform. Add a Postgres implementation as an optional extra behind <code>extras = ["postgres"]</code> in <code>pyproject.toml</code>.</p>
+<p><strong>Verify:</strong> All existing tests pass against SQLite backend; new tests validate the interface contract.</p>
+</div>
+
+<div class="phase-box">
+<h3>4.2 Add Postgres Service to Docker Compose</h3>
+<p><span class="tag tag-med">MED</span> <span class="tag tag-todo">TODO</span></p>
+<p><strong>Problem:</strong> <code>pyproject.toml</code> was originally designed for Postgres (includes <code>psycopg2-binary</code>) but the service was never added to <code>docker-compose.yml</code>.</p>
+<p><strong>File:</strong> <code>docker-compose.yml</code></p>
+<p><strong>Change:</strong> Add a <code>postgres</code> service with <code>POSTGRES_DB=finsight</code>, <code>POSTGRES_USER</code>, <code>POSTGRES_PASSWORD</code> from env. Add <code>DATABASE_URL</code> to agent environment variables. Conditionally use Postgres when <code>DATABASE_URL</code> is set, fall back to SQLite otherwise.</p>
+<p><strong>Verify:</strong> <code>docker compose up postgres</code> starts; agents connect when <code>DATABASE_URL</code> is set.</p>
+</div>
+
+<hr>
+
+<h2>Phase 5 &mdash; Observability</h2>
+<p>Production monitoring and visibility. Estimated effort: 2&ndash;3 hours.</p>
+
+<div class="phase-box">
+<h3>5.1 Add <code>/health</code> Endpoints with Detail</h3>
+<p><span class="tag tag-low">LOW</span> <span class="tag tag-todo">TODO</span></p>
+<p><strong>Problem:</strong> Existing <code>/health</code> endpoints return only <code>{"status":"ok"}</code>. No visibility into cache hit rates, circuit breaker state, or agent reachability.</p>
+<p><strong>Files:</strong> All <code>server.py</code> / <code>main.py</code> files</p>
+<p><strong>Change:</strong> Extend <code>/health</code> to return:</p>
+<pre>{
+  "status": "ok",
+  "agent": "orchestrator",
+  "circuit_breaker": "closed",
+  "cache_l1_hits": 42,
+  "redis_connected": true,
+  "sub_agents_reachable": ["rag", "quant", "market_context"],
+  "uptime_seconds": 3600
+}</pre>
+<p><strong>Verify:</strong> <code>curl localhost:8001/health</code> returns extended JSON.</p>
+</div>
+
+<div class="phase-box">
+<h3>5.2 Add Prometheus Metrics</h3>
+<p><span class="tag tag-low">LOW</span> <span class="tag tag-todo">TODO</span></p>
+<p><strong>Problem:</strong> No quantitative metrics for request rate, latency, or error rate. Langfuse traces are per-request; no aggregated view.</p>
+<p><strong>Files:</strong></p>
+<ul>
+<li>Create: <code>shared/metrics.py</code></li>
+<li>Modify: each <code>server.py</code></li>
+</ul>
+<p><strong>Change:</strong> Use <code>prometheus_client</code> to expose:</p>
+<ul>
+<li><code>finsight_requests_total</code> (counter, labels: agent, status)</li>
+<li><code>finsight_request_duration_seconds</code> (histogram, labels: agent)</li>
+<li><code>finsight_cache_hits_total</code> (counter, labels: layer)</li>
+<li><code>finsight_llm_queue_depth</code> (gauge)</li>
+</ul>
+<p><strong>Verify:</strong> <code>curl localhost:8001/metrics</code> returns Prometheus text format.</p>
+</div>
+
+<hr>
+
+<h2>Implementation Checklist</h2>
+<p>Sequential execution order. Each item should be a separate commit.</p>
+
+<h3>Phase 1: Production Hardening</h3>
+<ul class="checklist">
+<li class="check">1.1 &mdash; Gate <code>debug=True</code> on <code>ENV != "production"</code></li>
+<li class="check">1.2 &mdash; Add circuit breaker reset timer (300s half-open)</li>
+<li class="check">1.3 &mdash; Fix MCP client singleton atexit handler</li>
+<li class="check">1.4 &mdash; Remove unused <code>psycopg2-binary</code> or move to extras</li>
+</ul>
+
+<h3>Phase 2: Testing Gaps</h3>
+<ul class="checklist">
+<li class="check">2.1 &mdash; Add orchestrator executor unit tests (7 test cases)</li>
+<li class="check">2.2 &mdash; Add AG-UI bridge unit tests (4 test cases)</li>
+<li class="check">2.3 &mdash; Add report generator unit tests (4 test cases)</li>
+</ul>
+
+<h3>Phase 3: Code Quality</h3>
+<ul class="checklist">
+<li class="check">3.1 &mdash; Extract duplicated agent utilities to <code>shared/agent_utils.py</code></li>
+<li class="check">3.2 &mdash; Split <code>report_generator.py</code> into data + rendering</li>
+<li class="check">3.3 &mdash; Add <code>shared/__init__.py</code> with public exports</li>
+<li class="check">3.4 &mdash; Wrap <code>eval_gate.py</code> state in class</li>
+</ul>
+
+<h3>Phase 4: Scaling &amp; Persistence</h3>
+<ul class="checklist">
+<li class="check">4.1 &mdash; Abstract persistent store interface (SQLite &rarr; Postgres)</li>
+<li class="check">4.2 &mdash; Add Postgres service to Docker Compose</li>
+</ul>
+
+<h3>Phase 5: Observability</h3>
+<ul class="checklist">
+<li class="check">5.1 &mdash; Extend <code>/health</code> with cache/circuit/uptime details</li>
+<li class="check">5.2 &mdash; Add Prometheus metrics endpoint</li>
+</ul>
+
+<hr>
+
+<h2>Estimated Total Effort</h2>
+<table>
+<tr><th>Phase</th><th>Items</th><th>Estimate</th></tr>
+<tr><td>Phase 1: Production Hardening</td><td>4</td><td>1&ndash;2 hours</td></tr>
+<tr><td>Phase 2: Testing Gaps</td><td>3</td><td>3&ndash;4 hours</td></tr>
+<tr><td>Phase 3: Code Quality</td><td>4</td><td>2&ndash;3 hours</td></tr>
+<tr><td>Phase 4: Scaling</td><td>2</td><td>4&ndash;6 hours</td></tr>
+<tr><td>Phase 5: Observability</td><td>2</td><td>2&ndash;3 hours</td></tr>
+<tr><th>Total</th><th>15</th><th>12&ndash;18 hours</th></tr>
+</table>
+
+</div>
+</body>
+</html>

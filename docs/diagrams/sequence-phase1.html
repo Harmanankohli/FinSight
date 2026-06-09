@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sequence Diagram — Phase 1: Input</title>
+<link rel="stylesheet" href="shared.css">
+<style>.diagram-wrap{min-height:650px}</style>
+</head>
+<body>
+<div class="container">
+<div class="back"><a href="index.html">&larr; Back to Diagrams</a></div>
+<div class="sub-nav">
+  <a href="sequence.html">Full</a>
+  <a href="sequence-phase1.html" class="active">Phase 1: Input</a>
+  <a href="sequence-phase2.html">Phase 2: Agent Dispatch</a>
+  <a href="sequence-phase3.html">Phase 3: Synthesis</a>
+</div>
+<h1>Sequence Diagram — Phase 1: Input</h1>
+<p>User query through off-topic filter, semantic cache, memory cache, and memory context injection. <strong>Drag to pan, scroll to zoom, hover nodes for details.</strong></p>
+<div class="zoom-controls">
+  <button onclick="zoomIn()">+ Zoom In</button>
+  <button onclick="zoomOut()">- Zoom Out</button>
+  <button onclick="zoomReset()">Reset</button>
+  <span class="zoom-level" id="zoomLevel">100%</span>
+</div>
+<div class="diagram-wrap" id="diagramContainer">
+<div class="mermaid">
+%%{init: {'theme': 'base', 'themeVariables': {'background': '#ffffff', 'actorBkg': '#d4e6f1', 'actorBorder': '#2980b9', 'actorTextColor': '#1a1a1a', 'signalColor': '#8b6f4e', 'signalTextColor': '#1a1a1a', 'labelBoxBkgColor': '#d5f5e3', 'labelBoxBorderColor': '#27ae60', 'labelTextColor': '#1a1a1a', 'loopTextColor': '#1a1a1a', 'activationBorderColor': '#8b6f4e', 'activationBkgColor': '#f0ebe3'}}}%%
+sequenceDiagram
+actor User
+participant UI as ADK Web / Next.js
+participant Orch as Orchestrator
+participant MCP as MCP Server
+participant Mem as Memory (SQLite)
+participant LLM as LM Studio
+Note over User,LLM: ══════ Phase 1: Input Processing ══════
+
+User->>UI: ① "Should I invest in NVIDIA?"
+UI->>Orch: ② POST /a2a-agui (SSE stream)
+activate Orch
+Orch->>Orch: ③ Off-topic filter
+Note over Orch: Regex against _NON_INVESTMENT_RE<br/>→ pass (investment query)
+Orch->>MCP: ④ validate_ticker("NVDA")
+Note over Orch,MCP: Pre-flight validation via MCP<br/>SEC EDGAR company_tickers.json
+MCP-->>Orch: ✓ NVDA confirmed
+Orch->>Orch: ⑤ Semantic cache lookup
+Note over Orch: ChromaDB cosine similarity > 0.95<br/>Date-scoped to today's entries<br/>→ Miss (no prior match same-day)
+Orch->>Mem: ⑥ Today's brief cache
+Note over Orch,Mem: TickerMemory.get_latest("NVDA")<br/>SQLite query for today's brief<br/>→ Miss (no analysis yet today)
+Orch->>Mem: ⑦ Memory context load
+Note over Orch,Mem: TickerMemory.get_latest() (stale)<br/>PortfolioStore.get_holdings()<br/>→ Inject [STALE] label + portfolio
+Orch->>Orch: ⑧ Build system prompt
+Note over Orch: Agent list from discovery<br/>Memory context as prefix<br/>LLM instructed: emit ALL send_message<br/>calls in ONE assistant turn
+Orch->>LLM: ⑨ LLM dispatch decision
+Note over Orch,LLM: LLM sees: query + memory + agent list<br/>Decides: RAG + Quant + Market Ctx
+LLM-->>Orch: send_message("RAG", ...)<br/>send_message("Quant", ...)<br/>send_message("MarketCtx", ...)
+Note over Orch,LLM: ✓ Phase 1 → Phase 2: Parallel A2A dispatch
+deactivate Orch
+</div>
+</div>
+<hr style="margin-top:2rem">
+<p style="font-size:.85rem;color:#888">FinSight — Architecture Diagrams</p>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="shared.js"></script>
+</body>
+</html>

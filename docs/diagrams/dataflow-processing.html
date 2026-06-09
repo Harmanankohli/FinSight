@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Data Flow — Agent Processing</title>
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+<div class="container">
+<div class="back"><a href="index.html">&larr; Back to Diagrams</a></div>
+<div class="sub-nav">
+  <a href="dataflow.html">Full</a>
+  <a href="dataflow-input.html">Input Pipeline</a>
+  <a href="dataflow-processing.html" class="active">Agent Processing</a>
+</div>
+<h1>Data Flow — Agent Processing</h1>
+<p>Parallel dispatch to RAG, Quant, and Market Context agents via MCP, then LLM synthesis. <strong>Drag to pan, scroll to zoom, hover nodes for details.</strong></p>
+<div class="zoom-controls">
+  <button onclick="zoomIn()">+ Zoom In</button>
+  <button onclick="zoomOut()">- Zoom Out</button>
+  <button onclick="zoomReset()">Reset</button>
+  <span class="zoom-level" id="zoomLevel">100%</span>
+</div>
+<div class="diagram-wrap" id="diagramContainer">
+<div class="mermaid">
+%%{init: {'theme': 'base', 'themeVariables': {'background': '#ffffff', 'primaryColor': '#d4e6f1', 'primaryTextColor': '#1a1a1a', 'primaryBorderColor': '#2980b9', 'lineColor': '#8b6f4e', 'secondaryColor': '#d5f5e3', 'tertiaryColor': '#fadbd8', 'clusterBkg': '#faf8f5', 'clusterBorder': '#d5c4a1', 'fontSize': '11px'}}}%%
+graph TB
+MemCtx("Memory Context\n→ RAG, Quant, Market")
+subgraph Agents["Parallel Agent Processing (A2A)"]
+
+
+RAG("RAG Agent\n1. MCP get_company_filings\n2. ChromaDB ingest + dedup\n3. Hybrid search + rerank\n4. LLM synthesis (NORMAL)")
+Quant("Quant Agent\n1. MCP prices/financials\n2. 14-node LangGraph DAG\n3. Weighted signal voting\n4. LLM summary (CRITICAL)")
+Mkt("Market Context\n1. MCP macro + peers\n2. 3-step parallel collect\n3. CrewAI narrative (CRITICAL)")
+end
+subgraph MCPSources["MCP Data Sources (18 tools)"]
+
+
+M1("Market\nget_prices / get_financials")
+M2("SEC\nget_company_filings\n+ get_filing_content")
+M3("News\nget_news_sentiment")
+M4("Macro\nget_macro_indicators")
+M5("Options\nget_options_chain")
+M6("Insider\nget_insider_transactions")
+M7("Discovery\nget_peers, shocks\nvalidate, resolve")
+end
+Synth("LLM Synthesis\nADK LlmAgent merges\nRAG + Quant + Market\n→ BUY/HOLD/SELL + rationale")
+OutGuard("Output Guardrails\n≥50 chars + signal\nAuto-retry × 3")
+MemStore("Memory Persistence\nSQLite:\nTickerMemory\nPerformanceTracker\nPortfolioStore")
+CacheWrite("Semantic Cache\nChromaDB\nset(query, response,\ndate=today)")
+EvalFire("Background Eval\nRAGAS: 6 metrics\nCircuit breaker\nSHA-256 dedup\nBurst: EVAL_BURST_LIMIT/min\nTimeout: 90s/metric")
+EvalRelease("Sub-Agent Eval Release\nPOST /release-evals\n→ Faithfulness\n→ FactualCorrectness\n→ macro_regime\n→ peer_landscape")
+Output("Final Output\nAG-UI SSE stream\nInvestmentBrief JSON\nOptional PPTX/DOCX/HTML")
+MemCtx --> RAG
+MemCtx --> Quant
+MemCtx --> Mkt
+RAG -- "MCP" --> M1
+RAG -- "MCP" --> M2
+RAG -- "MCP" --> M3
+Quant -- "MCP" --> M1
+Quant -- "MCP" --> M5
+Quant -- "MCP" --> M6
+Quant -- "MCP" --> M7
+Mkt -- "MCP" --> M4
+Mkt -- "MCP" --> M7
+RAG --> Synth
+Quant --> Synth
+Mkt --> Synth
+Synth --> OutGuard
+OutGuard --> MemStore
+MemStore --> CacheWrite
+CacheWrite --> EvalFire
+EvalFire --> EvalRelease
+EvalRelease --> Output
+style MemCtx fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
+style RAG fill:#d4e6f1,stroke:#2980b9,color:#1a1a1a
+style Quant fill:#fdebd0,stroke:#e67e22,color:#1a1a1a
+style Mkt fill:#fadbd8,stroke:#c0392b,color:#1a1a1a
+style M1 fill:#f0ebe3,stroke:#888,color:#1a1a1a
+style M2 fill:#f0ebe3,stroke:#888,color:#1a1a1a
+style M3 fill:#f0ebe3,stroke:#888,color:#1a1a1a
+style M4 fill:#f0ebe3,stroke:#888,color:#1a1a1a
+style M5 fill:#f0ebe3,stroke:#888,color:#1a1a1a
+style M6 fill:#f0ebe3,stroke:#888,color:#1a1a1a
+style M7 fill:#f0ebe3,stroke:#888,color:#1a1a1a
+style Synth fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
+style OutGuard fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
+style MemStore fill:#abebc6,stroke:#1e8449,color:#1a1a1a
+style CacheWrite fill:#abebc6,stroke:#1e8449,color:#1a1a1a
+style EvalFire fill:#abebc6,stroke:#1e8449,color:#1a1a1a
+style EvalRelease fill:#abebc6,stroke:#1e8449,color:#1a1a1a
+style Output fill:#d5f5e3,stroke:#27ae60,stroke-width:3px,color:#1a1a1a
+</div>
+</div>
+<hr style="margin-top:2rem">
+<p style="font-size:.85rem;color:#888">FinSight — Architecture Diagrams</p>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="shared.js"></script>
+</body>
+</html>

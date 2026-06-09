@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sequence Diagram — FinSight (Full)</title>
+<link rel="stylesheet" href="shared.css">
+<style>.diagram-wrap{min-height:650px}</style>
+</head>
+<body>
+<div class="container">
+<div class="back"><a href="index.html">&larr; Back to Diagrams</a></div>
+<div class="sub-nav">
+  <a href="sequence.html" class="active">Full</a>
+  <a href="sequence-phase1.html">Phase 1: Input</a>
+  <a href="sequence-phase2.html">Phase 2: Agent Dispatch</a>
+  <a href="sequence-phase3.html">Phase 3: Synthesis</a>
+</div>
+<h1>Sequence Diagram — Full</h1>
+<p>Complete &#8220;Should I invest in NVIDIA?&#8221; lifecycle across 3 phases. <strong>Drag to pan, scroll to zoom, hover nodes for details.</strong></p>
+<div class="zoom-controls">
+  <button onclick="zoomIn()">+ Zoom In</button>
+  <button onclick="zoomOut()">- Zoom Out</button>
+  <button onclick="zoomReset()">Reset</button>
+  <span class="zoom-level" id="zoomLevel">100%</span>
+</div>
+<div class="diagram-wrap" id="diagramContainer">
+<div class="mermaid">
+%%{init: {'theme': 'base', 'themeVariables': {'background': '#ffffff', 'actorBkg': '#d4e6f1', 'actorBorder': '#2980b9', 'actorTextColor': '#1a1a1a', 'signalColor': '#8b6f4e', 'signalTextColor': '#1a1a1a', 'labelBoxBkgColor': '#d5f5e3', 'labelBoxBorderColor': '#27ae60', 'labelTextColor': '#1a1a1a', 'loopTextColor': '#1a1a1a', 'activationBorderColor': '#8b6f4e', 'activationBkgColor': '#f0ebe3', 'fontSize': '13px'}}}%%
+sequenceDiagram
+actor User
+participant UI as ADK Web/Next.js
+participant Orch as Orchestrator
+participant LLM as LM Studio
+participant RAG as RAG(LlamaIndex)
+participant Quant as Quant(LangGraph)
+participant Mkt as MktContext(CrewAI)
+participant MCP as MCP Server
+Note over User,MCP: ═══ Phase 1: Input Processing (&lt; 5s) ═══
+
+User->>UI: ① "Should I invest in NVIDIA?"
+UI->>Orch: ② POST /a2a-agui
+activate Orch
+Orch->>Orch: ③ Guardrails + Cache + Memory ctx
+Orch->>LLM: ④ Decide dispatch
+LLM-->>Orch: ⑤ send_message to all 3
+Note over Orch,MCP: ═══ Phase 2: Agent Dispatch (15-45s) ═══
+
+par ⑥ Parallel A2A dispatch
+Orch->>RAG: A2A "Analyze NVDA"
+
+
+activate RAG
+RAG->>MCP: get_company_filings + get_news
+MCP-->>RAG: Filing + news data
+RAG->>RAG: ChromaDB hybrid search
+RAG->>LLM: Synthesize
+LLM-->>RAG: RAG analysis
+RAG-->>Orch: Done
+deactivate RAG
+Orch->>Quant: A2A "Quant NVDA"
+
+
+activate Quant
+Quant->>MCP: get_prices + financials
+MCP-->>Quant: Price + financials
+Quant->>Quant: DCF + technicals + voting
+Quant->>LLM: Summary (CRITICAL)
+LLM-->>Quant: BUY (+0.31)
+Quant-->>Orch: Done
+deactivate Quant
+Orch->>Mkt: A2A "Market NVDA"
+
+
+activate Mkt
+Mkt->>MCP: get_macro + get_peers
+MCP-->>Mkt: Macro + peer data
+Mkt->>LLM: Narrative (CRITICAL)
+LLM-->>Mkt: Market context
+Mkt-->>Orch: Done
+deactivate Mkt
+end
+Note over Orch,MCP: ═══ Phase 3: Synthesis + Persist (5-15s) ═══
+
+Orch->>LLM: ⑦ Synthesize final
+LLM-->>Orch: ⑧ BUY (0.78)
+Orch->>Orch: ⑨ Output guard + persist + eval
+Orch->>Orch: ⑩ Cache write + /release-evals
+Orch->>UI: ⑪ SSE stream
+deactivate Orch
+UI->>User: ⑫ Investment brief
+</div>
+</div>
+<hr style="margin-top:2rem">
+<p style="font-size:.85rem;color:#888">FinSight — Architecture Diagrams</p>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="shared.js"></script>
+</body>
+</html>
