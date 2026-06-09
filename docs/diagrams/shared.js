@@ -24,35 +24,40 @@
     return wrap.getBoundingClientRect();
   }
 
-  function getViewBox() {
+  function getSvgSize() {
     if (!svg) return null;
+    // getBBox gives actual rendered content dimensions (ignores CSS transforms)
+    try {
+      var bbox = svg.getBBox();
+      if (bbox && bbox.width > 0 && bbox.height > 0) {
+        return { w: bbox.width, h: bbox.height };
+      }
+    } catch(e) {}
+    // Fallback: viewBox
     var vb = svg.getAttribute('viewBox');
     if (vb) {
       var p = vb.split(/\s+/).map(Number);
       if (p.length >= 4 && p[2] > 0 && p[3] > 0) return { w: p[2], h: p[3] };
     }
-    // Fallback: measure rendered size
-    var bbox = svg.getBBox();
-    if (bbox && bbox.width > 0) return { w: bbox.width, h: bbox.height };
-    return svg.width && svg.height.baseVal ? { w: svg.width.baseVal.value, h: svg.height.baseVal.value } : null;
+    return null;
   }
 
   function centerDiagram() {
     if (!svg) return;
-    var vb = getViewBox();
-    if (!vb || vb.w === 0 || vb.h === 0) return;
+    var sz = getSvgSize();
+    if (!sz || sz.w === 0 || sz.h === 0) return;
     var rect = getContainerRect();
     if (rect.width === 0 || rect.height === 0) return;
     var pad = 20;
     var availW = rect.width - pad * 2;
     var availH = rect.height - pad * 2;
     if (availW <= 0 || availH <= 0) return;
-    var s = Math.min(1.5, Math.max(0.25, availW / vb.w));
-    var sH = availH / vb.h;
-    if (s * vb.h > availH) s = Math.min(s, sH);
+    var sW = availW / sz.w;
+    var sH = availH / sz.h;
+    var s = Math.min(1.5, Math.max(0.25, Math.min(sW, sH)));
     scale = s;
-    tx = (rect.width - vb.w * scale) / 2;
-    ty = (rect.height - vb.h * scale) / 2;
+    tx = (rect.width - sz.w * scale) / 2;
+    ty = (rect.height - sz.h * scale) / 2;
     update();
   }
 
@@ -95,7 +100,18 @@
     });
   }
 
-  mermaid.initialize({startOnLoad: false, securityLevel: 'loose', theme: 'base'});
+  // Disable useMaxWidth so SVGs render at intrinsic size (not 100% container width)
+  // This ensures getBBox()/viewBox dimensions match the actual rendered SVG size
+  mermaid.initialize({
+    startOnLoad: false,
+    securityLevel: 'loose',
+    theme: 'base',
+    flowchart: { useMaxWidth: false },
+    sequence: { useMaxWidth: false },
+    class: { useMaxWidth: false },
+    state: { useMaxWidth: false },
+    gantt: { useMaxWidth: false }
+  });
 
   document.addEventListener('DOMContentLoaded', async function() {
     await mermaid.run({ querySelector: '.mermaid' });
@@ -103,6 +119,9 @@
     if (!svg) return;
 
     svg.style.cursor = 'grab';
+    svg.style.transformOrigin = '0 0';
+    // Hide briefly to prevent flash of oversized diagram before centering
+    svg.style.opacity = '0';
 
     // Mouse drag for pan
     svg.addEventListener('mousedown', function(e) {
@@ -175,15 +194,18 @@
       lastTouch = null;
     }, { passive: true });
 
-    // Center diagram with smart initial scale
-    centerDiagram();
+    // Wait for layout to settle before measuring (getBBox race condition guard)
+    requestAnimationFrame(function() {
+      centerDiagram();
+      svg.style.opacity = '1';
 
-    // Re-center on resize
-    if (window.ResizeObserver) {
-      var ro = new ResizeObserver(function() { centerDiagram(); });
-      ro.observe(wrap);
-    }
+      // Re-center on resize
+      if (window.ResizeObserver) {
+        var ro = new ResizeObserver(function() { centerDiagram(); });
+        ro.observe(wrap);
+      }
 
-    setupTooltips();
+      setupTooltips();
+    });
   });
 })();
