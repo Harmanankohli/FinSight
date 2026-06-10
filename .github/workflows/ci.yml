@@ -108,4 +108,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build ${{ matrix.service.name }}
-        run: docker build -t finsight-${{ matrix.service.name }}:ci ${{ matrix.service.context }}
+        run: docker build -t finsight-${{ matrix.service.name }}:ci -f ${{ matrix.service.context }}/Dockerfile .
