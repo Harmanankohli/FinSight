@@ -37,40 +37,108 @@ logger = logging.getLogger(__name__)
 
 # Modules providing filesystem, network, process, or reflection capabilities.
 # Keeping this as a frozenset means membership checks are O(1).
-_RESTRICTED_IMPORTS: frozenset[str] = frozenset([
-    # OS / process control
-    "os", "subprocess", "shutil", "shlex", "signal",
-    "threading", "multiprocessing", "concurrent",
-    "pty", "tty", "termios", "fcntl", "mmap",
-    "resource", "pwd", "grp", "crypt",
-    # Networking
-    "socket", "ssl", "http", "urllib", "requests",
-    "ftplib", "poplib", "smtplib", "telnetlib",
-    "xmlrpc", "socketserver",
-    # Filesystem
-    "pathlib", "io", "glob", "fnmatch", "tempfile",
-    "zipfile", "tarfile", "gzip", "bz2", "lzma",
-    # Reflection / introspection
-    "ctypes", "importlib", "pickle", "inspect",
-    "sys", "builtins", "gc", "weakref", "atexit",
-    # Encoding tricks
-    "base64", "codecs",
-])
+_RESTRICTED_IMPORTS: frozenset[str] = frozenset(
+    [
+        # OS / process control
+        "os",
+        "subprocess",
+        "shutil",
+        "shlex",
+        "signal",
+        "threading",
+        "multiprocessing",
+        "concurrent",
+        "pty",
+        "tty",
+        "termios",
+        "fcntl",
+        "mmap",
+        "resource",
+        "pwd",
+        "grp",
+        "crypt",
+        # Networking
+        "socket",
+        "ssl",
+        "http",
+        "urllib",
+        "requests",
+        "ftplib",
+        "poplib",
+        "smtplib",
+        "telnetlib",
+        "xmlrpc",
+        "socketserver",
+        # Filesystem
+        "pathlib",
+        "io",
+        "glob",
+        "fnmatch",
+        "tempfile",
+        "zipfile",
+        "tarfile",
+        "gzip",
+        "bz2",
+        "lzma",
+        # Reflection / introspection
+        "ctypes",
+        "importlib",
+        "pickle",
+        "inspect",
+        "sys",
+        "builtins",
+        "gc",
+        "weakref",
+        "atexit",
+        # Encoding tricks
+        "base64",
+        "codecs",
+    ]
+)
 
 # Builtin-level functions that bypass the AST sandbox or leak the environment.
-_RESTRICTED_CALLS: frozenset[str] = frozenset([
-    "exec", "eval", "open", "__import__", "compile",
-    "globals", "locals", "vars", "dir", "delattr", "setattr",
-])
+_RESTRICTED_CALLS: frozenset[str] = frozenset(
+    [
+        "exec",
+        "eval",
+        "open",
+        "__import__",
+        "compile",
+        "globals",
+        "locals",
+        "vars",
+        "dir",
+        "delattr",
+        "setattr",
+    ]
+)
 
 # Dunder attribute chains used in well-known class-walk sandbox escapes.
-_RESTRICTED_ATTRS: frozenset[str] = frozenset([
-    "system", "popen", "execv", "execve", "execl", "execvp",
-    "spawn", "spawnl", "fork", "forkpty", "exec", "eval",
-    "__class__", "__bases__", "__subclasses__", "__mro__",
-    "__globals__", "__builtins__", "__code__", "__closure__",
-    "__wrapped__",
-])
+_RESTRICTED_ATTRS: frozenset[str] = frozenset(
+    [
+        "system",
+        "popen",
+        "execv",
+        "execve",
+        "execl",
+        "execvp",
+        "spawn",
+        "spawnl",
+        "fork",
+        "forkpty",
+        "exec",
+        "eval",
+        "__class__",
+        "__bases__",
+        "__subclasses__",
+        "__mro__",
+        "__globals__",
+        "__builtins__",
+        "__code__",
+        "__closure__",
+        "__wrapped__",
+    ]
+)
 
 # ── Mode resolution ───────────────────────────────────────────────────────────
 
@@ -78,6 +146,7 @@ _RESTRICTED_ATTRS: frozenset[str] = frozenset([
 def _get_sandbox_mode() -> str:
     """Read SANDBOX_MODE from settings, lazily, to avoid import-time issues."""
     from shared.settings import get_settings
+
     return get_settings().sandbox_mode
 
 
@@ -105,16 +174,27 @@ async def _run_container(code: str, timeout: int = 30) -> dict:
 
     tag = uuid.uuid4().hex[:12]
     docker_cmd = [
-        "docker", "run", "--rm",
-        "--network", "none",
-        "--memory", "512m",
-        "--cpus", "1",
+        "docker",
+        "run",
+        "--rm",
+        "--network",
+        "none",
+        "--memory",
+        "512m",
+        "--cpus",
+        "1",
         "--read-only",
-        "--tmpfs", "/tmp:size=64m",
-        "--user", "65534:65534",
-        "--label", f"finsight-sandbox={tag}",
+        "--tmpfs",
+        "/tmp:size=64m",
+        "--user",
+        "65534:65534",
+        "--label",
+        f"finsight-sandbox={tag}",
         "python:3.12-slim",
-        "python", "-I", "-S", "-",
+        "python",
+        "-I",
+        "-S",
+        "-",
     ]
 
     loop = asyncio.get_event_loop()
@@ -134,12 +214,19 @@ async def _run_container(code: str, timeout: int = 30) -> dict:
         try:
             subprocess.run(
                 f"docker kill $(docker ps -q --filter label=finsight-sandbox={tag})",
-                shell=True, capture_output=True, timeout=5,
+                shell=True,
+                capture_output=True,
+                timeout=5,
             )
         except Exception:
             logger.debug("Docker kill fallback failed (non-fatal)")
         logger.warning("Container sandbox timed out after %ds", timeout)
-        return {"success": False, "stdout": "", "stderr": f"Timed out after {timeout}s", "result": None}
+        return {
+            "success": False,
+            "stdout": "",
+            "stderr": f"Timed out after {timeout}s",
+            "result": None,
+        }
     except Exception as exc:
         logger.warning("Container sandbox subprocess failed: %s", exc)
         return {"success": False, "stdout": "", "stderr": str(exc), "result": None}
@@ -148,6 +235,7 @@ async def _run_container(code: str, timeout: int = 30) -> dict:
 
 
 # ── Static AST safety check ───────────────────────────────────────────────────
+
 
 def _check_code_safety(code: str) -> tuple[bool, str]:
     """Parse and walk the AST to detect forbidden constructs.
@@ -189,13 +277,12 @@ def _check_code_safety(code: str) -> tuple[bool, str]:
             if isinstance(fn, ast.Name) and fn.id == "getattr":
                 if len(node.args) >= 2:
                     attr_arg = node.args[1]
-                    if isinstance(attr_arg, ast.Constant) and isinstance(
-                        attr_arg.value, str
-                    ) and (
-                        attr_arg.value in _RESTRICTED_ATTRS
-                        or (
-                            attr_arg.value.startswith("__")
-                            and attr_arg.value.endswith("__")
+                    if (
+                        isinstance(attr_arg, ast.Constant)
+                        and isinstance(attr_arg.value, str)
+                        and (
+                            attr_arg.value in _RESTRICTED_ATTRS
+                            or (attr_arg.value.startswith("__") and attr_arg.value.endswith("__"))
                         )
                     ):
                         return False, f"Restricted getattr: {attr_arg.value}"
@@ -209,13 +296,9 @@ def _check_code_safety(code: str) -> tuple[bool, str]:
         # Catches obj['__class__'] and similar dict-key escape patterns
         if isinstance(node, ast.Subscript):
             slice_node = node.slice
-            if isinstance(slice_node, ast.Constant) and isinstance(
-                slice_node.value, str
-            ):
+            if isinstance(slice_node, ast.Constant) and isinstance(slice_node.value, str):
                 val = slice_node.value
-                if val in _RESTRICTED_ATTRS or (
-                    val.startswith("__") and val.endswith("__")
-                ):
+                if val in _RESTRICTED_ATTRS or (val.startswith("__") and val.endswith("__")):
                     return False, f"Restricted subscript key: {val}"
 
     return True, ""
@@ -280,6 +363,7 @@ def _sandbox_preexec() -> None:
     """
     try:
         import resource as _res
+
         _res.setrlimit(_res.RLIMIT_CPU, (25, 25))
         _res.setrlimit(_res.RLIMIT_AS, (512 * 1024 * 1024, 512 * 1024 * 1024))
         _res.setrlimit(_res.RLIMIT_NOFILE, (0, 0))
@@ -309,7 +393,12 @@ async def run_sandbox(code: str, timeout: int = 30, principal: str = "mcp-server
 
     if mode == "disabled":
         logger.info("Sandbox disabled — blocking code execution")
-        return {"success": False, "stdout": "", "stderr": "execute_python disabled by SANDBOX_MODE", "result": None}
+        return {
+            "success": False,
+            "stdout": "",
+            "stderr": "execute_python disabled by SANDBOX_MODE",
+            "result": None,
+        }
 
     t0 = asyncio.get_event_loop().time()
 
@@ -355,7 +444,12 @@ async def _run_ast(code: str, timeout: int = 30) -> dict:
         return _parse_sandbox_output(proc)
     except subprocess.TimeoutExpired:
         logger.warning("Sandbox timed out after %ds", timeout)
-        return {"success": False, "stdout": "", "stderr": f"Timed out after {timeout}s", "result": None}
+        return {
+            "success": False,
+            "stdout": "",
+            "stderr": f"Timed out after {timeout}s",
+            "result": None,
+        }
     except Exception as exc:
         logger.warning("Sandbox subprocess failed: %s", exc)
         return {"success": False, "stdout": "", "stderr": str(exc), "result": None}
@@ -373,14 +467,14 @@ def _parse_sandbox_output(proc: subprocess.CompletedProcess) -> dict:
     for line in proc.stdout.splitlines():
         if line.startswith("__RESULT__:"):
             try:
-                result = json.loads(line[len("__RESULT__:"):])
+                result = json.loads(line[len("__RESULT__:") :])
             except json.JSONDecodeError:
-                result = {"raw": line[len("__RESULT__:"):]}
+                result = {"raw": line[len("__RESULT__:") :]}
         else:
             clean_lines.append(line)
 
     cleaned_stderr = "\n".join(
-        line[len("__ERROR__:"):] if line.startswith("__ERROR__:") else line
+        line[len("__ERROR__:") :] if line.startswith("__ERROR__:") else line
         for line in proc.stderr.splitlines()
     )
 

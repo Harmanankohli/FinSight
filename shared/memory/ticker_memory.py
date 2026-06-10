@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """Per-ticker recommendation history storage.
 
 Stores structured InvestmentBrief objects and provides compact context
@@ -13,19 +14,17 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-from shared.settings import IST
 from shared.memory.store import DB_PATH, get_db, write_lock
 from shared.models import InvestmentBrief
+from shared.settings import IST
 
 
 class TickerMemory:
     def __init__(self, db_path: Path = DB_PATH):
         self._db_path = db_path
 
-    # Stores full structured InvestmentBrief (ticker, rec, confidence, rationale). Called after agent completes analysis.
-    async def store_brief(
-        self, brief: InvestmentBrief, user_id: str, session_id: str
-    ) -> str:
+    # Stores full structured InvestmentBrief (ticker, rec, confidence, rationale). Called after agent completes analysis.  # noqa: E501
+    async def store_brief(self, brief: InvestmentBrief, user_id: str, session_id: str) -> str:
         """Store a full InvestmentBrief. Returns the record ID."""
         record_id = str(uuid.uuid4())
         async with write_lock():
@@ -49,11 +48,16 @@ class TickerMemory:
                 ),
             )
             await conn.commit()
-        logger.info("Stored brief for %s (id=%s, rec=%s, conf=%.2f)",
-                    brief.ticker, record_id, brief.final_recommendation, brief.confidence_score)
+        logger.info(
+            "Stored brief for %s (id=%s, rec=%s, conf=%.2f)",
+            brief.ticker,
+            record_id,
+            brief.final_recommendation,
+            brief.confidence_score,
+        )
         return record_id
 
-    # Stores a lightweight text-only brief when no structured InvestmentBrief is available (e.g. fallback or non-agent responses).
+    # Stores a lightweight text-only brief when no structured InvestmentBrief is available (e.g. fallback or non-agent responses).  # noqa: E501
     async def store_minimal(
         self,
         ticker: str,
@@ -117,9 +121,7 @@ class TickerMemory:
         return True
 
     # Fetches most recent brief for a ticker, ordered by analysis_date then created_at descending.
-    async def get_latest(
-        self, ticker: str, user_id: Optional[str] = None
-    ) -> Optional[dict]:
+    async def get_latest(self, ticker: str, user_id: Optional[str] = None) -> Optional[dict]:
         """Get the most recent brief for a ticker."""
         conn = await get_db(self._db_path)
         if user_id:
@@ -156,7 +158,7 @@ class TickerMemory:
             "analysis_date": row[9],
         }
 
-    # Returns last N briefs for a ticker, newest first. Used for trend detection and context building.
+    # Returns last N briefs for a ticker, newest first. Used for trend detection and context building.  # noqa: E501
     async def get_history(
         self, ticker: str, limit: int = 10, user_id: Optional[str] = None
     ) -> list[dict]:
@@ -197,7 +199,7 @@ class TickerMemory:
             for r in rows
         ]
 
-    # Compares latest two briefs on a given field (default: recommendation). Detects upgrades/downgrades across analyses.
+    # Compares latest two briefs on a given field (default: recommendation). Detects upgrades/downgrades across analyses.  # noqa: E501
     async def has_changed(
         self, ticker: str, field: str = "recommendation", *, user_id: Optional[str] = None
     ) -> Optional[dict]:
@@ -216,8 +218,10 @@ class TickerMemory:
             "changed": old_val != new_val,
         }
 
-    # Builds a compact ~300-token summary for prompt injection. Keeps rec, confidence, date, change delta, and truncated rationale.
-    async def format_context(self, ticker: str, max_tokens: int = 300, *, user_id: Optional[str] = None) -> str:
+    # Builds a compact ~300-token summary for prompt injection. Keeps rec, confidence, date, change delta, and truncated rationale.  # noqa: E501
+    async def format_context(
+        self, ticker: str, max_tokens: int = 300, *, user_id: Optional[str] = None
+    ) -> str:
         """Generate a compact memory summary for prompt injection.
 
         Budget: ~300 tokens (~1200 chars). Truncates rationale,
@@ -235,9 +239,7 @@ class TickerMemory:
         rec = latest["recommendation"]
         conf = latest["confidence"]
 
-        lines = [
-            f"Previous analysis for {ticker} ({created}): {rec}, confidence {conf:.2f}."
-        ]
+        lines = [f"Previous analysis for {ticker} ({created}): {rec}, confidence {conf:.2f}."]
 
         if len(history) >= 2:
             prev = history[1]
@@ -247,11 +249,10 @@ class TickerMemory:
             prev_rec = prev["recommendation"]
             if prev_rec != rec:
                 _RANK = {"SELL": 0, "HOLD": 1, "BUY": 2}
-                direction = "upgraded" if _RANK.get(rec, 1) > _RANK.get(prev_rec, 1) else "downgraded"  # noqa: E501
-                lines.append(
-                    f"Prior rec ({prev_date}): {prev_rec} "
-                    f"-> {direction} to {rec}."
-                )
+                direction = (
+                    "upgraded" if _RANK.get(rec, 1) > _RANK.get(prev_rec, 1) else "downgraded"
+                )  # noqa: E501
+                lines.append(f"Prior rec ({prev_date}): {prev_rec} -> {direction} to {rec}.")
 
         brief_data = latest.get("brief_json", "{}")
         try:

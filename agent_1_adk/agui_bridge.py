@@ -49,7 +49,6 @@ from shared.guardrails import is_off_topic
 
 logger = logging.getLogger(__name__)
 
-from shared.logging_config import logged, logged_sync
 
 _AGENT_DISPLAY_NAMES = {
     "financial rag agent": "Financial RAG Agent",
@@ -77,8 +76,9 @@ def _extract_user_text(payload: RunAgentInput) -> str:
 
 async def _get_today_cached_text(ticker: str, *, user_id: str | None = None) -> str | None:
     from datetime import datetime
-    from shared.settings import IST
+
     from shared.memory import TickerMemory
+    from shared.settings import IST
 
     tm = TickerMemory()
     latest = await tm.get_latest(ticker, user_id=user_id)
@@ -104,8 +104,9 @@ async def _get_today_cached_text(ticker: str, *, user_id: str | None = None) -> 
 
 async def _build_memory_context(user_input: str, user_id: str) -> str:
     from datetime import datetime
-    from shared.settings import IST
+
     from shared.memory import PortfolioStore, TickerMemory
+    from shared.settings import IST
     from shared.ticker_utils import extract_ticker
 
     ticker = extract_ticker(user_input)
@@ -123,11 +124,13 @@ async def _build_memory_context(user_input: str, user_id: str) -> str:
                     analysis_date = raw.split("T")[0] if "T" in raw else raw[:10]
                 today = datetime.now(IST).date().isoformat()
                 if analysis_date == today:
-                    parts.append(f"[TODAY — analysis is current, you may return it directly without calling agents again] {context}")
+                    parts.append(
+                        f"[TODAY — analysis is current, you may return it directly without calling agents again] {context}"  # noqa: E501
+                    )
                 else:
                     parts.append(
                         f"[STALE — analyzed on {analysis_date}, today is {today}. "
-                        f"You MUST call ALL agents for a fresh analysis before responding.] {context}"
+                        f"You MUST call ALL agents for a fresh analysis before responding.] {context}"  # noqa: E501
                     )
 
     ps = PortfolioStore()
@@ -151,8 +154,9 @@ async def _auto_save_brief(
 ) -> None:
     """Persist the investment brief to TickerMemory after synthesis completes."""
     from datetime import datetime
-    from shared.settings import IST
+
     from shared.memory import PerformanceTracker, TickerMemory
+    from shared.settings import IST
     from shared.ticker_utils import extract_ticker
 
     try:
@@ -184,15 +188,21 @@ async def _auto_save_brief(
             conf = raw / 100.0 if raw > 1.0 else raw
 
         await tm.store_minimal(
-            ticker=ticker, user_id=user_id, session_id=session_id,
-            query=user_query, response_text=response_text,
-            recommendation=rec, confidence=round(conf, 2),
+            ticker=ticker,
+            user_id=user_id,
+            session_id=session_id,
+            query=user_query,
+            response_text=response_text,
+            recommendation=rec,
+            confidence=round(conf, 2),
         )
 
         pt = PerformanceTracker()
         await pt.record_recommendation(
-            ticker=ticker, user_id=user_id,
-            recommendation=rec, confidence=round(conf, 2),
+            ticker=ticker,
+            user_id=user_id,
+            recommendation=rec,
+            confidence=round(conf, 2),
         )
         logger.info("Auto-saved brief: %s %s (%.0f%%)", ticker, rec, conf * 100)
     except Exception:
@@ -219,52 +229,85 @@ async def _stream(
     synthesis_parts: list[str] = []
     had_send_message = False
 
-    yield sse(RunStartedEvent(
-        type=EventType.RUN_STARTED,
-        thread_id=thread_id,
-        run_id=run_id,
-    ))
+    yield sse(
+        RunStartedEvent(
+            type=EventType.RUN_STARTED,
+            thread_id=thread_id,
+            run_id=run_id,
+        )
+    )
 
     # Seed the state so JSON Patch operations resolve against a known root
-    yield sse(StateSnapshotEvent(
-        type=EventType.STATE_SNAPSHOT,
-        snapshot={"active_agents": [], "active_agent": None},
-    ))
+    yield sse(
+        StateSnapshotEvent(
+            type=EventType.STATE_SNAPSHOT,
+            snapshot={"active_agents": [], "active_agent": None},
+        )
+    )
 
     # Off-topic guardrail
     if is_off_topic(user_text):
-        rejection = "I'm specialized in investment research. Please ask about stocks, portfolios, or financial analysis."
-        yield sse(TextMessageStartEvent(type=EventType.TEXT_MESSAGE_START, message_id=msg_id, role="assistant"))
-        yield sse(TextMessageContentEvent(type=EventType.TEXT_MESSAGE_CONTENT, message_id=msg_id, delta=rejection))
+        rejection = "I'm specialized in investment research. Please ask about stocks, portfolios, or financial analysis."  # noqa: E501
+        yield sse(
+            TextMessageStartEvent(
+                type=EventType.TEXT_MESSAGE_START, message_id=msg_id, role="assistant"
+            )
+        )
+        yield sse(
+            TextMessageContentEvent(
+                type=EventType.TEXT_MESSAGE_CONTENT, message_id=msg_id, delta=rejection
+            )
+        )
         yield sse(TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=msg_id))
         yield sse(RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=run_id))
         return
 
     # Today's brief cache check
     from shared.ticker_utils import extract_ticker
+
     ticker_hint = extract_ticker(user_text) or "unknown"
     if ticker_hint != "unknown":
         cached = await _get_today_cached_text(ticker_hint, user_id=user_id)
         if cached:
-            yield sse(TextMessageStartEvent(type=EventType.TEXT_MESSAGE_START, message_id=msg_id, role="assistant"))
+            yield sse(
+                TextMessageStartEvent(
+                    type=EventType.TEXT_MESSAGE_START, message_id=msg_id, role="assistant"
+                )
+            )
             chunk_size = 500
             for i in range(0, len(cached), chunk_size):
-                yield sse(TextMessageContentEvent(type=EventType.TEXT_MESSAGE_CONTENT, message_id=msg_id, delta=cached[i:i+chunk_size]))
+                yield sse(
+                    TextMessageContentEvent(
+                        type=EventType.TEXT_MESSAGE_CONTENT,
+                        message_id=msg_id,
+                        delta=cached[i : i + chunk_size],
+                    )
+                )
             yield sse(TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=msg_id))
-            yield sse(RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=run_id))
+            yield sse(
+                RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=run_id)
+            )
             return
 
     # Build memory context for prompt injection
     memory_ctx = await _build_memory_context(user_text, user_id)
-    enriched_input = f"[MEMORY CONTEXT]\n{memory_ctx}\n[/MEMORY CONTEXT]\n\n{user_text}" if memory_ctx else user_text
+    enriched_input = (
+        f"[MEMORY CONTEXT]\n{memory_ctx}\n[/MEMORY CONTEXT]\n\n{user_text}"
+        if memory_ctx
+        else user_text
+    )
 
     # Ensure ADK session exists for this thread
     existing = await runner.session_service.get_session(
-        app_name=runner.app_name, user_id=user_id, session_id=session_id,
+        app_name=runner.app_name,
+        user_id=user_id,
+        session_id=session_id,
     )
     if existing is None:
         await runner.session_service.create_session(
-            app_name=runner.app_name, user_id=user_id, session_id=session_id,
+            app_name=runner.app_name,
+            user_id=user_id,
+            session_id=session_id,
         )
 
     content = types.Content(role="user", parts=[types.Part.from_text(text=enriched_input)])
@@ -272,7 +315,9 @@ async def _stream(
     yield sse(StepStartedEvent(type=EventType.STEP_STARTED, step_name="orchestrator"))
 
     try:
-        async for event in runner.run_async(user_id=user_id, session_id=session_id, new_message=content):
+        async for event in runner.run_async(
+            user_id=user_id, session_id=session_id, new_message=content
+        ):
             # Function calls → sub-agent delegations
             for fn_call in event.get_function_calls():
                 call_id = str(uuid.uuid4())
@@ -287,25 +332,35 @@ async def _stream(
                     agent_display = _display_name(agent_raw)
                     if agent_display not in active_agents:
                         active_agents.append(agent_display)
-                    yield sse(StateDeltaEvent(
-                        type=EventType.STATE_DELTA,
-                        delta=[
-                            {"op": "replace", "path": "/active_agents", "value": list(active_agents)},
-                            {"op": "replace", "path": "/active_agent", "value": agent_display},
-                        ],
-                    ))
+                    yield sse(
+                        StateDeltaEvent(
+                            type=EventType.STATE_DELTA,
+                            delta=[
+                                {
+                                    "op": "replace",
+                                    "path": "/active_agents",
+                                    "value": list(active_agents),
+                                },
+                                {"op": "replace", "path": "/active_agent", "value": agent_display},
+                            ],
+                        )
+                    )
 
-                yield sse(ToolCallStartEvent(
-                    type=EventType.TOOL_CALL_START,
-                    tool_call_id=call_id,
-                    tool_call_name=fn_call.name,
-                    parent_message_id=msg_id,
-                ))
-                yield sse(ToolCallArgsEvent(
-                    type=EventType.TOOL_CALL_ARGS,
-                    tool_call_id=call_id,
-                    delta=json.dumps(dict(fn_call.args or {})),
-                ))
+                yield sse(
+                    ToolCallStartEvent(
+                        type=EventType.TOOL_CALL_START,
+                        tool_call_id=call_id,
+                        tool_call_name=fn_call.name,
+                        parent_message_id=msg_id,
+                    )
+                )
+                yield sse(
+                    ToolCallArgsEvent(
+                        type=EventType.TOOL_CALL_ARGS,
+                        tool_call_id=call_id,
+                        delta=json.dumps(dict(fn_call.args or {})),
+                    )
+                )
                 yield sse(ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=call_id))
 
             # Function responses → sub-agent results
@@ -321,43 +376,51 @@ async def _stream(
                     result_text = json.dumps(raw.model_dump())
                 else:
                     result_text = str(raw)
-                yield sse(ToolCallResultEvent(
-                    type=EventType.TOOL_CALL_RESULT,
-                    message_id=str(uuid.uuid4()),
-                    tool_call_id=call_id,
-                    content=result_text,
-                    role="tool",
-                ))
+                yield sse(
+                    ToolCallResultEvent(
+                        type=EventType.TOOL_CALL_RESULT,
+                        message_id=str(uuid.uuid4()),
+                        tool_call_id=call_id,
+                        content=result_text,
+                        role="tool",
+                    )
+                )
 
             # Text content → final synthesis
             if event.content and event.content.parts:
                 for part in event.content.parts:
                     if part.text:
                         if not text_started:
-                            yield sse(TextMessageStartEvent(
-                                type=EventType.TEXT_MESSAGE_START,
-                                message_id=msg_id,
-                                role="assistant",
-                            ))
+                            yield sse(
+                                TextMessageStartEvent(
+                                    type=EventType.TEXT_MESSAGE_START,
+                                    message_id=msg_id,
+                                    role="assistant",
+                                )
+                            )
                             text_started = True
                         synthesis_parts.append(part.text)
-                        yield sse(TextMessageContentEvent(
-                            type=EventType.TEXT_MESSAGE_CONTENT,
-                            message_id=msg_id,
-                            delta=part.text,
-                        ))
+                        yield sse(
+                            TextMessageContentEvent(
+                                type=EventType.TEXT_MESSAGE_CONTENT,
+                                message_id=msg_id,
+                                delta=part.text,
+                            )
+                        )
 
         if text_started:
             yield sse(TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=msg_id))
 
         if active_agents:
-            yield sse(StateDeltaEvent(
-                type=EventType.STATE_DELTA,
-                delta=[
-                    {"op": "replace", "path": "/active_agents", "value": []},
-                    {"op": "replace", "path": "/active_agent", "value": None},
-                ],
-            ))
+            yield sse(
+                StateDeltaEvent(
+                    type=EventType.STATE_DELTA,
+                    delta=[
+                        {"op": "replace", "path": "/active_agents", "value": []},
+                        {"op": "replace", "path": "/active_agent", "value": None},
+                    ],
+                )
+            )
 
         yield sse(StepFinishedEvent(type=EventType.STEP_FINISHED, step_name="orchestrator"))
 
@@ -389,9 +452,8 @@ def make_agui_bridge_endpoint(runner: Runner):
         thread_id = payload.thread_id or str(uuid.uuid4())
         run_id = payload.run_id or str(uuid.uuid4())
 
-        user_id = (
-            request.headers.get("X-FinSight-User-Id")
-            or (payload.forwarded_props or {}).get("user_id")
+        user_id = request.headers.get("X-FinSight-User-Id") or (payload.forwarded_props or {}).get(
+            "user_id"
         )
         if not user_id:
             user_id = f"anon-{uuid.uuid4()}"

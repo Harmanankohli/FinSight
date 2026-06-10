@@ -1,15 +1,15 @@
+# ruff: noqa: E402
 import asyncio
 import logging
-import sys
 
 from shared.bootstrap import bootstrap
+
 _settings = bootstrap("orchestrator")
 
 import click
 import uvicorn
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
-from shared.a2a_store import SQLiteTaskStore
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
 from google.adk.runners import Runner
 from google.adk.sessions import DatabaseSessionService
@@ -17,10 +17,10 @@ from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
-from starlette.routing import Mount, Route
-from starlette.staticfiles import StaticFiles
+from starlette.routing import Route
 
-from shared.memory import SQLiteMemoryService, init_db
+from shared.a2a_store import SQLiteTaskStore
+from shared.memory import SQLiteMemoryService
 from shared.observability import init_instrumentation
 
 init_instrumentation("orchestrator")
@@ -29,8 +29,8 @@ from shared.settings import ADK_MODEL
 
 from .agent import root_agent
 from .agent_executor import FinSightAgentExecutor
-from .agui_endpoint import make_agui_endpoint
 from .agui_bridge import make_agui_bridge_endpoint
+from .agui_endpoint import make_agui_endpoint
 from .api_routes import get_api_routes
 from .auth_routes import get_auth_routes
 
@@ -59,7 +59,7 @@ agent_card = AgentCard(
         AgentSkill(
             id="investment_research",
             name="Investment Research",
-            description="Answer investment queries with a complete research brief including RAG, quant, and market context analysis",
+            description="Answer investment queries with a complete research brief including RAG, quant, and market context analysis",  # noqa: E501
             tags=["investment", "stock research", "portfolio"],
             examples=[
                 "Should I invest in NVDA given my current portfolio?",
@@ -78,10 +78,8 @@ _req.schemes.get_or_create("bearerAuth")
 
 task_store = SQLiteTaskStore()
 
-# session_service: persists conversation turns; memory_service: enables semantic recall (load_memory tool)
-session_service = DatabaseSessionService(
-    db_url="sqlite+aiosqlite:///./db/adk_sessions.db"
-)
+# session_service: persists conversation turns; memory_service: enables semantic recall (load_memory tool)  # noqa: E501
+session_service = DatabaseSessionService(db_url="sqlite+aiosqlite:///./db/adk_sessions.db")
 memory_service = SQLiteMemoryService()
 
 # ADK Runner: ties agent, session persistence, and memory service together for execution
@@ -97,6 +95,7 @@ request_handler = DefaultRequestHandler(
     task_store=task_store,
     agent_card=agent_card,
 )
+
 
 async def health(request):
     return JSONResponse({"status": "ok", "agent": "orchestrator"})
@@ -120,9 +119,11 @@ routes.extend(get_auth_routes())
 
 # Serve generated reports as static files (PPTX/DOCX downloads) — authenticated
 from pathlib import Path as _Path
+
 _reports_dir = _Path("db/reports")
 _reports_dir.mkdir(parents=True, exist_ok=True)
 from starlette.responses import FileResponse
+
 from shared.auth.middleware import require as _require_auth
 
 _SAFE_FILENAME_RE = __import__("re", fromlist=["compile"]).compile(r"[^A-Za-z0-9._-]")
@@ -133,17 +134,26 @@ async def _authenticated_report(request):
     try:
         _require_auth(request, kinds=("user", "service"))
     except Exception:
-        return JSONResponse({"error": {"code": "UNAUTHENTICATED", "message": "Authentication required"}}, status_code=401)
+        return JSONResponse(
+            {"error": {"code": "UNAUTHENTICATED", "message": "Authentication required"}},
+            status_code=401,
+        )
     filename = request.path_params.get("filename", "")
     if not _SAFE_FILENAME_RE.sub("", filename) == filename:
-        return JSONResponse({"error": {"code": "VALIDATION_ERROR", "message": "Invalid filename"}}, status_code=400)
+        return JSONResponse(
+            {"error": {"code": "VALIDATION_ERROR", "message": "Invalid filename"}}, status_code=400
+        )
     file_path = (_reports_dir / filename).resolve()
     try:
         file_path.relative_to(_reports_dir.resolve())
     except ValueError:
-        return JSONResponse({"error": {"code": "FORBIDDEN", "message": "Path traversal blocked"}}, status_code=403)
+        return JSONResponse(
+            {"error": {"code": "FORBIDDEN", "message": "Path traversal blocked"}}, status_code=403
+        )
     if not file_path.is_file():
-        return JSONResponse({"error": {"code": "NOT_FOUND", "message": "File not found"}}, status_code=404)
+        return JSONResponse(
+            {"error": {"code": "NOT_FOUND", "message": "File not found"}}, status_code=404
+        )
     return FileResponse(str(file_path))
 
 
@@ -168,6 +178,7 @@ app = Starlette(
 async def start_server(host: str, port: int) -> None:
     # Initialize SQLite tables before accepting connections
     from shared.memory.store import get_db, prune_old_records
+
     await get_db()
     logger.info("Memory layer initialized with persistent SQLite storage")
 

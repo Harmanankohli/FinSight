@@ -5,16 +5,16 @@ synthetic state and a stubbed MCP client. Tests assert output keys
 and types — not precise numeric values — so they serve as a safety
 net for structural refactoring (WP 1.3).
 """
+
 from __future__ import annotations
 
 from datetime import date, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import numpy as np
-import pytest
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 def _price_data(n: int = 252, seed: int = 42) -> dict:
     rng = np.random.default_rng(seed)
@@ -27,9 +27,9 @@ def _price_data(n: int = 252, seed: int = 42) -> dict:
 def _stub_mcp() -> MagicMock:
     """MCP client that returns plausible-shaped responses for every tool call."""
     mcp = MagicMock()
-    mcp.call_tool = AsyncMock(return_value=MagicMock(
-        content=[MagicMock(text='{"data": [], "error": null}')]
-    ))
+    mcp.call_tool = AsyncMock(
+        return_value=MagicMock(content=[MagicMock(text='{"data": [], "error": null}')])
+    )
     return mcp
 
 
@@ -62,6 +62,7 @@ def _base_state(**overrides) -> dict:
 
 # ── compute_metrics_node ──────────────────────────────────────────────────────
 
+
 async def test_compute_metrics_output_keys():
     from agent_3_langgraph.nodes import compute_metrics_node
 
@@ -87,12 +88,18 @@ async def test_compute_metrics_empty_prices():
 
 # ── stress_test_node ──────────────────────────────────────────────────────────
 
+
 async def test_stress_test_output_keys():
     from agent_3_langgraph.nodes import stress_test_node
 
     pd = _price_data()
-    metrics = {"annual_volatility": 0.35, "max_drawdown": -0.22, "sharpe_ratio": 1.2,
-                "beta": 1.5, "var_95_daily": -0.025}
+    metrics = {
+        "annual_volatility": 0.35,
+        "max_drawdown": -0.22,
+        "sharpe_ratio": 1.2,
+        "beta": 1.5,
+        "var_95_daily": -0.025,
+    }
     state = _base_state(price_data=pd, metrics=metrics, volatility=0.35, is_high_volatility=True)
     result = await stress_test_node(state)
 
@@ -104,11 +111,17 @@ async def test_stress_test_output_keys():
 
 # ── format_output_node ────────────────────────────────────────────────────────
 
+
 async def test_format_output_keys():
     from agent_3_langgraph.nodes import format_output_node
 
-    metrics = {"annual_volatility": 0.35, "sharpe_ratio": 1.5, "beta": 1.2,
-                "var_95_daily": -0.02, "max_drawdown": -0.25}
+    metrics = {
+        "annual_volatility": 0.35,
+        "sharpe_ratio": 1.5,
+        "beta": 1.2,
+        "var_95_daily": -0.02,
+        "max_drawdown": -0.25,
+    }
     state = _base_state(
         price_data=_price_data(),
         metrics=metrics,
@@ -126,18 +139,20 @@ async def test_format_output_keys():
 
 # ── fetch_price_data_node ─────────────────────────────────────────────────────
 
+
 async def test_fetch_price_data_returns_price_data_key():
-    from agent_3_langgraph.nodes import fetch_price_data_node
     import json
+
+    from agent_3_langgraph.nodes import fetch_price_data_node
 
     price_payload = {
         "ticker": "NVDA",
         "data": [{"Close": 100.0, "Date": "2024-01-01"}],
     }
     mcp = _stub_mcp()
-    mcp.call_tool = AsyncMock(return_value=MagicMock(
-        content=[MagicMock(text=json.dumps(price_payload))]
-    ))
+    mcp.call_tool = AsyncMock(
+        return_value=MagicMock(content=[MagicMock(text=json.dumps(price_payload))])
+    )
     state = _base_state(mcp_client=mcp)
     result = await fetch_price_data_node(state)
 
@@ -147,9 +162,11 @@ async def test_fetch_price_data_returns_price_data_key():
 
 # ── dcf_valuation_node ────────────────────────────────────────────────────────
 
+
 async def test_dcf_valuation_output_keys():
-    from agent_3_langgraph.nodes import dcf_valuation_node
     import json
+
+    from agent_3_langgraph.nodes import dcf_valuation_node
 
     financials_payload = {
         "income_statement": {},
@@ -158,9 +175,9 @@ async def test_dcf_valuation_output_keys():
         "info": {"currentPrice": 500.0, "sharesOutstanding": 2_440_000_000},
     }
     mcp = _stub_mcp()
-    mcp.call_tool = AsyncMock(return_value=MagicMock(
-        content=[MagicMock(text=json.dumps(financials_payload))]
-    ))
+    mcp.call_tool = AsyncMock(
+        return_value=MagicMock(content=[MagicMock(text=json.dumps(financials_payload))])
+    )
     state = _base_state(mcp_client=mcp, price_data=_price_data())
     result = await dcf_valuation_node(state)
 
@@ -169,9 +186,11 @@ async def test_dcf_valuation_output_keys():
 
 # ── peer_comparison_node ──────────────────────────────────────────────────────
 
+
 async def test_peer_comparison_output_keys():
-    from agent_3_langgraph.nodes import peer_comparison_node
     import json
+
+    from agent_3_langgraph.nodes import peer_comparison_node
 
     peers_payload = {"ticker": "NVDA", "peers": ["AMD", "INTC"]}
     peer_fin = {"income_statement": {}, "balance_sheet": {}, "cash_flow": {}, "info": {}}

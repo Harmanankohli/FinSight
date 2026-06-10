@@ -1,5 +1,7 @@
 import asyncio
+
 import pytest
+
 from shared.ttl_cache import TTLCache
 
 
@@ -70,6 +72,7 @@ async def test_different_keys_each_fetch_independently():
         async def _fetch():
             calls[key] = calls.get(key, 0) + 1
             return f"val-{key}"
+
         return _fetch
 
     await cache.get_or_fetch("a", await make_fetch("a"))

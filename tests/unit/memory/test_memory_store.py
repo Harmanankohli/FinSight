@@ -1,12 +1,9 @@
-import pytest
-from shared.memory.store import get_db, init_db, SCHEMA_VERSION
+from shared.memory.store import SCHEMA_VERSION, get_db, init_db
 
 
 async def test_init_db_creates_tables(memory_db):
     conn = await get_db(memory_db)
-    cursor = await conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
-    )
+    cursor = await conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
     tables = {row[0] for row in await cursor.fetchall()}
     required = {
         "ticker_briefs",
@@ -25,18 +22,14 @@ async def test_init_db_idempotent(memory_db):
     """Calling init_db twice must not raise."""
     conn = await get_db(memory_db)
     await init_db(conn)  # second call on same DB
-    cursor = await conn.execute(
-        "SELECT version FROM schema_version ORDER BY version DESC LIMIT 1"
-    )
+    cursor = await conn.execute("SELECT version FROM schema_version ORDER BY version DESC LIMIT 1")
     row = await cursor.fetchone()
     assert row[0] == SCHEMA_VERSION
 
 
 async def test_schema_version_written(memory_db):
     conn = await get_db(memory_db)
-    cursor = await conn.execute(
-        "SELECT version FROM schema_version ORDER BY version DESC LIMIT 1"
-    )
+    cursor = await conn.execute("SELECT version FROM schema_version ORDER BY version DESC LIMIT 1")
     row = await cursor.fetchone()
     assert row is not None
     assert row[0] == SCHEMA_VERSION
@@ -51,9 +44,7 @@ async def test_wal_mode_enabled(memory_db):
 
 async def test_indexes_created(memory_db):
     conn = await get_db(memory_db)
-    cursor = await conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='index' ORDER BY name"
-    )
+    cursor = await conn.execute("SELECT name FROM sqlite_master WHERE type='index' ORDER BY name")
     indexes = {row[0] for row in await cursor.fetchall()}
     required_indexes = {
         "idx_briefs_ticker",

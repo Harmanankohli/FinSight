@@ -1,7 +1,10 @@
+# ruff: noqa: E501
 import logging
 from typing import Any
 
 from langgraph.graph import END, START, StateGraph
+
+from shared.logging_config import logged, logged_sync
 
 from .nodes import (
     analyst_positioning_node,
@@ -19,18 +22,23 @@ from .nodes import (
     technical_analysis_node,
 )
 from .state import QuantAnalysisState
-from shared.logging_config import logged, logged_sync
 
 logger = logging.getLogger(__name__)
 
 
 @logged_sync()
 def _route_on_volatility(state: QuantAnalysisState) -> str:
-    # Conditional edge: high volatility (>35%) → stress test (tail-risk focused), low → DCF (fundamental value)
+    # Conditional edge: high volatility (>35%) → stress test (tail-risk focused), low → DCF (fundamental value)  # noqa: E501
     if state.get("is_high_volatility", False):
-        logger.info("Routing %s to stress_test (volatility=%.4f high)", state.get("ticker"), state.get("volatility", 0))
+        logger.info(
+            "Routing %s to stress_test (volatility=%.4f high)",
+            state.get("ticker"),
+            state.get("volatility", 0),
+        )
         return "stress_test"
-    logger.info("Routing %s to dcf (volatility=%.4f low)", state.get("ticker"), state.get("volatility", 0))
+    logger.info(
+        "Routing %s to dcf (volatility=%.4f low)", state.get("ticker"), state.get("volatility", 0)
+    )
     return "dcf"
 
 
@@ -44,13 +52,13 @@ class QuantAnalysisGraph:
         """
         Fan-out topology:
 
-        START ──→ fetch_prices ──→ compute_base_metrics ──[conditional]──→ run_stress_test ──→ portfolio_correlation ──→ format_output
-                               └──→ technical_analysis ──────────────────────────────────────→ portfolio_correlation    ↑
-               └──→ fetch_fundamentals ──→ peer_comparison ──────────────────────────────────────────────────────────→ │
-                                      └──→ analyst_positioning ──────────────────────────────────────────────────────→ │
-               └──→ options_flow ──────────────────────────────────────────────────────────────────────────────────── → │
-               └──→ insider_signals ───────────────────────────────────────────────────────────────────────────────── → │
-                                                                         └──→ run_dcf ──→ portfolio_correlation ──────→ │
+        START ──→ fetch_prices ──→ compute_base_metrics ──[conditional]──→ run_stress_test ──→ portfolio_correlation ──→ format_output  # noqa: E501
+                               └──→ technical_analysis ──────────────────────────────────────→ portfolio_correlation    ↑  # noqa: E501
+               └──→ fetch_fundamentals ──→ peer_comparison ──────────────────────────────────────────────────────────→ │  # noqa: E501
+                                      └──→ analyst_positioning ──────────────────────────────────────────────────────→ │  # noqa: E501
+               └──→ options_flow ──────────────────────────────────────────────────────────────────────────────────── → │  # noqa: E501
+               └──→ insider_signals ───────────────────────────────────────────────────────────────────────────────── → │  # noqa: E501
+                                                                         └──→ run_dcf ──→ portfolio_correlation ──────→ │  # noqa: E501
         """
         builder = StateGraph(QuantAnalysisState)
 
@@ -114,8 +122,12 @@ class QuantAnalysisGraph:
 
     @logged()
     async def run(
-        self, ticker: str, period: str = "5y", portfolio_holdings: list[str] | None = None,
-        mcp_client: Any | None = None, langfuse_handler: Any | None = None,
+        self,
+        ticker: str,
+        period: str = "5y",
+        portfolio_holdings: list[str] | None = None,
+        mcp_client: Any | None = None,
+        langfuse_handler: Any | None = None,
     ) -> dict:
         initial: QuantAnalysisState = {
             "ticker": ticker.upper(),
@@ -143,7 +155,12 @@ class QuantAnalysisGraph:
             "mcp_client": mcp_client,
         }
 
-        logger.info("Starting graph execution for %s (period=%s, holdings=%d)", ticker, period, len(portfolio_holdings or []))
+        logger.info(
+            "Starting graph execution for %s (period=%s, holdings=%d)",
+            ticker,
+            period,
+            len(portfolio_holdings or []),
+        )
         config = {}
         if langfuse_handler:
             config["callbacks"] = [langfuse_handler]
@@ -152,11 +169,14 @@ class QuantAnalysisGraph:
         dcf_error = result.get("dcf_error")
         if dcf_error:
             logger.warning("DCF failed for %s: %s", ticker.upper(), dcf_error)
-        logger.info("Graph execution complete for %s: rec=%s, dcf=%s, stress=%s, peers=%s",
-                     ticker.upper(), result.get("recommendation"),
-                     "ok" if result.get("dcf_valuation") else "null",
-                     "ok" if result.get("stress_test_result") else "null",
-                     "ok" if result.get("peer_comparison") else "null")
+        logger.info(
+            "Graph execution complete for %s: rec=%s, dcf=%s, stress=%s, peers=%s",
+            ticker.upper(),
+            result.get("recommendation"),
+            "ok" if result.get("dcf_valuation") else "null",
+            "ok" if result.get("stress_test_result") else "null",
+            "ok" if result.get("peer_comparison") else "null",
+        )
 
         return {
             "ticker": ticker.upper(),

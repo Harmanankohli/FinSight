@@ -11,6 +11,7 @@ def _clean_env(monkeypatch):
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-lf-test")
 
     from shared.settings import reset_settings_for_tests
+
     reset_settings_for_tests()
     yield
     reset_settings_for_tests()

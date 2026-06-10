@@ -7,11 +7,11 @@ from datetime import date, datetime, timezone
 from shared.base_agent import BaseAgent
 from shared.logging_config import logged, logged_sync
 from shared.mcp_client import get_shared_mcp
-from shared.settings import EVAL_ENABLED
 from shared.memory.store import is_filing_ingested, mark_filing_ingested
 from shared.observability import get_langfuse_client
 from shared.runtime_eval import score_rag_response as _eval_rag_response
-from shared.ticker_utils import extract_ticker, validate_ticker, resolve_ticker
+from shared.settings import EVAL_ENABLED
+from shared.ticker_utils import extract_ticker, resolve_ticker, validate_ticker
 from shared.trace_context import extract_trace_ids
 
 from .document_ingestion import DocumentIngestionPipeline
@@ -25,7 +25,7 @@ class RAGAgent(BaseAgent):
     def __init__(self):
         super().__init__(
             agent_name="Financial RAG Agent",
-            description="Retrieves and analyzes financial documents using RAG with ChromaDB and LM Studio",
+            description="Retrieves and analyzes financial documents using RAG with ChromaDB and LM Studio",  # noqa: E501
             content_types=["text", "application/json"],
         )
         self.index = FinancialIndexManager()
@@ -104,7 +104,9 @@ class RAGAgent(BaseAgent):
                                 for filing in new_filings:
                                     if filing.get("edgar_url"):
                                         await mark_filing_ingested(filing["edgar_url"], ticker)
-                                logger.info("Ingested %d new filing(s) for %s", len(new_filings), ticker)
+                                logger.info(
+                                    "Ingested %d new filing(s) for %s", len(new_filings), ticker
+                                )
                         else:
                             logger.info("0 new filings to ingest for %s", ticker)
             self._last_ingestion[ticker] = today
@@ -148,13 +150,22 @@ class RAGAgent(BaseAgent):
                         if not isinstance(article, dict):
                             continue
                         sentiment = article.get("sentiment", 0)
-                        summary = article.get("summary", "") or f"sentiment={sentiment:+.2f}" if sentiment else ""
-                        self._ingestion.ingest_news_article(ticker, {
-                            "title": article.get("title", ""),
-                            "summary": summary,
-                            "url": article.get("link", article.get("url", "")),
-                            "published_at": article.get("published", article.get("published_at", "")),
-                        })
+                        summary = (
+                            article.get("summary", "") or f"sentiment={sentiment:+.2f}"
+                            if sentiment
+                            else ""
+                        )
+                        self._ingestion.ingest_news_article(
+                            ticker,
+                            {
+                                "title": article.get("title", ""),
+                                "summary": summary,
+                                "url": article.get("link", article.get("url", "")),
+                                "published_at": article.get(
+                                    "published", article.get("published_at", "")
+                                ),
+                            },
+                        )
                         ingested += 1
             if ingested > 0:
                 logger.info("Ingested %d news articles for %s", ingested, ticker)
@@ -169,9 +180,7 @@ class RAGAgent(BaseAgent):
         await self._ensure_news_ingested(ticker)
         return await self.index.query(ticker, query_text)
 
-    async def stream(
-        self, query: str, context_id: str, task_id: str
-    ) -> AsyncIterable[dict]:
+    async def stream(self, query: str, context_id: str, task_id: str) -> AsyncIterable[dict]:
         # Emit WORKING status events while awaiting ingestion so the A2A
         # client keeps the connection open rather than receiving a hollow
         # "index warming" placeholder. The orchestrator's SubAgentClient
@@ -181,6 +190,7 @@ class RAGAgent(BaseAgent):
         if ticker:
             today_ingested = self._last_ingestion.get(ticker)
             from datetime import datetime, timezone
+
             today = datetime.now(timezone.utc).date()
             if today_ingested != today:
                 yield {
@@ -225,7 +235,7 @@ class RAGAgent(BaseAgent):
                     "is_task_complete": True,
                     "is_error": True,
                     "require_user_input": False,
-                    "content": "Could not identify a stock ticker from the query. Try using parentheses (AAPL) or $ prefix ($V).",
+                    "content": "Could not identify a stock ticker from the query. Try using parentheses (AAPL) or $ prefix ($V).",  # noqa: E501
                 }
 
             valid, validated_ticker, company = await validate_ticker(ticker)
@@ -248,9 +258,17 @@ class RAGAgent(BaseAgent):
 
             try:
                 result = await self.query(ticker, query)
-                span.update(output={"ticker": ticker, "result_keys": list(result.keys()) if isinstance(result, dict) else "unknown"})
+                span.update(
+                    output={
+                        "ticker": ticker,
+                        "result_keys": list(result.keys())
+                        if isinstance(result, dict)
+                        else "unknown",
+                    }
+                )
                 if EVAL_ENABLED:
                     from shared.eval_gate import defer_eval
+
                     defer_eval(
                         _eval_rag_response,
                         query,

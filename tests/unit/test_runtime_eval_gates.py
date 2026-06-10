@@ -1,5 +1,4 @@
 """Unit tests for runtime_eval gates: dedup, burst limit, kill switch."""
-import pytest
 
 from shared import runtime_eval
 
@@ -71,8 +70,14 @@ def test_score_quant_deterministic_catches_missing_signals():
 def test_score_quant_deterministic_accepts_full_payload():
     result = {
         "signal_scores": {
-            "risk_quality": 0.5, "dcf": 0.3, "fund_value": 0.0, "fund_quality": 0.1,
-            "tech_trend": 0.2, "tech_momentum": 0.4, "peer_positioning": 0.1, "behavioral": 0.0,
+            "risk_quality": 0.5,
+            "dcf": 0.3,
+            "fund_value": 0.0,
+            "fund_quality": 0.1,
+            "tech_trend": 0.2,
+            "tech_momentum": 0.4,
+            "peer_positioning": 0.1,
+            "behavioral": 0.0,
         },
         "options_signals": {"pc_vol": 0.5},
         "insider_signals": {"count": 3},
@@ -89,10 +94,18 @@ def test_score_quant_deterministic_accepts_full_payload():
 def test_score_quant_deterministic_rejects_bad_recommendation():
     result = {
         "signal_scores": {
-            "risk_quality": 0, "dcf": 0, "fund_value": 0, "fund_quality": 0,
-            "tech_trend": 0, "tech_momentum": 0, "peer_positioning": 0, "behavioral": 0,
+            "risk_quality": 0,
+            "dcf": 0,
+            "fund_value": 0,
+            "fund_quality": 0,
+            "tech_trend": 0,
+            "tech_momentum": 0,
+            "peer_positioning": 0,
+            "behavioral": 0,
         },
-        "options_signals": {}, "insider_signals": {}, "positioning": {},
+        "options_signals": {},
+        "insider_signals": {},
+        "positioning": {},
         "recommendation": "MAYBE",  # invalid
         "confidence_score": 0.5,
     }

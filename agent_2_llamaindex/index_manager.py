@@ -3,6 +3,7 @@ import math
 import re
 from datetime import date, datetime
 
+import chromadb
 from llama_index.core import (
     Document,
     Settings,
@@ -10,23 +11,21 @@ from llama_index.core import (
     VectorStoreIndex,
 )
 from llama_index.core.node_parser import SentenceSplitter
-from llama_index.core.vector_stores import MetadataFilters, ExactMatchFilter
+from llama_index.core.response_synthesizers import get_response_synthesizer
+from llama_index.core.vector_stores import ExactMatchFilter, MetadataFilters
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.llms.openai_like import OpenAILike
 from llama_index.vector_stores.chroma import ChromaVectorStore
-import chromadb
 
-
-from llama_index.core.response_synthesizers import get_response_synthesizer
-
-from shared.settings import LLM_MODEL, EMBED_MODEL, CHROMA_DIR, LLM_BASE_URL, LLM_API_KEY
 from shared.logging_config import logged, logged_sync
+from shared.settings import CHROMA_DIR, EMBED_MODEL, LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Hybrid scoring helpers (§8.5.1 + §8.5.2)
 # ---------------------------------------------------------------------------
+
 
 def _keyword_score(query_text: str, node_text: str) -> float:
     """Term-frequency keyword overlap between query terms and node text."""
@@ -70,21 +69,55 @@ def _classify_query_intent(query_text: str) -> list[str]:
     """Return which ChromaDB collections to search based on keywords in the query."""
     q = query_text.lower()
     collections = ["sec_filings"]
-    if any(kw in q for kw in (
-        "news", "recent", "latest", "today", "sentiment", "market", "headline",
-        "article", "impact", "event", "announce", "breaking", "update",
-    )):
+    if any(
+        kw in q
+        for kw in (
+            "news",
+            "recent",
+            "latest",
+            "today",
+            "sentiment",
+            "market",
+            "headline",
+            "article",
+            "impact",
+            "event",
+            "announce",
+            "breaking",
+            "update",
+        )
+    ):
         collections.append("news")
-    if any(kw in q for kw in (
-        "earnings", "revenue", "guidance", "quarter", "call", "eps",
-        "beat", "miss", "forecast",
-    )):
+    if any(
+        kw in q
+        for kw in (
+            "earnings",
+            "revenue",
+            "guidance",
+            "quarter",
+            "call",
+            "eps",
+            "beat",
+            "miss",
+            "forecast",
+        )
+    ):
         collections.append("earnings")
     # Broad analytical queries: search all collections
-    if any(kw in q for kw in (
-        "analyze", "analysis", "overview", "outlook", "recommend",
-        "should i", "what do you think", "bull", "bear",
-    )):
+    if any(
+        kw in q
+        for kw in (
+            "analyze",
+            "analysis",
+            "overview",
+            "outlook",
+            "recommend",
+            "should i",
+            "what do you think",
+            "bull",
+            "bear",
+        )
+    ):
         return ["sec_filings", "news", "earnings"]
     return collections
 
@@ -99,9 +132,7 @@ class FinancialIndexManager:
             request_timeout=600.0,
             is_chat_model=True,
         )
-        self.embed_model = HuggingFaceEmbedding(
-            model_name=f"sentence-transformers/{EMBED_MODEL}"
-        )
+        self.embed_model = HuggingFaceEmbedding(model_name=f"sentence-transformers/{EMBED_MODEL}")
         Settings.llm = self.llm
         Settings.embed_model = self.embed_model
         Settings.node_parser = SentenceSplitter(chunk_size=512, chunk_overlap=50)
@@ -111,7 +142,7 @@ class FinancialIndexManager:
 
     @logged_sync()
     def _get_or_create_index(self, collection_name: str) -> VectorStoreIndex:
-        # Lazy index creation: one ChromaDB collection per document type (sec_filings, earnings, etc.)
+        # Lazy index creation: one ChromaDB collection per document type (sec_filings, earnings, etc.)  # noqa: E501
         if collection_name in self._indexes:
             return self._indexes[collection_name]
 
@@ -129,9 +160,7 @@ class FinancialIndexManager:
     @logged()
     async def query(self, ticker: str, query_text: str) -> dict:
         """Multi-collection retrieval: routes across sec_filings/news/earnings based on intent."""
-        filters = MetadataFilters(
-            filters=[ExactMatchFilter(key="ticker", value=ticker)]
-        )
+        filters = MetadataFilters(filters=[ExactMatchFilter(key="ticker", value=ticker)])
         collections = _classify_query_intent(query_text)
         today = date.today().isoformat()
         augmented_query = (
@@ -153,7 +182,9 @@ class FinancialIndexManager:
             except Exception as e:
                 logger.warning("Retrieval from %s failed for %s: %s", coll, ticker, e)
 
-        logger.info("Total nodes across collections %s for %s: %d", collections, ticker, len(all_nodes))
+        logger.info(
+            "Total nodes across collections %s for %s: %d", collections, ticker, len(all_nodes)
+        )
 
         if not all_nodes:
             return {
@@ -199,7 +230,10 @@ class FinancialIndexManager:
             confidence = round(max(scores) if scores else 0.0, 3)
             logger.info(
                 "query result for %s: nodes=%d, collections=%s, confidence=%.3f",
-                ticker, len(unique), collections, confidence,
+                ticker,
+                len(unique),
+                collections,
+                confidence,
             )
             return {
                 "ticker": ticker,
@@ -223,13 +257,9 @@ class FinancialIndexManager:
     @logged()
     async def query_sec_filings(self, ticker: str, query_text: str) -> dict:
         # Same ticker filter but scoped to sec_filings collection; validates first result matches
-        filters = MetadataFilters(
-            filters=[ExactMatchFilter(key="ticker", value=ticker)]
-        )
+        filters = MetadataFilters(filters=[ExactMatchFilter(key="ticker", value=ticker)])
         index = self._get_or_create_index("sec_filings")
-        engine = index.as_query_engine(
-            similarity_top_k=3, filters=filters, response_mode="compact"
-        )
+        engine = index.as_query_engine(similarity_top_k=3, filters=filters, response_mode="compact")
         today = date.today().isoformat()
         response = await engine.aquery(
             f"Today's date: {today}.\nFor {ticker}: {query_text}\nCite specific filing sections."
@@ -272,10 +302,8 @@ class FinancialIndexManager:
         }
 
     @logged_sync()
-    def ingest_documents(
-        self, collection_name: str, documents: list[dict]
-    ) -> int:
-        # Batch insert: wraps each dict as a LlamaIndex Document with ticker/source/file_name metadata
+    def ingest_documents(self, collection_name: str, documents: list[dict]) -> int:
+        # Batch insert: wraps each dict as a LlamaIndex Document with ticker/source/file_name metadata  # noqa: E501
         index = self._get_or_create_index(collection_name)
         docs = [
             Document(

@@ -21,9 +21,7 @@ async def stress_test_node(state: QuantAnalysisState) -> dict:
         logger.warning("Stress test skipped for %s: no price data", ticker)
         return {"stress_test_result": None, "monte_carlo": None}
 
-    prices = pd.Series(
-        {pd.Timestamp(k): v for k, v in prices_dict.items()}
-    ).sort_index()
+    prices = pd.Series({pd.Timestamp(k): v for k, v in prices_dict.items()}).sort_index()
     returns = prices.pct_change().dropna()
     current_price = float(prices.iloc[-1])
     beta = (state.get("metrics") or {}).get("beta") or 1.0
@@ -34,9 +32,9 @@ async def stress_test_node(state: QuantAnalysisState) -> dict:
     sector = (state.get("fundamentals") or {}).get("sector", "") or ""
     market_scenarios: dict[str, float] = {
         "market_crash_2008": -0.565,
-        "covid_crash_2020":  -0.340,
-        "dot_com_bubble":    -0.491,
-        "mild_recession":    -0.254,
+        "covid_crash_2020": -0.340,
+        "dot_com_bubble": -0.491,
+        "mild_recession": -0.254,
     }
     if mcp:
         try:
@@ -48,7 +46,10 @@ async def stress_test_node(state: QuantAnalysisState) -> dict:
                     market_scenarios.update(live)
                     logger.info(
                         "Live scenario shocks for %s (sector=%s, index=%s): %s",
-                        ticker, sector, json.loads(raw).get("index_used"), live,
+                        ticker,
+                        sector,
+                        json.loads(raw).get("index_used"),
+                        live,
                     )
         except Exception as _se:
             logger.warning("get_scenario_shocks failed for %s: %s — using fallback", ticker, _se)
@@ -65,7 +66,9 @@ async def stress_test_node(state: QuantAnalysisState) -> dict:
         }
 
     var_95 = float(np.percentile(returns, 5))
-    cvar_95 = float(returns[returns <= var_95].mean()) if len(returns[returns <= var_95]) > 0 else var_95
+    cvar_95 = (
+        float(returns[returns <= var_95].mean()) if len(returns[returns <= var_95]) > 0 else var_95
+    )
 
     mc = _run_monte_carlo(prices)
 

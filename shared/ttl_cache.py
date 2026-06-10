@@ -3,12 +3,11 @@
 Prevents duplicate concurrent fetches for the same key — ten simultaneous
 calls for the same ticker make exactly one network request.
 """
+
 import asyncio
 import logging
 import time
-from typing import Any, Callable, Awaitable
-
-from shared.logging_config import logged, logged_sync
+from typing import Any, Awaitable, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -27,9 +26,7 @@ class TTLCache:
         self._lock = asyncio.Lock()
         self._inflight: dict[str, asyncio.Future] = {}
 
-    async def get_or_fetch(
-        self, key: str, fetch: Callable[[], Awaitable[Any]]
-    ) -> Any:
+    async def get_or_fetch(self, key: str, fetch: Callable[[], Awaitable[Any]]) -> Any:
         """Return cached value if fresh; fetch exactly once for concurrent callers."""
         entry = self._data.get(key)
         if entry and time.monotonic() - entry[0] < self._ttl:
@@ -60,7 +57,9 @@ class TTLCache:
             self._data[key] = (time.monotonic(), value)
             if len(self._data) > self._max:
                 self._data.pop(next(iter(self._data)))
-                logger.debug("TTLCache evicting oldest entry (size %d/%d)", len(self._data), self._max)
+                logger.debug(
+                    "TTLCache evicting oldest entry (size %d/%d)", len(self._data), self._max
+                )
             logger.debug("TTLCache MISS+FETCH for %s", key)
             fut.set_result(value)
         except Exception as exc:

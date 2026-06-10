@@ -1,6 +1,6 @@
 import asyncio
 import time
-import pytest
+
 from shared.rate_limiter import TokenBucket
 
 
@@ -21,7 +21,7 @@ async def test_rate_enforced_after_burst():
     t0 = time.monotonic()
     await bucket.acquire()  # should wait ~50ms
     elapsed = time.monotonic() - t0
-    assert elapsed >= 0.03, f"Expected >=30ms, got {elapsed*1000:.1f}ms"
+    assert elapsed >= 0.03, f"Expected >=30ms, got {elapsed * 1000:.1f}ms"
 
 
 async def test_tokens_refill_over_time():
@@ -34,7 +34,7 @@ async def test_tokens_refill_over_time():
     await bucket.acquire()
     await bucket.acquire()
     elapsed = time.monotonic() - t0
-    assert elapsed < 0.1, f"Refilled tokens should be fast, got {elapsed*1000:.1f}ms"
+    assert elapsed < 0.1, f"Refilled tokens should be fast, got {elapsed * 1000:.1f}ms"
 
 
 async def test_single_token_bucket():

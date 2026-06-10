@@ -8,6 +8,7 @@ against it so any extraction change produces an explicit diff.
 The realistic_quant fixture currently reproduces P1 and P2 bugs — this
 is intentional. Phase R will update those goldens when the bugs are fixed.
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -52,6 +53,7 @@ def _load_or_write_golden(name: str, actual: dict) -> dict:
 def _no_yfinance():
     """All extraction tests run offline — block yfinance and clear in-process cache."""
     import shared.reports.extraction as _ext
+
     _ext._ticker_cache.clear()
     with patch("yfinance.Ticker", side_effect=RuntimeError("yfinance blocked in tests")):
         yield
@@ -82,10 +84,11 @@ def test_extraction_golden(fixture_name: str):
 
 # ── Structural invariants (hold across all fixtures) ─────────────────────────
 
+
 @pytest.mark.parametrize("fixture_name", FIXTURES)
 def test_extraction_always_returns_deck_data(fixture_name: str):
-    from shared.reports.extraction import _extract_deck_data
     from shared.reports.deck_model import DeckData
+    from shared.reports.extraction import _extract_deck_data
 
     brief = _load_fixture(fixture_name)
     deck = _extract_deck_data(brief, "NVDA", "BUY", 0.85, "2024-01-15")

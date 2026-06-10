@@ -67,6 +67,7 @@ def test_openapi_spec_has_required_schemas():
 def test_openapi_spec_is_up_to_date():
     """Regenerate and compare — ensures docs stay in sync with code."""
     from agent_1_adk.api_fastapi import spec as generated_spec
+
     current = json.loads(OPENAPI_PATH.read_text(encoding="utf-8"))
     assert current == generated_spec, (
         "OpenAPI spec is out of date. Regenerate with: python scripts/generate_openapi.py"

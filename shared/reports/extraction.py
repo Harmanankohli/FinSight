@@ -1,15 +1,21 @@
+# ruff: noqa: E402, E501
 """Content extraction helpers for investment report generation."""
 
 from __future__ import annotations
 
 import logging
-import re
-
 import os
+import re
 
 logger = logging.getLogger(__name__)
 
-from shared.reports.deck_model import Section, ParsedTable, ExtractionCtx, DeckData, _DEFAULT_DISCLAIMER
+from shared.reports.deck_model import (
+    _DEFAULT_DISCLAIMER,
+    DeckData,
+    ExtractionCtx,
+    ParsedTable,
+    Section,
+)
 
 _REPORTS_OFFLINE = os.environ.get("REPORTS_OFFLINE", "").lower() in ("1", "true", "yes")
 
@@ -59,7 +65,7 @@ def _case_block(text: str, label: str) -> str | None:
     m = re.search(rf"(?i)\b{label}\s+case\s*:\s*", text)
     if not m:
         return None
-    rest = text[m.end():]
+    rest = text[m.end() :]
     stop = _BLOCK_STOP.search(rest)
     block = rest[: stop.start()] if stop else rest
     return block.strip() or None
@@ -106,7 +112,7 @@ def fit_text(text: str, w_in: float, h_in: float, start_size: int = 20) -> tuple
     truncated = text[:budget]
     last_period = truncated.rfind(".")
     if last_period > budget * 0.5:
-        return text[:last_period + 1] + "..", size
+        return text[: last_period + 1] + "..", size
     # No sentence boundary — hard-truncate at last word boundary
     last_space = truncated.rfind(" ")
     if last_space > 0:
@@ -211,13 +217,21 @@ def _extract_bullets(text: str) -> list[str]:
 _ticker_cache: dict[str, tuple[str, str, str]] = {}
 
 _EXCHANGE_MAP = {
-    "NMS": "NASDAQ", "NGM": "NASDAQ", "NCM": "NASDAQ",
-    "NYQ": "NYSE", "NYS": "NYSE", "PCX": "NYSE ARCA",
-    "BTS": "CBOE", "LSE": "LSE", "TYO": "TSE",
+    "NMS": "NASDAQ",
+    "NGM": "NASDAQ",
+    "NCM": "NASDAQ",
+    "NYQ": "NYSE",
+    "NYS": "NYSE",
+    "PCX": "NYSE ARCA",
+    "BTS": "CBOE",
+    "LSE": "LSE",
+    "TYO": "TSE",
 }
 
 
-def _resolve_ticker_info(ticker: str, text: str, company_info: dict | None = None) -> tuple[str, str, str]:
+def _resolve_ticker_info(
+    ticker: str, text: str, company_info: dict | None = None
+) -> tuple[str, str, str]:
     """Return (company_name, sector, exchange).
 
     Priority: company_info arg → yfinance (unless REPORTS_OFFLINE) → regex → ticker symbol.
@@ -235,6 +249,7 @@ def _resolve_ticker_info(ticker: str, text: str, company_info: dict | None = Non
     if not _REPORTS_OFFLINE:
         try:
             import yfinance as yf
+
             info = yf.Ticker(ticker).info
             name = info.get("longName") or info.get("shortName") or ""
             sector = info.get("sector") or ""
@@ -286,66 +301,118 @@ def _parse_markdown_tables(text: str) -> tuple[str, list[dict], list[ParsedTable
 
 # ── Module-level constants for staged extraction ──────────────────────────
 _METRIC_PATTERNS: list[tuple[str, list[str], bool]] = [
-    ("Revenue Growth", [
-        r"revenue\s+growth\s*[\(:]\s*([+-]?\d+\.?\d*)\s*%",
-        r"revenue\s+growth[:\s]+([+-]?\d+\.?\d*)\s*%",
-        r"revenue\s+growth\s+(?:of\s+)?([+-]?\d+\.?\d*)\s*%",
-    ], True),
-    ("ROE", [
-        r"ROE\s*[\(:]\s*([+-]?\d+\.?\d*)\s*%",
-        r"(?:ROE|return\s+on\s+equity)[:\s]+([+-]?\d+\.?\d*)\s*%",
-        r"ROE\s+of\s+([+-]?\d+\.?\d*)\s*%",
-    ], True),
-    ("Operating Margin", [
-        r"operating\s+margin\s*[\(:]\s*([+-]?\d+\.?\d*)\s*%",
-        r"operating\s+margin[:\s]+([+-]?\d+\.?\d*)\s*%",
-        r"operating\s+margin\s+(?:stands?\s+at|of|at)\s+([+-]?\d+\.?\d*)\s*%",
-    ], True),
-    ("P/E Ratio", [
-        r"P/?E\s*[\(:=]\s*([+-]?\d+\.?\d*)",
-        r"P/?E\s+(?:ratio\s*)?[:\s]+([+-]?\d+\.?\d*)",
-        r"trailing\s+PE\s*[\(:]\s*([+-]?\d+\.?\d*)",
-        r"(?:trailing\s+)?P/?E\s+of\s+([+-]?\d+\.?\d*)",
-    ], False),
-    ("Beta", [
-        r"[Bb]eta\s*[\(:=]\s*([+-]?\d+\.?\d*)",
-        r"[Bb]eta[:\s]+([+-]?\d+\.?\d*)",
-        r"[Bb]eta\s+of\s+([+-]?\d+\.?\d*)",
-    ], False),
-    ("Sharpe Ratio", [
-        r"[Ss]harpe\s+[Rr]atio\s*[\(:=]\s*([+-]?\d+\.?\d*)",
-        r"[Ss]harpe\s+[Rr]atio[:\s]+([+-]?\d+\.?\d*)",
-        r"[Ss]harpe\s+[Rr]atio\s+of\s+([+-]?\d+\.?\d*)",
-    ], False),
-    ("RSI", [
-        r"RSI\s*[\(:=]\s*([+-]?\d+\.?\d*)",
-        r"RSI\s+of\s+([+-]?\d+\.?\d*)",
-    ], False),
-    ("Volatility", [
-        r"(?:annual\s+)?volatility\s*[\(:]\s*([+-]?\d+\.?\d*)\s*%",
-        r"(?:annual\s+)?volatility[:\s]+([+-]?\d+\.?\d*)\s*%",
-        r"(?:annual\s+)?volatility\s+of\s+([+-]?\d+\.?\d*)\s*%",
-    ], True),
-    ("Debt/Equity", [
-        r"(?:debt[/\\]equity|D/E)\s*[\(:=]\s*([+-]?\d+\.?\d*)",
-        r"(?:debt[/\\]equity|D/E)\s+of\s+([+-]?\d+\.?\d*)",
-    ], False),
-    ("Dividend Yield", [
-        r"dividend\s+yield\s*[\(:=]\s*([+-]?\d+\.?\d*)\s*%",
-        r"dividend\s+yield\s+of\s+([+-]?\d+\.?\d*)\s*%",
-    ], True),
-    ("EPS", [
-        r"(?:diluted\s+)?EPS\s*[\(:=]\s*\$?\s*([+-]?\d+\.?\d*)",
-        r"(?:diluted\s+)?EPS\s+of\s+\$?\s*([+-]?\d+\.?\d*)",
-    ], False),
-    ("Current Ratio", [
-        r"current\s+ratio\s*[\(:=]\s*([+-]?\d+\.?\d*)",
-        r"current\s+ratio\s+of\s+([+-]?\d+\.?\d*)",
-    ], False),
-    ("Net Margin", [
-        r"net\s+(?:profit\s+)?margin\s*[\(:=]\s*([+-]?\d+\.?\d*)\s*%",
-        r"net\s+(?:profit\s+)?margin\s+of\s+([+-]?\d+\.?\d*)\s*%",
-    ], True),
+    (
+        "Revenue Growth",
+        [
+            r"revenue\s+growth\s*[\(:]\s*([+-]?\d+\.?\d*)\s*%",
+            r"revenue\s+growth[:\s]+([+-]?\d+\.?\d*)\s*%",
+            r"revenue\s+growth\s+(?:of\s+)?([+-]?\d+\.?\d*)\s*%",
+        ],
+        True,
+    ),
+    (
+        "ROE",
+        [
+            r"ROE\s*[\(:]\s*([+-]?\d+\.?\d*)\s*%",
+            r"(?:ROE|return\s+on\s+equity)[:\s]+([+-]?\d+\.?\d*)\s*%",
+            r"ROE\s+of\s+([+-]?\d+\.?\d*)\s*%",
+        ],
+        True,
+    ),
+    (
+        "Operating Margin",
+        [
+            r"operating\s+margin\s*[\(:]\s*([+-]?\d+\.?\d*)\s*%",
+            r"operating\s+margin[:\s]+([+-]?\d+\.?\d*)\s*%",
+            r"operating\s+margin\s+(?:stands?\s+at|of|at)\s+([+-]?\d+\.?\d*)\s*%",
+        ],
+        True,
+    ),
+    (
+        "P/E Ratio",
+        [
+            r"P/?E\s*[\(:=]\s*([+-]?\d+\.?\d*)",
+            r"P/?E\s+(?:ratio\s*)?[:\s]+([+-]?\d+\.?\d*)",
+            r"trailing\s+PE\s*[\(:]\s*([+-]?\d+\.?\d*)",
+            r"(?:trailing\s+)?P/?E\s+of\s+([+-]?\d+\.?\d*)",
+        ],
+        False,
+    ),
+    (
+        "Beta",
+        [
+            r"[Bb]eta\s*[\(:=]\s*([+-]?\d+\.?\d*)",
+            r"[Bb]eta[:\s]+([+-]?\d+\.?\d*)",
+            r"[Bb]eta\s+of\s+([+-]?\d+\.?\d*)",
+        ],
+        False,
+    ),
+    (
+        "Sharpe Ratio",
+        [
+            r"[Ss]harpe\s+[Rr]atio\s*[\(:=]\s*([+-]?\d+\.?\d*)",
+            r"[Ss]harpe\s+[Rr]atio[:\s]+([+-]?\d+\.?\d*)",
+            r"[Ss]harpe\s+[Rr]atio\s+of\s+([+-]?\d+\.?\d*)",
+        ],
+        False,
+    ),
+    (
+        "RSI",
+        [
+            r"RSI\s*[\(:=]\s*([+-]?\d+\.?\d*)",
+            r"RSI\s+of\s+([+-]?\d+\.?\d*)",
+        ],
+        False,
+    ),
+    (
+        "Volatility",
+        [
+            r"(?:annual\s+)?volatility\s*[\(:]\s*([+-]?\d+\.?\d*)\s*%",
+            r"(?:annual\s+)?volatility[:\s]+([+-]?\d+\.?\d*)\s*%",
+            r"(?:annual\s+)?volatility\s+of\s+([+-]?\d+\.?\d*)\s*%",
+        ],
+        True,
+    ),
+    (
+        "Debt/Equity",
+        [
+            r"(?:debt[/\\]equity|D/E)\s*[\(:=]\s*([+-]?\d+\.?\d*)",
+            r"(?:debt[/\\]equity|D/E)\s+of\s+([+-]?\d+\.?\d*)",
+        ],
+        False,
+    ),
+    (
+        "Dividend Yield",
+        [
+            r"dividend\s+yield\s*[\(:=]\s*([+-]?\d+\.?\d*)\s*%",
+            r"dividend\s+yield\s+of\s+([+-]?\d+\.?\d*)\s*%",
+        ],
+        True,
+    ),
+    (
+        "EPS",
+        [
+            r"(?:diluted\s+)?EPS\s*[\(:=]\s*\$?\s*([+-]?\d+\.?\d*)",
+            r"(?:diluted\s+)?EPS\s+of\s+\$?\s*([+-]?\d+\.?\d*)",
+        ],
+        False,
+    ),
+    (
+        "Current Ratio",
+        [
+            r"current\s+ratio\s*[\(:=]\s*([+-]?\d+\.?\d*)",
+            r"current\s+ratio\s+of\s+([+-]?\d+\.?\d*)",
+        ],
+        False,
+    ),
+    (
+        "Net Margin",
+        [
+            r"net\s+(?:profit\s+)?margin\s*[\(:=]\s*([+-]?\d+\.?\d*)\s*%",
+            r"net\s+(?:profit\s+)?margin\s+of\s+([+-]?\d+\.?\d*)\s*%",
+        ],
+        True,
+    ),
 ]
 
 _KPI_CONTEXT = {
@@ -365,9 +432,19 @@ _KPI_CONTEXT = {
 }
 
 _KPI_PRIORITY = [
-    "Revenue Growth", "ROE", "Operating Margin", "P/E Ratio",
-    "Sharpe Ratio", "Beta", "Dividend Yield", "RSI",
-    "Volatility", "EPS", "Net Margin", "Debt/Equity", "Current Ratio",
+    "Revenue Growth",
+    "ROE",
+    "Operating Margin",
+    "P/E Ratio",
+    "Sharpe Ratio",
+    "Beta",
+    "Dividend Yield",
+    "RSI",
+    "Volatility",
+    "EPS",
+    "Net Margin",
+    "Debt/Equity",
+    "Current Ratio",
 ]
 
 _FIN_CONTEXT = {
@@ -387,9 +464,30 @@ _FIN_CONTEXT = {
 }
 
 _FINANCIAL_ABBREVS = {
-    "DCF", "MACD", "VIX", "DXY", "SEC", "LLM", "WACC", "RSI", "EPS",
-    "EBITDA", "IPO", "CEO", "CFO", "ETF", "GDP", "CPI", "FOMC", "YOY",
-    "QOQ", "MOM", "ADK", "SSE", "API", "YTD",
+    "DCF",
+    "MACD",
+    "VIX",
+    "DXY",
+    "SEC",
+    "LLM",
+    "WACC",
+    "RSI",
+    "EPS",
+    "EBITDA",
+    "IPO",
+    "CEO",
+    "CFO",
+    "ETF",
+    "GDP",
+    "CPI",
+    "FOMC",
+    "YOY",
+    "QOQ",
+    "MOM",
+    "ADK",
+    "SSE",
+    "API",
+    "YTD",
 }
 
 
@@ -410,7 +508,8 @@ def _stage_tables(ctx: ExtractionCtx) -> None:
                         break
         elif classification == "peer":
             valid_peers = [
-                h for h in parsed_table.headers
+                h
+                for h in parsed_table.headers
                 if h.lower() != "metric" and h.upper() != ctx.data.ticker and _TICKER_RE.match(h)
             ]
             if not valid_peers:
@@ -448,11 +547,14 @@ def _stage_metrics(ctx: ExtractionCtx) -> None:
             selected.append(lbl)
     for label in selected:
         val = ctx.extracted_metrics[label]
-        ctx.data.kpi_chips.append({
-            "label": label, "value": val,
-            "context": _KPI_CONTEXT.get(label, ""),
-            "positive": not val.startswith("-"),
-        })
+        ctx.data.kpi_chips.append(
+            {
+                "label": label,
+                "value": val,
+                "context": _KPI_CONTEXT.get(label, ""),
+                "positive": not val.startswith("-"),
+            }
+        )
 
 
 def _stage_scenarios(ctx: ExtractionCtx) -> None:
@@ -573,56 +675,124 @@ def _stage_financials_scorecard(ctx: ExtractionCtx) -> None:
     for label in _KPI_PRIORITY:
         if label in ctx.extracted_metrics and label not in existing_fin_metrics:
             d.financials.append((label, ctx.extracted_metrics[label], _FIN_CONTEXT.get(label, "")))
-    _STRONG_MAP = {"strong": "strong", "solid": "strong", "robust": "strong",
-                   "moderate": "moderate", "weak": "expensive", "poor": "expensive"}
-    _VALUATION_MAP = {"expensive": "expensive", "rich": "expensive", "premium": "expensive",
-                      "extreme": "expensive", "high": "expensive", "elevated": "expensive",
-                      "cheap": "strong", "undervalued": "strong", "fair": "moderate",
-                      "overvalued": "expensive"}
-    _RISK_MAP = {"low": "strong", "moderate": "moderate",
-                 "high": "expensive", "elevated": "expensive", "significant": "expensive"}
-    _ANALYST_MAP = {"strong buy": "strong", "buy": "strong", "outperform": "strong",
-                    "overweight": "strong", "hold": "bullish", "neutral": "moderate",
-                    "sell": "expensive", "underweight": "expensive"}
+    _STRONG_MAP = {
+        "strong": "strong",
+        "solid": "strong",
+        "robust": "strong",
+        "moderate": "moderate",
+        "weak": "expensive",
+        "poor": "expensive",
+    }
+    _VALUATION_MAP = {
+        "expensive": "expensive",
+        "rich": "expensive",
+        "premium": "expensive",
+        "extreme": "expensive",
+        "high": "expensive",
+        "elevated": "expensive",
+        "cheap": "strong",
+        "undervalued": "strong",
+        "fair": "moderate",
+        "overvalued": "expensive",
+    }
+    _RISK_MAP = {
+        "low": "strong",
+        "moderate": "moderate",
+        "high": "expensive",
+        "elevated": "expensive",
+        "significant": "expensive",
+    }
+    _ANALYST_MAP = {
+        "strong buy": "strong",
+        "buy": "strong",
+        "outperform": "strong",
+        "overweight": "strong",
+        "hold": "bullish",
+        "neutral": "moderate",
+        "sell": "expensive",
+        "underweight": "expensive",
+    }
     scorecard_entries: list[tuple[str, list[str], dict[str, str]]] = [
-        ("Fundamentals", [
-            r"(strong|weak|moderate|solid|robust)\s+(?:revenue\s+growth|fundamentals?|earnings)",
-            r"fundamental[s]?\s*[:\s]?\s*(strong|weak|moderate|solid|robust)",
-        ], _STRONG_MAP),
-        ("Technical Outlook", [
-            r"(?:MACD|macd)\s+(?:indicator\s+)?(?:is\s+)?(bullish|bearish)",
-            r"(sideways)\s+trend",
-            r"(?:technical[s]?|trend)\s*[:\s]?\s*(bullish|bearish|neutral|mixed)",
-            r"(bullish|bearish|neutral|mixed)\s+(?:signals?|technicals?|momentum)",
-            r"(?<!lack of a )(?<!lack of )(strong\s+uptrend|uptrend|downtrend|golden\s+cross)\b",
-        ], {"bullish": "bullish", "strong uptrend": "bullish", "uptrend": "bullish",
-            "golden cross": "bullish", "bearish": "expensive", "downtrend": "expensive",
-            "neutral": "moderate", "mixed": "moderate", "sideways": "moderate"}),
-        ("Valuation", [
-            r"(extreme|high|elevated|premium|rich|expensive)\s+valuation",
-            r"valuation\s*[:\s]?\s*(expensive|cheap|fair|rich|premium|undervalued|overvalued|extreme|high|elevated)",
-            r"(?:stock|company|it)\s+(?:may\s+be|is|appears?)\s+(overvalued|undervalued)",
-            r"(?:may\s+be|is)\s+(overvalued|undervalued)\s+relative",
-        ], _VALUATION_MAP),
-        ("Risk Profile", [
-            r"(significant|elevated|high)\s+(?:tail\s+)?risk",
-            r"(?:risk|volatility|tail\s+risk)\s*[:\s]?\s*(low|moderate|high|elevated|significant)",
-        ], _RISK_MAP),
-        ("Profitability", [
-            r"(robust|strong|high)\s+operating\s+margin",
-            r"operating\s+margin\s*[\(:]\s*\d+",
-            r"(?:profitability|margins?)\s*[:\s]?\s*(strong|weak|moderate|robust|high|improving)",
-        ], {"strong": "strong", "robust": "strong", "high": "strong", "improving": "bullish",
-            "moderate": "moderate", "weak": "expensive"}),
-        ("Momentum", [
-            r"RSI\s*[\(:=]\s*(\d+)",
-            r"RSI\s+of\s+(\d+\.?\d*)",
-        ], {"overbought": "expensive", "oversold": "strong"}),
-        ("Analyst Sentiment", [
-            r"""consensus\s+[\"']?(strong\s+buy|buy|hold|sell|outperform|overweight)[\"']?\s+recommend""",
-            r"(?:analyst[s]?\s+(?:consensus|recommend|sentiment)|consensus)\s*[:\s]?\s*(strong\s+buy|buy|hold|sell|outperform|overweight|underweight|neutral)",
-            r"""recommend[s]?\s+[\"']?(strong\s+buy|buy|hold|sell|outperform|overweight)[\"']?""",
-        ], _ANALYST_MAP),
+        (
+            "Fundamentals",
+            [
+                r"(strong|weak|moderate|solid|robust)\s+(?:revenue\s+growth|fundamentals?|earnings)",
+                r"fundamental[s]?\s*[:\s]?\s*(strong|weak|moderate|solid|robust)",
+            ],
+            _STRONG_MAP,
+        ),
+        (
+            "Technical Outlook",
+            [
+                r"(?:MACD|macd)\s+(?:indicator\s+)?(?:is\s+)?(bullish|bearish)",
+                r"(sideways)\s+trend",
+                r"(?:technical[s]?|trend)\s*[:\s]?\s*(bullish|bearish|neutral|mixed)",
+                r"(bullish|bearish|neutral|mixed)\s+(?:signals?|technicals?|momentum)",
+                r"(?<!lack of a )(?<!lack of )(strong\s+uptrend|uptrend|downtrend|golden\s+cross)\b",  # noqa: E501
+            ],
+            {
+                "bullish": "bullish",
+                "strong uptrend": "bullish",
+                "uptrend": "bullish",
+                "golden cross": "bullish",
+                "bearish": "expensive",
+                "downtrend": "expensive",
+                "neutral": "moderate",
+                "mixed": "moderate",
+                "sideways": "moderate",
+            },
+        ),
+        (
+            "Valuation",
+            [
+                r"(extreme|high|elevated|premium|rich|expensive)\s+valuation",
+                r"valuation\s*[:\s]?\s*(expensive|cheap|fair|rich|premium|undervalued|overvalued|extreme|high|elevated)",
+                r"(?:stock|company|it)\s+(?:may\s+be|is|appears?)\s+(overvalued|undervalued)",
+                r"(?:may\s+be|is)\s+(overvalued|undervalued)\s+relative",
+            ],
+            _VALUATION_MAP,
+        ),
+        (
+            "Risk Profile",
+            [
+                r"(significant|elevated|high)\s+(?:tail\s+)?risk",
+                r"(?:risk|volatility|tail\s+risk)\s*[:\s]?\s*(low|moderate|high|elevated|significant)",
+            ],
+            _RISK_MAP,
+        ),
+        (
+            "Profitability",
+            [
+                r"(robust|strong|high)\s+operating\s+margin",
+                r"operating\s+margin\s*[\(:]\s*\d+",
+                r"(?:profitability|margins?)\s*[:\s]?\s*(strong|weak|moderate|robust|high|improving)",
+            ],
+            {
+                "strong": "strong",
+                "robust": "strong",
+                "high": "strong",
+                "improving": "bullish",
+                "moderate": "moderate",
+                "weak": "expensive",
+            },
+        ),
+        (
+            "Momentum",
+            [
+                r"RSI\s*[\(:=]\s*(\d+)",
+                r"RSI\s+of\s+(\d+\.?\d*)",
+            ],
+            {"overbought": "expensive", "oversold": "strong"},
+        ),
+        (
+            "Analyst Sentiment",
+            [
+                r"""consensus\s+[\"']?(strong\s+buy|buy|hold|sell|outperform|overweight)[\"']?\s+recommend""",
+                r"(?:analyst[s]?\s+(?:consensus|recommend|sentiment)|consensus)\s*[:\s]?\s*(strong\s+buy|buy|hold|sell|outperform|overweight|underweight|neutral)",
+                r"""recommend[s]?\s+[\"']?(strong\s+buy|buy|hold|sell|outperform|overweight)[\"']?""",
+            ],
+            _ANALYST_MAP,
+        ),
     ]
     for dim, pats, mapping in scorecard_entries:
         for pat in pats:
@@ -631,7 +801,9 @@ def _stage_financials_scorecard(ctx: ExtractionCtx) -> None:
                 word = m.group(1).lower() if m.lastindex else ""
                 badge = mapping.get(word, "moderate")
                 if dim == "Profitability" and m.group(0) and "margin" in m.group(0).lower():
-                    margin_m = re.search(r"operating\s+margin\s*[\(:]\s*(\d+\.?\d*)", text, re.IGNORECASE)
+                    margin_m = re.search(
+                        r"operating\s+margin\s*[\(:]\s*(\d+\.?\d*)", text, re.IGNORECASE
+                    )
                     if margin_m and float(margin_m.group(1)) > 20:
                         word, badge = "strong", "strong"
                     elif margin_m and float(margin_m.group(1)) > 10:
@@ -648,10 +820,17 @@ def _stage_financials_scorecard(ctx: ExtractionCtx) -> None:
                         word, badge = "Oversold", "strong"
                 d.scorecard.append((dim, word.capitalize(), badge))
                 break
-    d.scorecard.append(("Recommendation", d.recommendation,
-                        "strong" if d.recommendation == "BUY"
-                        else "bullish" if d.recommendation == "HOLD"
-                        else "expensive"))
+    d.scorecard.append(
+        (
+            "Recommendation",
+            d.recommendation,
+            "strong"
+            if d.recommendation == "BUY"
+            else "bullish"
+            if d.recommendation == "HOLD"
+            else "expensive",
+        )
+    )
 
 
 def _stage_risks_opportunities(ctx: ExtractionCtx) -> None:
@@ -661,25 +840,49 @@ def _stage_risks_opportunities(ctx: ExtractionCtx) -> None:
     sections = ctx.sections
     for sec in sections:
         lower_title = sec.title.lower()
-        if any(k in lower_title for k in ("risk", "threat", "concern", "challenge", "bearish", "headwind")):
+        if any(
+            k in lower_title
+            for k in ("risk", "threat", "concern", "challenge", "bearish", "headwind")
+        ):
             d.risks.extend(filter(None, (_clean_item(b) for b in _extract_bullets(sec.body)[:5])))
-        elif any(k in lower_title for k in ("opportunit", "catalyst", "growth", "strength", "upside", "bullish", "tailwind")):
-            d.opportunities.extend(filter(None, (_clean_item(b) for b in _extract_bullets(sec.body)[:5])))
+        elif any(
+            k in lower_title
+            for k in (
+                "opportunit",
+                "catalyst",
+                "growth",
+                "strength",
+                "upside",
+                "bullish",
+                "tailwind",
+            )
+        ):
+            d.opportunities.extend(
+                filter(None, (_clean_item(b) for b in _extract_bullets(sec.body)[:5]))
+            )
     if not d.risks:
         risk_block = re.search(
             r"(?:key\s+risks?\s*(?:to\s+monitor)?|risk\s+factors?)\s*:\s*\n((?:.*\n)*?)(?:\n\n|\nnext\s+step|\Z)",
-            text, re.IGNORECASE,
+            text,
+            re.IGNORECASE,
         )
         if risk_block:
-            d.risks = list(filter(None, (_clean_item(b) for b in _extract_bullets(risk_block.group(1))[:5])))
+            d.risks = list(
+                filter(None, (_clean_item(b) for b in _extract_bullets(risk_block.group(1))[:5]))
+            )
     if not d.risks:
         inline_risk = re.search(
             r"key\s+risks?\s*:\s*(.+?)(?:\.\s*$|\n\n|\n[A-Z])",
-            text, re.IGNORECASE | re.MULTILINE,
+            text,
+            re.IGNORECASE | re.MULTILINE,
         )
         if inline_risk:
             items = re.split(r",\s*(?:and\s+)?", inline_risk.group(1))
-            d.risks = list(filter(None, (_clean_item(i.strip().rstrip(".")) for i in items if len(i.strip()) > 5)))[:5]
+            d.risks = list(
+                filter(
+                    None, (_clean_item(i.strip().rstrip(".")) for i in items if len(i.strip()) > 5)
+                )
+            )[:5]
     if not d.opportunities:
         d.opportunities = _case_items(text, "bull")
     if not d.risks:
@@ -687,22 +890,34 @@ def _stage_risks_opportunities(ctx: ExtractionCtx) -> None:
     if not d.opportunities:
         opp_block = re.search(
             r"(?:growth\s+(?:opportunities|drivers)|catalysts?)\s*:\s*\n((?:[\s\S]*?)(?=\n\n|\n[A-Z][a-z]|\Z))",
-            text, re.IGNORECASE,
+            text,
+            re.IGNORECASE,
         )
         if opp_block:
-            d.opportunities = list(filter(None, (_clean_item(b) for b in _extract_bullets(opp_block.group(1))[:5])))
+            d.opportunities = list(
+                filter(None, (_clean_item(b) for b in _extract_bullets(opp_block.group(1))[:5]))
+            )
+
     def _extract_labeled_block(label_pat: str) -> list[str]:
         block_m = re.search(
             rf"\*\*{label_pat}\s*:\*\*\s*\n((?:\s+[-•*+].*\n?)+)",
-            text, re.IGNORECASE,
+            text,
+            re.IGNORECASE,
         )
         if block_m:
-            return list(filter(None, (_clean_item(b) for b in _extract_bullets(block_m.group(1))[:5])))
+            return list(
+                filter(None, (_clean_item(b) for b in _extract_bullets(block_m.group(1))[:5]))
+            )
         inline_m = re.search(rf"\*\*{label_pat}\s*:\*\*\s*(.+)", text, re.IGNORECASE)
         if inline_m:
             items = re.split(r",\s*(?:and\s+)?", inline_m.group(1))
-            return list(filter(None, (_clean_item(i.strip().rstrip(".")) for i in items if len(i.strip()) > 5)))[:5]
+            return list(
+                filter(
+                    None, (_clean_item(i.strip().rstrip(".")) for i in items if len(i.strip()) > 5)
+                )
+            )[:5]
         return []
+
     if not d.risks:
         for lbl in (r"bearish\s+signals?", r"headwinds?"):
             d.risks.extend(_extract_labeled_block(lbl))
@@ -772,10 +987,14 @@ def _stage_executive_summary(ctx: ExtractionCtx) -> None:
             fund_metrics.append(f"{display_label} of {ctx.extracted_metrics[label]}{suffix}")
     if fund_metrics:
         summary_parts.append(f"{d.company_name} demonstrates {', '.join(fund_metrics)}")
-    dcf_val = next((v for l, v in d.valuation_table if "dcf" in l.lower() or "intrinsic" in l.lower()), None)
-    cur_price = next((v for l, v in d.valuation_table if "current price" in l.lower()), None)
+    dcf_val = next(
+        (v for lbl, v in d.valuation_table if "dcf" in lbl.lower() or "intrinsic" in lbl.lower()), None
+    )
+    cur_price = next((v for lbl, v in d.valuation_table if "current price" in lbl.lower()), None)
     if dcf_val and cur_price:
-        summary_parts.append(f"DCF analysis estimates intrinsic value at {dcf_val} versus the current trading price of {cur_price}")
+        summary_parts.append(
+            f"DCF analysis estimates intrinsic value at {dcf_val} versus the current trading price of {cur_price}"  # noqa: E501
+        )
     elif dcf_val:
         summary_parts.append(f"DCF analysis estimates intrinsic value at {dcf_val}")
     for vlabel, vval in d.valuation_table:
@@ -791,7 +1010,10 @@ def _stage_executive_summary(ctx: ExtractionCtx) -> None:
         if dim == "Technical Outlook":
             summary_parts.append(f"Technical outlook is {rating.lower()}")
             break
-    if d.opportunities and d.opportunities[0] not in ("Strong operational execution", "Market positioning"):
+    if d.opportunities and d.opportunities[0] not in (
+        "Strong operational execution",
+        "Market positioning",
+    ):
         summary_parts.append(d.opportunities[0].rstrip("."))
     if d.risks and d.risks[0] != "Market volatility":
         first_risk = re.split(r"(?<!\d)\.(?!\d)", d.risks[0])[0]
@@ -801,7 +1023,17 @@ def _stage_executive_summary(ctx: ExtractionCtx) -> None:
         if len(d.executive_summary) < 300:
             for sec in sections:
                 lt = sec.title.lower()
-                if any(k in lt for k in ("rationale", "thesis", "investment thesis", "summary", "synthesis", "outlook")):
+                if any(
+                    k in lt
+                    for k in (
+                        "rationale",
+                        "thesis",
+                        "investment thesis",
+                        "summary",
+                        "synthesis",
+                        "outlook",
+                    )
+                ):
                     narrative = sec.body.strip()
                     if len(narrative) > 50:
                         d.executive_summary = d.executive_summary.rstrip(".") + ". " + narrative
@@ -810,7 +1042,8 @@ def _stage_executive_summary(ctx: ExtractionCtx) -> None:
     else:
         bull = re.search(
             r"(?:bull\s+case|synthesis|investment\s+thesis)\s*:\s*(.+?)(?:\n(?:bear\s+case|confidence|key\s+risk)|\Z)",
-            text, re.IGNORECASE | re.DOTALL,
+            text,
+            re.IGNORECASE | re.DOTALL,
         )
         if bull:
             raw = bull.group(1).strip()
@@ -821,7 +1054,12 @@ def _stage_executive_summary(ctx: ExtractionCtx) -> None:
             substance = []
             for line in lines:
                 line = line.strip()
-                if not line or line.startswith("Here is") or line.startswith("Investment Recommendation") or line.startswith("Confidence Score"):
+                if (
+                    not line
+                    or line.startswith("Here is")
+                    or line.startswith("Investment Recommendation")
+                    or line.startswith("Confidence Score")
+                ):
                     continue
                 substance.append(line)
                 if len(" ".join(substance)) > 400:
@@ -842,12 +1080,18 @@ STAGES: list = [
 
 
 def _enrich_from_markdown(
-    data: DeckData, text: str, sections: list[Section], table_rows: list[dict] = None,
+    data: DeckData,
+    text: str,
+    sections: list[Section],
+    table_rows: list[dict] = None,
     tables: list[ParsedTable] = None,
 ) -> None:
     """Run the staged extraction pipeline over text into data."""
     ctx = ExtractionCtx(
-        data=data, text=text, sections=sections, tables=tables or [],
+        data=data,
+        text=text,
+        sections=sections,
+        tables=tables or [],
     )
     for stage in STAGES:
         stage(ctx)
@@ -888,30 +1132,64 @@ def _extract_deck_data(
 
         # KPI chips
         if ri.get("revenue_growth_yoy") is not None:
-            data.kpi_chips.append({"label": "Revenue Growth", "value": _fmt_pct(ri["revenue_growth_yoy"], True), "context": "Year-over-year", "positive": ri["revenue_growth_yoy"] > 0})
+            data.kpi_chips.append(
+                {
+                    "label": "Revenue Growth",
+                    "value": _fmt_pct(ri["revenue_growth_yoy"], True),
+                    "context": "Year-over-year",
+                    "positive": ri["revenue_growth_yoy"] > 0,
+                }
+            )
         if qm.get("sharpe_ratio") is not None:
-            data.kpi_chips.append({"label": "Sharpe Ratio", "value": f"{qm['sharpe_ratio']:.2f}", "context": "Risk-adjusted return", "positive": qm["sharpe_ratio"] > 0})
+            data.kpi_chips.append(
+                {
+                    "label": "Sharpe Ratio",
+                    "value": f"{qm['sharpe_ratio']:.2f}",
+                    "context": "Risk-adjusted return",
+                    "positive": qm["sharpe_ratio"] > 0,
+                }
+            )
         if si.get("avg_price_target"):
-            data.kpi_chips.append({"label": "Analyst Target", "value": _fmt_dollar(si["avg_price_target"]), "context": si.get("analyst_consensus", ""), "positive": True})
+            data.kpi_chips.append(
+                {
+                    "label": "Analyst Target",
+                    "value": _fmt_dollar(si["avg_price_target"]),
+                    "context": si.get("analyst_consensus", ""),
+                    "positive": True,
+                }
+            )
         if qm.get("annual_volatility") is not None:
-            data.kpi_chips.append({"label": "Annual Volatility", "value": _fmt_pct(qm["annual_volatility"], True), "context": "Annualized", "positive": qm["annual_volatility"] < 0.25})
+            data.kpi_chips.append(
+                {
+                    "label": "Annual Volatility",
+                    "value": _fmt_pct(qm["annual_volatility"], True),
+                    "context": "Annualized",
+                    "positive": qm["annual_volatility"] < 0.25,
+                }
+            )
 
         # Financials table
         if ri.get("revenue_growth_yoy") is not None:
-            data.financials.append(("Revenue Growth", _fmt_pct(ri["revenue_growth_yoy"], True), "YoY"))
+            data.financials.append(
+                ("Revenue Growth", _fmt_pct(ri["revenue_growth_yoy"], True), "YoY")
+            )
         if qm.get("beta") is not None:
             data.financials.append(("Beta", f"{qm['beta']:.2f}", "vs. S&P 500"))
         if qm.get("sharpe_ratio") is not None:
             data.financials.append(("Sharpe Ratio", f"{qm['sharpe_ratio']:.2f}", "Risk-Adjusted"))
         if qm.get("var_95_daily") is not None:
-            data.financials.append(("VaR (95%, daily)", _fmt_pct(qm["var_95_daily"], True), "Daily"))
+            data.financials.append(
+                ("VaR (95%, daily)", _fmt_pct(qm["var_95_daily"], True), "Daily")
+            )
 
         # Valuation
         if qm.get("dcf_intrinsic_value"):
             data.valuation_table.append(("DCF Fair Value", _fmt_dollar(qm["dcf_intrinsic_value"])))
             data.scenarios["dcf"] = _fmt_dollar(qm["dcf_intrinsic_value"])
         if si.get("avg_price_target"):
-            data.valuation_table.append(("Analyst Price Target", _fmt_dollar(si["avg_price_target"])))
+            data.valuation_table.append(
+                ("Analyst Price Target", _fmt_dollar(si["avg_price_target"]))
+            )
             data.scenarios["base"] = _fmt_dollar(si["avg_price_target"])
 
         # Monte Carlo scenarios (future-proofing — currently flows via response_text)
@@ -928,12 +1206,40 @@ def _extract_deck_data(
                 data.valuation_table.append(("Bear Case (MC p10)", _fmt_dollar(mc["p10"])))
 
         # Scorecard
-        data.scorecard.append(("Risk Profile", "Low" if (qm.get("annual_volatility") or 0) < 0.2 else "Moderate" if (qm.get("annual_volatility") or 0) < 0.35 else "High", "moderate"))
+        data.scorecard.append(
+            (
+                "Risk Profile",
+                "Low"
+                if (qm.get("annual_volatility") or 0) < 0.2
+                else "Moderate"
+                if (qm.get("annual_volatility") or 0) < 0.35
+                else "High",
+                "moderate",
+            )
+        )
         if si.get("analyst_consensus"):
-            data.scorecard.append(("Analyst Consensus", si["analyst_consensus"], "bullish" if "buy" in si["analyst_consensus"].lower() else "moderate"))
+            data.scorecard.append(
+                (
+                    "Analyst Consensus",
+                    si["analyst_consensus"],
+                    "bullish" if "buy" in si["analyst_consensus"].lower() else "moderate",
+                )
+            )
         if si.get("insider_signal"):
-            data.scorecard.append(("Insider Signal", si["insider_signal"], "strong" if "buy" in si["insider_signal"].lower() else "moderate"))
-        data.scorecard.append(("Recommendation", rec, "strong" if rec == "BUY" else "bullish" if rec == "HOLD" else "expensive"))
+            data.scorecard.append(
+                (
+                    "Insider Signal",
+                    si["insider_signal"],
+                    "strong" if "buy" in si["insider_signal"].lower() else "moderate",
+                )
+            )
+        data.scorecard.append(
+            (
+                "Recommendation",
+                rec,
+                "strong" if rec == "BUY" else "bullish" if rec == "HOLD" else "expensive",
+            )
+        )
 
         # Risks and opportunities
         ri_risks = ri.get("key_risks", [])
@@ -960,9 +1266,12 @@ def _extract_deck_data(
             comparison = qm_peers["comparison"]
             _pct_metrics = {"rev_growth", "op_margin", "roe"}
             metric_labels = [
-                ("pe", "P/E Ratio"), ("ev_ebitda", "EV/EBITDA"),
-                ("rev_growth", "Revenue Growth"), ("op_margin", "Operating Margin"),
-                ("roe", "ROE"), ("debt_to_equity", "D/E Ratio"),
+                ("pe", "P/E Ratio"),
+                ("ev_ebitda", "EV/EBITDA"),
+                ("rev_growth", "Revenue Growth"),
+                ("op_margin", "Operating Margin"),
+                ("roe", "ROE"),
+                ("debt_to_equity", "D/E Ratio"),
             ]
             ticker_data = comparison.get(data.ticker, {})
             for key, label in metric_labels:
@@ -975,7 +1284,9 @@ def _extract_deck_data(
                 for ci, pt in enumerate(peer_tickers):
                     pv = comparison.get(pt, {}).get(key)
                     if isinstance(pv, (int, float)):
-                        row[f"col{ci + 1}"] = f"{pv * 100:.1f}%" if key in _pct_metrics else f"{pv:.1f}"
+                        row[f"col{ci + 1}"] = (
+                            f"{pv * 100:.1f}%" if key in _pct_metrics else f"{pv:.1f}"
+                        )
                     else:
                         row[f"col{ci + 1}"] = "N/A"
                 data.peers.append(row)
@@ -1030,7 +1341,10 @@ def _extract_deck_data(
 
 
 def _enrich_from_markdown(
-    data: DeckData, text: str, sections: list[Section], table_rows: list[dict] = None,
+    data: DeckData,
+    text: str,
+    sections: list[Section],
+    table_rows: list[dict] = None,
     tables: list[ParsedTable] = None,
 ) -> None:
     """Extract KPIs, scorecard ratings, risks, and opportunities from text.
@@ -1051,12 +1365,17 @@ def _enrich_from_markdown(
                     for val_key in ("Current", "Value", "current", "value"):
                         if val_key in row and metric:
                             data.financials.append(
-                                (metric, row[val_key], row.get("YoY Change", row.get("Context", "")))
+                                (
+                                    metric,
+                                    row[val_key],
+                                    row.get("YoY Change", row.get("Context", "")),
+                                )
                             )
                             break
             elif classification == "peer":
                 valid_peers = [
-                    h for h in parsed_table.headers
+                    h
+                    for h in parsed_table.headers
                     if h.lower() != "metric" and h.upper() != data.ticker and _TICKER_RE.match(h)
                 ]
                 if not valid_peers:
@@ -1084,9 +1403,15 @@ def _enrich_from_markdown(
             metric = row.get("Metric") or row.get("metric") or ""
             for val_key in ("Current", "Value", "current", "value"):
                 if val_key in row and metric:
-                    data.financials.append((metric, row[val_key], row.get("YoY Change", row.get("Context", ""))))
+                    data.financials.append(
+                        (metric, row[val_key], row.get("YoY Change", row.get("Context", "")))
+                    )
                     break
-            peer_cols = [k for k in row.keys() if k not in ("Metric", "metric", "") and k.upper() != data.ticker]
+            peer_cols = [
+                k
+                for k in row.keys()
+                if k not in ("Metric", "metric", "") and k.upper() != data.ticker
+            ]
             if peer_cols and metric:
                 for peer_name in peer_cols[:2]:
                     if peer_name not in data.peer_names:
@@ -1104,66 +1429,118 @@ def _enrich_from_markdown(
     # ── Extract numeric metrics ──────────────────────────────────────────────
     # Each pattern list is tried in order; first match wins for that metric.
     metric_patterns: list[tuple[str, list[str], bool]] = [
-        ("Revenue Growth", [
-            r"revenue\s+growth\s*[\(:]\s*([+-]?\d+\.?\d*)\s*%",
-            r"revenue\s+growth[:\s]+([+-]?\d+\.?\d*)\s*%",
-            r"revenue\s+growth\s+(?:of\s+)?([+-]?\d+\.?\d*)\s*%",
-        ], True),
-        ("ROE", [
-            r"ROE\s*[\(:]\s*([+-]?\d+\.?\d*)\s*%",
-            r"(?:ROE|return\s+on\s+equity)[:\s]+([+-]?\d+\.?\d*)\s*%",
-            r"ROE\s+of\s+([+-]?\d+\.?\d*)\s*%",
-        ], True),
-        ("Operating Margin", [
-            r"operating\s+margin\s*[\(:]\s*([+-]?\d+\.?\d*)\s*%",
-            r"operating\s+margin[:\s]+([+-]?\d+\.?\d*)\s*%",
-            r"operating\s+margin\s+(?:stands?\s+at|of|at)\s+([+-]?\d+\.?\d*)\s*%",
-        ], True),
-        ("P/E Ratio", [
-            r"P/?E\s*[\(:=]\s*([+-]?\d+\.?\d*)",
-            r"P/?E\s+(?:ratio\s*)?[:\s]+([+-]?\d+\.?\d*)",
-            r"trailing\s+PE\s*[\(:]\s*([+-]?\d+\.?\d*)",
-            r"(?:trailing\s+)?P/?E\s+of\s+([+-]?\d+\.?\d*)",
-        ], False),
-        ("Beta", [
-            r"[Bb]eta\s*[\(:=]\s*([+-]?\d+\.?\d*)",
-            r"[Bb]eta[:\s]+([+-]?\d+\.?\d*)",
-            r"[Bb]eta\s+of\s+([+-]?\d+\.?\d*)",
-        ], False),
-        ("Sharpe Ratio", [
-            r"[Ss]harpe\s+[Rr]atio\s*[\(:=]\s*([+-]?\d+\.?\d*)",
-            r"[Ss]harpe\s+[Rr]atio[:\s]+([+-]?\d+\.?\d*)",
-            r"[Ss]harpe\s+[Rr]atio\s+of\s+([+-]?\d+\.?\d*)",
-        ], False),
-        ("RSI", [
-            r"RSI\s*[\(:=]\s*([+-]?\d+\.?\d*)",
-            r"RSI\s+of\s+([+-]?\d+\.?\d*)",
-        ], False),
-        ("Volatility", [
-            r"(?:annual\s+)?volatility\s*[\(:]\s*([+-]?\d+\.?\d*)\s*%",
-            r"(?:annual\s+)?volatility[:\s]+([+-]?\d+\.?\d*)\s*%",
-            r"(?:annual\s+)?volatility\s+of\s+([+-]?\d+\.?\d*)\s*%",
-        ], True),
-        ("Debt/Equity", [
-            r"(?:debt[/\\]equity|D/E)\s*[\(:=]\s*([+-]?\d+\.?\d*)",
-            r"(?:debt[/\\]equity|D/E)\s+of\s+([+-]?\d+\.?\d*)",
-        ], False),
-        ("Dividend Yield", [
-            r"dividend\s+yield\s*[\(:=]\s*([+-]?\d+\.?\d*)\s*%",
-            r"dividend\s+yield\s+of\s+([+-]?\d+\.?\d*)\s*%",
-        ], True),
-        ("EPS", [
-            r"(?:diluted\s+)?EPS\s*[\(:=]\s*\$?\s*([+-]?\d+\.?\d*)",
-            r"(?:diluted\s+)?EPS\s+of\s+\$?\s*([+-]?\d+\.?\d*)",
-        ], False),
-        ("Current Ratio", [
-            r"current\s+ratio\s*[\(:=]\s*([+-]?\d+\.?\d*)",
-            r"current\s+ratio\s+of\s+([+-]?\d+\.?\d*)",
-        ], False),
-        ("Net Margin", [
-            r"net\s+(?:profit\s+)?margin\s*[\(:=]\s*([+-]?\d+\.?\d*)\s*%",
-            r"net\s+(?:profit\s+)?margin\s+of\s+([+-]?\d+\.?\d*)\s*%",
-        ], True),
+        (
+            "Revenue Growth",
+            [
+                r"revenue\s+growth\s*[\(:]\s*([+-]?\d+\.?\d*)\s*%",
+                r"revenue\s+growth[:\s]+([+-]?\d+\.?\d*)\s*%",
+                r"revenue\s+growth\s+(?:of\s+)?([+-]?\d+\.?\d*)\s*%",
+            ],
+            True,
+        ),
+        (
+            "ROE",
+            [
+                r"ROE\s*[\(:]\s*([+-]?\d+\.?\d*)\s*%",
+                r"(?:ROE|return\s+on\s+equity)[:\s]+([+-]?\d+\.?\d*)\s*%",
+                r"ROE\s+of\s+([+-]?\d+\.?\d*)\s*%",
+            ],
+            True,
+        ),
+        (
+            "Operating Margin",
+            [
+                r"operating\s+margin\s*[\(:]\s*([+-]?\d+\.?\d*)\s*%",
+                r"operating\s+margin[:\s]+([+-]?\d+\.?\d*)\s*%",
+                r"operating\s+margin\s+(?:stands?\s+at|of|at)\s+([+-]?\d+\.?\d*)\s*%",
+            ],
+            True,
+        ),
+        (
+            "P/E Ratio",
+            [
+                r"P/?E\s*[\(:=]\s*([+-]?\d+\.?\d*)",
+                r"P/?E\s+(?:ratio\s*)?[:\s]+([+-]?\d+\.?\d*)",
+                r"trailing\s+PE\s*[\(:]\s*([+-]?\d+\.?\d*)",
+                r"(?:trailing\s+)?P/?E\s+of\s+([+-]?\d+\.?\d*)",
+            ],
+            False,
+        ),
+        (
+            "Beta",
+            [
+                r"[Bb]eta\s*[\(:=]\s*([+-]?\d+\.?\d*)",
+                r"[Bb]eta[:\s]+([+-]?\d+\.?\d*)",
+                r"[Bb]eta\s+of\s+([+-]?\d+\.?\d*)",
+            ],
+            False,
+        ),
+        (
+            "Sharpe Ratio",
+            [
+                r"[Ss]harpe\s+[Rr]atio\s*[\(:=]\s*([+-]?\d+\.?\d*)",
+                r"[Ss]harpe\s+[Rr]atio[:\s]+([+-]?\d+\.?\d*)",
+                r"[Ss]harpe\s+[Rr]atio\s+of\s+([+-]?\d+\.?\d*)",
+            ],
+            False,
+        ),
+        (
+            "RSI",
+            [
+                r"RSI\s*[\(:=]\s*([+-]?\d+\.?\d*)",
+                r"RSI\s+of\s+([+-]?\d+\.?\d*)",
+            ],
+            False,
+        ),
+        (
+            "Volatility",
+            [
+                r"(?:annual\s+)?volatility\s*[\(:]\s*([+-]?\d+\.?\d*)\s*%",
+                r"(?:annual\s+)?volatility[:\s]+([+-]?\d+\.?\d*)\s*%",
+                r"(?:annual\s+)?volatility\s+of\s+([+-]?\d+\.?\d*)\s*%",
+            ],
+            True,
+        ),
+        (
+            "Debt/Equity",
+            [
+                r"(?:debt[/\\]equity|D/E)\s*[\(:=]\s*([+-]?\d+\.?\d*)",
+                r"(?:debt[/\\]equity|D/E)\s+of\s+([+-]?\d+\.?\d*)",
+            ],
+            False,
+        ),
+        (
+            "Dividend Yield",
+            [
+                r"dividend\s+yield\s*[\(:=]\s*([+-]?\d+\.?\d*)\s*%",
+                r"dividend\s+yield\s+of\s+([+-]?\d+\.?\d*)\s*%",
+            ],
+            True,
+        ),
+        (
+            "EPS",
+            [
+                r"(?:diluted\s+)?EPS\s*[\(:=]\s*\$?\s*([+-]?\d+\.?\d*)",
+                r"(?:diluted\s+)?EPS\s+of\s+\$?\s*([+-]?\d+\.?\d*)",
+            ],
+            False,
+        ),
+        (
+            "Current Ratio",
+            [
+                r"current\s+ratio\s*[\(:=]\s*([+-]?\d+\.?\d*)",
+                r"current\s+ratio\s+of\s+([+-]?\d+\.?\d*)",
+            ],
+            False,
+        ),
+        (
+            "Net Margin",
+            [
+                r"net\s+(?:profit\s+)?margin\s*[\(:=]\s*([+-]?\d+\.?\d*)\s*%",
+                r"net\s+(?:profit\s+)?margin\s+of\s+([+-]?\d+\.?\d*)\s*%",
+            ],
+            True,
+        ),
     ]
 
     extracted: dict[str, str] = {}
@@ -1192,9 +1569,19 @@ def _enrich_from_markdown(
         "Net Margin": "Profitability",
     }
     _KPI_PRIORITY = [
-        "Revenue Growth", "ROE", "Operating Margin", "P/E Ratio",
-        "Sharpe Ratio", "Beta", "Dividend Yield", "RSI",
-        "Volatility", "EPS", "Net Margin", "Debt/Equity", "Current Ratio",
+        "Revenue Growth",
+        "ROE",
+        "Operating Margin",
+        "P/E Ratio",
+        "Sharpe Ratio",
+        "Beta",
+        "Dividend Yield",
+        "RSI",
+        "Volatility",
+        "EPS",
+        "Net Margin",
+        "Debt/Equity",
+        "Current Ratio",
     ]
     selected = [lbl for lbl in _KPI_PRIORITY if lbl in extracted][:4]
     for lbl in extracted:
@@ -1202,7 +1589,14 @@ def _enrich_from_markdown(
             selected.append(lbl)
     for label in selected:
         val = extracted[label]
-        data.kpi_chips.append({"label": label, "value": val, "context": _kpi_context.get(label, ""), "positive": not val.startswith("-")})
+        data.kpi_chips.append(
+            {
+                "label": label,
+                "value": val,
+                "context": _kpi_context.get(label, ""),
+                "positive": not val.startswith("-"),
+            }
+        )
 
     # ── Extract price targets / valuation ────────────────────────────────────
     # avg target / price target: "$298.42" or "target: $298.42"
@@ -1342,65 +1736,146 @@ def _enrich_from_markdown(
         "Net Margin": "Net profitability",
     }
     existing_fin_metrics = {row[0] for row in data.financials}
-    for label in ("Revenue Growth", "ROE", "Operating Margin", "P/E Ratio", "Beta", "Sharpe Ratio", "RSI", "Volatility",
-                  "Debt/Equity", "Dividend Yield", "EPS", "Current Ratio", "Net Margin"):
+    for label in (
+        "Revenue Growth",
+        "ROE",
+        "Operating Margin",
+        "P/E Ratio",
+        "Beta",
+        "Sharpe Ratio",
+        "RSI",
+        "Volatility",
+        "Debt/Equity",
+        "Dividend Yield",
+        "EPS",
+        "Current Ratio",
+        "Net Margin",
+    ):
         if label in extracted and label not in existing_fin_metrics:
             data.financials.append((label, extracted[label], _fin_context.get(label, "")))
 
     # ── Scorecard ────────────────────────────────────────────────────────────
     # Each entry: (dimension, [(pattern, group_index)], value_map)
     # Patterns try both "label adjective" and "adjective label" orders.
-    _STRONG_MAP = {"strong": "strong", "solid": "strong", "robust": "strong",
-                   "moderate": "moderate", "weak": "expensive", "poor": "expensive"}
-    _VALUATION_MAP = {"expensive": "expensive", "rich": "expensive", "premium": "expensive",
-                      "extreme": "expensive", "high": "expensive", "elevated": "expensive",
-                      "cheap": "strong", "undervalued": "strong", "fair": "moderate",
-                      "overvalued": "expensive"}
-    _RISK_MAP = {"low": "strong", "moderate": "moderate",
-                 "high": "expensive", "elevated": "expensive", "significant": "expensive"}
-    _ANALYST_MAP = {"strong buy": "strong", "buy": "strong", "outperform": "strong",
-                    "overweight": "strong", "hold": "bullish", "neutral": "moderate",
-                    "sell": "expensive", "underweight": "expensive"}
+    _STRONG_MAP = {
+        "strong": "strong",
+        "solid": "strong",
+        "robust": "strong",
+        "moderate": "moderate",
+        "weak": "expensive",
+        "poor": "expensive",
+    }
+    _VALUATION_MAP = {
+        "expensive": "expensive",
+        "rich": "expensive",
+        "premium": "expensive",
+        "extreme": "expensive",
+        "high": "expensive",
+        "elevated": "expensive",
+        "cheap": "strong",
+        "undervalued": "strong",
+        "fair": "moderate",
+        "overvalued": "expensive",
+    }
+    _RISK_MAP = {
+        "low": "strong",
+        "moderate": "moderate",
+        "high": "expensive",
+        "elevated": "expensive",
+        "significant": "expensive",
+    }
+    _ANALYST_MAP = {
+        "strong buy": "strong",
+        "buy": "strong",
+        "outperform": "strong",
+        "overweight": "strong",
+        "hold": "bullish",
+        "neutral": "moderate",
+        "sell": "expensive",
+        "underweight": "expensive",
+    }
 
     scorecard_entries: list[tuple[str, list[str], dict[str, str]]] = [
-        ("Fundamentals", [
-            r"(strong|weak|moderate|solid|robust)\s+(?:revenue\s+growth|fundamentals?|earnings)",
-            r"fundamental[s]?\s*[:\s]?\s*(strong|weak|moderate|solid|robust)",
-        ], _STRONG_MAP),
-        ("Technical Outlook", [
-            r"(?:MACD|macd)\s+(?:indicator\s+)?(?:is\s+)?(bullish|bearish)",
-            r"(sideways)\s+trend",
-            r"(?:technical[s]?|trend)\s*[:\s]?\s*(bullish|bearish|neutral|mixed)",
-            r"(bullish|bearish|neutral|mixed)\s+(?:signals?|technicals?|momentum)",
-            r"(?<!lack of a )(?<!lack of )(strong\s+uptrend|uptrend|downtrend|golden\s+cross)\b",
-        ], {"bullish": "bullish", "strong uptrend": "bullish", "uptrend": "bullish",
-            "golden cross": "bullish", "bearish": "expensive", "downtrend": "expensive",
-            "neutral": "moderate", "mixed": "moderate", "sideways": "moderate"}),
-        ("Valuation", [
-            r"(extreme|high|elevated|premium|rich|expensive)\s+valuation",
-            r"valuation\s*[:\s]?\s*(expensive|cheap|fair|rich|premium|undervalued|overvalued|extreme|high|elevated)",
-            r"(?:stock|company|it)\s+(?:may\s+be|is|appears?)\s+(overvalued|undervalued)",
-            r"(?:may\s+be|is)\s+(overvalued|undervalued)\s+relative",
-        ], _VALUATION_MAP),
-        ("Risk Profile", [
-            r"(significant|elevated|high)\s+(?:tail\s+)?risk",
-            r"(?:risk|volatility|tail\s+risk)\s*[:\s]?\s*(low|moderate|high|elevated|significant)",
-        ], _RISK_MAP),
-        ("Profitability", [
-            r"(robust|strong|high)\s+operating\s+margin",
-            r"operating\s+margin\s*[\(:]\s*\d+",
-            r"(?:profitability|margins?)\s*[:\s]?\s*(strong|weak|moderate|robust|high|improving)",
-        ], {"strong": "strong", "robust": "strong", "high": "strong", "improving": "bullish",
-            "moderate": "moderate", "weak": "expensive"}),
-        ("Momentum", [
-            r"RSI\s*[\(:=]\s*(\d+)",
-            r"RSI\s+of\s+(\d+\.?\d*)",
-        ], {"overbought": "expensive", "oversold": "strong"}),
-        ("Analyst Sentiment", [
-            r"""consensus\s+[\"']?(strong\s+buy|buy|hold|sell|outperform|overweight)[\"']?\s+recommend""",
-            r"(?:analyst[s]?\s+(?:consensus|recommend|sentiment)|consensus)\s*[:\s]?\s*(strong\s+buy|buy|hold|sell|outperform|overweight|underweight|neutral)",
-            r"""recommend[s]?\s+[\"']?(strong\s+buy|buy|hold|sell|outperform|overweight)[\"']?""",
-        ], _ANALYST_MAP),
+        (
+            "Fundamentals",
+            [
+                r"(strong|weak|moderate|solid|robust)\s+(?:revenue\s+growth|fundamentals?|earnings)",
+                r"fundamental[s]?\s*[:\s]?\s*(strong|weak|moderate|solid|robust)",
+            ],
+            _STRONG_MAP,
+        ),
+        (
+            "Technical Outlook",
+            [
+                r"(?:MACD|macd)\s+(?:indicator\s+)?(?:is\s+)?(bullish|bearish)",
+                r"(sideways)\s+trend",
+                r"(?:technical[s]?|trend)\s*[:\s]?\s*(bullish|bearish|neutral|mixed)",
+                r"(bullish|bearish|neutral|mixed)\s+(?:signals?|technicals?|momentum)",
+                r"(?<!lack of a )(?<!lack of )(strong\s+uptrend|uptrend|downtrend|golden\s+cross)\b",  # noqa: E501
+            ],
+            {
+                "bullish": "bullish",
+                "strong uptrend": "bullish",
+                "uptrend": "bullish",
+                "golden cross": "bullish",
+                "bearish": "expensive",
+                "downtrend": "expensive",
+                "neutral": "moderate",
+                "mixed": "moderate",
+                "sideways": "moderate",
+            },
+        ),
+        (
+            "Valuation",
+            [
+                r"(extreme|high|elevated|premium|rich|expensive)\s+valuation",
+                r"valuation\s*[:\s]?\s*(expensive|cheap|fair|rich|premium|undervalued|overvalued|extreme|high|elevated)",
+                r"(?:stock|company|it)\s+(?:may\s+be|is|appears?)\s+(overvalued|undervalued)",
+                r"(?:may\s+be|is)\s+(overvalued|undervalued)\s+relative",
+            ],
+            _VALUATION_MAP,
+        ),
+        (
+            "Risk Profile",
+            [
+                r"(significant|elevated|high)\s+(?:tail\s+)?risk",
+                r"(?:risk|volatility|tail\s+risk)\s*[:\s]?\s*(low|moderate|high|elevated|significant)",
+            ],
+            _RISK_MAP,
+        ),
+        (
+            "Profitability",
+            [
+                r"(robust|strong|high)\s+operating\s+margin",
+                r"operating\s+margin\s*[\(:]\s*\d+",
+                r"(?:profitability|margins?)\s*[:\s]?\s*(strong|weak|moderate|robust|high|improving)",
+            ],
+            {
+                "strong": "strong",
+                "robust": "strong",
+                "high": "strong",
+                "improving": "bullish",
+                "moderate": "moderate",
+                "weak": "expensive",
+            },
+        ),
+        (
+            "Momentum",
+            [
+                r"RSI\s*[\(:=]\s*(\d+)",
+                r"RSI\s+of\s+(\d+\.?\d*)",
+            ],
+            {"overbought": "expensive", "oversold": "strong"},
+        ),
+        (
+            "Analyst Sentiment",
+            [
+                r"""consensus\s+[\"']?(strong\s+buy|buy|hold|sell|outperform|overweight)[\"']?\s+recommend""",
+                r"(?:analyst[s]?\s+(?:consensus|recommend|sentiment)|consensus)\s*[:\s]?\s*(strong\s+buy|buy|hold|sell|outperform|overweight|underweight|neutral)",
+                r"""recommend[s]?\s+[\"']?(strong\s+buy|buy|hold|sell|outperform|overweight)[\"']?""",
+            ],
+            _ANALYST_MAP,
+        ),
     ]
 
     for dim, pats, mapping in scorecard_entries:
@@ -1411,7 +1886,9 @@ def _enrich_from_markdown(
                 badge = mapping.get(word, "moderate")
                 # For "operating margin (65.6%)" — just mark as strong if margin > 20%
                 if dim == "Profitability" and m.group(0) and "margin" in m.group(0).lower():
-                    margin_m = re.search(r"operating\s+margin\s*[\(:]\s*(\d+\.?\d*)", text, re.IGNORECASE)
+                    margin_m = re.search(
+                        r"operating\s+margin\s*[\(:]\s*(\d+\.?\d*)", text, re.IGNORECASE
+                    )
                     if margin_m and float(margin_m.group(1)) > 20:
                         word, badge = "strong", "strong"
                     elif margin_m and float(margin_m.group(1)) > 10:
@@ -1428,38 +1905,71 @@ def _enrich_from_markdown(
                         word, badge = "Oversold", "strong"
                 data.scorecard.append((dim, word.capitalize(), badge))
                 break
-    data.scorecard.append(("Recommendation", data.recommendation,
-                           "strong" if data.recommendation == "BUY"
-                           else "bullish" if data.recommendation == "HOLD"
-                           else "expensive"))
+    data.scorecard.append(
+        (
+            "Recommendation",
+            data.recommendation,
+            "strong"
+            if data.recommendation == "BUY"
+            else "bullish"
+            if data.recommendation == "HOLD"
+            else "expensive",
+        )
+    )
 
     # ── Risks and opportunities (all items pass through _clean_item) ─────────
     # From parsed sections
     for sec in sections:
         lower_title = sec.title.lower()
-        if any(k in lower_title for k in ("risk", "threat", "concern", "challenge", "bearish", "headwind")):
-            data.risks.extend(filter(None, (_clean_item(b) for b in _extract_bullets(sec.body)[:5])))
-        elif any(k in lower_title for k in ("opportunit", "catalyst", "growth", "strength", "upside", "bullish", "tailwind")):
-            data.opportunities.extend(filter(None, (_clean_item(b) for b in _extract_bullets(sec.body)[:5])))
+        if any(
+            k in lower_title
+            for k in ("risk", "threat", "concern", "challenge", "bearish", "headwind")
+        ):
+            data.risks.extend(
+                filter(None, (_clean_item(b) for b in _extract_bullets(sec.body)[:5]))
+            )
+        elif any(
+            k in lower_title
+            for k in (
+                "opportunit",
+                "catalyst",
+                "growth",
+                "strength",
+                "upside",
+                "bullish",
+                "tailwind",
+            )
+        ):
+            data.opportunities.extend(
+                filter(None, (_clean_item(b) for b in _extract_bullets(sec.body)[:5]))
+            )
 
     # From labelled blocks in text: "Key Risks to Monitor:\n" with per-line items
     if not data.risks:
         risk_block = re.search(
             r"(?:key\s+risks?\s*(?:to\s+monitor)?|risk\s+factors?)\s*:\s*\n((?:.*\n)*?)(?:\n\n|\nnext\s+step|\Z)",
-            text, re.IGNORECASE,
+            text,
+            re.IGNORECASE,
         )
         if risk_block:
-            data.risks = list(filter(None, (_clean_item(b) for b in _extract_bullets(risk_block.group(1))[:5])))
+            data.risks = list(
+                filter(None, (_clean_item(b) for b in _extract_bullets(risk_block.group(1))[:5]))
+            )
 
     # Inline comma-separated risks: "Key Risks: X, Y, and Z."
     if not data.risks:
         inline_risk = re.search(
             r"key\s+risks?\s*:\s*(.+?)(?:\.\s*$|\n\n|\n[A-Z])",
-            text, re.IGNORECASE | re.MULTILINE,
+            text,
+            re.IGNORECASE | re.MULTILINE,
         )
         if inline_risk:
             items = re.split(r",\s*(?:and\s+)?", inline_risk.group(1))
-            data.risks = list(filter(None, (_clean_item(i.strip().rstrip(".")) for i in items if len(i.strip()) > 5)))[:5]
+            data.risks = list(
+                filter(
+                    None, (_clean_item(i.strip().rstrip(".")) for i in items if len(i.strip()) > 5)
+                )
+            )[:5]
 
     # Bull Case / Bear Case — bounded block + per-item cleaning (R.2)
     if not data.opportunities:
@@ -1471,23 +1981,33 @@ def _enrich_from_markdown(
     if not data.opportunities:
         opp_block = re.search(
             r"(?:growth\s+(?:opportunities|drivers)|catalysts?)\s*:\s*\n((?:[\s\S]*?)(?=\n\n|\n[A-Z][a-z]|\Z))",
-            text, re.IGNORECASE,
+            text,
+            re.IGNORECASE,
         )
         if opp_block:
-            data.opportunities = list(filter(None, (_clean_item(b) for b in _extract_bullets(opp_block.group(1))[:5])))
+            data.opportunities = list(
+                filter(None, (_clean_item(b) for b in _extract_bullets(opp_block.group(1))[:5]))
+            )
 
     # Inline bold-labeled blocks: "**Bearish Signals:**\n  - items" or "**Headwinds:** inline text"
     def _extract_labeled_block(label_pat: str) -> list[str]:
         block_m = re.search(
             rf"\*\*{label_pat}\s*:\*\*\s*\n((?:\s+[-•*+].*\n?)+)",
-            text, re.IGNORECASE,
+            text,
+            re.IGNORECASE,
         )
         if block_m:
-            return list(filter(None, (_clean_item(b) for b in _extract_bullets(block_m.group(1))[:5])))
+            return list(
+                filter(None, (_clean_item(b) for b in _extract_bullets(block_m.group(1))[:5]))
+            )
         inline_m = re.search(rf"\*\*{label_pat}\s*:\*\*\s*(.+)", text, re.IGNORECASE)
         if inline_m:
             items = re.split(r",\s*(?:and\s+)?", inline_m.group(1))
-            return list(filter(None, (_clean_item(i.strip().rstrip(".")) for i in items if len(i.strip()) > 5)))[:5]
+            return list(
+                filter(
+                    None, (_clean_item(i.strip().rstrip(".")) for i in items if len(i.strip()) > 5)
+                )
+            )[:5]
         return []
 
     if not data.risks:
@@ -1508,9 +2028,30 @@ def _enrich_from_markdown(
 
     # ── Extract peer tickers from narrative text ─────────────────────────────
     _FINANCIAL_ABBREVS = {
-        "DCF", "MACD", "VIX", "DXY", "SEC", "LLM", "WACC", "RSI", "EPS",
-        "EBITDA", "IPO", "CEO", "CFO", "ETF", "GDP", "CPI", "FOMC", "YOY",
-        "QOQ", "MOM", "ADK", "SSE", "API", "YTD",
+        "DCF",
+        "MACD",
+        "VIX",
+        "DXY",
+        "SEC",
+        "LLM",
+        "WACC",
+        "RSI",
+        "EPS",
+        "EBITDA",
+        "IPO",
+        "CEO",
+        "CFO",
+        "ETF",
+        "GDP",
+        "CPI",
+        "FOMC",
+        "YOY",
+        "QOQ",
+        "MOM",
+        "ADK",
+        "SSE",
+        "API",
+        "YTD",
     }
     if not data.peer_names:
         # "CompanyName (TICKER)" format
@@ -1542,7 +2083,11 @@ def _enrich_from_markdown(
         for pat in _bare_peer_pats:
             for m in re.finditer(pat, text):
                 sym = m.group(1)
-                if sym != data.ticker and sym not in data.peer_names and sym not in _FINANCIAL_ABBREVS:
+                if (
+                    sym != data.ticker
+                    and sym not in data.peer_names
+                    and sym not in _FINANCIAL_ABBREVS
+                ):
                     data.peer_names.append(sym)
                     if len(data.peer_names) >= 2:
                         break
@@ -1561,15 +2106,17 @@ def _enrich_from_markdown(
             display_label = label if label in ("ROE", "P/E Ratio") else label.lower()
             fund_metrics.append(f"{display_label} of {extracted[label]}{suffix}")
     if fund_metrics:
-        summary_parts.append(
-            f"{data.company_name} demonstrates {', '.join(fund_metrics)}"
-        )
+        summary_parts.append(f"{data.company_name} demonstrates {', '.join(fund_metrics)}")
 
     # Valuation context: DCF + current price
-    dcf_val = next((v for l, v in data.valuation_table if "dcf" in l.lower() or "intrinsic" in l.lower()), None)
-    cur_price = next((v for l, v in data.valuation_table if "current price" in l.lower()), None)
+    dcf_val = next(
+        (v for lbl, v in data.valuation_table if "dcf" in lbl.lower() or "intrinsic" in lbl.lower()), None
+    )
+    cur_price = next((v for lbl, v in data.valuation_table if "current price" in lbl.lower()), None)
     if dcf_val and cur_price:
-        summary_parts.append(f"DCF analysis estimates intrinsic value at {dcf_val} versus the current trading price of {cur_price}")
+        summary_parts.append(
+            f"DCF analysis estimates intrinsic value at {dcf_val} versus the current trading price of {cur_price}"  # noqa: E501
+        )
     elif dcf_val:
         summary_parts.append(f"DCF analysis estimates intrinsic value at {dcf_val}")
 
@@ -1591,7 +2138,10 @@ def _enrich_from_markdown(
             break
 
     # Top opportunity
-    if data.opportunities and data.opportunities[0] not in ("Strong operational execution", "Market positioning"):
+    if data.opportunities and data.opportunities[0] not in (
+        "Strong operational execution",
+        "Market positioning",
+    ):
         summary_parts.append(data.opportunities[0].rstrip("."))
 
     # Key risk
@@ -1605,17 +2155,30 @@ def _enrich_from_markdown(
         if len(data.executive_summary) < 300:
             for sec in sections:
                 lt = sec.title.lower()
-                if any(k in lt for k in ("rationale", "thesis", "investment thesis", "summary", "synthesis", "outlook")):
+                if any(
+                    k in lt
+                    for k in (
+                        "rationale",
+                        "thesis",
+                        "investment thesis",
+                        "summary",
+                        "synthesis",
+                        "outlook",
+                    )
+                ):
                     narrative = sec.body.strip()
                     if len(narrative) > 50:
-                        data.executive_summary = data.executive_summary.rstrip(".") + ". " + narrative
+                        data.executive_summary = (
+                            data.executive_summary.rstrip(".") + ". " + narrative
+                        )
                         break
         data.executive_summary = data.executive_summary[:1200]
     else:
         # Fallback: extract from Bull Case or Synthesis block
         bull = re.search(
             r"(?:bull\s+case|synthesis|investment\s+thesis)\s*:\s*(.+?)(?:\n(?:bear\s+case|confidence|key\s+risk)|\Z)",
-            text, re.IGNORECASE | re.DOTALL,
+            text,
+            re.IGNORECASE | re.DOTALL,
         )
         if bull:
             raw = bull.group(1).strip()
@@ -1626,7 +2189,12 @@ def _enrich_from_markdown(
             substance = []
             for line in lines:
                 line = line.strip()
-                if not line or line.startswith("Here is") or line.startswith("Investment Recommendation") or line.startswith("Confidence Score"):
+                if (
+                    not line
+                    or line.startswith("Here is")
+                    or line.startswith("Investment Recommendation")
+                    or line.startswith("Confidence Score")
+                ):
                     continue
                 substance.append(line)
                 if len(" ".join(substance)) > 400:

@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """Unified MCP data server providing financial data tools — composition root.
 
 Exposes stock prices, financials, SEC EDGAR filings, news sentiment, ticker
@@ -26,13 +27,13 @@ HOST = _settings.mcp_host
 PORT = _settings.mcp_port
 
 # ── import app singleton (creates FastMCP instance) ──────────────────────────
-from mcp_servers._app import app  # noqa: E402  (must follow bootstrap)
-
 # ── trigger all @app.tool() registrations ────────────────────────────────────
 # tools/__init__ imports agent_registry which reads EMBED_MODEL_NAME lazily;
 # patch the default before any tool is first called (not at import time).
 import mcp_servers.tools  # noqa: F401  (side-effect: registers all tools)
 import mcp_servers.tools.agent_registry as _ar_mod
+from mcp_servers._app import app  # noqa: E402  (must follow bootstrap)
+
 _ar_mod.EMBED_MODEL_NAME = _settings.embed_model
 
 logger = logging.getLogger(__name__)
@@ -55,11 +56,12 @@ def get_app():
     if _starlette_app is None:
         with _app_lock:
             if _starlette_app is None:
+                from starlette.applications import Starlette
+                from starlette.responses import JSONResponse
+                from starlette.routing import Mount, Route
+
                 from shared.auth.middleware import build_auth_middleware
                 from shared.settings import get_settings
-                from starlette.applications import Starlette
-                from starlette.routing import Route, Mount
-                from starlette.responses import JSONResponse
 
                 async def health(request):
                     return JSONResponse({"status": "ok", "agent": "mcp"})
@@ -81,4 +83,5 @@ def get_app():
 # pull in the ASGI runtime — keeps import chains clean for agent tests.
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(get_app(), host=HOST, port=PORT)

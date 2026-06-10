@@ -1,12 +1,12 @@
 from datetime import datetime, timedelta, timezone
-import pytest
+
 from shared.memory.ticker_memory import TickerMemory
 from shared.models import (
+    InvestmentBrief,
+    QuantMetrics,
     QueryContext,
     RAGInsights,
-    QuantMetrics,
     SentimentIntelligence,
-    InvestmentBrief,
 )
 
 _BASE_TS = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
@@ -15,30 +15,52 @@ _BASE_TS = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
 def _make_brief(ticker="AAPL", rec="BUY", confidence=0.8, offset_hours=0):
     ts = _BASE_TS + timedelta(hours=offset_hours)
     qc = QueryContext(
-        ticker=ticker, user_query=f"analyze {ticker}",
-        user_risk_profile="medium", portfolio_holdings=[],
-        investment_horizon="medium_term", session_id="s1", timestamp=ts,
+        ticker=ticker,
+        user_query=f"analyze {ticker}",
+        user_risk_profile="medium",
+        portfolio_holdings=[],
+        investment_horizon="medium_term",
+        session_id="s1",
+        timestamp=ts,
     )
     rag = RAGInsights(
-        ticker=ticker, revenue_growth_yoy=0.10, rd_spend_billions=2.0,
-        forward_guidance="positive", key_risks=["competition"],
-        cited_documents=["10-K"], confidence_score=0.9,
+        ticker=ticker,
+        revenue_growth_yoy=0.10,
+        rd_spend_billions=2.0,
+        forward_guidance="positive",
+        key_risks=["competition"],
+        cited_documents=["10-K"],
+        confidence_score=0.9,
     )
     quant = QuantMetrics(
-        ticker=ticker, sharpe_ratio=1.2, annual_volatility=0.22,
-        beta=1.0, var_95_daily=-0.018, portfolio_correlation={},
-        quant_signal=rec, quant_confidence=confidence,
+        ticker=ticker,
+        sharpe_ratio=1.2,
+        annual_volatility=0.22,
+        beta=1.0,
+        var_95_daily=-0.018,
+        portfolio_correlation={},
+        quant_signal=rec,
+        quant_confidence=confidence,
     )
     sentiment = SentimentIntelligence(
-        ticker=ticker, social_sentiment_score=0.5, analyst_consensus="neutral",
-        avg_price_target=150.0, insider_signal="neutral", narrative="steady",
-        overall_signal=rec, confidence_score=confidence,
-        key_risks=[], key_catalysts=[],
+        ticker=ticker,
+        social_sentiment_score=0.5,
+        analyst_consensus="neutral",
+        avg_price_target=150.0,
+        insider_signal="neutral",
+        narrative="steady",
+        overall_signal=rec,
+        confidence_score=confidence,
+        key_risks=[],
+        key_catalysts=[],
     )
     return InvestmentBrief(
-        ticker=ticker, generated_at=ts,
-        query_context=qc, rag_insights=rag,
-        quant_metrics=quant, sentiment_intelligence=sentiment,
+        ticker=ticker,
+        generated_at=ts,
+        query_context=qc,
+        rag_insights=rag,
+        quant_metrics=quant,
+        sentiment_intelligence=sentiment,
         final_recommendation=rec,
         recommendation_rationale=f"{ticker} looks {rec.lower()}",
         confidence_score=confidence,

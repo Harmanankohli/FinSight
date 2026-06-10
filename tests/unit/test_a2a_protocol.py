@@ -15,6 +15,7 @@ pytestmark = pytest.mark.auth
 
 try:
     from a2a.types import TaskState
+
     HAS_A2A = True
 except Exception:
     HAS_A2A = False
@@ -65,7 +66,11 @@ class _FakeAgent:
     def __init__(self, steps=None):
         self.steps = steps or [
             {"is_task_complete": False, "content": "Working..."},
-            {"is_task_complete": True, "content": {"result": "success", "value": 42}, "response_type": "data"},
+            {
+                "is_task_complete": True,
+                "content": {"result": "success", "value": 42},
+                "response_type": "data",
+            },
         ]
 
     async def stream(self, query: str, context_id: str, task_id: str):
@@ -98,10 +103,14 @@ class TestGenericAgentExecutor:
     async def test_failure_lifecycle(self):
         from shared.generic_executor import GenericAgentExecutor
 
-        executor = GenericAgentExecutor(_FakeAgent(steps=[
-            {"is_task_complete": False, "content": "Running..."},
-            {"is_task_complete": True, "is_error": True, "content": "Something broke"},
-        ]))
+        executor = GenericAgentExecutor(
+            _FakeAgent(
+                steps=[
+                    {"is_task_complete": False, "content": "Running..."},
+                    {"is_task_complete": True, "is_error": True, "content": "Something broke"},
+                ]
+            )
+        )
         ctx = _FakeRequestContext()
         eq = _FakeEventQueue()
 
@@ -138,9 +147,17 @@ class TestGenericAgentExecutor:
     async def test_input_required_lifecycle(self):
         from shared.generic_executor import GenericAgentExecutor
 
-        executor = GenericAgentExecutor(_FakeAgent(steps=[
-            {"is_task_complete": False, "require_user_input": True, "content": "What is your risk tolerance?"},
-        ]))
+        executor = GenericAgentExecutor(
+            _FakeAgent(
+                steps=[
+                    {
+                        "is_task_complete": False,
+                        "require_user_input": True,
+                        "content": "What is your risk tolerance?",
+                    },
+                ]
+            )
+        )
         ctx = _FakeRequestContext()
         eq = _FakeEventQueue()
 
@@ -153,9 +170,17 @@ class TestGenericAgentExecutor:
     async def test_structured_data_artifact(self):
         from shared.generic_executor import GenericAgentExecutor
 
-        executor = GenericAgentExecutor(_FakeAgent(steps=[
-            {"is_task_complete": True, "content": {"sharpe": 1.5, "vol": 0.25}, "response_type": "data"},
-        ]))
+        executor = GenericAgentExecutor(
+            _FakeAgent(
+                steps=[
+                    {
+                        "is_task_complete": True,
+                        "content": {"sharpe": 1.5, "vol": 0.25},
+                        "response_type": "data",
+                    },
+                ]
+            )
+        )
         ctx = _FakeRequestContext()
         eq = _FakeEventQueue()
 

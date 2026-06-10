@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """News-fetching helpers: RSS, DuckDuckGo, Yahoo Finance news API.
 
 These are pure helper functions with no MCP tool registrations.
@@ -25,8 +26,7 @@ logger = logging.getLogger(__name__)
 RSS_FEEDS: dict[str, str] = {
     "yahoo_finance": "https://finance.yahoo.com/news/rssindex",
     "cnbc_top": (
-        "https://search.cnbc.com/rs/search/combinedcms/view.xml"
-        "?partnerId=wrss01&id=100003114"
+        "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114"
     ),
     "marketwatch": "https://feeds.content.dowjones.io/public/rss/mw_topstories",
 }
@@ -65,7 +65,7 @@ async def fetch_rss(url: str, client: httpx.AsyncClient) -> dict:
 
 
 async def fetch_ddg_news(ticker: str, company_name: str, limit: int = 10) -> list[dict]:
-    """4th-tier news fallback via DuckDuckGo. Silently skips if ``duckduckgo_search`` is not installed.
+    """4th-tier news fallback via DuckDuckGo. Silently skips if ``duckduckgo_search`` is not installed.  # noqa: E501
 
     Returns a list of article dicts: {source, title, link, publisher, published, sentiment}.
     """
@@ -92,23 +92,23 @@ async def fetch_ddg_news(ticker: str, company_name: str, limit: int = 10) -> lis
             title_score = _sa.polarity_scores(title)["compound"]
             body_score = _sa.polarity_scores(body)["compound"] if body else title_score
             compound = round((title_score + body_score) / 2, 4)
-            articles.append({
-                "source": "duckduckgo",
-                "title": title,
-                "link": item.get("url", ""),
-                "publisher": item.get("source", ""),
-                "published": item.get("date", ""),
-                "sentiment": compound,
-            })
+            articles.append(
+                {
+                    "source": "duckduckgo",
+                    "title": title,
+                    "link": item.get("url", ""),
+                    "publisher": item.get("source", ""),
+                    "published": item.get("date", ""),
+                    "sentiment": compound,
+                }
+            )
         return articles
     except Exception as exc:
         logger.warning("DuckDuckGo news fetch failed for %s: %s", ticker, exc)
         return []
 
 
-async def fetch_yf_news(
-    ticker: str, client: httpx.AsyncClient, limit: int = 15
-) -> list[dict]:
+async def fetch_yf_news(ticker: str, client: httpx.AsyncClient, limit: int = 15) -> list[dict]:
     """Fetch news articles from Yahoo Finance search API for a ticker.
 
     This is a structured fallback when RSS feeds fail or return 0 articles.
@@ -141,17 +141,19 @@ async def fetch_yf_news(
                 published = datetime.fromtimestamp(pub, tz=timezone.utc).isoformat() if pub else ""
             except Exception:
                 published = ""
-            title_score   = _sa.polarity_scores(title)["compound"]
+            title_score = _sa.polarity_scores(title)["compound"]
             summary_score = _sa.polarity_scores(summary)["compound"] if summary else title_score
             compound = round((title_score + summary_score) / 2, 4)
-            articles.append({
-                "source": "yahoo_finance_api",
-                "title": title,
-                "link": item.get("link", ""),
-                "publisher": item.get("publisher", ""),
-                "published": published,
-                "sentiment": compound,
-            })
+            articles.append(
+                {
+                    "source": "yahoo_finance_api",
+                    "title": title,
+                    "link": item.get("link", ""),
+                    "publisher": item.get("publisher", ""),
+                    "published": published,
+                    "sentiment": compound,
+                }
+            )
         return articles
     except Exception as exc:
         logger.warning("YF news API failed for %s: %s", ticker, exc)

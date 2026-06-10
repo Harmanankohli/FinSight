@@ -8,9 +8,10 @@ Each model represents data flowing between agents/stages:
   InvestmentBrief    → orchestrator → final output (user)
 """
 
-from pydantic import BaseModel
 from datetime import datetime
 from typing import Any, Optional
+
+from pydantic import BaseModel
 
 
 # ── QueryContext: raw user request that enters the orchestrator ──
@@ -79,6 +80,7 @@ class InvestmentBrief(BaseModel):
 
 
 # ── API Response Models (WP 3.2) — used by FastAPI sub-app for OpenAPI spec ──
+
 
 class HealthResponse(BaseModel):
     status: str

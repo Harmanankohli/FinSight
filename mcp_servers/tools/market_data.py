@@ -7,21 +7,19 @@ import logging
 from typing import Any
 
 import numpy as np
-import pandas as pd
 import yfinance as yf
 from langfuse import observe
-
-from shared.logging_config import logged
 
 from mcp_servers._app import app
 from mcp_servers.infra.rate_limiters import (
     _YF_LIMITER,
     BENCHMARK_TICKERS,
-    cache_prices,
     cache_benchmark,
     cache_financials,
     cache_macro,
+    cache_prices,
 )
+from shared.logging_config import logged
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +27,7 @@ logger = logging.getLogger(__name__)
 # ──────────────────────────────────────────────
 # Serialisation helper
 # ──────────────────────────────────────────────
+
 
 def _serialise_value(v: Any) -> Any:
     """Recursively convert non-JSON-serialisable types (NaN, inf, datetime, numpy)."""
@@ -52,6 +51,7 @@ def _serialise_value(v: Any) -> Any:
 # ──────────────────────────────────────────────
 # Prices
 # ──────────────────────────────────────────────
+
 
 async def _get_prices_uncached(ticker: str, period: str, interval: str) -> dict:
     try:
@@ -93,6 +93,7 @@ async def get_prices(ticker: str, period: str = "1y", interval: str = "1d") -> d
 # Financials
 # ──────────────────────────────────────────────
 
+
 async def _get_financials_uncached(ticker: str) -> dict:
     try:
         await _YF_LIMITER.acquire()
@@ -107,9 +108,7 @@ async def _get_financials_uncached(ticker: str) -> dict:
                 "balance_sheet": stock.balance_sheet.to_dict()
                 if stock.balance_sheet is not None
                 else {},
-                "cash_flow": stock.cashflow.to_dict()
-                if stock.cashflow is not None
-                else {},
+                "cash_flow": stock.cashflow.to_dict() if stock.cashflow is not None else {},
                 "info": stock.info or {},
             }
 
@@ -117,8 +116,12 @@ async def _get_financials_uncached(ticker: str) -> dict:
     except Exception as exc:
         logger.warning("get_financials failed for %s: %s", ticker, exc)
         return {
-            "ticker": ticker, "error": str(exc),
-            "income_statement": {}, "balance_sheet": {}, "cash_flow": {}, "info": {},
+            "ticker": ticker,
+            "error": str(exc),
+            "income_statement": {},
+            "balance_sheet": {},
+            "cash_flow": {},
+            "info": {},
         }
 
 
@@ -146,23 +149,23 @@ async def get_financials(ticker: str) -> dict:
 # ──────────────────────────────────────────────
 
 _MACRO_TICKERS = {
-    "us10y": "^TNX",      # 10-year Treasury yield
-    "us2y":  "^FVX",      # 5-year proxy (closest clean 2Y in yfinance)
-    "vix":   "^VIX",      # CBOE volatility index
-    "dxy":   "DX-Y.NYB",  # US Dollar index
+    "us10y": "^TNX",  # 10-year Treasury yield
+    "us2y": "^FVX",  # 5-year proxy (closest clean 2Y in yfinance)
+    "vix": "^VIX",  # CBOE volatility index
+    "dxy": "DX-Y.NYB",  # US Dollar index
 }
 
 _SECTOR_ETFS = {
-    "tech":          "XLK",
-    "financials":    "XLF",
-    "energy":        "XLE",
-    "healthcare":    "XLV",
-    "industrials":   "XLI",
+    "tech": "XLK",
+    "financials": "XLF",
+    "energy": "XLE",
+    "healthcare": "XLV",
+    "industrials": "XLI",
     "consumer_disc": "XLY",
     "consumer_stap": "XLP",
-    "utilities":     "XLU",
-    "materials":     "XLB",
-    "real_estate":   "XLRE",
+    "utilities": "XLU",
+    "materials": "XLB",
+    "real_estate": "XLRE",
     "communication": "XLC",
 }
 
@@ -179,9 +182,9 @@ async def _get_macro_impl() -> dict:
             if hist.empty:
                 continue
             latest = float(hist["Close"].iloc[-1])
-            prev   = float(hist["Close"].iloc[-5]) if len(hist) >= 5 else latest
+            prev = float(hist["Close"].iloc[-5]) if len(hist) >= 5 else latest
             result["macro"][key] = {
-                "value":         round(latest, 3),
+                "value": round(latest, 3),
                 "change_5d_pct": round((latest - prev) / prev * 100, 2) if prev else 0,
             }
         except Exception as exc:
@@ -194,14 +197,14 @@ async def _get_macro_impl() -> dict:
             if hist.empty:
                 continue
             latest = float(hist["Close"].iloc[-1])
-            prev   = float(hist["Close"].iloc[-21]) if len(hist) >= 21 else latest
+            prev = float(hist["Close"].iloc[-21]) if len(hist) >= 21 else latest
             result["sectors"][name] = round((latest - prev) / prev * 100, 2) if prev else 0
         except Exception:
             continue
     macro = result["macro"]
     if "us10y" in macro and "us2y" in macro:
         v10 = macro["us10y"].get("value", 0)
-        v2  = macro["us2y"].get("value", 0)
+        v2 = macro["us2y"].get("value", 0)
         spread = v10 - v2
         result["macro"]["yield_curve_spread"] = round(spread, 3)
         result["macro"]["regime"] = (
@@ -226,6 +229,7 @@ async def get_macro_indicators() -> dict:
 # ──────────────────────────────────────────────
 # Options chain
 # ──────────────────────────────────────────────
+
 
 @app.tool()
 @observe()

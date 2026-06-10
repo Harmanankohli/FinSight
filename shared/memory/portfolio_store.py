@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """User portfolio and risk profile persistence.
 
 Auto-captures portfolio holdings from QueryContext on each query.
@@ -12,9 +13,9 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-from shared.settings import IST
 from shared.memory.store import DB_PATH, get_db, write_lock
 from shared.models import QueryContext
+from shared.settings import IST
 
 
 class PortfolioStore:
@@ -43,7 +44,7 @@ class PortfolioStore:
         logger.debug("Profile for user %s: found (%d holdings)", user_id, len(result["holdings"]))
         return result
 
-    # Called on each query. Merges new holdings with existing ones (union), updates risk/horizon only when non-empty.
+    # Called on each query. Merges new holdings with existing ones (union), updates risk/horizon only when non-empty.  # noqa: E501
     async def upsert_from_context(self, ctx: QueryContext) -> None:
         """Auto-capture portfolio from QueryContext on each query.
 
@@ -84,7 +85,9 @@ class PortfolioStore:
                     (ctx.session_id, risk, json.dumps(new_holdings), horizon, now),
                 )
             await conn.commit()
-        logger.debug("Portfolio upserted for user %s (%d holdings)", ctx.session_id, len(new_holdings))
+        logger.debug(
+            "Portfolio upserted for user %s (%d holdings)", ctx.session_id, len(new_holdings)
+        )
 
     # Simple read — returns the user's current holdings list from their profile.
     async def get_holdings(self, user_id: str) -> list[str]:

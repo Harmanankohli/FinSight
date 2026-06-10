@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """Jinja2 HTML report generation."""
 
 from __future__ import annotations
@@ -33,14 +34,16 @@ def _deck_to_template_context(deck: DeckData) -> dict:
     }
 
 
-_jinja_env: "jinja2.Environment | None" = None
+_jinja_env: "jinja2.Environment | None" = None  # noqa: F821
 
 
-def _get_jinja_env() -> "jinja2.Environment":
+def _get_jinja_env() -> "jinja2.Environment":  # noqa: F821
     global _jinja_env
     if _jinja_env is None:
         from pathlib import Path
+
         import jinja2
+
         template_dir = Path(__file__).parent.parent / "templates"
         _jinja_env = jinja2.Environment(
             loader=jinja2.FileSystemLoader(str(template_dir)),
@@ -59,7 +62,9 @@ def generate_html(
 ) -> str:
     """Generate a standalone HTML investment deck. Returns HTML string."""
     logger.info("Generating HTML report for %s", ticker)
-    deck = _extract_deck_data(brief_data, ticker, recommendation, confidence, analysis_date, company_info=company_info)
+    deck = _extract_deck_data(
+        brief_data, ticker, recommendation, confidence, analysis_date, company_info=company_info
+    )
     ctx = _deck_to_template_context(deck)
     template = _get_jinja_env().get_template("investment_deck.html")
     result = template.render(**ctx)

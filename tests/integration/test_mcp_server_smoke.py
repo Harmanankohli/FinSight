@@ -5,8 +5,9 @@ Marked @pytest.mark.integration — skipped by default, run with:
 
 Requires all services to be running (run_adk_web.bat).
 """
-import pytest
+
 import httpx
+import pytest
 
 
 @pytest.mark.integration

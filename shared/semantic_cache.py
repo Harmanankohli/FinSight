@@ -24,8 +24,6 @@ import time
 from datetime import date
 from uuid import uuid4
 
-from shared.logging_config import logged_sync
-
 logger = logging.getLogger(__name__)
 
 _COLLECTION_NAME = "query_cache"
@@ -61,6 +59,7 @@ class SemanticCache:
         try:
             import chromadb
             from sentence_transformers import SentenceTransformer
+
             from shared.settings import CHROMA_DIR, EMBED_MODEL
 
             client = chromadb.PersistentClient(path=CHROMA_DIR)
@@ -100,7 +99,9 @@ class SemanticCache:
             if similarity >= self._threshold:
                 meta = metadatas[0]
                 if time.time() - float(meta.get("ts", 0)) < self._ttl:
-                    logger.debug("Semantic cache hit (sim=%.3f) for query: %s", similarity, query[:60])
+                    logger.debug(
+                        "Semantic cache hit (sim=%.3f) for query: %s", similarity, query[:60]
+                    )
                     return meta.get("response")
         except Exception as exc:
             logger.warning("SemanticCache.get failed: %s", exc)
@@ -117,12 +118,14 @@ class SemanticCache:
             self._col.add(
                 embeddings=[emb],
                 documents=[query],
-                metadatas=[{
-                    "response": response[:4000],
-                    "ts": str(time.time()),
-                    "date": _today_key(),
-                    "user_id": user_id or "__system__",
-                }],
+                metadatas=[
+                    {
+                        "response": response[:4000],
+                        "ts": str(time.time()),
+                        "date": _today_key(),
+                        "user_id": user_id or "__system__",
+                    }
+                ],
                 ids=[str(uuid4())],
             )
         except Exception as exc:

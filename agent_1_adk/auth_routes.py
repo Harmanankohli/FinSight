@@ -9,33 +9,30 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
+from starlette.responses import JSONResponse
 from starlette.routing import Route
 
+from shared.auth.audit import log_lockout, log_login, log_refresh
+from shared.auth.middleware import require
 from shared.auth.tokens import (
     AuthError,
-    issue_user_token,
-    issue_refresh_token,
     decode_refresh_token,
-    verify_user_token,
+    issue_refresh_token,
+    issue_user_token,
 )
-from shared.auth.audit import log_login, log_lockout, log_refresh
-from shared.auth.middleware import get_principal, require
 from shared.memory.user_store import (
-    verify_password,
-    store_refresh_token,
-    revoke_refresh_token,
-    is_refresh_token_revoked,
     get_refresh_token,
+    revoke_refresh_token,
     revoke_user_refresh_tokens,
+    store_refresh_token,
     update_rotated_at,
-    ensure_schema_v4,
+    verify_password,
 )
-from shared.settings import get_settings
 from shared.rate_limiter import TokenBucket
+from shared.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +97,8 @@ async def login(request: Request) -> JSONResponse:
     if await _check_lockout(username, ip):
         log_lockout(username, ip)
         return _ERROR_ENVELOPE(
-            "RATE_LIMITED", "Too many login attempts. Try again later.",
+            "RATE_LIMITED",
+            "Too many login attempts. Try again later.",
             status=429,
         )
 
@@ -120,12 +118,14 @@ async def login(request: Request) -> JSONResponse:
     refresh_token = issue_refresh_token(jti, user["user_id"])
     await store_refresh_token(jti, user["user_id"], expires_at)
 
-    response = JSONResponse({
-        "access_token": access_token,
-        "expires_in": s.auth_access_ttl_seconds,
-        "token_type": "Bearer",
-        "user": {"id": user["user_id"], "username": user["username"], "role": user["role"]},
-    })
+    response = JSONResponse(
+        {
+            "access_token": access_token,
+            "expires_in": s.auth_access_ttl_seconds,
+            "token_type": "Bearer",
+            "user": {"id": user["user_id"], "username": user["username"], "role": user["role"]},
+        }
+    )
     response.set_cookie(
         key="refresh_token",
         value=refresh_token,
@@ -205,11 +205,13 @@ async def refresh(request: Request) -> JSONResponse:
     access_token = issue_user_token(user_id)
     log_refresh(user_id, new_jti)
 
-    response = JSONResponse({
-        "access_token": access_token,
-        "expires_in": s.auth_access_ttl_seconds,
-        "token_type": "Bearer",
-    })
+    response = JSONResponse(
+        {
+            "access_token": access_token,
+            "expires_in": s.auth_access_ttl_seconds,
+            "token_type": "Bearer",
+        }
+    )
     response.set_cookie(
         key="refresh_token",
         value=new_refresh,
@@ -245,16 +247,19 @@ async def me(request: Request) -> JSONResponse:
         return _ERROR_ENVELOPE(str(e), "Not authenticated", status=401)
 
     from shared.memory.user_store import get_user
+
     user = await get_user(p.subject)
     if not user:
         return _ERROR_ENVELOPE("NOT_FOUND", "User not found", status=404)
 
-    return JSONResponse({
-        "id": user["user_id"],
-        "username": user["username"],
-        "role": user["role"],
-        "disabled": user["disabled"],
-    })
+    return JSONResponse(
+        {
+            "id": user["user_id"],
+            "username": user["username"],
+            "role": user["role"],
+            "disabled": user["disabled"],
+        }
+    )
 
 
 def get_auth_routes() -> list[Route]:

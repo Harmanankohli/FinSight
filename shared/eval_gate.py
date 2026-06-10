@@ -26,8 +26,6 @@ import logging
 from collections.abc import Callable, Coroutine
 from typing import Any
 
-from shared.logging_config import logged
-
 logger = logging.getLogger(__name__)
 
 EVAL_DEFER_TIMEOUT = 120.0  # seconds — safety net
@@ -71,6 +69,8 @@ async def _auto_release() -> None:
         await asyncio.sleep(EVAL_DEFER_TIMEOUT)
         n = await release_evals()
         if n:
-            logger.warning("[eval-gate] auto-released %d eval(s) after %.0fs timeout", n, EVAL_DEFER_TIMEOUT)
+            logger.warning(
+                "[eval-gate] auto-released %d eval(s) after %.0fs timeout", n, EVAL_DEFER_TIMEOUT
+            )
     except asyncio.CancelledError:
         pass

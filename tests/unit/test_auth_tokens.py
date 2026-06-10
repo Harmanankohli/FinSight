@@ -1,13 +1,15 @@
 """Tests for shared/auth/tokens.py — JWT creation, verification, error handling."""
+
 import time
+
 import pytest
+
 from shared.auth.tokens import (
     AuthError,
-    Principal,
-    issue_user_token,
-    issue_refresh_token,
-    verify_user_token,
     decode_refresh_token,
+    issue_refresh_token,
+    issue_user_token,
+    verify_user_token,
 )
 from shared.settings import reset_settings_for_tests
 
@@ -59,39 +61,62 @@ class TestVerifyUserToken:
             verify_user_token(token)
 
     def test_rejects_wrong_signature(self):
-        token = issue_user_token("carol")
+        issue_user_token("carol")
         # The token is signed with the correct key; we need a token signed with a different key
         import jwt as pyjwt
+
         bad = pyjwt.encode(
-            {"sub": "carol", "role": "user", "iat": int(time.time()),
-             "exp": int(time.time()) + 900, "iss": "finsight", "type": "access"},
-            "z" * 32, algorithm="HS256",
+            {
+                "sub": "carol",
+                "role": "user",
+                "iat": int(time.time()),
+                "exp": int(time.time()) + 900,
+                "iss": "finsight",
+                "type": "access",
+            },
+            "z" * 32,
+            algorithm="HS256",
         )
         with pytest.raises(AuthError, match="invalid token"):
             verify_user_token(bad)
 
     def test_rejects_wrong_type(self):
         import jwt as pyjwt
+
         s = __import__("shared.settings", fromlist=["get_settings"]).get_settings()
         key = s.auth_jwt_secrets.split(",")[0]
         bad = pyjwt.encode(
-            {"sub": "dave", "role": "user", "iat": int(time.time()),
-             "exp": int(time.time()) + 900, "iss": "finsight", "type": "evil"},
-            key, algorithm="HS256",
+            {
+                "sub": "dave",
+                "role": "user",
+                "iat": int(time.time()),
+                "exp": int(time.time()) + 900,
+                "iss": "finsight",
+                "type": "evil",
+            },
+            key,
+            algorithm="HS256",
         )
         with pytest.raises(AuthError, match="wrong token"):
-
             verify_user_token(bad)
 
     def test_rejects_wrong_issuer(self):
-        token = issue_user_token("eve")
+        issue_user_token("eve")
         import jwt as pyjwt
+
         s = __import__("shared.settings", fromlist=["get_settings"]).get_settings()
         key = s.auth_jwt_secrets.split(",")[0]
         bad = pyjwt.encode(
-            {"sub": "eve", "role": "user", "iat": int(time.time()),
-             "exp": int(time.time()) + 900, "iss": "wrong", "type": "access"},
-            key, algorithm="HS256",
+            {
+                "sub": "eve",
+                "role": "user",
+                "iat": int(time.time()),
+                "exp": int(time.time()) + 900,
+                "iss": "wrong",
+                "type": "access",
+            },
+            key,
+            algorithm="HS256",
         )
         with pytest.raises(AuthError, match="invalid token"):
             verify_user_token(bad)
@@ -121,12 +146,20 @@ class TestRefreshToken:
 
     def test_rejects_expired_refresh(self):
         import jwt as pyjwt
+
         s = __import__("shared.settings", fromlist=["get_settings"]).get_settings()
         key = s.auth_jwt_secrets.split(",")[0]
         bad = pyjwt.encode(
-            {"jti": "dead", "sub": "u1", "iat": int(time.time()) - 99999,
-             "exp": int(time.time()) - 1, "iss": "finsight", "type": "refresh"},
-            key, algorithm="HS256",
+            {
+                "jti": "dead",
+                "sub": "u1",
+                "iat": int(time.time()) - 99999,
+                "exp": int(time.time()) - 1,
+                "iss": "finsight",
+                "type": "refresh",
+            },
+            key,
+            algorithm="HS256",
         )
         with pytest.raises(AuthError, match="invalid refresh"):
             decode_refresh_token(bad)

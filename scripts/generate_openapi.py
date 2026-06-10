@@ -23,7 +23,7 @@ def main() -> None:
     if "--check" in sys.argv:
         current = OPENAPI_PATH.read_text(encoding="utf-8") if OPENAPI_PATH.exists() else ""
         if current != serialized:
-            print(f"OpenAPI spec changed — regenerate with: python scripts/generate_openapi.py")
+            print("OpenAPI spec changed — regenerate with: python scripts/generate_openapi.py")
             sys.exit(1)
         print("OpenAPI spec is up to date.")
         return

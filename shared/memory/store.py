@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """SQLite foundation for the FinSight memory layer.
 
 Provides async database connection management and schema migration.
@@ -17,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 try:
     from shared.settings import get_settings as _get_settings
+
     DB_PATH = Path(_get_settings().finsight_db_path)
 except Exception:
     DB_PATH = Path(__file__).resolve().parent.parent.parent / "db" / "finsight_memory.db"
@@ -24,7 +26,7 @@ except Exception:
 SCHEMA_VERSION = 3
 
 CREATE_TABLES_SQL = """
--- Stores structured InvestmentBrief objects. Written by TickerMemory, read by agent prompt builders.
+-- Stores structured InvestmentBrief objects. Written by TickerMemory, read by agent prompt builders.  # noqa: E501
 CREATE TABLE IF NOT EXISTS ticker_briefs (
     id TEXT PRIMARY KEY,
     ticker TEXT NOT NULL,
@@ -37,7 +39,7 @@ CREATE TABLE IF NOT EXISTS ticker_briefs (
     created_at TIMESTAMP NOT NULL
 );
 
--- Stores user risk profile and portfolio holdings. Written by PortfolioStore, read by analysis agents.
+-- Stores user risk profile and portfolio holdings. Written by PortfolioStore, read by analysis agents.  # noqa: E501
 CREATE TABLE IF NOT EXISTS user_profiles (
     user_id TEXT PRIMARY KEY,
     risk_profile TEXT NOT NULL DEFAULT 'medium',
@@ -46,7 +48,7 @@ CREATE TABLE IF NOT EXISTS user_profiles (
     updated_at TIMESTAMP NOT NULL
 );
 
--- Tracks each BUY/HOLD/SELL recommendation with price snapshot. Written by PerformanceTracker, read by evaluate/get_accuracy_stats.
+-- Tracks each BUY/HOLD/SELL recommendation with price snapshot. Written by PerformanceTracker, read by evaluate/get_accuracy_stats.  # noqa: E501
 CREATE TABLE IF NOT EXISTS recommendation_records (
     id TEXT PRIMARY KEY,
     ticker TEXT NOT NULL,
@@ -59,7 +61,7 @@ CREATE TABLE IF NOT EXISTS recommendation_records (
     realized_return REAL
 );
 
--- Stores conversation events as searchable entries. Written by SQLiteMemoryService, read by search_memory.
+-- Stores conversation events as searchable entries. Written by SQLiteMemoryService, read by search_memory.  # noqa: E501
 CREATE TABLE IF NOT EXISTS memory_entries (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
@@ -102,8 +104,8 @@ CREATE INDEX IF NOT EXISTS idx_a2a_tasks_owner ON a2a_tasks(owner);
 
 
 _db_conn: aiosqlite.Connection | None = None
-_db_lock = asyncio.Lock()   # serialises writes
-_init_lock = asyncio.Lock() # guards singleton creation
+_db_lock = asyncio.Lock()  # serialises writes
+_init_lock = asyncio.Lock()  # guards singleton creation
 
 
 async def get_db(path: Path = DB_PATH) -> aiosqlite.Connection:
@@ -139,7 +141,7 @@ async def close_db() -> None:
         logger.info("SQLite memory DB closed")
 
 
-# Version-based migration — schema_version tracks current version, CREATE TABLEs are idempotent, ALTER TABLEs use try/except for additive changes.
+# Version-based migration — schema_version tracks current version, CREATE TABLEs are idempotent, ALTER TABLEs use try/except for additive changes.  # noqa: E501
 async def init_db(conn: aiosqlite.Connection) -> None:
     """Create all memory tables if they don't exist. Idempotent."""
     await conn.execute("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY)")
@@ -156,28 +158,32 @@ async def init_db(conn: aiosqlite.Connection) -> None:
         await conn.commit()
         logger.info("Schema initialized (version %d)", SCHEMA_VERSION)
 
-    # Migration v1→v2: adds search_text column for BM25 full-text search. Safe to re-run — noop if column exists.
+    # Migration v1→v2: adds search_text column for BM25 full-text search. Safe to re-run — noop if column exists.  # noqa: E501
     try:
-        await conn.execute("ALTER TABLE memory_entries ADD COLUMN search_text TEXT NOT NULL DEFAULT ''")
+        await conn.execute(
+            "ALTER TABLE memory_entries ADD COLUMN search_text TEXT NOT NULL DEFAULT ''"
+        )
         await conn.commit()
     except Exception:
         logger.debug("Migration v2: table/column already exists, skipping")
 
-    # Migration v2→v3: adds analysis_date column to support date-ordered lookups independent of created_at.
+    # Migration v2→v3: adds analysis_date column to support date-ordered lookups independent of created_at.  # noqa: E501
     try:
         await conn.execute("ALTER TABLE ticker_briefs ADD COLUMN analysis_date TEXT")
         await conn.commit()
     except Exception:
         logger.debug("Migration v3: table/column already exists, skipping")
 
-    # Migration v3→v4: creates ingested_filings table for SEC filing dedup. Added after initial schema release.
+    # Migration v3→v4: creates ingested_filings table for SEC filing dedup. Added after initial schema release.  # noqa: E501
     try:
         await conn.execute("""CREATE TABLE IF NOT EXISTS ingested_filings (
             edgar_url TEXT PRIMARY KEY,
             ticker TEXT NOT NULL,
             ingested_at TIMESTAMP NOT NULL
         )""")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_ingested_ticker ON ingested_filings(ticker)")
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_ingested_ticker ON ingested_filings(ticker)"
+        )
         await conn.commit()
     except Exception:
         logger.debug("Migration v4: table/column already exists, skipping")
@@ -207,15 +213,17 @@ async def prune_old_records(days: int | None = None) -> dict[str, int]:
         days = int(os.environ.get("MEMORY_RETENTION_DAYS", "90"))
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     conn = await get_db()
-    _ALLOWED_TABLES: frozenset[str] = frozenset({
-        "ticker_briefs", "recommendation_records", "memory_entries",
-    })
+    _ALLOWED_TABLES: frozenset[str] = frozenset(
+        {
+            "ticker_briefs",
+            "recommendation_records",
+            "memory_entries",
+        }
+    )
     async with write_lock():
         deleted: dict[str, int] = {}
         for table in _ALLOWED_TABLES:
-            cur = await conn.execute(
-                f"DELETE FROM {table} WHERE created_at < ?", (cutoff,)
-            )
+            cur = await conn.execute(f"DELETE FROM {table} WHERE created_at < ?", (cutoff,))
             deleted[table] = cur.rowcount
         await conn.commit()
     logger.info("Pruned old records: %s", deleted)
@@ -234,11 +242,13 @@ async def is_filing_ingested(edgar_url: str, db_path: Path = DB_PATH) -> bool:
 async def mark_filing_ingested(edgar_url: str, ticker: str, db_path: Path = DB_PATH) -> None:
     """Record that a filing has been ingested."""
     from datetime import datetime
+
     from shared.settings import IST
+
     async with write_lock():
         conn = await get_db(db_path)
         await conn.execute(
-            "INSERT OR IGNORE INTO ingested_filings (edgar_url, ticker, ingested_at) VALUES (?, ?, ?)",
+            "INSERT OR IGNORE INTO ingested_filings (edgar_url, ticker, ingested_at) VALUES (?, ?, ?)",  # noqa: E501
             (edgar_url, ticker.upper(), datetime.now(IST).isoformat()),
         )
         await conn.commit()

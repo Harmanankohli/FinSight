@@ -2,6 +2,7 @@
 
 Parametrized over fixture files in tests/regression/corpus/ × 3 output formats.
 """
+
 from __future__ import annotations
 
 import json
@@ -9,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from shared.reports.extraction import _extract_deck_data, _TICKER_RE, fit_text
+from shared.reports.extraction import _TICKER_RE, _extract_deck_data, fit_text
 
 CORPUS_DIR = Path(__file__).parent / "corpus"
 FIXTURE_NAMES = sorted(p.stem for p in CORPUS_DIR.glob("*.json"))
@@ -20,6 +21,7 @@ def _load_corpus(name: str) -> dict:
 
 
 # ── Deck invariants (run for every corpus fixture) ─────────────────────────
+
 
 @pytest.mark.parametrize("fixture_name", FIXTURE_NAMES)
 def test_deck_generation_succeeds(fixture_name: str):
@@ -85,22 +87,25 @@ def test_slide_count_reasonable(fixture_name: str):
     """Slide count in reasonable range [4, 14] based on extraction."""
     brief = _load_corpus(fixture_name)
     deck = _extract_deck_data(brief, "NVDA", "BUY", 0.85, "2024-01-15")
-    n = sum([
-        bool(deck.executive_summary),
-        bool(deck.kpi_chips),
-        bool(deck.financials),
-        bool(deck.valuation_table or deck.scenarios),
-        len(deck.scorecard) > 1,
-        bool(deck.peer_names),
-        bool(deck.opportunities or deck.risks),
-        len(deck.sections),
-    ])
+    n = sum(
+        [
+            bool(deck.executive_summary),
+            bool(deck.kpi_chips),
+            bool(deck.financials),
+            bool(deck.valuation_table or deck.scenarios),
+            len(deck.scorecard) > 1,
+            bool(deck.peer_names),
+            bool(deck.opportunities or deck.risks),
+            len(deck.sections),
+        ]
+    )
     # title + conclusion are always present, + the data-driven slides
     total = 2 + n
     assert 4 <= total <= 14, f"Slide count {total} out of range [4, 14]"
 
 
 # ── Risk/Reward item invariants ────────────────────────────────────────────
+
 
 @pytest.mark.parametrize("fixture_name", FIXTURE_NAMES)
 def test_risk_reward_items_no_debris(fixture_name: str):

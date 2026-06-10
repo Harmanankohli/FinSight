@@ -1,7 +1,9 @@
+# ruff: noqa: E402
 """ADK callback layer for `adk web` mode.
 
 Handles post-turn memory persistence and orchestrator-level RAGAS eval.
 Bypassed entirely when running through FinSightAgentExecutor."""
+
 import asyncio
 import logging
 import re
@@ -13,13 +15,14 @@ if _src not in sys.path:
     sys.path.insert(0, _src)
 
 from shared.bootstrap import bootstrap
+
 bootstrap("adk_web")
 
 from google.genai import types
 
 from agent_1_adk.agent import root_agent
-from shared.settings import AGENT_SEED_URLS, EVAL_ENABLED
 from shared.runtime_eval import score_response as _eval_score_response
+from shared.settings import AGENT_SEED_URLS, EVAL_ENABLED
 
 __all__ = ["root_agent"]
 
@@ -29,6 +32,7 @@ logger = logging.getLogger(__name__)
 async def _release_sub_agent_evals() -> None:
     """POST /release-evals to each sub-agent so they fire deferred evals."""
     import httpx
+
     urls = [u.strip().rstrip("/") for u in AGENT_SEED_URLS.split(",") if u.strip()]
     async with httpx.AsyncClient(timeout=5) as client:
         for base in urls:
@@ -42,8 +46,9 @@ async def _memory_cache_callback(callback_context) -> types.Content | None:
     """Before-agent callback: short-circuit with today's cached brief if available."""
     import json
     from datetime import datetime
-    from shared.settings import IST
+
     from shared.memory import TickerMemory
+    from shared.settings import IST
     from shared.ticker_utils import extract_ticker
 
     def _log(msg):
@@ -88,6 +93,7 @@ async def _memory_cache_callback(callback_context) -> types.Content | None:
     if not latest:
         try:
             from shared.ticker_utils import resolve_ticker
+
             resolved, _company = await resolve_ticker(user_text)
             if resolved and resolved.upper() != ticker.upper():
                 _log(f"regex={ticker!r} resolved={resolved!r}")
@@ -135,6 +141,7 @@ _LOG_FILE = _LOGS_DIR / "memory_callback.log"
 # Module load marker — proves the new code was loaded
 with open(_LOG_FILE, "a") as _f:
     from datetime import datetime as _dt
+
     _f.write(f"\n=== MODULE LOADED at {_dt.now().isoformat()} ===\n")
 
 
@@ -154,13 +161,11 @@ def _extract_query_and_response(events) -> tuple[str, str]:
     if last_user_idx >= 0:
         content = getattr(events[last_user_idx], "content", None)
         if content and getattr(content, "parts", None):
-            user_query = "".join(
-                p.text for p in content.parts if getattr(p, "text", None)
-            )
+            user_query = "".join(p.text for p in content.parts if getattr(p, "text", None))
 
     # Take the longest LLM text produced after the last user message.
     best_text = ""
-    for event in events[last_user_idx + 1:]:
+    for event in events[last_user_idx + 1 :]:
         author = getattr(event, "author", None)
         if not author or author == "user":
             continue
@@ -189,7 +194,7 @@ def _is_analysis_turn(events) -> bool:
     if last_user_idx < 0:
         return False
 
-    for event in events[last_user_idx + 1:]:
+    for event in events[last_user_idx + 1 :]:
         try:
             for fn_call in event.get_function_calls():
                 if fn_call.name == "send_message":
@@ -199,7 +204,7 @@ def _is_analysis_turn(events) -> bool:
 
     # Fallback: check if the LLM response contains a BUY/HOLD/SELL signal
     # (covers the no-agents-available path where LLM analyzes on its own)
-    for event in events[last_user_idx + 1:]:
+    for event in events[last_user_idx + 1 :]:
         author = getattr(event, "author", None)
         if not author or author == "user":
             continue
@@ -207,7 +212,7 @@ def _is_analysis_turn(events) -> bool:
         if not content or not getattr(content, "parts", None):
             continue
         text = "".join(p.text for p in content.parts if getattr(p, "text", None))
-        if re.search(r'\b(BUY|HOLD|SELL)\b', text):
+        if re.search(r"\b(BUY|HOLD|SELL)\b", text):
             return True
 
     return False
@@ -243,8 +248,9 @@ async def _auto_save_brief(session, user_query: str, response_text: str) -> None
     then persists via TickerMemory + PerformanceTracker.
     """
     from datetime import datetime
-    from shared.settings import IST
+
     from shared.memory import PerformanceTracker, TickerMemory
+    from shared.settings import IST
     from shared.ticker_utils import extract_ticker
 
     ticker = extract_ticker(user_query)
@@ -263,14 +269,19 @@ async def _auto_save_brief(session, user_query: str, response_text: str) -> None
             stored = ""
             try:
                 import json as _json
+
                 bj = _json.loads(existing.get("brief_json", "{}"))
                 stored = bj.get("response_text", "")
             except Exception:
                 logger.debug("Could not parse brief_json for %s", ticker, exc_info=True)
             if len(response_text) > len(stored):
                 await tm.update_response_text(existing["id"], response_text)
-                logger.info("Updated brief %s with longer text (%d > %d)",
-                            existing["id"], len(response_text), len(stored))
+                logger.info(
+                    "Updated brief %s with longer text (%d > %d)",
+                    existing["id"],
+                    len(response_text),
+                    len(stored),
+                )
             else:
                 logger.debug("Auto-save skipped — brief already exists today for %s", ticker)
             return
@@ -300,7 +311,7 @@ async def _auto_save_brief(session, user_query: str, response_text: str) -> None
         f.write(f"  auto_save_brief: {ticker} {rec} ({conf:.0%})\n")
 
 
-# ADK invokes this after every agent turn. Non-analysis turns are skipped to avoid polluting long-term memory with casual chitchat queries.
+# ADK invokes this after every agent turn. Non-analysis turns are skipped to avoid polluting long-term memory with casual chitchat queries.  # noqa: E501
 async def _persist_memory_callback(callback_context) -> None:
     """Persist session to memory after each agent turn.
 
@@ -310,12 +321,16 @@ async def _persist_memory_callback(callback_context) -> None:
     Also auto-saves the investment brief when an analysis turn completes.
     """
     session = callback_context.session
-    logger.info("_persist_memory_callback: session=%s, events=%s",
-                session.id if session else "None",
-                len(session.events) if session and session.events else 0)
+    logger.info(
+        "_persist_memory_callback: session=%s, events=%s",
+        session.id if session else "None",
+        len(session.events) if session and session.events else 0,
+    )
 
     with open(_LOG_FILE, "a") as f:
-        f.write(f"Callback invoked: session={session.id if session else 'None'}, events={len(session.events) if session else 0}\n")
+        f.write(
+            f"Callback invoked: session={session.id if session else 'None'}, events={len(session.events) if session else 0}\n"  # noqa: E501
+        )
 
     if not session or not session.events:
         logger.warning("No session or no events to persist")
@@ -363,6 +378,7 @@ async def _persist_memory_callback(callback_context) -> None:
         trace_id = None
         try:
             from shared.observability import get_langfuse_client
+
             trace_id = get_langfuse_client().get_current_trace_id()
         except Exception:
             logger.debug("Could not get Langfuse trace_id", exc_info=True)

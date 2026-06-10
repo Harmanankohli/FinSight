@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """Register custom memory service for FinSight.
 
 This file is automatically loaded by ADK when `adk web` starts.
@@ -17,6 +18,7 @@ if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
 from google.adk.cli.service_registry import get_service_registry
+
 from shared.memory import SQLiteMemoryService
 
 logger = logging.getLogger(__name__)
@@ -24,7 +26,7 @@ logger = logging.getLogger(__name__)
 registry = get_service_registry()
 
 
-# Factory for the URI-based memory service registration pattern (maps `finsight://` URIs to SQLiteMemoryService)
+# Factory for the URI-based memory service registration pattern (maps `finsight://` URIs to SQLiteMemoryService)  # noqa: E501
 def finsight_memory_factory(uri: str, **kwargs) -> SQLiteMemoryService:
     """Create a SQLiteMemoryService instance."""
     logger.info("Creating SQLiteMemoryService for URI: %s", uri)

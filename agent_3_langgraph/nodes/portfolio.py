@@ -18,7 +18,11 @@ async def correlation_node(state: QuantAnalysisState) -> dict:
     mcp = state.get("mcp_client")
 
     if not prices_dict or not holdings or not mcp:
-        return {"correlation_matrix": {"note": "No portfolio holdings provided. Include holdings like 'My portfolio holds AAPL, MSFT' to see correlation analysis."}}
+        return {
+            "correlation_matrix": {
+                "note": "No portfolio holdings provided. Include holdings like 'My portfolio holds AAPL, MSFT' to see correlation analysis."  # noqa: E501
+            }
+        }
 
     ticker = state["ticker"]
     all_tickers = [ticker] + holdings
@@ -26,16 +30,26 @@ async def correlation_node(state: QuantAnalysisState) -> dict:
     try:
         all_prices = {ticker: prices_dict}
         for h in holdings:
-            result = await mcp.call_tool_by_name("get_prices", {"ticker": h, "period": state.get("period", "5y"), "interval": "1d"})
+            result = await mcp.call_tool_by_name(
+                "get_prices", {"ticker": h, "period": state.get("period", "5y"), "interval": "1d"}
+            )
             hp = _parse_price_data(result, h)
             if hp:
                 all_prices[h] = hp
 
-        close_df = pd.DataFrame({t: pd.Series({pd.Timestamp(k): v for k, v in p.items()})
-                                  for t, p in all_prices.items()}).sort_index()
+        close_df = pd.DataFrame(
+            {
+                t: pd.Series({pd.Timestamp(k): v for k, v in p.items()})
+                for t, p in all_prices.items()
+            }
+        ).sort_index()
         returns = close_df.pct_change().dropna()
         if returns.empty or len(returns.columns) < 2:
-            return {"correlation_matrix": {"note": "Insufficient overlapping price data to compute correlations between holdings."}}
+            return {
+                "correlation_matrix": {
+                    "note": "Insufficient overlapping price data to compute correlations between holdings."  # noqa: E501
+                }
+            }
         corr = returns.corr()
 
         matrix = {}

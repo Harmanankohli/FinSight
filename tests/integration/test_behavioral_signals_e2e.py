@@ -5,6 +5,7 @@ All tests are @pytest.mark.integration — skipped by default. Run with:
 
 Requires all services running (run_adk_web.bat).
 """
+
 import json
 
 import httpx
@@ -85,7 +86,16 @@ async def test_macro_query_routes_to_market_context():
     txt = _extract_text(rpc)
     lower = txt.lower()
     # Look for at least one specific macro indicator name
-    macro_terms = ["yield curve", "vix", "dxy", "dollar", "10-year", "treasury", "sector", "rotation"]
+    macro_terms = [
+        "yield curve",
+        "vix",
+        "dxy",
+        "dollar",
+        "10-year",
+        "treasury",
+        "sector",
+        "rotation",
+    ]
     assert any(t in lower for t in macro_terms), f"No macro indicators in response: {txt[:400]}"
 
 

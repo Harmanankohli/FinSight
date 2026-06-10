@@ -1,42 +1,50 @@
 import pytest
+
 from shared.ticker_utils import (
-    is_valid_ticker_format,
-    extract_ticker,
     clean_query_for_resolution,
     extract_holdings,
+    extract_ticker,
+    is_valid_ticker_format,
 )
-
 
 # ── is_valid_ticker_format ────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("ticker,expected", [
-    ("AAPL", True),
-    ("NVDA", True),
-    ("BRK.A", True),
-    ("V", True),
-    ("GOOGL", True),
-    ("aapl", False),
-    ("TOOLONG", False),  # 7 chars > max 5
-    ("123", False),
-    ("", False),
-    ("BRK.ABC", False),  # suffix > 2 chars
-])
+
+@pytest.mark.parametrize(
+    "ticker,expected",
+    [
+        ("AAPL", True),
+        ("NVDA", True),
+        ("BRK.A", True),
+        ("V", True),
+        ("GOOGL", True),
+        ("aapl", False),
+        ("TOOLONG", False),  # 7 chars > max 5
+        ("123", False),
+        ("", False),
+        ("BRK.ABC", False),  # suffix > 2 chars
+    ],
+)
 def test_is_valid_ticker_format(ticker, expected):
     assert is_valid_ticker_format(ticker) == expected
 
 
 # ── extract_ticker ────────────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("query,expected", [
-    ("Analyze AAPL for me", "AAPL"),
-    ("Buy $TSLA today", "TSLA"),
-    ("NVIDIA (NVDA) earnings report", "NVDA"),
-    ("V (Visa) stock analysis", "V"),
-    ("invest in MSFT", "MSFT"),
-    ("research SEC filings for the company", ""),   # SEC is stop word
-    ("what are the EPS projections", ""),            # EPS is stop word
-    ("how does AI perform in finance", ""),          # AI is stop word
-])
+
+@pytest.mark.parametrize(
+    "query,expected",
+    [
+        ("Analyze AAPL for me", "AAPL"),
+        ("Buy $TSLA today", "TSLA"),
+        ("NVIDIA (NVDA) earnings report", "NVDA"),
+        ("V (Visa) stock analysis", "V"),
+        ("invest in MSFT", "MSFT"),
+        ("research SEC filings for the company", ""),  # SEC is stop word
+        ("what are the EPS projections", ""),  # EPS is stop word
+        ("how does AI perform in finance", ""),  # AI is stop word
+    ],
+)
 def test_extract_ticker(query, expected):
     assert extract_ticker(query) == expected
 
@@ -51,6 +59,7 @@ def test_extract_ticker_parens_ticker_beats_standalone():
 
 
 # ── clean_query_for_resolution ────────────────────────────────────────────────
+
 
 def test_clean_query_strips_noise_words():
     query = "please analyze the stock data for Apple"
@@ -75,6 +84,7 @@ def test_clean_query_empty_after_all_noise():
 
 
 # ── extract_holdings ──────────────────────────────────────────────────────────
+
 
 def test_extract_holdings_comma_separated():
     query = "My portfolio holds AAPL, MSFT, GOOG"

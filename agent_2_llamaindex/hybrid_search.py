@@ -1,13 +1,12 @@
 import logging
-from typing import Any
 
 import numpy as np
+from llama_index.core.schema import NodeWithScore, TextNode
 from rank_bm25 import BM25Okapi
 from sentence_transformers import CrossEncoder
 
-from shared.settings import RERANKER_MODEL
 from shared.logging_config import logged, logged_sync
-from llama_index.core.schema import NodeWithScore, TextNode
+from shared.settings import RERANKER_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +70,7 @@ class HybridSearchPipeline:
     async def dense_retrieve(
         self, query: str, nodes: list[NodeWithScore], top_k: int | None = None
     ) -> list[NodeWithScore]:
-        # Embedding-based semantic retrieval (cosine similarity via HuggingFace encoder), top-k selection
+        # Embedding-based semantic retrieval (cosine similarity via HuggingFace encoder), top-k selection  # noqa: E501
         k = top_k or self.dense_top_k
         sorted_nodes = sorted(nodes, key=lambda n: n.score or 0.0, reverse=True)
         return sorted_nodes[:k]
@@ -83,7 +82,7 @@ class HybridSearchPipeline:
         dense: list[NodeWithScore],
         k: int = 60,
     ) -> list[NodeWithScore]:
-        # Reciprocal Rank Fusion: combines sparse (BM25) and dense (embedding) rankings by reciprocal rank scores
+        # Reciprocal Rank Fusion: combines sparse (BM25) and dense (embedding) rankings by reciprocal rank scores  # noqa: E501
         seen: dict[str, float] = {}
 
         for rank, node in enumerate(sparse):
@@ -95,28 +94,21 @@ class HybridSearchPipeline:
             seen[text] = seen.get(text, 0.0) + 1.0 / (k + rank + 1)
 
         merged = sorted(seen.items(), key=lambda x: x[1], reverse=True)
-        return [
-            NodeWithScore(node=TextNode(text=text), score=score)
-            for text, score in merged
-        ]
+        return [NodeWithScore(node=TextNode(text=text), score=score) for text, score in merged]
 
     @logged()
-    async def rerank(
-        self, query: str, nodes: list[NodeWithScore]
-    ) -> list[NodeWithScore]:
-        # CrossEncoder reranking: scores each (query, doc) pair jointly for finer relevance than cosine alone
+    async def rerank(self, query: str, nodes: list[NodeWithScore]) -> list[NodeWithScore]:
+        # CrossEncoder reranking: scores each (query, doc) pair jointly for finer relevance than cosine alone  # noqa: E501
         if not nodes:
             return []
         pairs = [(query, n.node.text) for n in nodes]
         scores = self.reranker.predict(pairs)
         for node, score in zip(nodes, scores):
             node.score = float(score)
-        return sorted(nodes, key=lambda n: n.score or 0.0, reverse=True)[:self.rerank_top_n]
+        return sorted(nodes, key=lambda n: n.score or 0.0, reverse=True)[: self.rerank_top_n]
 
     @logged()
-    async def retrieve(
-        self, query: str, dense_nodes: list[NodeWithScore]
-    ) -> list[NodeWithScore]:
+    async def retrieve(self, query: str, dense_nodes: list[NodeWithScore]) -> list[NodeWithScore]:
         # Full hybrid pipeline: sparse → RRF merge → CrossEncoder rerank → top N
         sparse_nodes = await self.sparse_retrieve(query)
         merged = self._rrf_merge(sparse_nodes, dense_nodes, k=self.rrf_k)

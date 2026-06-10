@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 import asyncio
 import json
 import logging
@@ -7,7 +8,6 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-
 from a2a.client import (
     A2ACardResolver,
     ClientConfig,
@@ -32,6 +32,7 @@ def _get_data_parts(parts: list) -> list:
     """
     return [p for p in parts if p.HasField("data")]
 
+
 _TERMINAL_STATES = {
     TaskState.TASK_STATE_COMPLETED,
     TaskState.TASK_STATE_FAILED,
@@ -39,15 +40,23 @@ _TERMINAL_STATES = {
     TaskState.TASK_STATE_INPUT_REQUIRED,
 }
 
-from shared.settings import AGENT_SEED_URLS, A2A_TIMEOUT, A2A_TIMEOUT_RAG, A2A_TIMEOUT_QUANT, A2A_TIMEOUT_MARKET_CONTEXT
-from shared.logging_config import logged, logged_sync
+from shared.logging_config import logged
 from shared.observability import get_langfuse_client
-from shared.trace_context import inject_trace_context, current_trace_id, current_user_id
+from shared.settings import (
+    A2A_TIMEOUT,
+    A2A_TIMEOUT_MARKET_CONTEXT,
+    A2A_TIMEOUT_QUANT,
+    A2A_TIMEOUT_RAG,
+    AGENT_SEED_URLS,
+)
+from shared.trace_context import current_trace_id, current_user_id, inject_trace_context
 
 logger = logging.getLogger(__name__)
 
 _EVAL_TRACE_ENABLED = os.environ.get("EVAL_TRACE_ENABLED", "false").lower() == "true"
-_EVAL_TRACES_DIR = Path(__file__).parent.parent / "tests" / "evaluation" / "eval_results" / "orchestrator_traces"
+_EVAL_TRACES_DIR = (
+    Path(__file__).parent.parent / "tests" / "evaluation" / "eval_results" / "orchestrator_traces"
+)
 
 
 class SubAgentClient:
@@ -72,15 +81,13 @@ class SubAgentClient:
         Retries failed URLs up to ``retries`` times with ``delay``
         seconds between attempts, to handle slow-starting agents.
         """
-        urls = [
-            u.strip()
-            for u in AGENT_SEED_URLS.split(",")
-            if u.strip()
-        ]
+        urls = [u.strip() for u in AGENT_SEED_URLS.split(",") if u.strip()]
         pending = list(urls)
         http = httpx.AsyncClient(
             timeout=httpx.Timeout(10.0),
-            headers={"Authorization": f"Bearer {self._bearer_token}"} if self._bearer_token else None,
+            headers={"Authorization": f"Bearer {self._bearer_token}"}
+            if self._bearer_token
+            else None,
         )
         try:
             for attempt in range(retries):
@@ -102,8 +109,7 @@ class SubAgentClient:
                         still_pending.append(url)
                         if attempt < retries - 1:
                             logger.info(
-                                "Agent at %s not ready yet "
-                                "(attempt %d/%d): %s",
+                                "Agent at %s not ready yet (attempt %d/%d): %s",
                                 url,
                                 attempt + 1,
                                 retries,
@@ -111,8 +117,7 @@ class SubAgentClient:
                             )
                         else:
                             logger.warning(
-                                "Failed to discover agent at %s "
-                                "after %d attempts: %s",
+                                "Failed to discover agent at %s after %d attempts: %s",
                                 url,
                                 retries,
                                 e,
@@ -166,9 +171,7 @@ class SubAgentClient:
             {
                 "name": name,
                 "description": a["card"].description,
-                "skills": ", ".join(
-                    s.name or s.id for s in a["card"].skills
-                ),
+                "skills": ", ".join(s.name or s.id for s in a["card"].skills),
             }
             for name, a in self._agents.items()
         ]
@@ -200,7 +203,9 @@ class SubAgentClient:
 
         http = httpx.AsyncClient(
             timeout=httpx.Timeout(A2A_TIMEOUT),
-            headers={"Authorization": f"Bearer {self._bearer_token}"} if self._bearer_token else None,
+            headers={"Authorization": f"Bearer {self._bearer_token}"}
+            if self._bearer_token
+            else None,
         )
         config = ClientConfig(
             streaming=True,
@@ -229,9 +234,7 @@ class SubAgentClient:
 
         client = await self._get_a2a_client(agent_name)
         if client is None:
-            return json.dumps(
-                {"error": f"Failed to create client for '{agent_name}'"}
-            )
+            return json.dumps({"error": f"Failed to create client for '{agent_name}'"})
 
         # Propagate Langfuse trace context to sub-agents for end-to-end observability
         # --- Inject distributed trace context + user_id ---
@@ -245,7 +248,8 @@ class SubAgentClient:
             task_str = inject_trace_context(task_str, trace_id, parent_span_id, user_id=user_id)
             logger.debug(
                 "Injected trace context into task for '%s': trace=%s",
-                agent_name, trace_id[:8] if trace_id else "none"
+                agent_name,
+                trace_id[:8] if trace_id else "none",
             )
         # ------------------------------------------------
 
@@ -307,14 +311,14 @@ class SubAgentClient:
         try:
             result_text = await asyncio.wait_for(_stream(), timeout=timeout)
         except asyncio.TimeoutError:
-            logger.warning(
-                "Agent '%s' timed out after %.0fs", agent_name, timeout
+            logger.warning("Agent '%s' timed out after %.0fs", agent_name, timeout)
+            result_text = json.dumps(
+                {
+                    "error": "agent_timeout",
+                    "agent": agent_name,
+                    "timeout": timeout,
+                }
             )
-            result_text = json.dumps({
-                "error": "agent_timeout",
-                "agent": agent_name,
-                "timeout": timeout,
-            })
         except Exception as e:
             logger.exception("Error sending message to '%s'", agent_name)
             result_text = json.dumps({"error": str(e)})
@@ -324,6 +328,7 @@ class SubAgentClient:
             if _EVAL_TRACE_ENABLED:
                 try:
                     import uuid as _uuid
+
                     _EVAL_TRACES_DIR.mkdir(parents=True, exist_ok=True)
                     trace = {
                         "agent_name": agent_name,
@@ -338,25 +343,19 @@ class SubAgentClient:
 
         return result_text
 
-    def _extract_terminal_result(
-        self, status_update: Any
-    ) -> str:
+    def _extract_terminal_result(self, status_update: Any) -> str:
         state = status_update.status.state
         if state == TaskState.TASK_STATE_FAILED:
             msg = (
                 status_update.status.message.text
-                if status_update.status.HasField("message")
-                and status_update.status.message.parts
+                if status_update.status.HasField("message") and status_update.status.message.parts
                 else None
             )
-            return json.dumps(
-                {"error": f"Agent failed: {msg or 'Unknown'}"}
-            )
+            return json.dumps({"error": f"Agent failed: {msg or 'Unknown'}"})
         if state == TaskState.TASK_STATE_INPUT_REQUIRED:
             msg = (
                 status_update.status.message.text
-                if status_update.status.HasField("message")
-                and status_update.status.message.parts
+                if status_update.status.HasField("message") and status_update.status.message.parts
                 else None
             )
             return json.dumps(
@@ -374,13 +373,10 @@ class SubAgentClient:
         if state == TaskState.TASK_STATE_FAILED:
             msg = (
                 task.status.message.text
-                if task.status.HasField("message")
-                and task.status.message.parts
+                if task.status.HasField("message") and task.status.message.parts
                 else None
             )
-            return json.dumps(
-                {"error": f"Agent failed: {msg or 'Unknown'}"}
-            )
+            return json.dumps({"error": f"Agent failed: {msg or 'Unknown'}"})
 
         # Data parts from task artifacts
         for art in task.artifacts:

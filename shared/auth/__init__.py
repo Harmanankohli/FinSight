@@ -3,7 +3,6 @@
 WP 2.1: shared auth primitives. WP 2.2 extends with user store + login routes.
 """
 
-from shared.auth.tokens import AuthError, Principal, issue_user_token, verify_user_token
 from shared.auth.middleware import (
     PUBLIC_PATHS,
     AuthMiddleware,
@@ -11,6 +10,7 @@ from shared.auth.middleware import (
     get_principal,
     require,
 )
+from shared.auth.tokens import AuthError, Principal, issue_user_token, verify_user_token
 
 __all__ = [
     "AuthError",

@@ -1,6 +1,7 @@
 """Tests for shared/settings.py — Settings class, env precedence, back-compat, validate_runtime."""
-import os
+
 import pytest
+
 from shared.settings import Settings, get_settings, reset_settings_for_tests
 
 
@@ -12,6 +13,7 @@ def _reset():
 
 
 # ── Env precedence ────────────────────────────────────────────────────────────
+
 
 def test_default_values():
     s = Settings()
@@ -36,6 +38,7 @@ def test_env_file_not_required(tmp_path, monkeypatch):
 
 # ── llm_summary_model / llm_eval_model fallback ───────────────────────────────
 
+
 def test_llm_summary_model_falls_back_to_llm_model(monkeypatch):
     monkeypatch.setenv("LLM_MODEL", "base-model")
     monkeypatch.delenv("LLM_SUMMARY_MODEL", raising=False)
@@ -58,6 +61,7 @@ def test_llm_eval_model_falls_back_to_llm_model(monkeypatch):
 
 # ── A2A_TIMEOUT_SENTIMENT back-compat ─────────────────────────────────────────
 
+
 def test_a2a_timeout_sentiment_alias(monkeypatch):
     monkeypatch.delenv("A2A_TIMEOUT_MARKET_CONTEXT", raising=False)
     monkeypatch.setenv("A2A_TIMEOUT_SENTIMENT", "450.0")
@@ -74,6 +78,7 @@ def test_a2a_timeout_market_context_wins_over_sentinel(monkeypatch):
 
 # ── LANGFUSE_BASE_URL alias ────────────────────────────────────────────────────
 
+
 def test_langfuse_base_url_alias(monkeypatch):
     monkeypatch.setenv("LANGFUSE_BASE_URL", "https://my-langfuse.example.com")
     s = Settings()
@@ -81,6 +86,7 @@ def test_langfuse_base_url_alias(monkeypatch):
 
 
 # ── Singleton / reset ─────────────────────────────────────────────────────────
+
 
 def test_get_settings_singleton():
     s1 = get_settings()
@@ -97,6 +103,7 @@ def test_reset_settings_for_tests(monkeypatch):
 
 
 # ── validate_runtime ──────────────────────────────────────────────────────────
+
 
 def test_validate_runtime_passes_in_development():
     s = Settings()

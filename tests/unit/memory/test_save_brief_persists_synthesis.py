@@ -1,9 +1,10 @@
 """Tests that save_brief stores the full synthesis text, not the short rationale."""
+
 import json
 import sys
-import types as pytypes
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
 
 
 # ---------------------------------------------------------------------------
@@ -22,6 +23,7 @@ def _stub_modules():
     }
     for name, mock in stubs.items():
         sys.modules.setdefault(name, mock)
+
 
 _stub_modules()
 
@@ -69,14 +71,17 @@ async def test_save_brief_uses_synthesis_over_rationale(tmp_path):
     ctx = _make_tool_context(events)
 
     import shared.memory.store as store_mod
+
     db = tmp_path / "test.db"
     store_mod._db_conn = None
 
     pt_mock = MagicMock()
     pt_mock.record_recommendation = AsyncMock()
-    with patch("shared.memory.TickerMemory", lambda: TickerMemory(db_path=db)), \
-         patch("shared.memory.PerformanceTracker", return_value=pt_mock), \
-         patch("agent_1_adk.agent.asyncio.create_task"):
+    with (
+        patch("shared.memory.TickerMemory", lambda: TickerMemory(db_path=db)),
+        patch("shared.memory.PerformanceTracker", return_value=pt_mock),
+        patch("agent_1_adk.agent.asyncio.create_task"),
+    ):
         await save_brief(
             ticker="WMT",
             recommendation="HOLD",
@@ -106,14 +111,17 @@ async def test_save_brief_falls_back_to_rationale_on_empty_session(tmp_path):
     ctx = _make_tool_context(events)
 
     import shared.memory.store as store_mod
+
     db = tmp_path / "test.db"
     store_mod._db_conn = None
 
     pt_mock = MagicMock()
     pt_mock.record_recommendation = AsyncMock()
-    with patch("shared.memory.TickerMemory", lambda: TickerMemory(db_path=db)), \
-         patch("shared.memory.PerformanceTracker", return_value=pt_mock), \
-         patch("agent_1_adk.agent.asyncio.create_task"):
+    with (
+        patch("shared.memory.TickerMemory", lambda: TickerMemory(db_path=db)),
+        patch("shared.memory.PerformanceTracker", return_value=pt_mock),
+        patch("agent_1_adk.agent.asyncio.create_task"),
+    ):
         await save_brief(
             ticker="WMT",
             recommendation="BUY",

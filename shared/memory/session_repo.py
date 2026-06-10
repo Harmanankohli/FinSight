@@ -3,12 +3,12 @@
 Uses a lazy singleton for the ADK sessions DB so callers never open per-request
 connections. The flatten helper is pure and independently testable.
 """
+
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
-from pathlib import Path
 from typing import Any
 
 import aiosqlite
@@ -49,25 +49,29 @@ def _flatten_event(data: dict) -> dict:
     author = data.get("author") or data.get("role") or ""
     content_parts: list[dict] = []
     content = data.get("content", {})
-    for part in (content.get("parts") or []):
+    for part in content.get("parts") or []:
         if not isinstance(part, dict):
             continue
         if part.get("text"):
             content_parts.append({"type": "text", "text": part["text"]})
         elif part.get("functionCall"):
             fc = part["functionCall"]
-            content_parts.append({
-                "type": "function_call",
-                "name": fc.get("name", ""),
-                "args": fc.get("args", {}),
-            })
+            content_parts.append(
+                {
+                    "type": "function_call",
+                    "name": fc.get("name", ""),
+                    "args": fc.get("args", {}),
+                }
+            )
         elif part.get("functionResponse"):
             fr = part["functionResponse"]
-            content_parts.append({
-                "type": "function_response",
-                "name": fr.get("name", ""),
-                "response": str(fr.get("response", ""))[:500],
-            })
+            content_parts.append(
+                {
+                    "type": "function_response",
+                    "name": fr.get("name", ""),
+                    "response": str(fr.get("response", ""))[:500],
+                }
+            )
     return {"author": author, "content": content_parts}
 
 
@@ -118,7 +122,9 @@ class SessionRepo:
             for r in rows
         ]
 
-    async def get_events(self, session_id: str, user_id: str | None = None) -> list[dict[str, Any]] | None:
+    async def get_events(
+        self, session_id: str, user_id: str | None = None
+    ) -> list[dict[str, Any]] | None:
         """Return flattened events for a session. Returns None if session not found or not owned."""
         db = await _get_adk_db()
         if user_id:
@@ -142,10 +148,12 @@ class SessionRepo:
             except (json.JSONDecodeError, TypeError):
                 data = {}
             flat = _flatten_event(data)
-            events.append({
-                "id": row[0],
-                "author": flat["author"],
-                "timestamp": row[2],
-                "content": flat["content"],
-            })
+            events.append(
+                {
+                    "id": row[0],
+                    "author": flat["author"],
+                    "timestamp": row[2],
+                    "content": flat["content"],
+                }
+            )
         return events

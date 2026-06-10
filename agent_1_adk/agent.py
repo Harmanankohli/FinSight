@@ -1,14 +1,14 @@
+# ruff: noqa: E402, E501
 import asyncio
 import json
 import logging
-import sys
 from datetime import datetime
 
 from google.adk.agents import LlmAgent
 from google.adk.tools.tool_context import ToolContext
 from google.genai import types as genai_types
+
 from shared.settings import ADK_MODEL, IST
-from shared.logging_config import logged, logged_sync
 
 logger = logging.getLogger(__name__)
 
@@ -18,9 +18,7 @@ _client = SubAgentClient()
 
 
 # ADK tool function: delegates tasks to sub-agents via A2A
-async def send_message(
-    agent_name: str, task: str, tool_context: ToolContext
-) -> str:
+async def send_message(agent_name: str, task: str, tool_context: ToolContext) -> str:
     """Delegate a task to a specialized remote investment agent.
 
     ONLY call this tool when agents are listed under "Available agents"
@@ -40,18 +38,22 @@ async def send_message(
         The agent's analysis as text.
     """
     if not _client.list_agents():
-        return json.dumps({
-            "error": "No agents are currently available. They may still be "
-                     "starting up. Do not call this tool — answer based on "
-                     "your own knowledge instead."
-        })
+        return json.dumps(
+            {
+                "error": "No agents are currently available. They may still be "
+                "starting up. Do not call this tool — answer based on "
+                "your own knowledge instead."
+            }
+        )
     resolved = _client.resolve_agent_name(agent_name)
     if resolved is None:
         valid = [a["name"] for a in _client.list_agents()]
-        return json.dumps({
-            "error": f"Unknown agent '{agent_name}'. Valid agents are: {valid}. "
-                     "Use one of these exact names and retry."
-        })
+        return json.dumps(
+            {
+                "error": f"Unknown agent '{agent_name}'. Valid agents are: {valid}. "
+                "Use one of these exact names and retry."
+            }
+        )
     result = await _client.send_message(resolved, task)
     return result
 
@@ -68,16 +70,14 @@ def _synthesis_text_from_context(tool_context) -> str:
             last_user_idx = i
             break
     best = ""
-    for event in events[last_user_idx + 1:]:
+    for event in events[last_user_idx + 1 :]:
         author = getattr(event, "author", None)
         if not author or author == "user":
             continue
         content = getattr(event, "content", None)
         if not content or not getattr(content, "parts", None):
             continue
-        text = "".join(
-            p.text for p in content.parts if getattr(p, "text", None)
-        )
+        text = "".join(p.text for p in content.parts if getattr(p, "text", None))
         if len(text) > len(best):
             best = text
     return best
@@ -178,6 +178,7 @@ async def _evaluate_past_recommendations(ticker: str) -> None:
     """Background task: evaluate past recommendations against current prices."""
     try:
         from shared.memory import PerformanceTracker as _PT
+
         pt = _PT()
         results = await pt.evaluate_all()
         if results:
@@ -250,7 +251,7 @@ PROCEDURE:
 
 MEMORY CONTEXT RULES (applies when [MEMORY CONTEXT] block is present):
 - [TODAY]: analysis was done today — you MUST return it directly.
-- [STALE]: analysis is from a prior day — treat as background reference only, not as the current recommendation.
+- [STALE]: analysis is from a prior day — treat as background reference only, not as the current recommendation.  # noqa: E501
 
 For general chat or non-stock queries, respond conversationally.\
 """
@@ -262,10 +263,7 @@ def _build_instruction() -> str:
     agent_list = _client.list_agents()
     if agent_list:
         preamble = _STATIC_PREAMBLE
-        skill_lines = "\n".join(
-            f"  - {a['name']}: {a['description']}"
-            for a in agent_list
-        )
+        skill_lines = "\n".join(f"  - {a['name']}: {a['description']}" for a in agent_list)
         skill_lines += (
             "\n\nAgent responsibility boundaries:\n"
             "  - Financial RAG Agent owns ALL document and news retrieval\n"

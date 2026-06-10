@@ -1,17 +1,19 @@
+# ruff: noqa: E402
 import json
 import logging
 from datetime import date
 
 from crewai import Agent, Crew, Process, Task
 
-from .mcp_tools import MCPClientWrapper
-
 from shared.logging_config import logged, logged_sync
+
+from .mcp_tools import MCPClientWrapper
 
 logger = logging.getLogger(__name__)
 
 from crewai import LLM as CrewLLM
-from shared.settings import ADK_MODEL, LLM_BASE_URL, LLM_API_KEY
+
+from shared.settings import ADK_MODEL, LLM_API_KEY, LLM_BASE_URL
 
 _LLM = CrewLLM(model=ADK_MODEL, base_url=LLM_BASE_URL, api_key=LLM_API_KEY, temperature=0.3)
 
@@ -32,15 +34,19 @@ class MarketContextCrew:
         m = macro.get("macro", {})
         s = macro.get("sectors", {})
         macro_summary = (
-            f"Regime: {m.get('regime', 'unknown')} yield curve "
-            f"(10Y={m.get('us10y', {}).get('value')}%, "
-            f"spread={m.get('yield_curve_spread')}). "
-            f"VIX={m.get('vix', {}).get('value')} "
-            f"(5d change {m.get('vix', {}).get('change_5d_pct')}%). "
-            f"DXY 5d change {m.get('dxy', {}).get('change_5d_pct')}%. "
-            "Sector 1mo: " +
-            ", ".join(f"{k}={v}%" for k, v in s.items() if isinstance(v, (int, float)))
-        ) if m else "(macro data unavailable)"
+            (
+                f"Regime: {m.get('regime', 'unknown')} yield curve "
+                f"(10Y={m.get('us10y', {}).get('value')}%, "
+                f"spread={m.get('yield_curve_spread')}). "
+                f"VIX={m.get('vix', {}).get('value')} "
+                f"(5d change {m.get('vix', {}).get('change_5d_pct')}%). "
+                f"DXY 5d change {m.get('dxy', {}).get('change_5d_pct')}%. "
+                "Sector 1mo: "
+                + ", ".join(f"{k}={v}%" for k, v in s.items() if isinstance(v, (int, float)))
+            )
+            if m
+            else "(macro data unavailable)"
+        )
 
         peer_lines = []
         for sym, pdata in peers.items():
@@ -103,7 +109,8 @@ class MarketContextCrew:
     async def analyze(self, ticker: str, precollected_data: dict | None = None) -> dict:
         crew = self.build_crew(ticker, data=precollected_data)
         try:
-            from shared.llm_queue import llm_queue, Priority
+            from shared.llm_queue import Priority, llm_queue
+
             async with llm_queue.acquire(Priority.CRITICAL, "crewai-kickoff"):
                 result = crew.kickoff()
             raw = result.raw if hasattr(result, "raw") else str(result)

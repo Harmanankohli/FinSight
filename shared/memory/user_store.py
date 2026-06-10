@@ -5,7 +5,6 @@ Schema lives in ticker_briefs DB (`get_db()`) alongside the existing tables.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -16,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 try:
     from argon2 import PasswordHasher
+
     _ph = PasswordHasher()
 except ImportError:
     _ph = None  # type: ignore[assignment]
@@ -61,9 +61,7 @@ async def ensure_schema_v4() -> None:
     await conn.commit()
 
 
-async def create_user(
-    username: str, password: str, role: str = "user"
-) -> str:
+async def create_user(username: str, password: str, role: str = "user") -> str:
     """Create a new user. Returns the user_id. Raises on duplicate username."""
     await ensure_schema_v4()
     user_id = str(uuid.uuid4())
@@ -73,7 +71,7 @@ async def create_user(
         conn = await get_db()
         try:
             await conn.execute(
-                "INSERT INTO users (user_id, username, password_hash, role, created_at) VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO users (user_id, username, password_hash, role, created_at) VALUES (?, ?, ?, ?, ?)",  # noqa: E501
                 (user_id, username, pw_hash, role, now),
             )
             await conn.commit()
@@ -88,7 +86,7 @@ async def get_user(user_id: str) -> dict | None:
     await ensure_schema_v4()
     conn = await get_db()
     cursor = await conn.execute(
-        "SELECT user_id, username, password_hash, role, created_at, disabled FROM users WHERE user_id = ?",
+        "SELECT user_id, username, password_hash, role, created_at, disabled FROM users WHERE user_id = ?",  # noqa: E501
         (user_id,),
     )
     row = await cursor.fetchone()
@@ -109,7 +107,7 @@ async def get_user_by_username(username: str) -> dict | None:
     await ensure_schema_v4()
     conn = await get_db()
     cursor = await conn.execute(
-        "SELECT user_id, username, password_hash, role, created_at, disabled FROM users WHERE username = ?",
+        "SELECT user_id, username, password_hash, role, created_at, disabled FROM users WHERE username = ?",  # noqa: E501
         (username,),
     )
     row = await cursor.fetchone()
@@ -170,9 +168,7 @@ async def revoke_refresh_token(jti: str) -> None:
     await ensure_schema_v4()
     async with write_lock():
         conn = await get_db()
-        await conn.execute(
-            "UPDATE refresh_tokens SET revoked = 1 WHERE jti = ?", (jti,)
-        )
+        await conn.execute("UPDATE refresh_tokens SET revoked = 1 WHERE jti = ?", (jti,))
         await conn.commit()
 
 
@@ -180,9 +176,7 @@ async def is_refresh_token_revoked(jti: str) -> bool:
     """Check if a refresh token has been revoked."""
     await ensure_schema_v4()
     conn = await get_db()
-    cursor = await conn.execute(
-        "SELECT revoked FROM refresh_tokens WHERE jti = ?", (jti,)
-    )
+    cursor = await conn.execute("SELECT revoked FROM refresh_tokens WHERE jti = ?", (jti,))
     row = await cursor.fetchone()
     if not row:
         return True  # unknown = revoked for safety
@@ -228,7 +222,5 @@ async def update_rotated_at(jti: str) -> None:
     now = datetime.now(timezone.utc).isoformat()
     async with write_lock():
         conn = await get_db()
-        await conn.execute(
-            "UPDATE refresh_tokens SET rotated_at = ? WHERE jti = ?", (now, jti)
-        )
+        await conn.execute("UPDATE refresh_tokens SET rotated_at = ? WHERE jti = ?", (now, jti))
         await conn.commit()

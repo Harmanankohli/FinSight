@@ -16,7 +16,6 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
-from shared.logging_config import logged
 from shared.memory.store import get_db
 from shared.settings import get_settings
 
@@ -33,6 +32,7 @@ def _user_id(request: Request) -> str | None:
     s = get_settings()
     if s.auth_enabled:
         from shared.auth.middleware import get_principal
+
         p = get_principal(request)
         if p and p.kind == "user":
             return p.subject
@@ -45,8 +45,9 @@ def _require_admin(request: Request) -> JSONResponse | None:
     s = get_settings()
     if not s.auth_enabled:
         return None
-    from shared.auth.tokens import AuthError
     from shared.auth.middleware import require
+    from shared.auth.tokens import AuthError
+
     try:
         require(request, role="admin")
         return None
@@ -75,6 +76,7 @@ def _validate_ticker(symbol: str) -> str | JSONResponse:
 
 # ── /api/memory/ticker/{symbol} ───────────────────────────────────────────────
 
+
 async def memory_ticker_history(request: Request) -> JSONResponse:
     sym = _validate_ticker(request.path_params["symbol"])
     if isinstance(sym, JSONResponse):
@@ -84,6 +86,7 @@ async def memory_ticker_history(request: Request) -> JSONResponse:
         return limit
     user_id = _user_id(request)
     from shared.memory import TickerMemory
+
     tm = TickerMemory()
     history = await tm.get_history(sym, limit=limit, user_id=user_id)
     return JSONResponse(history)
@@ -95,6 +98,7 @@ async def memory_ticker_latest(request: Request) -> JSONResponse:
         return sym
     user_id = _user_id(request)
     from shared.memory import TickerMemory
+
     tm = TickerMemory()
     latest = await tm.get_latest(sym, user_id=user_id)
     if not latest:
@@ -108,6 +112,7 @@ async def memory_ticker_changed(request: Request) -> JSONResponse:
         return sym
     user_id = _user_id(request)
     from shared.memory import TickerMemory
+
     tm = TickerMemory()
     result = await tm.has_changed(sym, user_id=user_id)
     if result is None:
@@ -117,6 +122,7 @@ async def memory_ticker_changed(request: Request) -> JSONResponse:
 
 # ── /api/sessions ─────────────────────────────────────────────────────────────
 
+
 async def sessions_list(request: Request) -> JSONResponse:
     """List sessions, optionally filtered by user_id."""
     limit = _parse_limit(request, default=50, max_val=200)
@@ -124,6 +130,7 @@ async def sessions_list(request: Request) -> JSONResponse:
         return limit
     user_id = _user_id(request) or request.query_params.get("user_id")
     from shared.memory.session_repo import SessionRepo
+
     try:
         repo = SessionRepo()
         sessions = await repo.list_sessions(user_id=user_id, limit=limit)
@@ -138,6 +145,7 @@ async def session_events(request: Request) -> JSONResponse:
     session_id = request.path_params["id"]
     user_id = _user_id(request)
     from shared.memory.session_repo import SessionRepo
+
     try:
         repo = SessionRepo()
         events = await repo.get_events(session_id, user_id=user_id)
@@ -168,7 +176,7 @@ async def _build_report_response(
     analysis_date: str,
     fmt: str,
 ) -> Response:
-    from shared.reports import generate_pptx, generate_docx, generate_html
+    from shared.reports import generate_docx, generate_html, generate_pptx
 
     brief_data: dict = {}
     if brief_json_str:
@@ -191,7 +199,9 @@ async def _build_report_response(
         )
 
     generator = generate_pptx if fmt == "pptx" else generate_docx
-    buf = generator(brief_data, ticker, recommendation or "UNKNOWN", confidence or 0.0, analysis_date or "")
+    buf = generator(
+        brief_data, ticker, recommendation or "UNKNOWN", confidence or 0.0, analysis_date or ""
+    )
 
     return Response(
         content=buf.getvalue(),
@@ -219,7 +229,9 @@ async def report_by_id(request: Request) -> Response:
         return _ERROR_ENVELOPE("NOT_FOUND", "Brief not found", status=404)
 
     ticker, rec, conf, brief_json_str, analysis_date = row
-    return await _build_report_response(brief_json_str, ticker, rec, conf or 0.0, analysis_date or "", fmt)
+    return await _build_report_response(
+        brief_json_str, ticker, rec, conf or 0.0, analysis_date or "", fmt
+    )
 
 
 async def report_latest(request: Request) -> Response:
@@ -233,6 +245,7 @@ async def report_latest(request: Request) -> Response:
 
     user_id = _user_id(request)
     from shared.memory import TickerMemory
+
     tm = TickerMemory()
     latest = await tm.get_latest(sym, user_id=user_id)
     if not latest:
@@ -250,12 +263,14 @@ async def report_latest(request: Request) -> Response:
 
 # ── /api/agents ───────────────────────────────────────────────────────────────
 
+
 async def agents_list(request: Request) -> JSONResponse:
     """List discovered sub-agents with names, descriptions, and skills."""
     denied = _require_admin(request)
     if denied:
         return denied
     from agent_1_adk.agent import _client
+
     agents = _client.list_agents()
     return JSONResponse(agents)
 
@@ -267,6 +282,7 @@ async def agent_health(request: Request) -> JSONResponse:
         return denied
     name = request.path_params["name"]
     from agent_1_adk.agent import _client
+
     agents = {a["name"]: a for a in _client.list_agents()}
     if name not in agents:
         return _ERROR_ENVELOPE("NOT_FOUND", f"Unknown agent: {name}", status=404)
@@ -278,15 +294,18 @@ async def agent_health(request: Request) -> JSONResponse:
     try:
         async with httpx.AsyncClient(timeout=5.0) as http:
             resp = await http.get(health_url)
-            return JSONResponse({
-                "status": "ok" if resp.status_code == 200 else "degraded",
-                "detail": resp.json(),
-            })
+            return JSONResponse(
+                {
+                    "status": "ok" if resp.status_code == 200 else "degraded",
+                    "detail": resp.json(),
+                }
+            )
     except Exception as exc:
         return JSONResponse({"status": "unreachable", "error": str(exc)})
 
 
 # ── Route list ────────────────────────────────────────────────────────────────
+
 
 def get_api_routes() -> list[Route]:
     return [

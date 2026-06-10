@@ -1,14 +1,17 @@
+# ruff: noqa: E402
 import asyncio
 import logging
-import sys
 
 from shared.bootstrap import bootstrap
+
 _settings = bootstrap("rag")
 
 from shared.observability import init_instrumentation
+
 init_instrumentation("rag")
 
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
+
 from shared.agent_server import build_agent_app
 from shared.logging_config import logged, logged_sync
 
@@ -35,7 +38,7 @@ agent_card = AgentCard(
         AgentSkill(
             id="sec_filing_retrieval",
             name="SEC Filing Retrieval",
-            description="Retrieves and analyzes SEC 10-K, 10-Q, 8-K filings with citation-backed insights",
+            description="Retrieves and analyzes SEC 10-K, 10-Q, 8-K filings with citation-backed insights",  # noqa: E501
             tags=["sec", "edgar", "filings", "financial documents"],
             examples=[
                 "What are the key risks mentioned in NVDA's latest 10-K?",
@@ -90,7 +93,10 @@ def _do_prewarm() -> tuple[FinancialIndexManager, HybridSearchPipeline]:
 
     logger.info(
         "RAG warm-up complete: embed=%.2fs chroma=%.2fs rerank=%.2fs total=%.2fs",
-        t_embed, t_chroma, t_rerank, time.perf_counter() - t0,
+        t_embed,
+        t_chroma,
+        t_rerank,
+        time.perf_counter() - t0,
     )
     return mgr, pipe
 
@@ -115,4 +121,5 @@ app = build_agent_app(
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=_settings.agent_port_rag)

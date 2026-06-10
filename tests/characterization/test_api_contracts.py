@@ -9,27 +9,26 @@ their types. They are intentionally loose on values so minor data changes
 don't break them — they exist to catch structural regressions during
 refactoring (Phase 1 / WP 1.6).
 """
+
 from __future__ import annotations
 
-from unittest.mock import MagicMock
-
-import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
-from starlette.routing import Route
 from starlette.responses import JSONResponse
-
+from starlette.routing import Route
 
 # ── Minimal health handler ────────────────────────────────────────────────────
+
 
 async def _health(request):
     return JSONResponse({"status": "ok", "agent": "orchestrator"})
 
 
 # ── App fixture ───────────────────────────────────────────────────────────────
+
 
 @pytest_asyncio.fixture()
 async def api_app(tmp_path):
@@ -46,10 +45,12 @@ async def api_app(tmp_path):
 
     # Init DB schema via get_db (which runs init_db internally on first open)
     from shared.memory.store import get_db
+
     await get_db(db_path)
 
     # Seed one minimal brief
     from shared.memory.ticker_memory import TickerMemory
+
     mem = TickerMemory(db_path=db_path)
     await mem.store_minimal(
         ticker="NVDA",
@@ -68,8 +69,9 @@ async def api_app(tmp_path):
     app = Starlette(
         routes=routes,
         middleware=[
-            Middleware(CORSMiddleware, allow_origins=["*"],
-                       allow_methods=["*"], allow_headers=["*"])
+            Middleware(
+                CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
+            )
         ],
     )
     yield app, db_path
@@ -82,6 +84,7 @@ async def api_app(tmp_path):
 
 # ── /health ───────────────────────────────────────────────────────────────────
 
+
 async def test_health_ok(api_app):
     app, _ = api_app
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -91,6 +94,7 @@ async def test_health_ok(api_app):
 
 
 # ── /api/memory/ticker/{symbol} ───────────────────────────────────────────────
+
 
 async def test_memory_ticker_history_shape(api_app):
     app, _ = api_app
@@ -129,6 +133,7 @@ async def test_memory_ticker_changed_shape(api_app):
 
 # ── /api/sessions ─────────────────────────────────────────────────────────────
 
+
 async def test_sessions_list_shape(api_app):
     app, _ = api_app
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -147,6 +152,7 @@ async def test_sessions_list_no_user_id(api_app):
 
 # ── /api/sessions/{id}/events ─────────────────────────────────────────────────
 
+
 async def test_session_events_missing(api_app):
     app, _ = api_app
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -157,6 +163,7 @@ async def test_session_events_missing(api_app):
 
 
 # ── /api/agents ───────────────────────────────────────────────────────────────
+
 
 async def test_agents_list_shape(api_app):
     app, _ = api_app
@@ -177,6 +184,7 @@ async def test_agent_health_unknown_name(api_app):
 
 
 # ── /api/reports ──────────────────────────────────────────────────────────────
+
 
 async def test_report_latest_unsupported_format(api_app):
     app, _ = api_app

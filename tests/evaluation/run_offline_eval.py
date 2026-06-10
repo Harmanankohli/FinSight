@@ -13,6 +13,7 @@ Run manually:
     uv run python tests/evaluation/run_offline_eval.py --captured runs/2026-05-28.jsonl
     uv run python tests/evaluation/run_offline_eval.py --live  # hits running services
 """
+
 from __future__ import annotations
 
 import argparse
@@ -29,15 +30,19 @@ GOLDEN_SET = Path(__file__).parent / "golden_set.jsonl"
 
 
 def load_golden_set() -> list[dict]:
-    return [json.loads(line) for line in GOLDEN_SET.read_text(encoding="utf-8").splitlines() if line.strip()]
+    return [
+        json.loads(line)
+        for line in GOLDEN_SET.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
 
 
 async def _score_one(example: dict, response: str, retrieved_contexts: list[str] | None) -> dict:
     """Run RAGAS metrics that need a reference; return per-metric scores."""
     try:
         from ragas.metrics.collections import (
-            ContextRecall,
             ContextEntityRecall,
+            ContextRecall,
             DomainSpecificRubrics,
         )
     except ImportError:
@@ -45,6 +50,7 @@ async def _score_one(example: dict, response: str, retrieved_contexts: list[str]
         return {}
 
     from shared.runtime_eval import _setup_ragas_clients
+
     clients = await _setup_ragas_clients()
     if clients is None:
         return {}
@@ -81,10 +87,10 @@ async def _score_one(example: dict, response: str, retrieved_contexts: list[str]
             llm=ragas_llm,
             rubrics={
                 "score1_description": "Response is entirely off-topic from the user's question.",
-                "score2_description": "Response touches the topic but doesn't answer the actual question.",
+                "score2_description": "Response touches the topic but doesn't answer the actual question.",  # noqa: E501
                 "score3_description": "Response answers part of the question.",
                 "score4_description": "Response answers the question with minor gaps.",
-                "score5_description": "Response fully and directly addresses the user's question with relevant evidence.",
+                "score5_description": "Response fully and directly addresses the user's question with relevant evidence.",  # noqa: E501
             },
         )
         r = await rubric.ascore(user_input=user_input, response=response)
@@ -117,7 +123,9 @@ async def run_offline(captured_path: Path | None) -> dict:
     for ex in examples:
         rec = captured.get(ex["id"])
         if not rec:
-            logger.warning("No captured response for %s — skipping (live mode not yet wired)", ex["id"])
+            logger.warning(
+                "No captured response for %s — skipping (live mode not yet wired)", ex["id"]
+            )
             continue
         scores = await _score_one(ex, rec["response"], rec.get("retrieved_contexts"))
         summary["per_example"][ex["id"]] = scores
@@ -136,8 +144,14 @@ async def run_offline(captured_path: Path | None) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Offline RAGAS evaluation over golden_set.jsonl")
-    parser.add_argument("--captured", type=Path, help="JSONL file with {id, response, retrieved_contexts}")
-    parser.add_argument("--live", action="store_true", help="Hit running orchestrator (port 8001) instead of using captured")
+    parser.add_argument(
+        "--captured", type=Path, help="JSONL file with {id, response, retrieved_contexts}"
+    )
+    parser.add_argument(
+        "--live",
+        action="store_true",
+        help="Hit running orchestrator (port 8001) instead of using captured",
+    )
     args = parser.parse_args()
 
     if not args.captured and not args.live:

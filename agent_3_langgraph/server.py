@@ -1,14 +1,16 @@
-import asyncio
+# ruff: noqa: E402
 import logging
-import sys
 
 from shared.bootstrap import bootstrap
+
 _settings = bootstrap("quant")
 
 from shared.observability import init_instrumentation
+
 init_instrumentation("quant")
 
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
+
 from shared.agent_server import build_agent_app
 from shared.logging_config import logged
 
@@ -18,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 agent_card = AgentCard(
     name="Quant Analysis Agent",
-    description="Computes quantitative risk metrics, financial analysis, behavioral signals, and peer comparisons using yfinance and LangGraph",
+    description="Computes quantitative risk metrics, financial analysis, behavioral signals, and peer comparisons using yfinance and LangGraph",  # noqa: E501
     version="2.0.0",
     capabilities=AgentCapabilities(streaming=True),
     supported_interfaces=[
@@ -33,8 +35,16 @@ agent_card = AgentCard(
         AgentSkill(
             id="quant_analysis",
             name="Quantitative Analysis",
-            description="Compute Sharpe ratio, Beta, VaR, volatility, DCF valuation, stress tests, Monte Carlo simulation, and portfolio correlation",
-            tags=["quantitative", "risk metrics", "sharpe", "beta", "dcf", "valuation", "monte carlo"],
+            description="Compute Sharpe ratio, Beta, VaR, volatility, DCF valuation, stress tests, Monte Carlo simulation, and portfolio correlation",  # noqa: E501
+            tags=[
+                "quantitative",
+                "risk metrics",
+                "sharpe",
+                "beta",
+                "dcf",
+                "valuation",
+                "monte carlo",
+            ],
             examples=[
                 "Calculate risk metrics for NVDA",
                 "Run a DCF valuation on AAPL",
@@ -44,8 +54,15 @@ agent_card = AgentCard(
         AgentSkill(
             id="options_flow_analysis",
             name="Options Flow Analysis",
-            description="Analyze put/call volume ratio, open interest imbalance, and unusual options activity to gauge market positioning",
-            tags=["options", "put/call", "open interest", "flow", "positioning", "unusual activity"],
+            description="Analyze put/call volume ratio, open interest imbalance, and unusual options activity to gauge market positioning",  # noqa: E501
+            tags=[
+                "options",
+                "put/call",
+                "open interest",
+                "flow",
+                "positioning",
+                "unusual activity",
+            ],
             examples=[
                 "What's the options flow on NVDA?",
                 "Is there unusual options activity in AAPL?",
@@ -55,7 +72,7 @@ agent_card = AgentCard(
         AgentSkill(
             id="insider_transaction_analysis",
             name="Insider Transaction Analysis",
-            description="Parse SEC Form 4 filings to detect insider buying/selling patterns, cluster activity, and net insider direction over 90 days",
+            description="Parse SEC Form 4 filings to detect insider buying/selling patterns, cluster activity, and net insider direction over 90 days",  # noqa: E501
             tags=["insider", "form 4", "sec", "insider buying", "insider selling"],
             examples=[
                 "Are insiders buying AAPL?",
@@ -66,7 +83,7 @@ agent_card = AgentCard(
         AgentSkill(
             id="positioning_signals",
             name="Positioning & Analyst Signals",
-            description="Aggregate analyst consensus ratings, price target upside, short interest, and earnings surprise history into a composite positioning signal",
+            description="Aggregate analyst consensus ratings, price target upside, short interest, and earnings surprise history into a composite positioning signal",  # noqa: E501
             tags=["analyst", "short interest", "price target", "consensus", "earnings surprise"],
             examples=[
                 "What is analyst consensus on TSLA?",
@@ -82,11 +99,16 @@ agent_card = AgentCard(
 async def _prewarm_llm():
     try:
         from langchain_openai import ChatOpenAI
-        from shared.settings import LLM_SUMMARY_MODEL, LLM_BASE_URL, LLM_API_KEY
-        from shared.llm_queue import llm_queue, Priority
+
+        from shared.llm_queue import Priority, llm_queue
+        from shared.settings import LLM_API_KEY, LLM_BASE_URL, LLM_SUMMARY_MODEL
+
         llm = ChatOpenAI(
-            model=LLM_SUMMARY_MODEL, base_url=LLM_BASE_URL,
-            api_key=LLM_API_KEY, temperature=0.0, max_tokens=1,
+            model=LLM_SUMMARY_MODEL,
+            base_url=LLM_BASE_URL,
+            api_key=LLM_API_KEY,
+            temperature=0.0,
+            max_tokens=1,
         )
         async with llm_queue.acquire(Priority.NORMAL, "quant-warmup"):
             await llm.ainvoke("ping")
@@ -105,4 +127,5 @@ app = build_agent_app(
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=_settings.agent_port_quant)

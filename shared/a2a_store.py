@@ -4,6 +4,7 @@ Wraps InMemoryTaskStore for fast in-process get/list/delete (no re-query on
 every call) and adds SQLite write-through so tasks are durable across restarts.
 On cold start, all rows from a2a_tasks are loaded into the in-memory store once.
 """
+
 import asyncio
 import logging
 from datetime import datetime
@@ -17,8 +18,8 @@ from a2a.types import a2a_pb2
 from a2a.types.a2a_pb2 import Task
 from google.protobuf.json_format import MessageToJson, Parse
 
-from shared.settings import IST
 from shared.memory.store import DB_PATH, get_db, write_lock
+from shared.settings import IST
 
 logger = logging.getLogger(__name__)
 
@@ -46,9 +47,7 @@ class SQLiteTaskStore(TaskStore):
                 return
             try:
                 conn = await get_db(self._db_path)
-                cursor = await conn.execute(
-                    "SELECT task_id, owner, payload FROM a2a_tasks"
-                )
+                cursor = await conn.execute("SELECT task_id, owner, payload FROM a2a_tasks")
                 rows = await cursor.fetchall()
                 for _task_id, owner, payload in rows:
                     task = Parse(payload, Task())
@@ -79,9 +78,7 @@ class SQLiteTaskStore(TaskStore):
             await conn.commit()
         await self._mem.save(task, context)
 
-    async def get(
-        self, task_id: str, context: ServerCallContext
-    ) -> Task | None:
+    async def get(self, task_id: str, context: ServerCallContext) -> Task | None:
         await self._ensure_loaded()
         return await self._mem.get(task_id, context)
 
@@ -97,8 +94,6 @@ class SQLiteTaskStore(TaskStore):
         await self._ensure_loaded()
         async with write_lock():
             conn = await get_db(self._db_path)
-            await conn.execute(
-                "DELETE FROM a2a_tasks WHERE task_id = ?", (task_id,)
-            )
+            await conn.execute("DELETE FROM a2a_tasks WHERE task_id = ?", (task_id,))
             await conn.commit()
         await self._mem.delete(task_id, context)

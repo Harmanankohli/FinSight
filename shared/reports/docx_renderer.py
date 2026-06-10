@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """DOCX report generation."""
 
 from __future__ import annotations
@@ -41,7 +42,9 @@ def _extract_docx_content(
     company_info: dict | None = None,
 ) -> DeckData:
     """Wrapper for DOCX — reuses the deck extractor."""
-    return _extract_deck_data(brief_data, ticker, recommendation, confidence, analysis_date, company_info=company_info)
+    return _extract_deck_data(
+        brief_data, ticker, recommendation, confidence, analysis_date, company_info=company_info
+    )
 
 
 def generate_docx(
@@ -53,10 +56,10 @@ def generate_docx(
     company_info: dict | None = None,
 ) -> BytesIO:
     from docx import Document
-    from docx.shared import Pt, RGBColor, Inches
     from docx.enum.text import WD_ALIGN_PARAGRAPH
-    from docx.oxml.ns import qn
     from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+    from docx.shared import Inches, Pt, RGBColor
 
     def rgb(hex_str: str) -> RGBColor:
         r = int(hex_str[0:2], 16)
@@ -65,7 +68,9 @@ def generate_docx(
         return RGBColor(r, g, b)
 
     logger.info("Generating DOCX report for %s", ticker)
-    deck = _extract_docx_content(brief_data, ticker, recommendation, confidence, analysis_date, company_info=company_info)
+    deck = _extract_docx_content(
+        brief_data, ticker, recommendation, confidence, analysis_date, company_info=company_info
+    )
     doc = Document()
 
     for section in doc.sections:
@@ -74,8 +79,14 @@ def generate_docx(
         section.left_margin = Inches(1)
         section.right_margin = Inches(1)
 
-    def set_run_style(run, size: int, bold: bool = False,
-                      color: str = _TEXT, italic: bool = False, name: str = "Calibri") -> None:
+    def set_run_style(
+        run,
+        size: int,
+        bold: bool = False,
+        color: str = _TEXT,
+        italic: bool = False,
+        name: str = "Calibri",
+    ) -> None:
         run.font.name = name
         run.font.size = Pt(size)
         run.font.bold = bold

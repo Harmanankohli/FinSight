@@ -38,9 +38,7 @@ EMBED_MODEL_NAME: str = "all-MiniLM-L6-v2"
 _registry_lock = asyncio.Lock()
 _registry_ready = False
 _model_embed: SentenceTransformer | None = None
-_df_registry: pd.DataFrame = pd.DataFrame(
-    columns=["card_uri", "agent_card", "card_embeddings"]
-)
+_df_registry: pd.DataFrame = pd.DataFrame(columns=["card_uri", "agent_card", "card_embeddings"])
 
 
 def _load_agent_cards() -> tuple[list[str], list[dict]]:
@@ -84,15 +82,11 @@ async def _ensure_registry() -> None:
         def _init():
             card_uris, agent_cards = _load_agent_cards()
             if not agent_cards:
-                return None, pd.DataFrame(
-                    columns=["card_uri", "agent_card", "card_embeddings"]
-                )
+                return None, pd.DataFrame(columns=["card_uri", "agent_card", "card_embeddings"])
             # SentenceTransformer downloads ~80 MB on first call — delay until needed.
             model = get_embed_model(EMBED_MODEL_NAME)
             df = pd.DataFrame({"card_uri": card_uris, "agent_card": agent_cards})
-            df["card_embeddings"] = df["agent_card"].apply(
-                lambda c: model.encode(json.dumps(c))
-            )
+            df["card_embeddings"] = df["agent_card"].apply(lambda c: model.encode(json.dumps(c)))
             return model, df
 
         _model_embed, _df_registry = await loop.run_in_executor(None, _init)
@@ -102,6 +96,7 @@ async def _ensure_registry() -> None:
 # ──────────────────────────────────────────────
 # Agent Registry Tools
 # ──────────────────────────────────────────────
+
 
 @app.tool(
     name="find_agent",
@@ -128,11 +123,7 @@ async def find_agent(query: str) -> str:
 async def get_agent_cards() -> dict:
     """List all available agent card URIs as a JSON resource."""
     await _ensure_registry()
-    return {
-        "agent_cards": _df_registry["card_uri"].to_list()
-        if not _df_registry.empty
-        else []
-    }
+    return {"agent_cards": _df_registry["card_uri"].to_list() if not _df_registry.empty else []}
 
 
 @app.resource("resource://agent_cards/{card_name}", mime_type="application/json")
@@ -142,7 +133,5 @@ async def get_agent_card(card_name: str) -> dict:
     if _df_registry.empty:
         return {"agent_card": None}
     uri = f"resource://agent_cards/{card_name}"
-    cards = _df_registry.loc[
-        _df_registry["card_uri"] == uri, "agent_card"
-    ].to_list()
+    cards = _df_registry.loc[_df_registry["card_uri"] == uri, "agent_card"].to_list()
     return {"agent_card": cards[0]} if cards else {"agent_card": None}

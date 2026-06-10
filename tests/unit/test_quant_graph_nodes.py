@@ -4,11 +4,11 @@ All nodes are called directly (not through the LangGraph runner) with
 synthetic price data. MCP client is set to None so network calls are
 skipped and beta defaults to 1.0.
 """
+
 import math
 from datetime import date, timedelta
 
 import numpy as np
-import pytest
 
 from agent_3_langgraph.nodes import (
     compute_metrics_node,
@@ -17,7 +17,9 @@ from agent_3_langgraph.nodes import (
 )
 
 
-def _price_data(n: int = 252, daily_ret: float = 0.001, daily_vol: float = 0.01, seed: int = 42) -> dict:
+def _price_data(
+    n: int = 252, daily_ret: float = 0.001, daily_vol: float = 0.01, seed: int = 42
+) -> dict:
     """Generate n days of synthetic log-normal close prices."""
     rng = np.random.default_rng(seed)
     log_rets = rng.normal(daily_ret, daily_vol, n)
@@ -49,6 +51,7 @@ def _base_state(**overrides) -> dict:
 
 
 # ── compute_metrics_node ──────────────────────────────────────────────────────
+
 
 async def test_compute_metrics_returns_expected_keys():
     state = _base_state(price_data=_price_data())
@@ -112,6 +115,7 @@ async def test_compute_metrics_max_drawdown_non_positive():
 
 # ── stress_test_node ──────────────────────────────────────────────────────────
 
+
 async def test_stress_test_returns_expected_keys():
     state = _base_state(price_data=_price_data())
     result = await stress_test_node(state)
@@ -157,16 +161,28 @@ async def test_stress_test_empty_prices_returns_none():
 
 # ── format_output_node ────────────────────────────────────────────────────────
 
+
 async def test_format_output_buy_signal():
     """Strong positive signals → BUY."""
     state = _base_state(
         ticker="AAPL",
-        metrics={"sharpe_ratio": 1.5, "annual_volatility": 0.10, "beta": 1.0,
-                 "var_95_daily": -0.01, "max_drawdown": -0.05},
-        dcf_valuation={"upside_pct": 35.0, "intrinsic_value": 200.0,
-                       "current_price": 148.0, "wacc": 0.10,
-                       "growth_rate": 0.08, "terminal_growth": 0.025,
-                       "enterprise_value": 3e12, "fcf_used": 1e11},
+        metrics={
+            "sharpe_ratio": 1.5,
+            "annual_volatility": 0.10,
+            "beta": 1.0,
+            "var_95_daily": -0.01,
+            "max_drawdown": -0.05,
+        },
+        dcf_valuation={
+            "upside_pct": 35.0,
+            "intrinsic_value": 200.0,
+            "current_price": 148.0,
+            "wacc": 0.10,
+            "growth_rate": 0.08,
+            "terminal_growth": 0.025,
+            "enterprise_value": 3e12,
+            "fcf_used": 1e11,
+        },
     )
     result = await format_output_node(state)
     assert result["recommendation"] == "BUY"
@@ -176,14 +192,24 @@ async def test_format_output_sell_signal():
     """Strong negative signals → SELL."""
     state = _base_state(
         ticker="JUNK",
-        metrics={"sharpe_ratio": -0.5, "annual_volatility": 0.45, "beta": 1.8,
-                 "var_95_daily": -0.04, "max_drawdown": -0.60},
-        dcf_valuation={"upside_pct": -35.0, "intrinsic_value": 50.0,
-                       "current_price": 77.0, "wacc": 0.10,
-                       "growth_rate": 0.02, "terminal_growth": 0.01,
-                       "enterprise_value": 5e9, "fcf_used": 1e8},
-        stress_test_result={"cvar_95": -0.08, "var_95": -0.06,
-                            "scenarios": {}},
+        metrics={
+            "sharpe_ratio": -0.5,
+            "annual_volatility": 0.45,
+            "beta": 1.8,
+            "var_95_daily": -0.04,
+            "max_drawdown": -0.60,
+        },
+        dcf_valuation={
+            "upside_pct": -35.0,
+            "intrinsic_value": 50.0,
+            "current_price": 77.0,
+            "wacc": 0.10,
+            "growth_rate": 0.02,
+            "terminal_growth": 0.01,
+            "enterprise_value": 5e9,
+            "fcf_used": 1e8,
+        },
+        stress_test_result={"cvar_95": -0.08, "var_95": -0.06, "scenarios": {}},
     )
     result = await format_output_node(state)
     assert result["recommendation"] == "SELL"
@@ -193,8 +219,13 @@ async def test_format_output_hold_when_no_signals():
     """No signals at all → HOLD."""
     state = _base_state(
         ticker="HOLD",
-        metrics={"sharpe_ratio": 0.5, "annual_volatility": 0.20, "beta": 1.0,
-                 "var_95_daily": -0.015, "max_drawdown": -0.12},
+        metrics={
+            "sharpe_ratio": 0.5,
+            "annual_volatility": 0.20,
+            "beta": 1.0,
+            "var_95_daily": -0.015,
+            "max_drawdown": -0.12,
+        },
     )
     result = await format_output_node(state)
     assert result["recommendation"] == "HOLD"
@@ -203,8 +234,13 @@ async def test_format_output_hold_when_no_signals():
 async def test_format_output_confidence_in_range():
     state = _base_state(
         ticker="X",
-        metrics={"sharpe_ratio": 1.2, "annual_volatility": 0.12, "beta": 1.0,
-                 "var_95_daily": -0.01, "max_drawdown": -0.08},
+        metrics={
+            "sharpe_ratio": 1.2,
+            "annual_volatility": 0.12,
+            "beta": 1.0,
+            "var_95_daily": -0.01,
+            "max_drawdown": -0.08,
+        },
     )
     result = await format_output_node(state)
     conf = result["metrics"]["quant_confidence"]
@@ -214,8 +250,13 @@ async def test_format_output_confidence_in_range():
 async def test_format_output_signals_list_populated():
     state = _base_state(
         ticker="SIG",
-        metrics={"sharpe_ratio": 1.5, "annual_volatility": 0.10, "beta": 1.0,
-                 "var_95_daily": -0.01, "max_drawdown": -0.05},
+        metrics={
+            "sharpe_ratio": 1.5,
+            "annual_volatility": 0.10,
+            "beta": 1.0,
+            "var_95_daily": -0.01,
+            "max_drawdown": -0.05,
+        },
     )
     result = await format_output_node(state)
     signals = result["metrics"]["signals"]

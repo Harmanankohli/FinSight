@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """SEC EDGAR MCP tools and client: _EdgarClient, get_company_filings, get_financial_filings,
 full_text_search, get_filing_content.
 """
@@ -13,11 +14,10 @@ import httpx
 from bs4 import BeautifulSoup
 from langfuse import observe
 
-from shared.settings import SEC_USER_AGENT
-from shared.logging_config import logged
-
 from mcp_servers._app import app
 from mcp_servers.infra.rate_limiters import _EDGAR_LIMITER, cache_filing, cache_submissions
+from shared.logging_config import logged
+from shared.settings import SEC_USER_AGENT
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +44,7 @@ _INDEX_ONLY_FORMS: frozenset[str] = frozenset({"3", "4", "5", "3/A", "4/A", "5/A
 # SEC EDGAR Client
 # ──────────────────────────────────────────────
 
+
 class _EdgarClient:
     """Async SEC EDGAR client managing ticker→CIK maps and filing retrieval.
 
@@ -55,8 +56,8 @@ class _EdgarClient:
         self._client: httpx.AsyncClient | None = None
         self._client_lock = asyncio.Lock()
         self._cik_cache: dict[str, str] = {}
-        self._ticker_map: dict[str, str] | None = None      # {TICKER: cik_zfill10}
-        self._title_map: dict[str, str] | None = None       # {TICKER: company title}
+        self._ticker_map: dict[str, str] | None = None  # {TICKER: cik_zfill10}
+        self._title_map: dict[str, str] | None = None  # {TICKER: company title}
         self._ticker_map_lock = asyncio.Lock()
 
     async def _get_client(self) -> httpx.AsyncClient:
@@ -83,13 +84,9 @@ class _EdgarClient:
             resp.raise_for_status()
             raw = resp.json()
             self._ticker_map = {
-                entry["ticker"]: str(entry["cik_str"]).zfill(10)
-                for entry in raw.values()
+                entry["ticker"]: str(entry["cik_str"]).zfill(10) for entry in raw.values()
             }
-            self._title_map = {
-                entry["ticker"]: entry.get("title", "")
-                for entry in raw.values()
-            }
+            self._title_map = {entry["ticker"]: entry.get("title", "") for entry in raw.values()}
         return self._ticker_map
 
     async def get_company_title(self, ticker: str) -> str:
@@ -128,14 +125,12 @@ class _EdgarClient:
             )
         else:
             edgar_url = (
-                f"https://www.sec.gov/Archives/edgar/data/"
-                f"{cik_short}/{acc_clean}/{safe_doc}"
+                f"https://www.sec.gov/Archives/edgar/data/{cik_short}/{acc_clean}/{safe_doc}"
             )
 
         # ix_url wraps the doc in SEC's inline XBRL viewer for structured data rendering.
         ix_url = (
-            f"https://www.sec.gov/ix?doc=/Archives/edgar/data/"
-            f"{cik_short}/{acc_clean}/{safe_doc}"
+            f"https://www.sec.gov/ix?doc=/Archives/edgar/data/{cik_short}/{acc_clean}/{safe_doc}"
         )
         return edgar_url, ix_url
 
@@ -158,11 +153,9 @@ class _EdgarClient:
             except Exception:
                 # Exponential backoff (1s, 2s) before raising on the 3rd failure.
                 if attempt < 2:
-                    await asyncio.sleep(2 ** attempt)
+                    await asyncio.sleep(2**attempt)
                 else:
-                    raise RuntimeError(
-                        f"get_company_filings failed for {ticker} after 3 retries"
-                    )
+                    raise RuntimeError(f"get_company_filings failed for {ticker} after 3 retries")
         return {}
 
     async def get_company_filings(
@@ -183,11 +176,11 @@ class _EdgarClient:
 
         cik_short = str(int(cik))
         recent = data.get("filings", {}).get("recent", {})
-        forms    = recent.get("form", [])
-        dates    = recent.get("filingDate", [])
-        docs     = recent.get("primaryDocument", [])
+        forms = recent.get("form", [])
+        dates = recent.get("filingDate", [])
+        docs = recent.get("primaryDocument", [])
         acc_nums = recent.get("accessionNumber", [])
-        # SEC's JSON returns parallel arrays — bound-check against the shortest to avoid index errors.
+        # SEC's JSON returns parallel arrays — bound-check against the shortest to avoid index errors.  # noqa: E501
         n = min(len(forms), len(dates), len(docs), len(acc_nums))
 
         result = []
@@ -196,16 +189,16 @@ class _EdgarClient:
                 continue
             if len(result) >= limit:
                 break
-            edgar_url, ix_url = self._build_filing_urls(
-                cik_short, forms[i], docs[i], acc_nums[i]
+            edgar_url, ix_url = self._build_filing_urls(cik_short, forms[i], docs[i], acc_nums[i])
+            result.append(
+                {
+                    "form": forms[i],
+                    "filing_date": dates[i],
+                    "description": docs[i],
+                    "edgar_url": edgar_url,
+                    "ix_url": ix_url,
+                }
             )
-            result.append({
-                "form": forms[i],
-                "filing_date": dates[i],
-                "description": docs[i],
-                "edgar_url": edgar_url,
-                "ix_url": ix_url,
-            })
         return {"ticker": ticker, "cik": cik, "filings": result}
 
     async def get_financial_filings(
@@ -247,18 +240,16 @@ class _EdgarClient:
         quarterly: list[dict] = []
 
         def _process_recent(recent: dict) -> None:
-            forms    = recent.get("form", [])
-            dates    = recent.get("filingDate", [])
-            docs     = recent.get("primaryDocument", [])
+            forms = recent.get("form", [])
+            dates = recent.get("filingDate", [])
+            docs = recent.get("primaryDocument", [])
             acc_nums = recent.get("accessionNumber", [])
             n = min(len(forms), len(dates), len(docs), len(acc_nums))
             for i in range(n):
                 form = forms[i]
                 if form not in ("10-K", "10-K/A", "10-Q", "10-Q/A"):
                     continue
-                edgar_url, ix_url = self._build_filing_urls(
-                    cik_short, form, docs[i], acc_nums[i]
-                )
+                edgar_url, ix_url = self._build_filing_urls(cik_short, form, docs[i], acc_nums[i])
                 entry = {
                     "form": form,
                     "filing_date": dates[i],
@@ -288,9 +279,7 @@ class _EdgarClient:
             try:
                 c = await self._get_client()
                 await _EDGAR_LIMITER.acquire()
-                resp = await c.get(
-                    f"https://data.sec.gov/submissions/{fname}"
-                )
+                resp = await c.get(f"https://data.sec.gov/submissions/{fname}")
                 resp.raise_for_status()
                 older = resp.json()
                 _process_recent(older)
@@ -313,14 +302,12 @@ class _EdgarClient:
             "annual": annual,
             "quarterly": quarterly,
             "total_filings": len(annual) + len(quarterly),
-            "note": " ".join(note_parts) if note_parts else (
-                f"Retrieved {len(annual)} annual and {len(quarterly)} quarterly filings."
-            ),
+            "note": " ".join(note_parts)
+            if note_parts
+            else (f"Retrieved {len(annual)} annual and {len(quarterly)} quarterly filings."),
         }
 
-    async def full_text_search(
-        self, query: str, ticker: str | None = None
-    ) -> dict:
+    async def full_text_search(self, query: str, ticker: str | None = None) -> dict:
         """EDGAR full-text search via efts.sec.gov — indexes all filings."""
         try:
             params: dict = {"q": query}
@@ -341,19 +328,19 @@ class _EdgarClient:
         results = []
         for hit in data.get("hits", {}).get("hits", [])[:10]:
             src = hit.get("_source", {})
-            results.append({
-                "score": hit["_score"],
-                "ticker": src.get("ticker", ""),
-                "form": src.get("form", ""),
-                "filing_date": src.get("filingDate", ""),
-                "description": src.get("description", ""),
-                "url": f"https://www.sec.gov{src.get('file_url', '')}",
-            })
+            results.append(
+                {
+                    "score": hit["_score"],
+                    "ticker": src.get("ticker", ""),
+                    "form": src.get("form", ""),
+                    "filing_date": src.get("filingDate", ""),
+                    "description": src.get("description", ""),
+                    "url": f"https://www.sec.gov{src.get('file_url', '')}",
+                }
+            )
         return {"query": query, "results": results}
 
-    async def get_filing_content(
-        self, edgar_url: str, ix_url: str | None = None
-    ) -> dict:
+    async def get_filing_content(self, edgar_url: str, ix_url: str | None = None) -> dict:
         """Fetch and extract text content from an SEC EDGAR filing URL."""
         # Try edgar_url first, fall back to ix_url if the direct URL fails.
         tried_urls = [edgar_url]
@@ -371,7 +358,7 @@ class _EdgarClient:
                 if "json" in content_type.lower():
                     text = json.dumps(resp.json(), indent=2)
                 elif "xml" in content_type.lower() or url.endswith((".xml", ".xsd")):
-                    # XBRL/XML filings — strip script/style/xbrldocument tags before text extraction.
+                    # XBRL/XML filings — strip script/style/xbrldocument tags before text extraction.  # noqa: E501
                     try:
                         soup = BeautifulSoup(resp.text, "lxml-xml")
                     except Exception:
@@ -434,12 +421,11 @@ async def _prewarm_ticker_map() -> None:
 # SEC EDGAR MCP Tools
 # ──────────────────────────────────────────────
 
+
 @app.tool()
 @observe()
 @logged()
-async def get_company_filings(
-    ticker: str, form_types: str = "", limit: int = 10
-) -> dict:
+async def get_company_filings(ticker: str, form_types: str = "", limit: int = 10) -> dict:
     """Retrieve SEC filings for a publicly traded company.
 
     For fundamental financial analysis, prefer get_financial_filings() which
@@ -451,15 +437,11 @@ async def get_company_filings(
         limit: Maximum number of filings to return (default 10)
 
     Returns:
-        dict with keys: ticker, cik, filings (list of {form, filing_date, description, edgar_url, ix_url})
+        dict with keys: ticker, cik, filings (list of {form, filing_date, description, edgar_url, ix_url})  # noqa: E501
     """
     logger.info("Tool called", extra={"tool": "get_company_filings", "ticker": ticker})
     try:
-        types_list = (
-            [t.strip() for t in form_types.split(",") if t.strip()]
-            if form_types
-            else None
-        )
+        types_list = [t.strip() for t in form_types.split(",") if t.strip()] if form_types else None
         return await _edgar.get_company_filings(ticker, types_list, limit)
     except Exception as exc:
         logger.warning("get_company_filings tool failed for %s: %s", ticker, exc)
@@ -509,8 +491,11 @@ async def get_financial_filings(
     except Exception as exc:
         logger.warning("get_financial_filings tool failed for %s: %s", ticker, exc)
         return {
-            "ticker": ticker, "error": str(exc),
-            "annual": [], "quarterly": [], "total_filings": 0,
+            "ticker": ticker,
+            "error": str(exc),
+            "annual": [],
+            "quarterly": [],
+            "total_filings": 0,
         }
 
 
@@ -524,7 +509,7 @@ async def full_text_search(query: str, ticker: str | None = None) -> dict:
         ticker: Optional ticker to narrow to one company.
 
     Returns:
-        dict with keys: query, results (list of {score, ticker, form, filing_date, description, url})
+        dict with keys: query, results (list of {score, ticker, form, filing_date, description, url})  # noqa: E501
     """
     try:
         return await _edgar.full_text_search(query, ticker)

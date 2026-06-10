@@ -34,9 +34,11 @@ async def main() -> None:
 
     # Bootstrap the app config first
     from shared.bootstrap import bootstrap
+
     bootstrap("create_user")
 
     from shared.memory.user_store import create_user
+
     try:
         user_id = await create_user(username, password, role=args.role)
         print(f"Created user: {username} (id={user_id[:8]}..., role={args.role})")

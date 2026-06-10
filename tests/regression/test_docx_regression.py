@@ -5,15 +5,15 @@ _extract_docx_content(). Phase 1 extraction improvements apply automatically.
 No DOCX code changes needed — just verify it still produces valid output
 with populated sections after the Phase 1 refactor.
 """
+
 import sys
-from pathlib import Path
 from io import BytesIO
-from unittest.mock import patch, MagicMock
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from shared.reports import generate_docx
-
 
 # ── Fixtures ────────────────────────────────────────────────────────────────────
 
@@ -49,12 +49,16 @@ def _make_yf_mock(long_name, sector, exchange):
 
 # ── Tests ───────────────────────────────────────────────────────────────────────
 
+
 def test_docx_generates_valid_output(tmp_path):
     """Realistic WMT data → DOCX generates without error, non-empty."""
     with patch("yfinance.Ticker", _make_yf_mock("Walmart Inc.", "Consumer Defensive", "NYQ")):
         buf = generate_docx(
             {"response_text": WMT_RESPONSE_TEXT},
-            "WMT", "HOLD", 0.58, "2026-06-08",
+            "WMT",
+            "HOLD",
+            0.58,
+            "2026-06-08",
         )
     assert isinstance(buf, BytesIO)
     data = buf.read()
@@ -83,7 +87,10 @@ def test_docx_with_unknown_ticker(tmp_path):
     with patch("yfinance.Ticker", side_effect=Exception("network fail")):
         buf = generate_docx(
             {"response_text": text},
-            "PLTR", "BUY", 0.70, "2026-06-08",
+            "PLTR",
+            "BUY",
+            0.70,
+            "2026-06-08",
         )
     assert isinstance(buf, BytesIO)
     data = buf.read()
@@ -96,10 +103,15 @@ def test_docx_with_unknown_ticker(tmp_path):
 def test_docx_with_unicode(tmp_path):
     """Unicode characters in company name → no encoding errors."""
     text = "Analysis of São Paulo Alimentos (SPA) shows growth."
-    with patch("yfinance.Ticker", _make_yf_mock("São Paulo Alimentos S.A.", "Consumer Defensive", "NYQ")):
+    with patch(
+        "yfinance.Ticker", _make_yf_mock("São Paulo Alimentos S.A.", "Consumer Defensive", "NYQ")
+    ):
         buf = generate_docx(
             {"response_text": text},
-            "SPA", "BUY", 0.65, "2026-06-08",
+            "SPA",
+            "BUY",
+            0.65,
+            "2026-06-08",
         )
     assert isinstance(buf, BytesIO)
     data = buf.read()
@@ -123,7 +135,10 @@ def test_docx_with_markdown_tables(tmp_path):
     with patch("yfinance.Ticker", _make_yf_mock("Walmart Inc.", "Consumer Defensive", "NYQ")):
         buf = generate_docx(
             {"response_text": text},
-            "WMT", "HOLD", 0.58, "2026-06-08",
+            "WMT",
+            "HOLD",
+            0.58,
+            "2026-06-08",
         )
     assert isinstance(buf, BytesIO)
     data = buf.read()
@@ -135,6 +150,7 @@ def test_docx_with_markdown_tables(tmp_path):
 
 if __name__ == "__main__":
     import tempfile
+
     with tempfile.TemporaryDirectory() as d:
         tmp = Path(d)
         test_docx_generates_valid_output(tmp)

@@ -13,9 +13,15 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-current_trace_id: contextvars.ContextVar[str | None] = contextvars.ContextVar("trace_id", default=None)
-current_session_id: contextvars.ContextVar[str | None] = contextvars.ContextVar("session_id", default=None)
-current_user_id: contextvars.ContextVar[str | None] = contextvars.ContextVar("user_id", default=None)
+current_trace_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "trace_id", default=None
+)
+current_session_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "session_id", default=None
+)
+current_user_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "user_id", default=None
+)
 
 # Sentinel separator: a marker between the JSON prefix and the real task text.
 # Using a triple-angled delimiter + newline makes accidental collisions with
@@ -23,7 +29,9 @@ current_user_id: contextvars.ContextVar[str | None] = contextvars.ContextVar("us
 _SEPARATOR = "\n<<<TASK>>>\n"
 
 
-def inject_trace_context(task_text: str, trace_id: str, parent_span_id: str, user_id: str | None = None) -> str:
+def inject_trace_context(
+    task_text: str, trace_id: str, parent_span_id: str, user_id: str | None = None
+) -> str:
     """Prepend a JSON trace envelope to *task_text*.
 
     The caller (orchestrator or parent agent) injects its current trace_id

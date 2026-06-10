@@ -4,6 +4,7 @@ Usage:
     from shared.agent_server import build_agent_app
     app = build_agent_app(agent_card=card, agent=MyAgent(), service_name="my_agent")
 """
+
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
@@ -11,14 +12,13 @@ from collections.abc import Callable, Sequence
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
 from a2a.types import AgentCard
-from shared.a2a_store import SQLiteTaskStore
-from shared.base_agent import BaseAgent
-from shared.bootstrap import bootstrap
-from a2a.types.a2a_pb2 import HTTPAuthSecurityScheme, SecurityRequirement, SecurityScheme
-from shared.generic_executor import GenericAgentExecutor
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.routing import Route
+
+from shared.a2a_store import SQLiteTaskStore
+from shared.base_agent import BaseAgent
+from shared.generic_executor import GenericAgentExecutor
 
 
 def build_auth_middleware(settings, accept=None) -> list:  # type: ignore[type-arg]
@@ -28,17 +28,20 @@ def build_auth_middleware(settings, accept=None) -> list:  # type: ignore[type-a
     Delegates to shared.auth.middleware.build_auth_middleware.
     """
     from shared.auth.middleware import build_auth_middleware as _build
+
     return _build(settings, accept=accept)
 
 
 def _health(service_name: str):
     async def handler(request):
         return JSONResponse({"status": "ok", "agent": service_name})
+
     return handler
 
 
 async def _release_evals(request):
     from shared.eval_gate import release_evals as _release
+
     n = await _release()
     return JSONResponse({"released": n})
 
@@ -74,6 +77,7 @@ def build_agent_app(
     - ``frozenset({"service"})``: only service tokens (sub-agents)
     """
     from shared.settings import get_settings
+
     settings = get_settings()
 
     _add_security_to_card(agent_card, accept=accept)

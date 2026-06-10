@@ -4,6 +4,7 @@ These stubs prevent import errors in CI/dev environments where optional
 heavy packages (langfuse, transformers, google-adk, etc.) are not installed.
 They are inserted into sys.modules BEFORE any test imports trigger them.
 """
+
 import sys
 from unittest.mock import MagicMock
 
@@ -48,6 +49,7 @@ _STUB_MODULES = [
     "sentence_transformers",
 ]
 
+
 def _identity_decorator(*args, **kwargs):
     """Return an identity decorator — used to stub @observe(), @logged(), etc."""
     if len(args) == 1 and callable(args[0]) and not kwargs:
@@ -65,6 +67,7 @@ for _mod in _STUB_MODULES:
 
 # Make langfuse.observe specifically an identity decorator (used as @observe())
 import langfuse as _langfuse_mod  # noqa: E402 (already stubbed above)
+
 _langfuse_mod.observe = _identity_decorator
 if hasattr(_langfuse_mod, "decorators"):
     _langfuse_mod.decorators.observe = _identity_decorator

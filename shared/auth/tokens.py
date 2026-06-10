@@ -28,9 +28,7 @@ class Principal:
     role: str = "user"
 
 
-def issue_user_token(
-    user_id: str, role: str = "user", *, ttl: int | None = None
-) -> str:
+def issue_user_token(user_id: str, role: str = "user", *, ttl: int | None = None) -> str:
     """Issue a signed access JWT for a user.
 
     Uses the first key from AUTH_JWT_SECRETS as the signing key.
@@ -54,9 +52,7 @@ def issue_user_token(
     )
 
 
-def issue_refresh_token(
-    jti: str, user_id: str, *, ttl: int | None = None
-) -> str:
+def issue_refresh_token(jti: str, user_id: str, *, ttl: int | None = None) -> str:
     """Issue a refresh JWT with a unique JWT ID for rotation tracking."""
     if pyjwt is None:
         raise AuthError("pyjwt library not installed")

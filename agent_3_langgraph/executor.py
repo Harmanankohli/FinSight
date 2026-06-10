@@ -1,4 +1,3 @@
-import json
 import logging
 from collections.abc import AsyncIterable
 
@@ -6,12 +5,12 @@ from langfuse.langchain import CallbackHandler
 
 from shared.base_agent import BaseAgent
 from shared.logging_config import logged, logged_sync
-from shared.settings import EVAL_ENABLED
-from shared.observability import get_langfuse_client
-from shared.runtime_eval import score_quant_response as _eval_quant_response
-from shared.runtime_eval import score_quant_deterministic
 from shared.mcp_client import get_shared_mcp
-from shared.ticker_utils import extract_ticker, extract_holdings, validate_ticker, resolve_ticker
+from shared.observability import get_langfuse_client
+from shared.runtime_eval import score_quant_deterministic
+from shared.runtime_eval import score_quant_response as _eval_quant_response
+from shared.settings import EVAL_ENABLED
+from shared.ticker_utils import extract_holdings, extract_ticker, resolve_ticker, validate_ticker
 from shared.trace_context import extract_trace_ids
 
 from .graph import QuantAnalysisGraph
@@ -24,30 +23,45 @@ class QuantAgent(BaseAgent):
     def __init__(self):
         super().__init__(
             agent_name="Quant Analysis Agent",
-            description="Computes quantitative risk metrics and financial analysis using MCP data and LangGraph",
+            description="Computes quantitative risk metrics and financial analysis using MCP data and LangGraph",  # noqa: E501
             content_types=["text", "application/json"],
         )
         self.graph = QuantAnalysisGraph()
 
     @logged()
-    async def analyze(self, ticker: str, period: str = "5y", portfolio_holdings: list[str] | None = None, trace_ctx: dict | None = None) -> dict:
-        logger.info("Quant analysis starting for %s (period=%s, holdings=%s)", ticker, period, portfolio_holdings)
+    async def analyze(
+        self,
+        ticker: str,
+        period: str = "5y",
+        portfolio_holdings: list[str] | None = None,
+        trace_ctx: dict | None = None,
+    ) -> dict:
+        logger.info(
+            "Quant analysis starting for %s (period=%s, holdings=%s)",
+            ticker,
+            period,
+            portfolio_holdings,
+        )
         mcp = await get_shared_mcp()
 
         # Langfuse CallbackHandler is nested under the parent agent span via trace_ctx
         langfuse_handler = CallbackHandler(trace_context=trace_ctx)
         result = await self.graph.run(
-            ticker, period=period, portfolio_holdings=portfolio_holdings,
-            mcp_client=mcp, langfuse_handler=langfuse_handler,
+            ticker,
+            period=period,
+            portfolio_holdings=portfolio_holdings,
+            mcp_client=mcp,
+            langfuse_handler=langfuse_handler,
         )
-        logger.info("Quant analysis complete for %s: rec=%s, dcf=%s",
-                     ticker, result.get("recommendation"),
-                     "ok" if result.get("dcf_valuation") else "null")
+        logger.info(
+            "Quant analysis complete for %s: rec=%s, dcf=%s",
+            ticker,
+            result.get("recommendation"),
+            "ok" if result.get("dcf_valuation") else "null",
+        )
         return result
 
-    async def stream(
-        self, query: str, context_id: str, task_id: str
-    ) -> AsyncIterable[dict]:
+    async def stream(self, query: str, context_id: str, task_id: str) -> AsyncIterable[dict]:
         logger.info("QuantAgent.stream() called: query=%s...", query[:80])
         yield await self._build_response(query)
 
@@ -81,7 +95,7 @@ class QuantAgent(BaseAgent):
                     "is_task_complete": True,
                     "is_error": True,
                     "require_user_input": False,
-                    "content": "Could not identify a stock ticker from the query. Try using parentheses (AAPL) or $ prefix ($V).",
+                    "content": "Could not identify a stock ticker from the query. Try using parentheses (AAPL) or $ prefix ($V).",  # noqa: E501
                 }
 
             valid, validated_ticker, company = await validate_ticker(ticker)
@@ -107,16 +121,27 @@ class QuantAgent(BaseAgent):
                 logger.info("Extracted portfolio holdings for %s: %s", ticker, holdings)
 
             try:
-                result = await self.analyze(ticker, portfolio_holdings=holdings, trace_ctx=trace_ctx)
+                result = await self.analyze(
+                    ticker, portfolio_holdings=holdings, trace_ctx=trace_ctx
+                )
                 # Deterministic schema validator — runs every call, no LLM cost
                 schema_checks = score_quant_deterministic(result)
                 if not schema_checks.get("passed", False):
                     failing = [k for k, v in schema_checks.items() if k != "passed" and not v]
-                    logger.warning("Quant deterministic schema validation failed for %s: %s", ticker, failing)
+                    logger.warning(
+                        "Quant deterministic schema validation failed for %s: %s", ticker, failing
+                    )
                 result["schema_validation"] = schema_checks
-                span.update(output={"ticker": ticker, "recommendation": result.get("recommendation"), "schema_passed": schema_checks["passed"]})
+                span.update(
+                    output={
+                        "ticker": ticker,
+                        "recommendation": result.get("recommendation"),
+                        "schema_passed": schema_checks["passed"],
+                    }
+                )
                 if EVAL_ENABLED:
                     from shared.eval_gate import defer_eval
+
                     defer_eval(
                         _eval_quant_response,
                         query,

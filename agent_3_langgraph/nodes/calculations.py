@@ -3,7 +3,6 @@ import logging
 
 import numpy as np
 import pandas as pd
-from scipy import stats
 
 from shared.logging_config import logged_sync
 
@@ -13,6 +12,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 @logged_sync()
 def _parse_price_data(mcp_result, ticker: str) -> dict:
@@ -24,15 +24,20 @@ def _parse_price_data(mcp_result, ticker: str) -> dict:
         try:
             data = json.loads(raw)
             records = data.get("data", [])
-            return {str(r.get("Date", r.get("date", ""))): float(r.get("Close", r.get("close", 0)))
-                    for r in records if r.get("Date") or r.get("date")}
+            return {
+                str(r.get("Date", r.get("date", ""))): float(r.get("Close", r.get("close", 0)))
+                for r in records
+                if r.get("Date") or r.get("date")
+            }
         except (json.JSONDecodeError, TypeError, ValueError):
             continue
     return {}
 
 
 @logged_sync()
-def _run_monte_carlo(prices: pd.Series, n_simulations: int = 5000, horizon_days: int = 252) -> dict | None:
+def _run_monte_carlo(
+    prices: pd.Series, n_simulations: int = 5000, horizon_days: int = 252
+) -> dict | None:
     """GBM Monte Carlo with Ito-corrected drift. Returns percentile outcomes over horizon_days."""
     returns = prices.pct_change().dropna()
     if len(returns) < 30:
@@ -44,7 +49,7 @@ def _run_monte_carlo(prices: pd.Series, n_simulations: int = 5000, horizon_days:
         return None
 
     rng = np.random.default_rng(42)
-    log_rets = rng.normal(mu - 0.5 * sigma ** 2, sigma, (horizon_days, n_simulations))
+    log_rets = rng.normal(mu - 0.5 * sigma**2, sigma, (horizon_days, n_simulations))
     terminal = current * np.exp(log_rets.sum(axis=0))
     pct_chg = (terminal - current) / current
 
@@ -169,20 +174,30 @@ def _relative_score(value: float, median: float, higher_is_better: bool) -> floa
     ratio = value / median
     if higher_is_better:
         # e.g. ROE, margin: higher ratio = better
-        if ratio > 2.0:   return  1.0
-        if ratio > 1.5:   return  0.6
-        if ratio > 1.1:   return  0.2
-        if ratio > 0.7:   return -0.1
-        if ratio > 0.4:   return -0.4
-        return                   -0.7
+        if ratio > 2.0:
+            return 1.0
+        if ratio > 1.5:
+            return 0.6
+        if ratio > 1.1:
+            return 0.2
+        if ratio > 0.7:
+            return -0.1
+        if ratio > 0.4:
+            return -0.4
+        return -0.7
     else:
         # e.g. PE, EV/EBITDA: lower ratio = cheaper = better
-        if ratio < 0.5:   return  1.0
-        if ratio < 0.75:  return  0.6
-        if ratio < 0.95:  return  0.2
-        if ratio < 1.2:   return -0.1
-        if ratio < 1.6:   return -0.4
-        return                   -0.7
+        if ratio < 0.5:
+            return 1.0
+        if ratio < 0.75:
+            return 0.6
+        if ratio < 0.95:
+            return 0.2
+        if ratio < 1.2:
+            return -0.1
+        if ratio < 1.6:
+            return -0.4
+        return -0.7
 
 
 @logged_sync()
@@ -200,11 +215,16 @@ def _score_fundamental_value(fund: dict | None, medians: dict | None = None) -> 
             scores.append(_relative_score(pe, m["pe"], higher_is_better=False))
         else:
             # Absolute fallback — universal thresholds
-            if pe < 12:      scores.append( 1.0)
-            elif pe < 18:    scores.append( 0.5)
-            elif pe < 25:    scores.append( 0.0)
-            elif pe < 40:    scores.append(-0.3)
-            else:            scores.append(-0.7)
+            if pe < 12:
+                scores.append(1.0)
+            elif pe < 18:
+                scores.append(0.5)
+            elif pe < 25:
+                scores.append(0.0)
+            elif pe < 40:
+                scores.append(-0.3)
+            else:
+                scores.append(-0.7)
         n += 1
 
     ev_eb = fund.get("ev_to_ebitda")
@@ -212,10 +232,14 @@ def _score_fundamental_value(fund: dict | None, medians: dict | None = None) -> 
         if m.get("ev_ebitda") and m["ev_ebitda"] > 0:
             scores.append(_relative_score(ev_eb, m["ev_ebitda"], higher_is_better=False))
         else:
-            if ev_eb < 8:    scores.append( 0.7)
-            elif ev_eb < 14: scores.append( 0.2)
-            elif ev_eb < 25: scores.append(-0.2)
-            else:            scores.append(-0.6)
+            if ev_eb < 8:
+                scores.append(0.7)
+            elif ev_eb < 14:
+                scores.append(0.2)
+            elif ev_eb < 25:
+                scores.append(-0.2)
+            else:
+                scores.append(-0.6)
         n += 1
 
     return max(-1.0, min(1.0, sum(scores) / n)) if n > 0 else 0.0
@@ -234,11 +258,16 @@ def _score_fundamental_quality(fund: dict | None, medians: dict | None = None) -
         if m.get("roe") is not None:
             scores.append(_relative_score(roe, m["roe"], higher_is_better=True))
         else:
-            if roe > 0.25:   scores.append( 1.0)
-            elif roe > 0.15: scores.append( 0.5)
-            elif roe > 0.05: scores.append( 0.1)
-            elif roe < 0:    scores.append(-0.7)
-            else:            scores.append(-0.1)
+            if roe > 0.25:
+                scores.append(1.0)
+            elif roe > 0.15:
+                scores.append(0.5)
+            elif roe > 0.05:
+                scores.append(0.1)
+            elif roe < 0:
+                scores.append(-0.7)
+            else:
+                scores.append(-0.1)
         n += 1
 
     op_margin = fund.get("operating_margin")
@@ -246,10 +275,14 @@ def _score_fundamental_quality(fund: dict | None, medians: dict | None = None) -
         if m.get("op_margin") is not None:
             scores.append(_relative_score(op_margin, m["op_margin"], higher_is_better=True))
         else:
-            if op_margin > 0.25:   scores.append( 0.8)
-            elif op_margin > 0.15: scores.append( 0.4)
-            elif op_margin > 0.05: scores.append( 0.0)
-            elif op_margin < 0:    scores.append(-0.8)
+            if op_margin > 0.25:
+                scores.append(0.8)
+            elif op_margin > 0.15:
+                scores.append(0.4)
+            elif op_margin > 0.05:
+                scores.append(0.0)
+            elif op_margin < 0:
+                scores.append(-0.8)
         n += 1
 
     d_e = fund.get("debt_to_equity")
@@ -259,10 +292,14 @@ def _score_fundamental_quality(fund: dict | None, medians: dict | None = None) -
             scores.append(_relative_score(d_e, m["debt_to_equity"], higher_is_better=False))
         else:
             # Absolute fallback — note: utilities/banks carry high D/E normally
-            if d_e < 30:     scores.append( 0.3)
-            elif d_e < 80:   scores.append( 0.0)
-            elif d_e < 150:  scores.append(-0.2)
-            else:            scores.append(-0.5)
+            if d_e < 30:
+                scores.append(0.3)
+            elif d_e < 80:
+                scores.append(0.0)
+            elif d_e < 150:
+                scores.append(-0.2)
+            else:
+                scores.append(-0.5)
         n += 1
 
     return max(-1.0, min(1.0, sum(scores) / n)) if n > 0 else 0.0
@@ -273,8 +310,11 @@ def _score_technicals_trend(tech: dict | None) -> float:
     if not tech:
         return 0.0
     trend_scores = {
-        "strong_uptrend": 1.0, "uptrend": 0.6,
-        "recovery": 0.2, "sideways": 0.0, "downtrend": -0.8,
+        "strong_uptrend": 1.0,
+        "uptrend": 0.6,
+        "recovery": 0.2,
+        "sideways": 0.0,
+        "downtrend": -0.8,
     }
     score = trend_scores.get(tech.get("trend", ""), 0.0)
     golden = tech.get("golden_cross")
@@ -326,7 +366,9 @@ def _score_peer_positioning(peer_comp: dict | None) -> float:
 
 
 @logged_sync()
-def _score_behavioral(options: dict | None, positioning: dict | None, insider: dict | None) -> float:
+def _score_behavioral(
+    options: dict | None, positioning: dict | None, insider: dict | None
+) -> float:
     scores, n = [], 0
     if options:
         pc = options.get("put_call_volume_ratio")
@@ -388,9 +430,7 @@ def _weighted_vote(group_scores: dict[str, float]) -> tuple[str, float]:
     if total_present_weight <= 0:
         return "HOLD", 0.5
     scale = 1.0 / total_present_weight
-    composite = sum(
-        group_scores[k] * _SIGNAL_WEIGHTS.get(k, 0) * scale for k in present
-    )
+    composite = sum(group_scores[k] * _SIGNAL_WEIGHTS.get(k, 0) * scale for k in present)
     if composite > 0.15:
         rec = "BUY"
     elif composite < -0.15:

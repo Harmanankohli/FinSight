@@ -7,7 +7,6 @@ from typing import Any
 
 import yaml
 from mcp import ClientSession
-from shared.logging_config import logged, logged_sync
 from mcp.client.sse import sse_client
 
 logger = logging.getLogger(__name__)
@@ -16,6 +15,7 @@ logger = logging.getLogger(__name__)
 # httpx is an optional dependency; degrade gracefully if missing.
 try:
     import httpx as _httpx
+
     _TRANSIENT_ERRORS: tuple[type[Exception], ...] = (
         asyncio.TimeoutError,
         ConnectionError,
@@ -52,8 +52,8 @@ async def get_shared_mcp() -> "MCPClient":
         return _global_client
     async with _client_lock:
         if _global_client is None or not _global_client._connected:
-            from shared.settings import MCP_SERVER_URL, MCP_TIMEOUT
-            from shared.settings import get_settings
+            from shared.settings import MCP_SERVER_URL, MCP_TIMEOUT, get_settings
+
             _s = get_settings()
             _token = _s.service_auth_token if _s.auth_enabled else None
             _global_client = MCPClient(
@@ -74,6 +74,7 @@ def _shutdown_mcp_sync() -> None:
         loop.close()
     except Exception:
         pass
+
 
 atexit.register(_shutdown_mcp_sync)
 
@@ -217,10 +218,13 @@ class MCPClient:
             except Exception as e:
                 logger.warning(
                     "MCP connect attempt %d/%d failed for %s: %s",
-                    attempt + 1, self.max_retries, server.name, e,
+                    attempt + 1,
+                    self.max_retries,
+                    server.name,
+                    e,
                 )
                 if attempt < self.max_retries - 1:
-                    wait = 2 ** attempt
+                    wait = 2**attempt
                     await asyncio.sleep(wait)
         raise MCPClientError(
             f"Failed to connect to MCP server '{server.name}' after {self.max_retries} attempts"
@@ -268,21 +272,28 @@ class MCPClient:
                 return result
             except MCPClient._TRANSIENT_EXC as e:
                 if attempt < self.max_retries - 1:
-                    wait = 2 ** attempt
+                    wait = 2**attempt
                     logger.warning(
                         "MCP call attempt %d/%d transient error on %s/%s: %s — retrying in %ds",
-                        attempt + 1, self.max_retries, server_name, tool_name, e, wait,
+                        attempt + 1,
+                        self.max_retries,
+                        server_name,
+                        tool_name,
+                        e,
+                        wait,
                     )
                     await asyncio.sleep(wait)
                 else:
                     raise MCPClientError(
-                        f"Tool call '{server_name}/{tool_name}' failed after {self.max_retries} attempts: {e}"
+                        f"Tool call '{server_name}/{tool_name}' failed after {self.max_retries} attempts: {e}"  # noqa: E501
                     )
             except MCPClientError:
                 raise
             except Exception as e:
                 # Non-transient (bad args, server error, etc.) — fail immediately
-                logger.warning("MCP call non-transient error on %s/%s: %s", server_name, tool_name, e)
+                logger.warning(
+                    "MCP call non-transient error on %s/%s: %s", server_name, tool_name, e
+                )
                 raise
         raise MCPClientError(
             f"Tool call '{server_name}/{tool_name}' failed after {self.max_retries} attempts"
@@ -302,9 +313,7 @@ class MCPClient:
             server_name = self._tool_registry.get(tool_name)
             if not server_name:
                 available = ", ".join(sorted(self._tool_registry))
-                raise MCPClientError(
-                    f"Tool '{tool_name}' not found. Available tools: {available}"
-                )
+                raise MCPClientError(f"Tool '{tool_name}' not found. Available tools: {available}")
             try:
                 return await self.call_tool(server_name, tool_name, arguments)
             except _RECONNECT_EXC as exc:

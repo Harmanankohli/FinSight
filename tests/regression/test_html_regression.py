@@ -4,14 +4,14 @@ End-to-end verification of generate_html() with real data patterns,
 edge cases, and unknown tickers. Validates that HTML output is valid,
 contains expected slide sections, and is self-contained.
 """
+
 import sys
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from shared.reports import generate_html
-
 
 WMT_RESPONSE_TEXT = (
     "## Investment Recommendation: HOLD\n\n"
@@ -48,7 +48,10 @@ def test_html_generates_valid_output(tmp_path):
     with patch("yfinance.Ticker", _make_yf_mock("Walmart Inc.", "Consumer Defensive", "NYQ")):
         html_str = generate_html(
             {"response_text": WMT_RESPONSE_TEXT},
-            "WMT", "HOLD", 0.58, "2026-06-08",
+            "WMT",
+            "HOLD",
+            0.58,
+            "2026-06-08",
         )
     assert isinstance(html_str, str)
     assert len(html_str) > 5000, f"HTML too small: {len(html_str)} chars"
@@ -81,7 +84,10 @@ def test_html_with_unknown_ticker(tmp_path):
     with patch("yfinance.Ticker", side_effect=Exception("network fail")):
         html_str = generate_html(
             {"response_text": text},
-            "PLTR", "BUY", 0.70, "2026-06-08",
+            "PLTR",
+            "BUY",
+            0.70,
+            "2026-06-08",
         )
     assert isinstance(html_str, str)
     assert len(html_str) > 2000
@@ -96,7 +102,10 @@ def test_html_with_nonstandard_rec(tmp_path):
     with patch("yfinance.Ticker", side_effect=Exception("network fail")):
         html_str = generate_html(
             {"response_text": text},
-            "TST", "STRONG BUY", 0.80, "2026-06-08",
+            "TST",
+            "STRONG BUY",
+            0.80,
+            "2026-06-08",
         )
     assert isinstance(html_str, str)
     assert len(html_str) > 2000
@@ -108,10 +117,15 @@ def test_html_with_nonstandard_rec(tmp_path):
 def test_html_with_unicode(tmp_path):
     """Unicode characters → no encoding errors in HTML."""
     text = "Analysis of São Paulo Alimentos (SPA) shows growth."
-    with patch("yfinance.Ticker", _make_yf_mock("São Paulo Alimentos S.A.", "Consumer Defensive", "NYQ")):
+    with patch(
+        "yfinance.Ticker", _make_yf_mock("São Paulo Alimentos S.A.", "Consumer Defensive", "NYQ")
+    ):
         html_str = generate_html(
             {"response_text": text},
-            "SPA", "BUY", 0.65, "2026-06-08",
+            "SPA",
+            "BUY",
+            0.65,
+            "2026-06-08",
         )
     assert isinstance(html_str, str)
     assert "São Paulo" in html_str
@@ -133,7 +147,10 @@ def test_html_with_markdown_tables(tmp_path):
     with patch("yfinance.Ticker", _make_yf_mock("Walmart Inc.", "Consumer Defensive", "NYQ")):
         html_str = generate_html(
             {"response_text": text},
-            "WMT", "HOLD", 0.58, "2026-06-08",
+            "WMT",
+            "HOLD",
+            0.58,
+            "2026-06-08",
         )
     assert isinstance(html_str, str)
     assert len(html_str) > 2000
@@ -147,10 +164,13 @@ def test_html_deck_stage_js_embedded(tmp_path):
     with patch("yfinance.Ticker", _make_yf_mock("Walmart Inc.", "Consumer Defensive", "NYQ")):
         html_str = generate_html(
             {"response_text": WMT_RESPONSE_TEXT},
-            "WMT", "HOLD", 0.58, "2026-06-08",
+            "WMT",
+            "HOLD",
+            0.58,
+            "2026-06-08",
         )
     # Only one actual <script> HTML element, and it has no src attribute
-    first_script = html_str[html_str.lower().find("<script"):]
+    first_script = html_str[html_str.lower().find("<script") :]
     open_tag = first_script.split(">")[0].strip()
     assert "src=" not in open_tag, f"Script tag unexpectedly has src: {open_tag}"
     assert "customElements" in html_str
@@ -171,6 +191,7 @@ def test_html_autoescape_prevents_xss(tmp_path):
 
 if __name__ == "__main__":
     import tempfile
+
     with tempfile.TemporaryDirectory() as d:
         tmp = Path(d)
         test_html_generates_valid_output(tmp)

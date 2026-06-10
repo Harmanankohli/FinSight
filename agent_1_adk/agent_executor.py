@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 import re
 import uuid
 
@@ -16,15 +17,12 @@ from google.adk.runners import Runner
 from google.genai import types
 from langfuse import propagate_attributes
 
-import os
-
-from shared.settings import AGENT_SEED_URLS, EVAL_ENABLED
+from shared.guardrails import extract_ticker, is_off_topic
+from shared.logging_config import logged, logged_sync
 from shared.observability import get_langfuse_client
 from shared.runtime_eval import score_response as _eval_score_response
-from shared.guardrails import extract_ticker, is_off_topic
+from shared.settings import AGENT_SEED_URLS, EVAL_ENABLED
 from shared.trace_context import current_user_id
-
-from shared.logging_config import logged, logged_sync
 
 logger = logging.getLogger(__name__)
 
@@ -32,16 +30,19 @@ _SEMANTIC_CACHE_ENABLED = os.environ.get("SEMANTIC_CACHE_ENABLED", "false").lowe
 
 _semantic_cache = None
 
+
 @logged_sync(log_result=False)
 def _get_semantic_cache():
     global _semantic_cache
     if _SEMANTIC_CACHE_ENABLED and _semantic_cache is None:
         try:
             from shared.semantic_cache import SemanticCache
+
             _semantic_cache = SemanticCache()
         except Exception as exc:
             logger.warning("SemanticCache init failed: %s", exc)
     return _semantic_cache
+
 
 _SIGNAL_RE = re.compile(r"\b(BUY|HOLD|SELL)\b")
 
@@ -49,6 +50,7 @@ _SIGNAL_RE = re.compile(r"\b(BUY|HOLD|SELL)\b")
 async def _release_sub_agent_evals() -> None:
     """POST /release-evals to each sub-agent so they fire deferred evals."""
     import httpx
+
     urls = [u.strip().rstrip("/") for u in AGENT_SEED_URLS.split(",") if u.strip()]
     async with httpx.AsyncClient(timeout=5) as client:
         for base in urls:
@@ -77,11 +79,12 @@ class FinSightAgentExecutor(AgentExecutor):
         """Return today's cached analysis text, or None if not available."""
         import json
         from datetime import datetime
-        from shared.settings import IST
+
         from shared.memory import TickerMemory
+        from shared.settings import IST
 
         tm = TickerMemory()
-        # Query without user_id filter — user_id varies across endpoints (a2a_user / user / eval_user)
+        # Query without user_id filter — user_id varies across endpoints (a2a_user / user / eval_user)  # noqa: E501
         latest = await tm.get_latest(ticker, user_id=None)
         if not latest:
             logger.debug("Memory cache miss for %s (no record)", ticker)
@@ -90,7 +93,9 @@ class FinSightAgentExecutor(AgentExecutor):
         analysis_date = latest.get("analysis_date") or latest["created_at"][:10]
         today = datetime.now(IST).date().isoformat()
         if analysis_date != today:
-            logger.debug("Memory cache miss for %s (stale: %s vs today %s)", ticker, analysis_date, today)
+            logger.debug(
+                "Memory cache miss for %s (stale: %s vs today %s)", ticker, analysis_date, today
+            )
             return None
 
         rec = latest.get("recommendation", "UNKNOWN")
@@ -102,7 +107,13 @@ class FinSightAgentExecutor(AgentExecutor):
         except Exception:
             response_text = ""
 
-        logger.info("Memory cache HIT for %s (rec=%s, conf=%.2f, text_len=%d)", ticker, rec, conf, len(response_text))
+        logger.info(
+            "Memory cache HIT for %s (rec=%s, conf=%.2f, text_len=%d)",
+            ticker,
+            rec,
+            conf,
+            len(response_text),
+        )
 
         if response_text:
             return f"**{ticker} — {rec}** (confidence: {conf:.0%})\n\n{response_text}"
@@ -111,9 +122,7 @@ class FinSightAgentExecutor(AgentExecutor):
         return None
 
     @logged(log_args=False, log_result=False)
-    async def execute(
-        self, context: RequestContext, event_queue: EventQueue
-    ) -> None:
+    async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
         self._task = asyncio.current_task()
         context_id = context.context_id
         user_id = _resolve_user_id(context)
@@ -161,6 +170,7 @@ class FinSightAgentExecutor(AgentExecutor):
         if ticker_hint != "unknown":
             try:
                 from shared.ticker_utils import validate_ticker as _validate_ticker
+
                 _valid, _, _err = await _validate_ticker(ticker_hint)
                 if not _valid:
                     task = context.current_task
@@ -247,13 +257,20 @@ class FinSightAgentExecutor(AgentExecutor):
 
                     if final_event:
                         await self._process_response(
-                            final_event, updater, task, span, trace_id,
-                            user_input, user_id, original_input,
+                            final_event,
+                            updater,
+                            task,
+                            span,
+                            trace_id,
+                            user_input,
+                            user_id,
+                            original_input,
                         )
-                        logger.info("Collected %d events, calling _add_events_to_memory", len(collected_events))
-                        await self._add_events_to_memory(
-                            user_id, context_id, collected_events
+                        logger.info(
+                            "Collected %d events, calling _add_events_to_memory",
+                            len(collected_events),
                         )
+                        await self._add_events_to_memory(user_id, context_id, collected_events)
                     else:
                         logger.warning("No final event received from runner")
                         await updater.update_status(
@@ -265,22 +282,23 @@ class FinSightAgentExecutor(AgentExecutor):
                     span.update(output={"error": "Agent execution failed"})
                     await updater.update_status(
                         TaskState.TASK_STATE_FAILED,
-                        new_text_message(
-                            "An exception occurred while performing the operation"
-                        ),
+                        new_text_message("An exception occurred while performing the operation"),
                     )
 
     # Output guardrails: reject too-short responses, warn when BUY/HOLD/SELL signal is missing
     @logged(log_result=False)
     async def _process_response(
-        self, event, updater: TaskUpdater, task, span=None, trace_id=None,
-        user_input: str = "", user_id: str = "", original_input: str = "",
+        self,
+        event,
+        updater: TaskUpdater,
+        task,
+        span=None,
+        trace_id=None,
+        user_input: str = "",
+        user_id: str = "",
+        original_input: str = "",
     ) -> None:
-        if not (
-            event.content
-            and event.content.parts
-            and event.content.parts[0].text
-        ):
+        if not (event.content and event.content.parts and event.content.parts[0].text):
             if span:
                 span.update(output={"error": "No text content"})
             await updater.update_status(
@@ -315,9 +333,7 @@ class FinSightAgentExecutor(AgentExecutor):
             span.update(output={"synthesis": text[:2000]}, metadata={"completed": True})
 
         if "[TODAY" not in user_input:
-            asyncio.create_task(
-                self._store_memory(user_input, text, task.context_id, user_id)
-            )
+            asyncio.create_task(self._store_memory(user_input, text, task.context_id, user_id))
         if EVAL_ENABLED:
             asyncio.create_task(
                 _eval_score_response(
@@ -344,9 +360,7 @@ class FinSightAgentExecutor(AgentExecutor):
         )
 
     @logged()
-    async def ensure_session(
-        self, user_id: str, context_id: str
-    ) -> None:
+    async def ensure_session(self, user_id: str, context_id: str) -> None:
         session = await self._runner.session_service.get_session(
             app_name=self._runner.app_name,
             user_id=user_id,
@@ -364,16 +378,19 @@ class FinSightAgentExecutor(AgentExecutor):
             self._task.cancel()
 
     @logged(log_result=False)
-    async def _add_events_to_memory(
-        self, user_id: str, context_id: str, events: list
-    ) -> None:
+    async def _add_events_to_memory(self, user_id: str, context_id: str, events: list) -> None:
         """Add the completed session to memory using the standard ADK pattern.
 
         ADK docs prescribe: run agent → get_session() → add_session_to_memory(session).
         This works with any MemoryService implementation (InMemoryMemoryService,
         SQLiteMemoryService, VertexAiMemoryBankService, etc.).
         """
-        logger.info("_add_events_to_memory: %d events, user=%s, session=%s", len(events), user_id, context_id)
+        logger.info(
+            "_add_events_to_memory: %d events, user=%s, session=%s",
+            len(events),
+            user_id,
+            context_id,
+        )
         if not events:
             logger.warning("No events to add to memory")
             return
@@ -381,14 +398,18 @@ class FinSightAgentExecutor(AgentExecutor):
             logger.warning("No memory_service available on runner")
             return
         try:
-            # Standard ADK pattern: get the session (which now has events from DatabaseSessionService)
+            # Standard ADK pattern: get the session (which now has events from DatabaseSessionService)  # noqa: E501
             # then add the full session to memory
             session = await self._runner.session_service.get_session(
                 app_name=self._runner.app_name,
                 user_id=user_id,
                 session_id=context_id,
             )
-            logger.info("Got session: %s, events: %s", session.id if session else "None", len(session.events) if session and session.events else 0)
+            logger.info(
+                "Got session: %s, events: %s",
+                session.id if session else "None",
+                len(session.events) if session and session.events else 0,
+            )
             if session and session.events:
                 logger.info("Session has %d events, adding to memory", len(session.events))
                 await self._runner.memory_service.add_session_to_memory(session)
@@ -398,7 +419,7 @@ class FinSightAgentExecutor(AgentExecutor):
                     "Session has no events (events=%s), falling back to add_events_to_memory",
                     "empty" if session else "none",
                 )
-                # Fallback: if session events are empty (e.g. InMemorySessionService doesn't persist)
+                # Fallback: if session events are empty (e.g. InMemorySessionService doesn't persist)  # noqa: E501
                 # use the events we collected during run_async
                 await self._runner.memory_service.add_events_to_memory(
                     app_name=self._runner.app_name,
@@ -415,8 +436,9 @@ class FinSightAgentExecutor(AgentExecutor):
     async def _build_memory_context(self, user_input: str, user_id: str) -> str:
         """Build compact memory context for prompt injection."""
         from datetime import datetime
-        from shared.settings import IST
+
         from shared.memory import PortfolioStore, TickerMemory
+        from shared.settings import IST
         from shared.ticker_utils import extract_ticker
 
         ticker = extract_ticker(user_input)
@@ -435,7 +457,9 @@ class FinSightAgentExecutor(AgentExecutor):
                         analysis_date = raw.split("T")[0] if "T" in raw else raw[:10]
                     today = datetime.now(IST).date().isoformat()
                     if analysis_date == today:
-                        parts.append(f"[TODAY — analysis is current, you may return it directly without calling agents again] {context}")
+                        parts.append(
+                            f"[TODAY — analysis is current, you may return it directly without calling agents again] {context}"  # noqa: E501
+                        )
                     else:
                         parts.append(
                             f"[STALE — analyzed on {analysis_date}, today is {today}. "
@@ -446,7 +470,9 @@ class FinSightAgentExecutor(AgentExecutor):
         ps = PortfolioStore()
         holdings = await ps.get_holdings(user_id)
         if holdings:
-            parts.append(f"Background — user's known holdings (do NOT include for portfolio correlation unless the user explicitly requests it in their current message): {', '.join(holdings)}")
+            parts.append(
+                f"Background — user's known holdings (do NOT include for portfolio correlation unless the user explicitly requests it in their current message): {', '.join(holdings)}"  # noqa: E501
+            )
 
         return "\n".join(parts)
 
@@ -455,9 +481,10 @@ class FinSightAgentExecutor(AgentExecutor):
     ) -> None:
         """Parse response and store brief + portfolio + performance record."""
         from datetime import datetime
-        from shared.settings import IST
+
         from shared.memory import PerformanceTracker, PortfolioStore, TickerMemory
         from shared.models import QueryContext
+        from shared.settings import IST
         from shared.ticker_utils import extract_ticker
 
         ticker = extract_ticker(query) or "unknown"
@@ -475,20 +502,25 @@ class FinSightAgentExecutor(AgentExecutor):
                     logger.debug("Could not parse brief_json for %s", ticker, exc_info=True)
                 if len(response_text) > len(stored):
                     await tm.update_response_text(existing["id"], response_text)
-                    logger.info("Updated existing brief %s with longer text (%d > %d)",
-                                existing["id"], len(response_text), len(stored))
+                    logger.info(
+                        "Updated existing brief %s with longer text (%d > %d)",
+                        existing["id"],
+                        len(response_text),
+                        len(stored),
+                    )
                 else:
                     logger.debug("Skip _store_memory — brief already stored today for %s", ticker)
                 return
 
-        rec_match = re.search(r'\b(BUY|HOLD|SELL)\b', response_text, re.IGNORECASE)
+        rec_match = re.search(r"\b(BUY|HOLD|SELL)\b", response_text, re.IGNORECASE)
         recommendation = rec_match.group(1).upper() if rec_match else "UNKNOWN"
 
         confidence = 0.5
         conf_match = re.search(
             r"(?:confidence|conf)(?:\s+score)?[:\s]*(\d+(?:\.\d+)?)\s*%?"
             r"|(\d+(?:\.\d+)?)\s*%\s*(?:confidence|conf)",
-            response_text, re.IGNORECASE,
+            response_text,
+            re.IGNORECASE,
         )
         if conf_match:
             raw = float(conf_match.group(1) or conf_match.group(2))
@@ -528,9 +560,7 @@ class FinSightAgentExecutor(AgentExecutor):
             logger.debug("Failed to update portfolio from query context", exc_info=True)
 
     # Fallback: persist directly to SQLiteMemoryService for load_memory tool support
-    async def _persist_to_memory(
-        self, user_id: str, context_id: str, events: list
-    ) -> None:
+    async def _persist_to_memory(self, user_id: str, context_id: str, events: list) -> None:
         """Persist events directly to SQLiteMemoryService for load_memory search.
 
         This bypasses the unreliable after_agent_callback and ensures
@@ -554,9 +584,6 @@ class FinSightAgentExecutor(AgentExecutor):
 
 
 def _resolve_user_id(context: RequestContext) -> str:
-    if (
-        context.call_context
-        and context.call_context.user.is_authenticated
-    ):
+    if context.call_context and context.call_context.user.is_authenticated:
         return context.call_context.user.user_name
     return "a2a_user"

@@ -1,8 +1,10 @@
 """Tests for shared/auth/middleware.py — AuthMiddleware, get_principal, require."""
+
 import json
+
 import pytest
+
 from shared.auth.middleware import (
-    PUBLIC_PATHS,
     AuthMiddleware,
     build_auth_middleware,
     get_principal,
@@ -37,7 +39,13 @@ def _make_scope(method="GET", path="/api/test", headers=None):
 
 async def _ok_app(scope, receive, send):
     body = b'{"ok":true}'
-    await send({"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"application/json")]})
+    await send(
+        {
+            "type": "http.response.start",
+            "status": 200,
+            "headers": [(b"content-type", b"application/json")],
+        }
+    )
     await send({"type": "http.response.body", "body": body})
 
 
@@ -53,7 +61,9 @@ async def _run_middleware(mw, scope):
 
 
 class TestPublicPaths:
-    @pytest.mark.parametrize("path", ["/health", "/health/", "/.well-known/anything", "/.well-known/a2a"])
+    @pytest.mark.parametrize(
+        "path", ["/health", "/health/", "/.well-known/anything", "/.well-known/a2a"]
+    )
     async def test_public_paths_pass(self, path):
         mw = AuthMiddleware(_ok_app)
         scope = _make_scope(path=path)
@@ -154,6 +164,7 @@ class TestBuildAuthMiddleware:
         mw_list = build_auth_middleware(settings)
         assert len(mw_list) == 1
         from starlette.middleware import Middleware
+
         assert isinstance(mw_list[0], Middleware)
         assert mw_list[0].cls is AuthMiddleware
 

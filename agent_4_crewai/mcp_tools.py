@@ -1,6 +1,7 @@
+# ruff: noqa: E402
 import json
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from crewai.tools import BaseTool
 from pydantic import BaseModel, Field, create_model
@@ -16,12 +17,18 @@ def _build_args_schema(name: str, input_schema: dict) -> type[BaseModel]:
     props = input_schema.get("properties", {})
     required = input_schema.get("required", [])
     for prop_name, prop_def in props.items():
-        ptype = prop_def.get("type", "string")
-        python_type = str
+        prop_def.get("type", "string")
         default = prop_def.get("default", ...)
         if prop_name not in required and "default" in prop_def:
-            default = str(prop_def["default"]) if isinstance(prop_def["default"], (int, float)) else prop_def["default"]
-        fields[prop_name] = (str, Field(default=default, description=prop_def.get("description", "")))
+            default = (
+                str(prop_def["default"])
+                if isinstance(prop_def["default"], (int, float))
+                else prop_def["default"]
+            )
+        fields[prop_name] = (
+            str,
+            Field(default=default, description=prop_def.get("description", "")),
+        )
     return create_model(f"{name}Arguments", **fields)
 
 
@@ -31,7 +38,13 @@ class DynamicMCPTool(BaseTool):
     description: str = ""
 
     @logged_sync(log_args=False, log_result=False)
-    def __init__(self, tool_name: str, tool_description: str, input_schema: dict, mcp_wrapper: "MCPClientWrapper"):
+    def __init__(
+        self,
+        tool_name: str,
+        tool_description: str,
+        input_schema: dict,
+        mcp_wrapper: "MCPClientWrapper",
+    ):
         # Dynamically builds a Pydantic args_schema from the MCP tool's JSON input_schema
         args_schema = _build_args_schema(tool_name, input_schema)
         super().__init__(name=tool_name, description=tool_description, args_schema=args_schema)
@@ -41,6 +54,7 @@ class DynamicMCPTool(BaseTool):
     @logged_sync()
     def _run(self, **kwargs: Any) -> str:
         import asyncio
+
         result = asyncio.run(self._mcp.call_by_name(self._tool_name, kwargs))
         if isinstance(result, str):
             return result

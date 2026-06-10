@@ -1,3 +1,4 @@
+# ruff: noqa: E402, E501
 """Sentiment and market-signal MCP tools.
 
 Tools: get_news_sentiment, get_earnings_calendar, get_sentiment_indicators,
@@ -14,27 +15,26 @@ import pandas as pd
 import yfinance as yf
 from langfuse import observe
 
-from shared.settings import SEC_USER_AGENT
-from shared.logging_config import logged
-
 from mcp_servers._app import app
+from mcp_servers.infra.news_fetch import (
+    RSS_FEEDS,
+    fetch_ddg_news,
+    fetch_rss,
+    fetch_yf_news,
+    keyword_matches,
+    normalise_for_match,
+    resolve_company_keywords,
+)
 from mcp_servers.infra.rate_limiters import (
     _YF_LIMITER,
     cache_news,
     cache_peers,
     cache_shocks,
 )
-from mcp_servers.infra.news_fetch import (
-    RSS_FEEDS,
-    fetch_rss,
-    fetch_ddg_news,
-    fetch_yf_news,
-    resolve_company_keywords,
-    normalise_for_match,
-    keyword_matches,
-)
 from mcp_servers.tools.edgar import _edgar
 from mcp_servers.tools.market_data import _serialise_value
+from shared.logging_config import logged
+from shared.settings import SEC_USER_AGENT
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +47,7 @@ _SEC_HEADERS = {
 # performs well on financial news where standard lexicons often fail on
 # domain-specific terms like "bearish", "beat estimates", "downgrade".
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+
 _sentiment_analyzer = SentimentIntensityAnalyzer()
 
 # ──────────────────────────────────────────────
@@ -57,31 +58,31 @@ _sentiment_analyzer = SentimentIntensityAnalyzer()
 # "mild_recession" uses the 2022 bear market as the most-recent well-defined drawdown.
 _SCENARIO_WINDOWS: dict[str, tuple[str, str]] = {
     "market_crash_2008": ("2007-10-09", "2009-03-09"),
-    "covid_crash_2020":  ("2020-02-19", "2020-03-23"),
-    "dot_com_bubble":    ("2000-03-24", "2002-10-09"),
-    "mild_recession":    ("2022-01-03", "2022-10-12"),
+    "covid_crash_2020": ("2020-02-19", "2020-03-23"),
+    "dot_com_bubble": ("2000-03-24", "2002-10-09"),
+    "mild_recession": ("2022-01-03", "2022-10-12"),
 }
 # Values used when live fetch fails or price history is too short.
 _SHOCK_FALLBACKS: dict[str, float] = {
-    "market_crash_2008": -0.565,   # S&P 500 actual peak-to-trough
-    "covid_crash_2020":  -0.340,
-    "dot_com_bubble":    -0.491,
-    "mild_recession":    -0.254,   # 2022 S&P bear
+    "market_crash_2008": -0.565,  # S&P 500 actual peak-to-trough
+    "covid_crash_2020": -0.340,
+    "dot_com_bubble": -0.491,
+    "mild_recession": -0.254,  # 2022 S&P bear
 }
 # Sector-specific reference ETFs so defensive/growth names get appropriate benchmarks.
 _SECTOR_ETF: dict[str, str] = {
-    "Technology":             "QQQ",
-    "Consumer Defensive":     "XLP",
-    "Consumer Cyclical":      "XLY",
-    "Healthcare":             "XLV",
-    "Health Care":            "XLV",
-    "Financial Services":     "XLF",
-    "Financials":             "XLF",
-    "Energy":                 "XLE",
-    "Industrials":            "XLI",
-    "Utilities":              "XLU",
-    "Real Estate":            "XLRE",
-    "Basic Materials":        "XLB",
+    "Technology": "QQQ",
+    "Consumer Defensive": "XLP",
+    "Consumer Cyclical": "XLY",
+    "Healthcare": "XLV",
+    "Health Care": "XLV",
+    "Financial Services": "XLF",
+    "Financials": "XLF",
+    "Energy": "XLE",
+    "Industrials": "XLI",
+    "Utilities": "XLU",
+    "Real Estate": "XLRE",
+    "Basic Materials": "XLB",
     "Communication Services": "XLC",
 }
 
@@ -90,6 +91,7 @@ _SECTOR_ETF: dict[str, str] = {
 # News sentiment core logic
 # ──────────────────────────────────────────────
 
+
 async def _get_news_sentiment_impl(ticker: str, limit: int) -> dict:
     """Core fetch logic for get_news_sentiment; called via single-flight cache."""
     keywords = await resolve_company_keywords(ticker, _edgar)
@@ -97,11 +99,10 @@ async def _get_news_sentiment_impl(ticker: str, limit: int) -> dict:
     scores: list[float] = []
     feed_status: dict[str, str] = {}
 
-    # Merge generic feeds with a ticker-specific Yahoo Finance RSS (pre-filtered, no keyword match needed)
+    # Merge generic feeds with a ticker-specific Yahoo Finance RSS (pre-filtered, no keyword match needed)  # noqa: E501
     ticker_feed_key = f"yahoo_ticker_{ticker.upper()}"
     ticker_feed_url = (
-        f"https://feeds.finance.yahoo.com/rss/2.0/headline"
-        f"?s={ticker.upper()}&region=US&lang=en-US"
+        f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={ticker.upper()}&region=US&lang=en-US"
     )
     all_feeds: dict[str, str] = {**RSS_FEEDS, ticker_feed_key: ticker_feed_url}
 
@@ -130,20 +131,23 @@ async def _get_news_sentiment_impl(ticker: str, limit: int) -> dict:
                     if not keyword_matches(combined, keywords):
                         continue
 
-                title_score   = _sentiment_analyzer.polarity_scores(title)["compound"]
+                title_score = _sentiment_analyzer.polarity_scores(title)["compound"]
                 summary_score = (
                     _sentiment_analyzer.polarity_scores(summary)["compound"]
-                    if summary else title_score
+                    if summary
+                    else title_score
                 )
                 compound = round((title_score + summary_score) / 2, 4)
                 scores.append(compound)
-                articles.append({
-                    "source": source,
-                    "title": title,
-                    "link": entry.get("link", ""),
-                    "published": entry.get("published", ""),
-                    "sentiment": compound,
-                })
+                articles.append(
+                    {
+                        "source": source,
+                        "title": title,
+                        "link": entry.get("link", ""),
+                        "published": entry.get("published", ""),
+                        "sentiment": compound,
+                    }
+                )
 
         source_used = "rss"
 
@@ -154,7 +158,7 @@ async def _get_news_sentiment_impl(ticker: str, limit: int) -> dict:
             yf_articles = await fetch_yf_news(ticker, client, limit=limit * 2)
             if yf_articles:
                 articles = yf_articles[:limit]
-                scores   = [a["sentiment"] for a in articles]
+                scores = [a["sentiment"] for a in articles]
                 feed_status["yahoo_finance_api"] = f"ok ({len(yf_articles)} articles)"
                 source_used = f"yahoo_finance_api ({reason})"
             else:
@@ -192,7 +196,7 @@ async def _get_news_sentiment_impl(ticker: str, limit: int) -> dict:
     }
 
     if not articles:
-        feeds_ok   = [k for k, v in feed_status.items() if "ok" in v]
+        feeds_ok = [k for k, v in feed_status.items() if "ok" in v]
         feeds_fail = [k for k, v in feed_status.items() if "ok" not in v]
         if feeds_fail and not feeds_ok:
             result["warning"] = (
@@ -212,9 +216,11 @@ async def _get_news_sentiment_impl(ticker: str, limit: int) -> dict:
 # Scenario shocks helpers
 # ──────────────────────────────────────────────
 
+
 def _industry_to_slug(name: str) -> str:
     """Convert a yfinance industry/sector string to a yfinance URL slug."""
     import re
+
     return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
 
 
@@ -262,8 +268,15 @@ async def _get_scenario_shocks_uncached(sector: str) -> dict:
         # Per-window fallback to known S&P values
         shocks[name] = _SHOCK_FALLBACKS[name]
 
-    source = "live" if any(v not in _SHOCK_FALLBACKS.values() for v in shocks.values()) else "fallback"
-    return {"sector": sector or "market", "index_used": index_used, "shocks": shocks, "source": source}
+    source = (
+        "live" if any(v not in _SHOCK_FALLBACKS.values() for v in shocks.values()) else "fallback"
+    )
+    return {
+        "sector": sector or "market",
+        "index_used": index_used,
+        "shocks": shocks,
+        "source": source,
+    }
 
 
 async def _get_peers_uncached(ticker: str) -> dict:
@@ -308,6 +321,7 @@ async def _get_peers_uncached(ticker: str) -> dict:
 # ──────────────────────────────────────────────
 # Sentiment MCP Tools
 # ──────────────────────────────────────────────
+
 
 @app.tool()
 @observe()
@@ -361,9 +375,7 @@ async def get_earnings_calendar(ticker: str) -> dict:
             raw = cal["Earnings Date"]
             dates = raw if isinstance(raw, (list, tuple)) else [raw]
             iso_dates = [
-                d.isoformat() if hasattr(d, "isoformat") else str(d)
-                for d in dates
-                if d is not None
+                d.isoformat() if hasattr(d, "isoformat") else str(d) for d in dates if d is not None
             ]
             if iso_dates:
                 return {
@@ -378,9 +390,7 @@ async def get_earnings_calendar(ticker: str) -> dict:
     try:
         cik = await _edgar._lookup_cik(ticker)
         c = await _edgar._get_client()
-        resp = await c.get(
-            f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
-        )
+        resp = await c.get(f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json")
         resp.raise_for_status()
         facts = resp.json()
         eps_data = (
@@ -391,9 +401,7 @@ async def get_earnings_calendar(ticker: str) -> dict:
             .get("USD/shares", [])
         )
         if eps_data:
-            filed_dates = sorted(
-                {e["filed"] for e in eps_data if "filed" in e}, reverse=True
-            )
+            filed_dates = sorted({e["filed"] for e in eps_data if "filed" in e}, reverse=True)
             return {
                 "ticker": ticker.upper(),
                 "last_eps_filed": filed_dates[0] if filed_dates else None,
@@ -426,7 +434,7 @@ async def get_sentiment_indicators(ticker: str) -> dict:
         dict with keys:
           ticker,
           short_interest: {short_ratio, short_percent_of_float, shares_short},
-          analyst: {recommendation_key, n_opinions, target_mean, target_high, target_low, current_price, upside_pct},
+          analyst: {recommendation_key, n_opinions, target_mean, target_high, target_low, current_price, upside_pct},  # noqa: E501
           institutional: {held_percent_institutions, held_percent_insiders}
     """
     try:
@@ -500,19 +508,23 @@ async def get_earnings_history(ticker: str, limit: int = 8) -> dict:
         past = ed[ed["Reported EPS"].notna()].head(limit)
         quarters = []
         for dt, row in past.iterrows():
-            quarters.append({
-                "date": dt.isoformat(),
-                "eps_estimate": _serialise_value(row.get("EPS Estimate")),
-                "eps_actual": _serialise_value(row.get("Reported EPS")),
-                "surprise_pct": _serialise_value(row.get("Surprise(%)")),
-            })
+            quarters.append(
+                {
+                    "date": dt.isoformat(),
+                    "eps_estimate": _serialise_value(row.get("EPS Estimate")),
+                    "eps_actual": _serialise_value(row.get("Reported EPS")),
+                    "surprise_pct": _serialise_value(row.get("Surprise(%)")),
+                }
+            )
         surprise_vals = [q["surprise_pct"] for q in quarters if q["surprise_pct"] is not None]
         beat_count = sum(1 for s in surprise_vals if s > 0)
         return {
             "ticker": ticker.upper(),
             "quarters": quarters,
             "beat_rate": round(beat_count / len(surprise_vals), 3) if surprise_vals else None,
-            "avg_surprise_pct": round(sum(surprise_vals) / len(surprise_vals), 2) if surprise_vals else None,
+            "avg_surprise_pct": round(sum(surprise_vals) / len(surprise_vals), 2)
+            if surprise_vals
+            else None,
             "n_quarters": len(quarters),
         }
     except Exception as exc:
@@ -542,9 +554,15 @@ async def get_insider_transactions(ticker: str, days: int = 90) -> dict:
     try:
         await _YF_LIMITER.acquire()
         loop = asyncio.get_event_loop()
-        df = await loop.run_in_executor(None, lambda: yf.Ticker(ticker.upper()).insider_transactions)
+        df = await loop.run_in_executor(
+            None, lambda: yf.Ticker(ticker.upper()).insider_transactions
+        )
         if df is None or df.empty:
-            return {"ticker": ticker.upper(), "transactions": [], "summary": {"total": 0, "buys": 0, "sells": 0, "direction": "neutral"}}
+            return {
+                "ticker": ticker.upper(),
+                "transactions": [],
+                "summary": {"total": 0, "buys": 0, "sells": 0, "direction": "neutral"},
+            }
 
         cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=days)
         # Start Date may be tz-aware or tz-naive
@@ -573,15 +591,17 @@ async def get_insider_transactions(ticker: str, days: int = 90) -> dict:
                 net_value -= float(row.get("Value", 0) or 0)
             else:
                 direction = "other"
-            transactions.append({
-                "insider": str(row.get("Insider", "")),
-                "position": str(row.get("Position", "")),
-                "direction": direction,
-                "shares": int(row.get("Shares", 0) or 0),
-                "value": float(row.get("Value", 0) or 0),
-                "date": str(row.get("Start Date", ""))[:10],
-                "transaction": txn,
-            })
+            transactions.append(
+                {
+                    "insider": str(row.get("Insider", "")),
+                    "position": str(row.get("Position", "")),
+                    "direction": direction,
+                    "shares": int(row.get("Shares", 0) or 0),
+                    "value": float(row.get("Value", 0) or 0),
+                    "date": str(row.get("Start Date", ""))[:10],
+                    "transaction": txn,
+                }
+            )
 
         if buys > sells and buys > 0:
             net_dir = "net_buy"
@@ -604,8 +624,12 @@ async def get_insider_transactions(ticker: str, days: int = 90) -> dict:
         }
     except Exception as exc:
         logger.warning("get_insider_transactions failed for %s: %s", ticker, exc)
-        return {"ticker": ticker.upper(), "transactions": [], "error": str(exc),
-                "summary": {"total": 0, "buys": 0, "sells": 0, "direction": "neutral"}}
+        return {
+            "ticker": ticker.upper(),
+            "transactions": [],
+            "error": str(exc),
+            "summary": {"total": 0, "buys": 0, "sells": 0, "direction": "neutral"},
+        }
 
 
 @app.tool()

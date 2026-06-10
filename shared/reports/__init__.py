@@ -7,15 +7,16 @@ Public API:
 """
 
 from shared.reports.deck_model import DeckData, ExtractionCtx, ParsedTable, Section
-from shared.reports.pptx_renderer import generate_pptx
 from shared.reports.docx_renderer import generate_docx
 from shared.reports.html_renderer import generate_html
+from shared.reports.pptx_renderer import generate_pptx
 
 __all__ = [
     "generate_pptx",
     "generate_docx",
     "generate_html",
     "DeckData",
+    "ExtractionCtx",
     "ParsedTable",
     "Section",
 ]

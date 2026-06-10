@@ -3,9 +3,9 @@ import json
 import logging
 from datetime import date
 
+from shared.llm_queue import Priority, llm_queue
 from shared.logging_config import logged
-from shared.settings import LLM_SUMMARY_MODEL, LLM_BASE_URL, LLM_API_KEY
-from shared.llm_queue import llm_queue, Priority
+from shared.settings import LLM_API_KEY, LLM_BASE_URL, LLM_SUMMARY_MODEL
 
 from ..state import QuantAnalysisState
 from .calculations import (
@@ -49,11 +49,13 @@ async def peer_comparison_node(state: QuantAnalysisState) -> dict:
         logger.warning("get_peers failed for %s: %s", ticker, _pe)
 
     if not peer_tickers:
-        return {"peer_comparison": {
-            "note": f"Peer discovery unavailable for {ticker} — get_peers returned no results. Restart MCP server if recently deployed.",
-            "industry": industry,
-            "sector": sector,
-        }}
+        return {
+            "peer_comparison": {
+                "note": f"Peer discovery unavailable for {ticker} — get_peers returned no results. Restart MCP server if recently deployed.",  # noqa: E501
+                "industry": industry,
+                "sector": sector,
+            }
+        }
 
     async def _fetch(sym: str) -> tuple[str, dict]:
         try:
@@ -69,9 +71,11 @@ async def peer_comparison_node(state: QuantAnalysisState) -> dict:
     # Limit to 3 concurrent get_financials calls so the MCP/yfinance rate limiter
     # doesn't queue more requests than the per-attempt timeout can absorb.
     _sem = asyncio.Semaphore(3)
+
     async def _fetch_capped(sym: str) -> tuple[str, dict]:
         async with _sem:
             return await _fetch(sym)
+
     peer_infos = dict(await asyncio.gather(*[_fetch_capped(p) for p in peer_tickers]))
 
     def _extract(inf: dict) -> dict:
@@ -92,11 +96,18 @@ async def peer_comparison_node(state: QuantAnalysisState) -> dict:
     # Rank primary ticker (1 = best) on each metric
     rankings: dict[str, int] = {}
     metric_higher_better = {
-        "pe": False, "ev_ebitda": False,
-        "rev_growth": True, "op_margin": True, "roe": True,
+        "pe": False,
+        "ev_ebitda": False,
+        "rev_growth": True,
+        "op_margin": True,
+        "roe": True,
     }
     for metric, hib in metric_higher_better.items():
-        vals = {t: v[metric] for t, v in comparison.items() if v.get(metric) is not None and v[metric] > 0}
+        vals = {
+            t: v[metric]
+            for t, v in comparison.items()
+            if v.get(metric) is not None and v[metric] > 0
+        }
         if ticker not in vals or len(vals) < 2:
             continue
         ordered = sorted(vals.keys(), key=lambda t: vals[t], reverse=hib)
@@ -107,14 +118,18 @@ async def peer_comparison_node(state: QuantAnalysisState) -> dict:
     medians: dict[str, float] = {}
     for metric in ("pe", "ev_ebitda", "rev_growth", "op_margin", "roe", "debt_to_equity"):
         vals_list = sorted(
-            v[metric] for v in comparison.values()
-            if v.get(metric) is not None and isinstance(v[metric], (int, float))
+            v[metric]
+            for v in comparison.values()
+            if v.get(metric) is not None
+            and isinstance(v[metric], (int, float))
             # allow negative values for quality metrics; skip negative for valuation ratios
             and (metric not in ("pe", "ev_ebitda") or v[metric] > 0)
         )
         if vals_list:
             mid = len(vals_list) // 2
-            medians[metric] = vals_list[mid] if len(vals_list) % 2 else (vals_list[mid - 1] + vals_list[mid]) / 2
+            medians[metric] = (
+                vals_list[mid] if len(vals_list) % 2 else (vals_list[mid - 1] + vals_list[mid]) / 2
+            )
 
     return {
         "peer_comparison": {
@@ -135,7 +150,7 @@ async def format_output_node(state: QuantAnalysisState) -> dict:
     metrics = state.get("metrics", {})
     stress = state.get("stress_test_result")
     dcf = state.get("dcf_valuation")
-    corr = state.get("correlation_matrix", {})
+    state.get("correlation_matrix", {})
     fundamentals = state.get("fundamentals")
     technicals = state.get("technicals")
     peer_comp = state.get("peer_comparison")
@@ -279,17 +294,22 @@ async def format_output_node(state: QuantAnalysisState) -> dict:
             parts.append(f"Technicals: {', '.join(tech_parts)}")
     if peer_comp and peer_comp.get("rankings"):
         ranks = peer_comp["rankings"]
-        parts.append(f"Peers: rank {ranks} among {peer_comp.get('n_peers', '?')+1}")
+        parts.append(f"Peers: rank {ranks} among {peer_comp.get('n_peers', '?') + 1}")
     if stress:
         parts.append(f"Stress CVaR: {stress.get('cvar_95', 'N/A')}")
     parts.append(
-        f"Composite: {sum(group_scores[k]*_SIGNAL_WEIGHTS.get(k,0) for k in group_scores):.3f} "
+        f"Composite: {sum(group_scores[k] * _SIGNAL_WEIGHTS.get(k, 0) for k in group_scores):.3f} "
         f"({recommendation}, conf={confidence:.2f})"
     )
 
     stress_test_info = stress or (
-        {"note": f"Stress test skipped - volatility ({vol:.1%}) below 35% threshold", "volatility": vol, "threshold": 0.35}
-        if vol <= 0.35 else None
+        {
+            "note": f"Stress test skipped - volatility ({vol:.1%}) below 35% threshold",
+            "volatility": vol,
+            "threshold": 0.35,
+        }
+        if vol <= 0.35
+        else None
     )
 
     return {
@@ -359,7 +379,9 @@ async def llm_summary_node(state: QuantAnalysisState) -> dict:
     if stress:
         prompt += f"Stress CVaR: {stress.get('cvar_95')}\n"
     if peer_comp.get("rankings"):
-        prompt += f"Peer ranks: {peer_comp['rankings']} out of {peer_comp.get('n_peers', '?')+1}\n"
+        prompt += (
+            f"Peer ranks: {peer_comp['rankings']} out of {peer_comp.get('n_peers', '?') + 1}\n"
+        )
     if positioning.get("recommendation_key"):
         prompt += (
             f"Analyst consensus: {positioning['recommendation_key']} "
@@ -367,11 +389,19 @@ async def llm_summary_node(state: QuantAnalysisState) -> dict:
             f"target upside {positioning.get('analyst_upside_pct')}%)\n"
         )
     if options.get("flow_signal"):
-        prompt += f"Options flow: {options['flow_signal']} (P/C vol={options.get('put_call_volume_ratio')})\n"
-    prompt += "\nWrite 3-4 sentences for an investor. Note signal conflicts. Be specific about numbers."
+        prompt += f"Options flow: {options['flow_signal']} (P/C vol={options.get('put_call_volume_ratio')})\n"  # noqa: E501
+    prompt += (
+        "\nWrite 3-4 sentences for an investor. Note signal conflicts. Be specific about numbers."
+    )
 
     try:
-        llm = ChatOpenAI(model=LLM_SUMMARY_MODEL, base_url=LLM_BASE_URL, api_key=LLM_API_KEY, temperature=0.3, max_tokens=512)
+        llm = ChatOpenAI(
+            model=LLM_SUMMARY_MODEL,
+            base_url=LLM_BASE_URL,
+            api_key=LLM_API_KEY,
+            temperature=0.3,
+            max_tokens=512,
+        )
         async with llm_queue.acquire(Priority.CRITICAL, "quant-summary"):
             response = await llm.ainvoke(prompt)
         summary = response.content if hasattr(response, "content") else str(response)

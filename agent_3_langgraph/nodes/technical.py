@@ -30,13 +30,13 @@ async def compute_metrics_node(state: QuantAnalysisState) -> dict:
             },
         }
 
-    prices = pd.Series(
-        {pd.Timestamp(k): v for k, v in prices_dict.items()}
-    ).sort_index()
+    prices = pd.Series({pd.Timestamp(k): v for k, v in prices_dict.items()}).sort_index()
     returns = prices.pct_change().dropna()
 
     if len(returns) < 2:
-        logger.warning("Metrics skipped for %s: only %d data points (need >= 2)", ticker, len(returns))
+        logger.warning(
+            "Metrics skipped for %s: only %d data points (need >= 2)", ticker, len(returns)
+        )
         return {
             "volatility": 0.0,
             "is_high_volatility": False,
@@ -61,7 +61,10 @@ async def compute_metrics_node(state: QuantAnalysisState) -> dict:
         mcp = state.get("mcp_client")
         sp_data = {}
         if mcp:
-            sp_result = await mcp.call_tool_by_name("get_prices", {"ticker": "^GSPC", "period": state.get("period", "5y"), "interval": "1d"})
+            sp_result = await mcp.call_tool_by_name(
+                "get_prices",
+                {"ticker": "^GSPC", "period": state.get("period", "5y"), "interval": "1d"},
+            )
             sp_data = _parse_price_data(sp_result, "^GSPC")
         if sp_data:
             sp_series = pd.Series({pd.Timestamp(k): v for k, v in sp_data.items()}).sort_index()
@@ -107,9 +110,7 @@ async def technical_analysis_node(state: QuantAnalysisState) -> dict:
     if not prices_dict:
         return {"technicals": None}
     try:
-        prices = pd.Series(
-            {pd.Timestamp(k): v for k, v in prices_dict.items()}
-        ).sort_index()
+        prices = pd.Series({pd.Timestamp(k): v for k, v in prices_dict.items()}).sort_index()
         if len(prices) < 20:
             return {"technicals": None}
 
@@ -132,13 +133,19 @@ async def technical_analysis_node(state: QuantAnalysisState) -> dict:
         loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
         rs = gain / loss
         rsi_raw = 100 - 100 / (1 + rs)
-        rsi = float(rsi_raw.iloc[-1]) if not rsi_raw.empty and not np.isnan(rsi_raw.iloc[-1]) else 50.0
+        rsi = (
+            float(rsi_raw.iloc[-1])
+            if not rsi_raw.empty and not np.isnan(rsi_raw.iloc[-1])
+            else 50.0
+        )
 
         bb_mid = prices.rolling(20).mean()
         bb_std = prices.rolling(20).std()
         bb_upper = float((bb_mid + 2 * bb_std).iloc[-1])
         bb_lower = float((bb_mid - 2 * bb_std).iloc[-1])
-        bb_position = (current - bb_lower) / (bb_upper - bb_lower) if (bb_upper - bb_lower) > 0 else 0.5
+        bb_position = (
+            (current - bb_lower) / (bb_upper - bb_lower) if (bb_upper - bb_lower) > 0 else 0.5
+        )
 
         mom_20d = float((current / prices.iloc[-20] - 1) * 100) if len(prices) >= 20 else None
         mom_60d = float((current / prices.iloc[-60] - 1) * 100) if len(prices) >= 60 else None

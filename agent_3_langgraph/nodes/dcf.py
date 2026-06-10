@@ -26,9 +26,16 @@ async def dcf_valuation_node(state: QuantAnalysisState) -> dict:
             result = await mcp.call_tool_by_name("get_financials", {"ticker": ticker})
             raw = ""
             if hasattr(result, "content") and result.content:
-                raw = result.content[0].text if hasattr(result.content[0], "text") else str(result.content[0])
+                raw = (
+                    result.content[0].text
+                    if hasattr(result.content[0], "text")
+                    else str(result.content[0])
+                )
             if not raw:
-                return {"dcf_valuation": None, "dcf_error": "DCF skipped: financial data server returned empty response"}
+                return {
+                    "dcf_valuation": None,
+                    "dcf_error": "DCF skipped: financial data server returned empty response",
+                }
             data = json.loads(raw)
         except Exception as e:
             return {"dcf_valuation": None, "dcf_error": str(e)}
@@ -43,17 +50,33 @@ async def dcf_valuation_node(state: QuantAnalysisState) -> dict:
 
         latest_fcf = _get_fcf_from_financials(cash_flow_data)
         if latest_fcf is None or latest_fcf <= 0:
-            fcf_values = [float(m.get("Free Cash Flow", 0)) for m in cash_flow_data.values() if "Free Cash Flow" in m]
-            op_values = [float(m.get("Operating Cash Flow", 0)) + float(m.get("Capital Expenditure", 0)) for m in cash_flow_data.values()]
-            return {"dcf_valuation": None, "dcf_error": f"DCF skipped: no positive FCF (FCF={fcf_values}, OCF-CAPEX={op_values})"}
+            fcf_values = [
+                float(m.get("Free Cash Flow", 0))
+                for m in cash_flow_data.values()
+                if "Free Cash Flow" in m
+            ]
+            op_values = [
+                float(m.get("Operating Cash Flow", 0)) + float(m.get("Capital Expenditure", 0))
+                for m in cash_flow_data.values()
+            ]
+            return {
+                "dcf_valuation": None,
+                "dcf_error": f"DCF skipped: no positive FCF (FCF={fcf_values}, OCF-CAPEX={op_values})",  # noqa: E501
+            }
 
         shares_outstanding = info.get("sharesOutstanding", 0)
         if not shares_outstanding or shares_outstanding <= 0:
-            return {"dcf_valuation": None, "dcf_error": f"DCF skipped: shares outstanding missing (value: {shares_outstanding})"}
+            return {
+                "dcf_valuation": None,
+                "dcf_error": f"DCF skipped: shares outstanding missing (value: {shares_outstanding})",  # noqa: E501
+            }
 
         current_price = info.get("currentPrice") or info.get("regularMarketPrice", 0)
         if not current_price or current_price <= 0:
-            return {"dcf_valuation": None, "dcf_error": f"DCF skipped: current price not available (value: {current_price})"}
+            return {
+                "dcf_valuation": None,
+                "dcf_error": f"DCF skipped: current price not available (value: {current_price})",
+            }
 
         # Data-driven growth: blend revenue & earnings growth, bounded 2–25%
         rg = info.get("revenueGrowth")
@@ -84,7 +107,9 @@ async def dcf_valuation_node(state: QuantAnalysisState) -> dict:
 
         total_cap = market_cap + total_debt
         if total_cap > 0:
-            wacc = (market_cap / total_cap) * cost_of_equity + (total_debt / total_cap) * after_tax_cod
+            wacc = (market_cap / total_cap) * cost_of_equity + (
+                total_debt / total_cap
+            ) * after_tax_cod
         else:
             wacc = cost_of_equity
         wacc = max(0.06, min(wacc, 0.18))
@@ -102,16 +127,28 @@ async def dcf_valuation_node(state: QuantAnalysisState) -> dict:
             projected_fcf = latest_fcf * (1 + yr_growth) ** year
             pv_fcf += projected_fcf / (1 + wacc) ** year
 
-        terminal_value = (latest_fcf * (1 + growth_rate) ** 5 * (1 + terminal_growth)) / (wacc - terminal_growth)
+        terminal_value = (latest_fcf * (1 + growth_rate) ** 5 * (1 + terminal_growth)) / (
+            wacc - terminal_growth
+        )
         pv_terminal = terminal_value / (1 + wacc) ** 5
         enterprise_value = pv_fcf + pv_terminal
 
         intrinsic_value = enterprise_value / shares_outstanding if shares_outstanding > 0 else 0
-        upside = (intrinsic_value - current_price) / current_price if current_price and intrinsic_value > 0 else 0
+        upside = (
+            (intrinsic_value - current_price) / current_price
+            if current_price and intrinsic_value > 0
+            else 0
+        )
 
         logger.info(
-            "DCF for %s: FCF=%s, WACC=%.3f, growth=%.3f, terminal=%.3f, intrinsic=%s, upside=%.1f%%",
-            ticker, latest_fcf, wacc, growth_rate, terminal_growth, intrinsic_value, upside * 100,
+            "DCF for %s: FCF=%s, WACC=%.3f, growth=%.3f, terminal=%.3f, intrinsic=%s, upside=%.1f%%",  # noqa: E501
+            ticker,
+            latest_fcf,
+            wacc,
+            growth_rate,
+            terminal_growth,
+            intrinsic_value,
+            upside * 100,
         )
 
         # Run Monte Carlo here so low-volatility tickers (routed to DCF, not stress test)

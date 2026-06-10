@@ -27,14 +27,34 @@ _STOCK_TICKER_RE = _re_module.compile(r"^[A-Z]{1,5}(\.[A-Z]{1,2})?$")
 
 
 def _normalize_company_name(name: str) -> str:
-    """Strip corporate suffixes and punctuation so "Apple Inc." -> "apple" matches "Apple". """
+    """Strip corporate suffixes and punctuation so "Apple Inc." -> "apple" matches "Apple"."""
     s = name.lower().strip()
     for _suffix in [
-        " inc", " inc.", " incorporated", " corp", " corp.", " corporation",
-        " ltd", " ltd.", " limited", " llc", " lp", " plc",
-        " company", " co.", " co", " holdings", " holding",
-        " technologies", " technology", " group",
-        " (the)", " (new)", " (de)", " (md)", " (mn)",
+        " inc",
+        " inc.",
+        " incorporated",
+        " corp",
+        " corp.",
+        " corporation",
+        " ltd",
+        " ltd.",
+        " limited",
+        " llc",
+        " lp",
+        " plc",
+        " company",
+        " co.",
+        " co",
+        " holdings",
+        " holding",
+        " technologies",
+        " technology",
+        " group",
+        " (the)",
+        " (new)",
+        " (de)",
+        " (md)",
+        " (mn)",
     ]:
         if s.endswith(_suffix):
             s = s[: -len(_suffix)].strip()
@@ -64,7 +84,7 @@ async def _build_reverse_index() -> list[tuple[str, str, str]]:
 
 
 async def _ticker_sec_lookup(query: str) -> dict | None:
-    """Match company name against the SEC ticker map with priority: exact→prefix→word_overlap→substring."""
+    """Match company name against the SEC ticker map with priority: exact→prefix→word_overlap→substring."""  # noqa: E501
     norm_query = _normalize_company_name(query)
     if not norm_query:
         return None
@@ -157,14 +177,10 @@ async def _ticker_yahoo_search(query: str) -> dict | None:
             symbol = q.get("symbol", "")
             if not symbol or not _is_plausible_ticker(symbol):
                 continue
-            if q.get("exchange", "") in (
-                "NYQ", "NMS", "NGM", "ASE", "PCX", "OQA", "OQB"
-            ):
+            if q.get("exchange", "") in ("NYQ", "NMS", "NGM", "ASE", "PCX", "OQA", "OQB"):
                 return {
                     "ticker": symbol,
-                    "company_name": q.get(
-                        "longname", q.get("shortname", symbol)
-                    ),
+                    "company_name": q.get("longname", q.get("shortname", symbol)),
                     "source": "yfinance",
                 }
 
@@ -176,9 +192,7 @@ async def _ticker_yahoo_search(query: str) -> dict | None:
             if await _is_sec_ticker(symbol):
                 return {
                     "ticker": symbol,
-                    "company_name": q.get(
-                        "longname", q.get("shortname", symbol)
-                    ),
+                    "company_name": q.get("longname", q.get("shortname", symbol)),
                     "source": "yfinance",
                 }
 
@@ -188,9 +202,7 @@ async def _ticker_yahoo_search(query: str) -> dict | None:
             if symbol and _is_plausible_ticker(symbol):
                 return {
                     "ticker": symbol,
-                    "company_name": q.get(
-                        "longname", q.get("shortname", symbol)
-                    ),
+                    "company_name": q.get("longname", q.get("shortname", symbol)),
                     "source": "yfinance",
                 }
 
@@ -202,6 +214,7 @@ async def _ticker_yahoo_search(query: str) -> dict | None:
 # ──────────────────────────────────────────────
 # Ticker MCP Tools
 # ──────────────────────────────────────────────
+
 
 @app.tool()
 @observe()

@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """FastAPI app for REST API documentation and OpenAPI spec generation.
 
 WP 3.2: this FastAPI app shadows the Starlette REST routes for OpenAPI spec
@@ -6,7 +7,7 @@ routes in main.py handle all requests. This app exists solely to produce
 the docs/openapi.json specification.
 
 Usage:
-    python -c "from agent_1_adk.api_fastapi import spec; import json; print(json.dumps(spec, indent=2))"
+    python -c "from agent_1_adk.api_fastapi import spec; import json; print(json.dumps(spec, indent=2))"  # noqa: E501
 """
 
 from __future__ import annotations
@@ -142,7 +143,11 @@ async def report_by_id(brief_id: str, format: str):
 @fastapi_app.post(
     "/auth/login",
     response_model=LoginResponse,
-    responses={400: {"model": ErrorResponse}, 401: {"model": ErrorResponse}, 429: {"model": ErrorResponse}},
+    responses={
+        400: {"model": ErrorResponse},
+        401: {"model": ErrorResponse},
+        429: {"model": ErrorResponse},
+    },
     tags=["Auth"],
     summary="Authenticate with username+password",
 )

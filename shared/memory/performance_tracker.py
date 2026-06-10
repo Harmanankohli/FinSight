@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """Recommendation outcome tracking.
 
 Records each BUY/HOLD/SELL recommendation with optional price snapshot.
@@ -12,15 +13,15 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-from shared.settings import IST
 from shared.memory.store import DB_PATH, get_db, write_lock
+from shared.settings import IST
 
 
 class PerformanceTracker:
     def __init__(self, db_path: Path = DB_PATH):
         self._db_path = db_path
 
-    # Persists recommendation with async price snapshot. Falls back to yfinance fetch via executor if no price supplied.
+    # Persists recommendation with async price snapshot. Falls back to yfinance fetch via executor if no price supplied.  # noqa: E501
     async def record_recommendation(
         self,
         ticker: str,
@@ -36,6 +37,7 @@ class PerformanceTracker:
         """
         if price is None:
             import asyncio as _asyncio
+
             loop = _asyncio.get_event_loop()
             price = await loop.run_in_executor(None, self._fetch_current_price, ticker)
 
@@ -58,11 +60,16 @@ class PerformanceTracker:
                 ),
             )
             await conn.commit()
-        logger.info("Recorded %s recommendation for %s (conf=%.2f, price=%s)",
-                    recommendation.upper(), ticker, confidence, price)
+        logger.info(
+            "Recorded %s recommendation for %s (conf=%.2f, price=%s)",
+            recommendation.upper(),
+            ticker,
+            confidence,
+            price,
+        )
         return record_id
 
-    # Batch-evaluates all unevaluated recommendations by fetching current prices and computing realized_return for each.
+    # Batch-evaluates all unevaluated recommendations by fetching current prices and computing realized_return for each.  # noqa: E501
     async def evaluate_all(self) -> list[dict]:
         """Compare all unevaluated recommendations to current prices.
 
@@ -98,22 +105,22 @@ class PerformanceTracker:
                 )
                 await conn.commit()
 
-            results.append({
-                "id": record_id,
-                "ticker": ticker,
-                "recommendation": recommendation,
-                "price_at_rec": price_at_rec,
-                "current_price": current_price,
-                "realized_return": round(realized_return, 4),
-            })
+            results.append(
+                {
+                    "id": record_id,
+                    "ticker": ticker,
+                    "recommendation": recommendation,
+                    "price_at_rec": price_at_rec,
+                    "current_price": current_price,
+                    "realized_return": round(realized_return, 4),
+                }
+            )
 
         logger.info("Evaluation complete: %d updated", len(results))
         return results
 
-    # Computes win rate per recommendation type. BUY correct if price rose (ret > 0), SELL correct if price fell (ret < 0). HOLD always counted as correct.
-    async def get_accuracy_stats(
-        self, user_id: Optional[str] = None
-    ) -> dict:
+    # Computes win rate per recommendation type. BUY correct if price rose (ret > 0), SELL correct if price fell (ret < 0). HOLD always counted as correct.  # noqa: E501
+    async def get_accuracy_stats(self, user_id: Optional[str] = None) -> dict:
         """Return win rate by recommendation type.
 
         A BUY is 'correct' if realized_return > 0.
@@ -156,9 +163,11 @@ class PerformanceTracker:
         for rec in stats:
             returns = stats[rec]["returns"]
             stats[rec]["avg_return"] = round(sum(returns) / len(returns), 4) if returns else 0.0
-            stats[rec]["win_rate"] = round(
-                stats[rec]["correct"] / stats[rec]["total"], 4
-            ) if stats[rec]["total"] > 0 else 0.0
+            stats[rec]["win_rate"] = (
+                round(stats[rec]["correct"] / stats[rec]["total"], 4)
+                if stats[rec]["total"] > 0
+                else 0.0
+            )
             del stats[rec]["returns"]
 
         return stats
@@ -208,6 +217,7 @@ class PerformanceTracker:
         """Fetch current price via yfinance. Returns None on failure."""
         try:
             import yfinance as yf
+
             ticker_obj = yf.Ticker(ticker)
             info = ticker_obj.info
             return info.get("currentPrice") or info.get("regularMarketPrice")

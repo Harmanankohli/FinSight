@@ -2,7 +2,6 @@ import asyncio
 import logging
 
 from a2a.helpers import new_task_from_user_message, new_text_message
-from shared.trace_context import extract_trace_ids, extract_user_id, current_trace_id, current_session_id, current_user_id
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.types import (
@@ -16,7 +15,14 @@ from a2a.types import (
 from google.protobuf.struct_pb2 import Struct, Value
 
 from shared.base_agent import BaseAgent
-from shared.logging_config import logged, logged_sync
+from shared.logging_config import logged
+from shared.trace_context import (
+    current_session_id,
+    current_trace_id,
+    current_user_id,
+    extract_trace_ids,
+    extract_user_id,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +121,9 @@ class GenericAgentExecutor(AgentExecutor):
                             task_id=task.id,
                             context_id=task.context_id,
                             status=TaskStatus(
-                                state=TaskState.TASK_STATE_FAILED if is_error else TaskState.TASK_STATE_COMPLETED,
+                                state=TaskState.TASK_STATE_FAILED
+                                if is_error
+                                else TaskState.TASK_STATE_COMPLETED,
                                 message=new_text_message(str(content)) if is_error else None,
                             ),
                         )
@@ -159,9 +167,7 @@ class GenericAgentExecutor(AgentExecutor):
             )
             raise
 
-    async def cancel(
-        self, context: RequestContext, event_queue: EventQueue
-    ) -> None:
+    async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
         """Cancel the in-flight agent task if one is running."""
         if self._task and not self._task.done():
             self._task.cancel()

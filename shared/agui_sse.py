@@ -9,8 +9,17 @@ logger = logging.getLogger(__name__)
 # Optional event keys where null must be omitted (Zod .optional() rejects null).
 # Data-carrying keys like 'snapshot', 'delta', 'content' are NOT listed here
 # because null may be semantically meaningful for JSON Patch / state management.
-_STRIP_KEYS = {"rawEvent", "parentRunId", "parentMessageId", "result",
-               "name", "code", "encryptedValue", "role", "input"}
+_STRIP_KEYS = {
+    "rawEvent",
+    "parentRunId",
+    "parentMessageId",
+    "result",
+    "name",
+    "code",
+    "encryptedValue",
+    "role",
+    "input",
+}
 
 
 def _clean(obj, depth=0):
@@ -43,7 +52,9 @@ def _strip_message_nulls(messages):
     out = []
     for m in messages:
         if isinstance(m, dict):
-            out.append({k: v for k, v in m.items() if v is not None or k in ("content", "role", "id")})
+            out.append(
+                {k: v for k, v in m.items() if v is not None or k in ("content", "role", "id")}
+            )
         else:
             out.append(m)
     return out

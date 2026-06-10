@@ -1,9 +1,5 @@
-import asyncio
 import json
 import logging
-
-import numpy as np
-import pandas as pd
 
 from shared.logging_config import logged
 
@@ -15,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 @logged()
 async def fetch_price_data_node(state: QuantAnalysisState) -> dict:
-    # First graph node: fetches historical daily closes via MCP get_prices tool into state["price_data"]
+    # First graph node: fetches historical daily closes via MCP get_prices tool into state["price_data"]  # noqa: E501
     ticker = state["ticker"]
     period = state.get("period", "5y")
     mcp = state.get("mcp_client")
@@ -23,7 +19,9 @@ async def fetch_price_data_node(state: QuantAnalysisState) -> dict:
         return {"price_data": {}}
 
     try:
-        result = await mcp.call_tool_by_name("get_prices", {"ticker": ticker, "period": period, "interval": "1d"})
+        result = await mcp.call_tool_by_name(
+            "get_prices", {"ticker": ticker, "period": period, "interval": "1d"}
+        )
         prices = _parse_price_data(result, ticker)
         if not prices:
             raise ValueError(f"No price data found for {ticker}")
@@ -44,7 +42,11 @@ async def fundamental_analysis_node(state: QuantAnalysisState) -> dict:
         result = await mcp.call_tool_by_name("get_financials", {"ticker": ticker})
         raw = ""
         if hasattr(result, "content") and result.content:
-            raw = result.content[0].text if hasattr(result.content[0], "text") else str(result.content[0])
+            raw = (
+                result.content[0].text
+                if hasattr(result.content[0], "text")
+                else str(result.content[0])
+            )
         if not raw:
             return {"fundamentals": None, "_financials_raw": {}}
         data = json.loads(raw)
@@ -86,9 +88,15 @@ async def fundamental_analysis_node(state: QuantAnalysisState) -> dict:
             "50d_avg": fifty_day_ma,
             "200d_avg": two_hundred_day_ma,
             "current_price": current_price,
-            "pct_from_52w_high": round((current_price - fifty2w_high) / fifty2w_high, 4) if fifty2w_high and current_price else None,
-            "pct_from_52w_low": round((current_price - fifty2w_low) / fifty2w_low, 4) if fifty2w_low and current_price else None,
-            "golden_cross": (fifty_day_ma > two_hundred_day_ma) if fifty_day_ma and two_hundred_day_ma else False,
+            "pct_from_52w_high": round((current_price - fifty2w_high) / fifty2w_high, 4)
+            if fifty2w_high and current_price
+            else None,
+            "pct_from_52w_low": round((current_price - fifty2w_low) / fifty2w_low, 4)
+            if fifty2w_low and current_price
+            else None,
+            "golden_cross": (fifty_day_ma > two_hundred_day_ma)
+            if fifty_day_ma and two_hundred_day_ma
+            else False,
             "net_debt": total_debt - total_cash,
         }
         return {"fundamentals": fundamentals, "_financials_raw": data}
@@ -108,7 +116,9 @@ async def options_flow_node(state: QuantAnalysisState) -> dict:
         result = await mcp.call_tool_by_name("get_options_chain", {"ticker": ticker})
         if not hasattr(result, "content") or not result.content:
             return {"options_signals": None}
-        raw = result.content[0].text if hasattr(result.content[0], "text") else str(result.content[0])
+        raw = (
+            result.content[0].text if hasattr(result.content[0], "text") else str(result.content[0])
+        )
         data = json.loads(raw)
 
         def _sum(rows: list, field: str) -> int:
@@ -165,16 +175,20 @@ async def options_flow_node(state: QuantAnalysisState) -> dict:
 
 @logged()
 async def insider_signals_node(state: QuantAnalysisState) -> dict:
-    """Fetches insider buy/sell transactions via yfinance (structured data, not keyword matching)."""
+    """Fetches insider buy/sell transactions via yfinance (structured data, not keyword matching)."""  # noqa: E501
     ticker = state["ticker"]
     mcp = state.get("mcp_client")
     if not mcp:
         return {"insider_signals": None}
     try:
-        result = await mcp.call_tool_by_name("get_insider_transactions", {"ticker": ticker, "days": 90})
+        result = await mcp.call_tool_by_name(
+            "get_insider_transactions", {"ticker": ticker, "days": 90}
+        )
         if not hasattr(result, "content") or not result.content:
             return {"insider_signals": None}
-        raw = result.content[0].text if hasattr(result.content[0], "text") else str(result.content[0])
+        raw = (
+            result.content[0].text if hasattr(result.content[0], "text") else str(result.content[0])
+        )
         data = json.loads(raw)
         summary = data.get("summary", {})
 
@@ -205,7 +219,7 @@ async def insider_signals_node(state: QuantAnalysisState) -> dict:
 
 @logged()
 async def analyst_positioning_node(state: QuantAnalysisState) -> dict:
-    """Extracts analyst consensus, price target upside, and short interest from pre-fetched financials."""
+    """Extracts analyst consensus, price target upside, and short interest from pre-fetched financials."""  # noqa: E501
     raw_fin = state.get("_financials_raw") or {}
     if not raw_fin:
         return {"positioning": None}
@@ -221,11 +235,15 @@ async def analyst_positioning_node(state: QuantAnalysisState) -> dict:
     forward_eps = info.get("forwardEps")
 
     consensus_map = {
-        "strongbuy": 2, "strong_buy": 2,
+        "strongbuy": 2,
+        "strong_buy": 2,
         "buy": 1,
-        "hold": 0, "neutral": 0,
+        "hold": 0,
+        "neutral": 0,
         "underperform": -1,
-        "sell": -2, "strongsell": -2, "strong_sell": -2,
+        "sell": -2,
+        "strongsell": -2,
+        "strong_sell": -2,
     }
     consensus_score = consensus_map.get(rec_key.lower().replace(" ", ""), 0)
 

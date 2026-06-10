@@ -1,8 +1,8 @@
 from shared.trace_context import (
-    inject_trace_context,
+    current_trace_id,
     extract_trace_context,
     extract_trace_ids,
-    current_trace_id,
+    inject_trace_context,
 )
 
 

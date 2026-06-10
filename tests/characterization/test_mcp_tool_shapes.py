@@ -8,20 +8,22 @@ minor changes to yfinance or EDGAR responses don't break this suite.
 Moving any tool function to a new module without a re-export will fail
 a test here.
 """
+
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-
 # ── Fixtures ─────────────────────────────────────────────────────────────────
+
 
 def _yf_ticker_mock(symbol: str):
     """Minimal yfinance.Ticker mock."""
     mock = MagicMock()
     import pandas as pd
+
     mock.history.return_value = pd.DataFrame(
         {"Close": [100.0, 101.0]},
         index=pd.to_datetime(["2024-01-01", "2024-01-02"]),
@@ -60,6 +62,7 @@ def _feedparser_mock():
 
 # ── Imports (done inside tests to allow monkeypatching at import time) ────────
 
+
 @pytest.fixture(autouse=True)
 def _patch_heavy_imports():
     """Prevent real ML model loads and network calls during import."""
@@ -72,9 +75,11 @@ def _patch_heavy_imports():
 
 # ── get_prices ────────────────────────────────────────────────────────────────
 
+
 async def test_get_prices_shape():
     with patch("yfinance.Ticker", side_effect=_yf_ticker_mock):
         from mcp_servers.finsight_server import get_prices
+
         result = await get_prices("NVDA", period="1mo", interval="1d")
     assert isinstance(result, dict)
     assert "ticker" in result
@@ -85,6 +90,7 @@ async def test_get_prices_shape():
 async def test_get_prices_error_shape():
     with patch("yfinance.Ticker", side_effect=RuntimeError("network down")):
         from mcp_servers.finsight_server import get_prices
+
         result = await get_prices("FAIL")
     assert isinstance(result, dict)
     assert "data" in result
@@ -93,9 +99,11 @@ async def test_get_prices_error_shape():
 
 # ── get_financials ────────────────────────────────────────────────────────────
 
+
 async def test_get_financials_shape():
     with patch("yfinance.Ticker", side_effect=_yf_ticker_mock):
         from mcp_servers.finsight_server import get_financials
+
         result = await get_financials("NVDA")
     assert isinstance(result, dict)
     for key in ("income_statement", "balance_sheet", "cash_flow", "info"):
@@ -104,9 +112,11 @@ async def test_get_financials_shape():
 
 # ── get_news_sentiment ────────────────────────────────────────────────────────
 
+
 async def test_get_news_sentiment_shape():
     with patch("feedparser.parse", return_value=_feedparser_mock()):
         from mcp_servers.finsight_server import get_news_sentiment
+
         result = await get_news_sentiment("NVDA", limit=3)
     assert isinstance(result, dict)
     assert "ticker" in result
@@ -116,9 +126,11 @@ async def test_get_news_sentiment_shape():
 
 # ── get_macro_indicators ──────────────────────────────────────────────────────
 
+
 async def test_get_macro_indicators_shape():
     with patch("yfinance.Ticker", side_effect=_yf_ticker_mock):
         from mcp_servers.finsight_server import get_macro_indicators
+
         result = await get_macro_indicators()
     assert isinstance(result, dict)
     # Route returns 'macro' key (not 'indicators')
@@ -127,9 +139,11 @@ async def test_get_macro_indicators_shape():
 
 # ── validate_ticker ───────────────────────────────────────────────────────────
 
+
 async def test_validate_ticker_shape():
     with patch("yfinance.Ticker", side_effect=_yf_ticker_mock):
         from mcp_servers.finsight_server import validate_ticker
+
         result = await validate_ticker("NVDA")
     assert isinstance(result, dict)
     assert "valid" in result
@@ -138,9 +152,11 @@ async def test_validate_ticker_shape():
 
 # ── get_peers ─────────────────────────────────────────────────────────────────
 
+
 async def test_get_peers_shape():
     with patch("yfinance.Ticker", side_effect=_yf_ticker_mock):
         from mcp_servers.finsight_server import get_peers
+
         result = await get_peers("NVDA")
     assert isinstance(result, dict)
     assert "ticker" in result
@@ -150,8 +166,10 @@ async def test_get_peers_shape():
 
 # ── execute_python ────────────────────────────────────────────────────────────
 
+
 async def test_execute_python_shape():
     from mcp_servers.finsight_server import execute_python
+
     result = await execute_python("x = 1 + 1")
     assert isinstance(result, dict)
     # Must have at least one of these keys
@@ -160,6 +178,7 @@ async def test_execute_python_shape():
 
 async def test_execute_python_error_shape():
     from mcp_servers.finsight_server import execute_python
+
     result = await execute_python("raise ValueError('boom')")
     assert isinstance(result, dict)
     # Either explicit 'error' key or 'success': False / stderr present
@@ -169,9 +188,11 @@ async def test_execute_python_error_shape():
 
 # ── get_earnings_calendar ─────────────────────────────────────────────────────
 
+
 async def test_get_earnings_calendar_shape():
     with patch("yfinance.Ticker", side_effect=_yf_ticker_mock):
         from mcp_servers.finsight_server import get_earnings_calendar
+
         result = await get_earnings_calendar("NVDA")
     assert isinstance(result, dict)
     assert "ticker" in result
@@ -179,9 +200,11 @@ async def test_get_earnings_calendar_shape():
 
 # ── get_insider_transactions ──────────────────────────────────────────────────
 
+
 async def test_get_insider_transactions_shape():
     with patch("yfinance.Ticker", side_effect=_yf_ticker_mock):
         from mcp_servers.finsight_server import get_insider_transactions
+
         result = await get_insider_transactions("NVDA")
     assert isinstance(result, dict)
     assert "ticker" in result
@@ -190,8 +213,10 @@ async def test_get_insider_transactions_shape():
 
 # ── get_scenario_shocks ───────────────────────────────────────────────────────
 
+
 async def test_get_scenario_shocks_shape():
     from mcp_servers.finsight_server import get_scenario_shocks
+
     result = await get_scenario_shocks("Technology")
     assert isinstance(result, dict)
     assert "scenarios" in result or "shocks" in result or "sector" in result
@@ -199,11 +224,14 @@ async def test_get_scenario_shocks_shape():
 
 # ── find_agent ────────────────────────────────────────────────────────────────
 
+
 async def test_find_agent_shape():
     import mcp_servers.finsight_server as _srv
+
     orig = _srv._df_registry
     try:
         import pandas as pd
+
         _srv._df_registry = pd.DataFrame()  # empty — triggers the "no cards" path
         result = await _srv.find_agent("investment research")
     finally:

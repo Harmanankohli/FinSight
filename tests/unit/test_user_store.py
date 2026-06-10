@@ -1,9 +1,12 @@
 """Tests for shared/memory/user_store.py — user CRUD, password hashing, refresh token lifecycle."""
+
 import uuid
+from pathlib import Path
+
 import pytest
 import pytest_asyncio
+
 from shared.settings import reset_settings_for_tests
-from pathlib import Path
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -12,6 +15,7 @@ async def _clean_env(monkeypatch):
     monkeypatch.setenv("SERVICE_AUTH_TOKEN", "b" * 16)
     reset_settings_for_tests()
     import shared.memory.store as store_mod
+
     # Close and reset the DB connection, then delete the DB file
     if store_mod._db_conn is not None:
         await store_mod._db_conn.close()
@@ -31,6 +35,7 @@ async def _clean_env(monkeypatch):
 @pytest.mark.asyncio
 async def test_create_user():
     from shared.memory.user_store import create_user, get_user_by_username
+
     user_id = await create_user("alice", "secret123", role="user")
     assert user_id is not None
     user = await get_user_by_username("alice")
@@ -43,6 +48,7 @@ async def test_create_user():
 @pytest.mark.asyncio
 async def test_create_admin():
     from shared.memory.user_store import create_user, get_user
+
     user_id = await create_user("admin", "adminpass", role="admin")
     user = await get_user(user_id)
     assert user["role"] == "admin"
@@ -51,6 +57,7 @@ async def test_create_admin():
 @pytest.mark.asyncio
 async def test_duplicate_username_raises():
     from shared.memory.user_store import create_user
+
     await create_user("bob", "pass1")
     with pytest.raises(ValueError, match="already exist"):
         await create_user("bob", "pass2")
@@ -59,6 +66,7 @@ async def test_duplicate_username_raises():
 @pytest.mark.asyncio
 async def test_verify_password_success():
     from shared.memory.user_store import create_user, verify_password
+
     await create_user("carol", "mypassword")
     user = await verify_password("carol", "mypassword")
     assert user is not None
@@ -68,6 +76,7 @@ async def test_verify_password_success():
 @pytest.mark.asyncio
 async def test_verify_password_failure():
     from shared.memory.user_store import create_user, verify_password
+
     await create_user("dave", "correct")
     user = await verify_password("dave", "wrong")
     assert user is None
@@ -76,6 +85,7 @@ async def test_verify_password_failure():
 @pytest.mark.asyncio
 async def test_verify_password_nonexistent_user():
     from shared.memory.user_store import verify_password
+
     user = await verify_password("nobody", "anything")
     assert user is None
 
@@ -84,11 +94,12 @@ async def test_verify_password_nonexistent_user():
 async def test_refresh_token_lifecycle():
     from shared.memory.user_store import (
         create_user,
-        store_refresh_token,
-        revoke_refresh_token,
-        is_refresh_token_revoked,
         get_refresh_token,
+        is_refresh_token_revoked,
+        revoke_refresh_token,
+        store_refresh_token,
     )
+
     user_id = await create_user("eve", "pass")
     jti = str(uuid.uuid4())
     await store_refresh_token(jti, user_id, "2099-01-01T00:00:00")
@@ -107,6 +118,7 @@ async def test_refresh_token_lifecycle():
 @pytest.mark.asyncio
 async def test_unknown_refresh_is_revoked():
     from shared.memory.user_store import is_refresh_token_revoked
+
     assert await is_refresh_token_revoked("nonexistent-jti")
 
 
@@ -114,10 +126,11 @@ async def test_unknown_refresh_is_revoked():
 async def test_revoke_user_all_tokens():
     from shared.memory.user_store import (
         create_user,
-        store_refresh_token,
-        revoke_user_refresh_tokens,
         is_refresh_token_revoked,
+        revoke_user_refresh_tokens,
+        store_refresh_token,
     )
+
     user_id = await create_user("frank", "pass")
     jti1, jti2 = str(uuid.uuid4()), str(uuid.uuid4())
     await store_refresh_token(jti1, user_id, "2099-01-01T00:00:00")
@@ -134,10 +147,11 @@ async def test_revoke_user_all_tokens():
 async def test_rotated_at():
     from shared.memory.user_store import (
         create_user,
+        get_refresh_token,
         store_refresh_token,
         update_rotated_at,
-        get_refresh_token,
     )
+
     user_id = await create_user("grace", "pass")
     jti = str(uuid.uuid4())
     await store_refresh_token(jti, user_id, "2099-01-01T00:00:00")

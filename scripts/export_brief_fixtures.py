@@ -6,6 +6,7 @@ Usage:
 Strips user/session identifiers and writes anonymized JSON files
 suitable for use as regression corpus fixtures.
 """
+
 import argparse
 import json
 import sqlite3

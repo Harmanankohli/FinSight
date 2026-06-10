@@ -10,14 +10,14 @@ Usage:
 
 Interface is identical to TTLCache: get_or_fetch(), get(), set().
 """
+
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
-from typing import Any, Callable, Awaitable
+from typing import Any, Awaitable, Callable
 
-from shared.logging_config import logged, logged_sync
 from shared.ttl_cache import TTLCache
 
 logger = logging.getLogger(__name__)
@@ -37,7 +37,9 @@ class RedisCache:
         namespace: str,
         max_entries: int = 512,
     ) -> None:
-        self._ttl_int = int(ttl_seconds) if (ttl_seconds is not None and ttl_seconds != float("inf")) else None
+        self._ttl_int = (
+            int(ttl_seconds) if (ttl_seconds is not None and ttl_seconds != float("inf")) else None
+        )
         self._ns = namespace
         self._l1 = TTLCache(ttl_seconds=ttl_seconds, max_entries=max_entries)
         self._redis: Any = None
@@ -57,7 +59,9 @@ class RedisCache:
                 return self._redis
             try:
                 import redis.asyncio as aioredis  # optional dep
+
                 from shared.settings import REDIS_URL
+
                 client = aioredis.from_url(
                     REDIS_URL,
                     decode_responses=False,
@@ -70,7 +74,8 @@ class RedisCache:
             except Exception as exc:
                 logger.warning(
                     "Redis unavailable for ns=%s, falling back to in-process cache: %s",
-                    self._ns, exc,
+                    self._ns,
+                    exc,
                 )
                 self._redis_failed = True
                 return None
@@ -99,9 +104,7 @@ class RedisCache:
         except Exception as exc:
             logger.debug("Redis set failed for %s: %s", key, exc)
 
-    async def get_or_fetch(
-        self, key: str, fetch: Callable[[], Awaitable[Any]]
-    ) -> Any:
+    async def get_or_fetch(self, key: str, fetch: Callable[[], Awaitable[Any]]) -> Any:
         """Return cached value (L1 then L2) or fetch and populate both levels."""
         l1_val = self._l1.get(key)
         if l1_val is not None:
@@ -139,6 +142,7 @@ def make_cache(
     interface regardless of which implementation is returned.
     """
     from shared.settings import REDIS_URL
+
     if REDIS_URL:
         return RedisCache(ttl_seconds=ttl_seconds, namespace=namespace, max_entries=max_entries)
     return TTLCache(ttl_seconds=ttl_seconds, max_entries=max_entries)

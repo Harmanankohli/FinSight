@@ -5,11 +5,11 @@ from collections.abc import AsyncIterable
 
 from shared.base_agent import BaseAgent
 from shared.logging_config import logged, logged_sync
-from shared.settings import EVAL_ENABLED
+from shared.mcp_client import get_shared_mcp
 from shared.observability import get_langfuse_client
 from shared.runtime_eval import score_sentiment_response as _eval_sentiment_response
-from shared.mcp_client import get_shared_mcp
-from shared.ticker_utils import extract_ticker, validate_ticker, resolve_ticker
+from shared.settings import EVAL_ENABLED
+from shared.ticker_utils import extract_ticker, resolve_ticker, validate_ticker
 from shared.trace_context import extract_trace_ids
 
 from .crew import MarketContextCrew
@@ -23,7 +23,7 @@ class MarketContextAgent(BaseAgent):
     def __init__(self):
         super().__init__(
             agent_name="Market Context Agent",
-            description="Provides macro regime analysis and competitive peer landscape positioning using CrewAI",
+            description="Provides macro regime analysis and competitive peer landscape positioning using CrewAI",  # noqa: E501
             content_types=["text", "application/json"],
         )
 
@@ -51,7 +51,11 @@ class MarketContextAgent(BaseAgent):
         )
 
         # Extract industry/sector from primary financials for crew context
-        info = primary_fin.get("info", {}) if isinstance(primary_fin, dict) and not primary_fin.get("error") else {}
+        info = (
+            primary_fin.get("info", {})
+            if isinstance(primary_fin, dict) and not primary_fin.get("error")
+            else {}
+        )
         industry = info.get("industry", "")
         sector = info.get("sector", "")
 
@@ -59,13 +63,17 @@ class MarketContextAgent(BaseAgent):
         peers_result = await call("get_peers", {"ticker": ticker})
         peer_tickers = peers_result.get("peers", []) if isinstance(peers_result, dict) else []
         if not peer_tickers:
-            logger.warning("get_peers returned no results for %s — peer analysis will be skipped", ticker)
+            logger.warning(
+                "get_peers returned no results for %s — peer analysis will be skipped", ticker
+            )
 
         # Step 3: peer financials — capped at 3 concurrent to avoid MCP/yfinance queue backup
         _sem = asyncio.Semaphore(3)
+
         async def _call_capped(t):
             async with _sem:
                 return await call("get_financials", {"ticker": t})
+
         peer_fin_results = await asyncio.gather(
             *[_call_capped(p) for p in peer_tickers],
             return_exceptions=True,
@@ -91,7 +99,12 @@ class MarketContextAgent(BaseAgent):
     async def analyze(self, ticker: str, query_text: str) -> dict:
         mcp = await get_shared_mcp()
         data = await self._collect_data_parallel(ticker, mcp)
-        logger.info("Collected market context for %s: macro=%s peers=%s", ticker, bool(data.get("macro")), list(data.get("peers", {}).keys()))
+        logger.info(
+            "Collected market context for %s: macro=%s peers=%s",
+            ticker,
+            bool(data.get("macro")),
+            list(data.get("peers", {}).keys()),
+        )
         wrapper = MCPClientWrapper(mcp)
         crew_builder = MarketContextCrew(wrapper)
         result = await crew_builder.analyze(ticker, precollected_data=data)
@@ -108,15 +121,13 @@ class MarketContextAgent(BaseAgent):
                     ("trailingPE", "P/E Ratio", False),
                 ]:
                     if pinfo.get(key) is not None:
-                        metrics[label] = f"{pinfo[key]*100:.1f}%" if pct else f"{pinfo[key]:.1f}x"
+                        metrics[label] = f"{pinfo[key] * 100:.1f}%" if pct else f"{pinfo[key]:.1f}x"
                 if metrics:
                     peer_comparison.append({"ticker": sym, "metrics": metrics})
         result["peer_comparison"] = peer_comparison[:3]
         return result
 
-    async def stream(
-        self, query: str, context_id: str, task_id: str
-    ) -> AsyncIterable[dict]:
+    async def stream(self, query: str, context_id: str, task_id: str) -> AsyncIterable[dict]:
         logger.info("MarketContextAgent.stream() called: query=%s...", query[:80])
         yield await self._build_response(query)
 
@@ -146,7 +157,7 @@ class MarketContextAgent(BaseAgent):
                     "is_task_complete": True,
                     "is_error": True,
                     "require_user_input": False,
-                    "content": "Could not identify a stock ticker from the query. Try using parentheses (AAPL) or $ prefix ($V).",
+                    "content": "Could not identify a stock ticker from the query. Try using parentheses (AAPL) or $ prefix ($V).",  # noqa: E501
                 }
 
             valid, validated_ticker, company = await validate_ticker(ticker)
@@ -170,11 +181,13 @@ class MarketContextAgent(BaseAgent):
             try:
                 result = await self.analyze(ticker, query)
                 contexts = result.pop("_retrieved_contexts", [])
-                span.update(output={
-                    "ticker": ticker,
-                    "signal": result.get("overall_signal"),
-                    "confidence": result.get("confidence_score"),
-                })
+                span.update(
+                    output={
+                        "ticker": ticker,
+                        "signal": result.get("overall_signal"),
+                        "confidence": result.get("confidence_score"),
+                    }
+                )
                 narrative = (
                     result.get("narrative")
                     or result.get("investment_narrative")
@@ -183,6 +196,7 @@ class MarketContextAgent(BaseAgent):
                 )
                 if EVAL_ENABLED:
                     from shared.eval_gate import defer_eval
+
                     defer_eval(
                         _eval_sentiment_response,
                         query,

@@ -1,12 +1,15 @@
 """Tests for agent_1_adk/auth_routes.py — login, refresh, logout, me endpoints."""
+
 import uuid
+from pathlib import Path
+
 import pytest
 import pytest_asyncio
-from httpx import AsyncClient, ASGITransport
+from httpx import ASGITransport, AsyncClient
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
+
 from shared.settings import reset_settings_for_tests
-from pathlib import Path
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -16,6 +19,7 @@ async def _clean_env(monkeypatch):
     monkeypatch.setenv("AUTH_ENABLED", "true")
     reset_settings_for_tests()
     import shared.memory.store as store_mod
+
     if store_mod._db_conn is not None:
         await store_mod._db_conn.close()
         store_mod._db_conn = None
@@ -35,8 +39,8 @@ async def _clean_env(monkeypatch):
 async def app_with_user():
     """Build a minimal Starlette app with auth routes + middleware + a test user."""
     from agent_1_adk.auth_routes import get_auth_routes
-    from shared.memory.user_store import create_user, ensure_schema_v4
     from shared.auth.middleware import AuthMiddleware
+    from shared.memory.user_store import create_user, ensure_schema_v4
 
     await ensure_schema_v4()
     username = f"testuser_{uuid.uuid4().hex[:8]}"
@@ -100,7 +104,9 @@ async def test_refresh_token_flow(app_with_user):
     uname = _uname(app_with_user)
     transport = ASGITransport(app=app_with_user)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        login_resp = await client.post("/auth/login", json={"username": uname, "password": "testpass"})
+        login_resp = await client.post(
+            "/auth/login", json={"username": uname, "password": "testpass"}
+        )
         assert login_resp.status_code == 200
 
         refresh_resp = await client.post("/auth/refresh")
@@ -124,8 +130,10 @@ async def test_logout(app_with_user):
 async def test_me_authenticated(app_with_user):
     uname = _uname(app_with_user)
     from shared.memory.user_store import get_user_by_username
+
     user = await get_user_by_username(uname)
     from shared.auth.tokens import issue_user_token
+
     token = issue_user_token(user["user_id"])
 
     transport = ASGITransport(app=app_with_user)

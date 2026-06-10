@@ -13,20 +13,22 @@ import logging
 from hmac import compare_digest
 from typing import Any
 
-from shared.settings import get_settings
 from starlette.middleware import Middleware
 
 from shared.auth.tokens import AuthError, Principal, verify_user_token
+from shared.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
-PUBLIC_PATHS: frozenset[str] = frozenset({
-    "/health",
-    "/card",
-    "/auth/login",
-    "/auth/refresh",
-    "/auth/logout",
-})
+PUBLIC_PATHS: frozenset[str] = frozenset(
+    {
+        "/health",
+        "/card",
+        "/auth/login",
+        "/auth/refresh",
+        "/auth/logout",
+    }
+)
 
 
 def _is_public(path: str) -> bool:
@@ -44,6 +46,7 @@ class _AuthUser:
     A2A SDK's StarletteUser reads request.user.is_authenticated and
     request.user.display_name from the Starlette Request's scope["user"].
     """
+
     is_authenticated = True
     display_name = ""
 
@@ -132,7 +135,9 @@ class AuthMiddleware:
 
         if not token:
             logger.info("auth.denied reason=missing_header path=%s", path)
-            await self._send_json(send, 401, "UNAUTHENTICATED", "Missing or malformed Authorization header")
+            await self._send_json(
+                send, 401, "UNAUTHENTICATED", "Missing or malformed Authorization header"
+            )
             return
 
         # E4: reject short/empty tokens before any comparison
@@ -173,18 +178,22 @@ class AuthMiddleware:
 
     async def _send_json(self, send: Any, status: int, code: str, message: str) -> None:
         body = _json_error(code, message, status)
-        await send({
-            "type": "http.response.start",
-            "status": status,
-            "headers": [
-                (b"content-type", b"application/json"),
-                (b"content-length", str(len(body)).encode("latin-1")),
-            ],
-        })
-        await send({
-            "type": "http.response.body",
-            "body": body,
-        })
+        await send(
+            {
+                "type": "http.response.start",
+                "status": status,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(body)).encode("latin-1")),
+                ],
+            }
+        )
+        await send(
+            {
+                "type": "http.response.body",
+                "body": body,
+            }
+        )
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────────

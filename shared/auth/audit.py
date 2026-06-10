@@ -6,9 +6,7 @@ with structured fields for log aggregation.
 
 from __future__ import annotations
 
-import hashlib
 import logging
-import time
 
 logger = logging.getLogger("auth")
 
@@ -38,14 +36,20 @@ def log_refresh(user_id: str, jti: str, revoked: bool = False) -> None:
 
 def log_admin_action(admin_id: str, action: str, details: str = "") -> None:
     extra = {"admin_id": admin_id, "action": action}
-    logger.info("Admin action admin=%s action=%s details=%s", admin_id, action, details, extra=extra)
+    logger.info(
+        "Admin action admin=%s action=%s details=%s", admin_id, action, details, extra=extra
+    )
 
 
-def log_sandbox_execution(principal: str, code_sha256: str, duration: float, exit_status: int) -> None:
+def log_sandbox_execution(
+    principal: str, code_sha256: str, duration: float, exit_status: int
+) -> None:
     extra = {
         "principal": principal,
         "code_sha256": code_sha256,
         "duration_ms": int(duration * 1000),
         "exit_status": exit_status,
     }
-    logger.info("Sandbox execution principal=%s sha256=%s", principal, code_sha256[:12], extra=extra)
+    logger.info(
+        "Sandbox execution principal=%s sha256=%s", principal, code_sha256[:12], extra=extra
+    )

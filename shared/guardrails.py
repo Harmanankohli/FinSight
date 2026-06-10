@@ -1,4 +1,5 @@
 """Shared input guardrails for investment topic filtering."""
+
 from __future__ import annotations
 
 import re

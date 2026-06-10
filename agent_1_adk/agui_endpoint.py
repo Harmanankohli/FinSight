@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """AG-UI compatible SSE endpoint for RAGAS evaluation.
 
 Exposes POST /agentic_chat — accepts RunAgentInput JSON, streams AG-UI events
@@ -7,7 +8,6 @@ trajectories for offline batch evaluation.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import uuid
@@ -35,7 +35,6 @@ from starlette.responses import JSONResponse, StreamingResponse
 
 logger = logging.getLogger(__name__)
 
-from shared.logging_config import logged, logged_sync
 
 _EVAL_USER_ID = "eval_user"
 
@@ -65,12 +64,14 @@ async def _stream(
             session_id=session_id,
         )
 
-    yield _sse(RunStartedEvent(
-        type=EventType.RUN_STARTED,
-        thread_id=thread_id,
-        run_id=run_id,
-        input=payload.model_dump(by_alias=True),
-    ))
+    yield _sse(
+        RunStartedEvent(
+            type=EventType.RUN_STARTED,
+            thread_id=thread_id,
+            run_id=run_id,
+            input=payload.model_dump(by_alias=True),
+        )
+    )
 
     content = types.Content(role="user", parts=[types.Part.from_text(text=user_text)])
     msg_id = str(uuid.uuid4())
@@ -89,21 +90,27 @@ async def _stream(
             for fn_call in event.get_function_calls():
                 call_id = str(uuid.uuid4())
                 pending_calls[fn_call.name] = call_id
-                yield _sse(ToolCallStartEvent(
-                    type=EventType.TOOL_CALL_START,
-                    tool_call_id=call_id,
-                    tool_call_name=fn_call.name,
-                    parent_message_id=msg_id,
-                ))
-                yield _sse(ToolCallArgsEvent(
-                    type=EventType.TOOL_CALL_ARGS,
-                    tool_call_id=call_id,
-                    delta=json.dumps(dict(fn_call.args or {})),
-                ))
-                yield _sse(ToolCallEndEvent(
-                    type=EventType.TOOL_CALL_END,
-                    tool_call_id=call_id,
-                ))
+                yield _sse(
+                    ToolCallStartEvent(
+                        type=EventType.TOOL_CALL_START,
+                        tool_call_id=call_id,
+                        tool_call_name=fn_call.name,
+                        parent_message_id=msg_id,
+                    )
+                )
+                yield _sse(
+                    ToolCallArgsEvent(
+                        type=EventType.TOOL_CALL_ARGS,
+                        tool_call_id=call_id,
+                        delta=json.dumps(dict(fn_call.args or {})),
+                    )
+                )
+                yield _sse(
+                    ToolCallEndEvent(
+                        type=EventType.TOOL_CALL_END,
+                        tool_call_id=call_id,
+                    )
+                )
 
             # ── Function responses (sub-agent results) ───────────────────────
             for fn_resp in event.get_function_responses():
@@ -115,50 +122,62 @@ async def _stream(
                         if isinstance(fn_resp.response, str)
                         else json.dumps(fn_resp.response)
                     )
-                yield _sse(ToolCallResultEvent(
-                    type=EventType.TOOL_CALL_RESULT,
-                    message_id=str(uuid.uuid4()),
-                    tool_call_id=call_id,
-                    content=result_text,
-                    role="tool",
-                ))
+                yield _sse(
+                    ToolCallResultEvent(
+                        type=EventType.TOOL_CALL_RESULT,
+                        message_id=str(uuid.uuid4()),
+                        tool_call_id=call_id,
+                        content=result_text,
+                        role="tool",
+                    )
+                )
 
             # ── Text content ─────────────────────────────────────────────────
             if event.content and event.content.parts:
                 for part in event.content.parts:
                     if part.text:
                         if not text_started:
-                            yield _sse(TextMessageStartEvent(
-                                type=EventType.TEXT_MESSAGE_START,
-                                message_id=msg_id,
-                                role="assistant",
-                            ))
+                            yield _sse(
+                                TextMessageStartEvent(
+                                    type=EventType.TEXT_MESSAGE_START,
+                                    message_id=msg_id,
+                                    role="assistant",
+                                )
+                            )
                             text_started = True
-                        yield _sse(TextMessageContentEvent(
-                            type=EventType.TEXT_MESSAGE_CONTENT,
-                            message_id=msg_id,
-                            delta=part.text,
-                        ))
+                        yield _sse(
+                            TextMessageContentEvent(
+                                type=EventType.TEXT_MESSAGE_CONTENT,
+                                message_id=msg_id,
+                                delta=part.text,
+                            )
+                        )
 
         if text_started:
-            yield _sse(TextMessageEndEvent(
-                type=EventType.TEXT_MESSAGE_END,
-                message_id=msg_id,
-            ))
+            yield _sse(
+                TextMessageEndEvent(
+                    type=EventType.TEXT_MESSAGE_END,
+                    message_id=msg_id,
+                )
+            )
 
     except Exception as exc:
         logger.exception("AG-UI stream error for run_id=%s", run_id)
-        yield _sse(RunErrorEvent(
-            type=EventType.RUN_ERROR,
-            message=str(exc),
-            code=None,
-        ))
+        yield _sse(
+            RunErrorEvent(
+                type=EventType.RUN_ERROR,
+                message=str(exc),
+                code=None,
+            )
+        )
 
-    yield _sse(RunFinishedEvent(
-        type=EventType.RUN_FINISHED,
-        thread_id=thread_id,
-        run_id=run_id,
-    ))
+    yield _sse(
+        RunFinishedEvent(
+            type=EventType.RUN_FINISHED,
+            thread_id=thread_id,
+            run_id=run_id,
+        )
+    )
 
 
 def make_agui_endpoint(runner: Runner):
@@ -178,9 +197,7 @@ def make_agui_endpoint(runner: Runner):
         for msg in reversed(payload.messages or []):
             role = getattr(msg, "role", None)
             if role == "user" or isinstance(msg, UserMessage):
-                user_text = (
-                    msg.content if isinstance(msg.content, str) else str(msg.content)
-                )
+                user_text = msg.content if isinstance(msg.content, str) else str(msg.content)
                 break
 
         if not user_text:

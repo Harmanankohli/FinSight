@@ -1,6 +1,14 @@
 """Tests for shared/auth/audit.py — structured audit logging."""
+
 import logging
-from shared.auth.audit import log_login, log_lockout, log_refresh, log_admin_action, log_sandbox_execution
+
+from shared.auth.audit import (
+    log_admin_action,
+    log_lockout,
+    log_login,
+    log_refresh,
+    log_sandbox_execution,
+)
 
 
 class TestAuditLog:

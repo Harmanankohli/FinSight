@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """Persistent MemoryService backed by SQLite with BM25 + embedding search.
 
 Implements ADK's BaseMemoryService interface so it works natively with
@@ -16,7 +17,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-import numpy as np
 from google.adk.events import Event
 from google.adk.memory import BaseMemoryService
 from google.adk.memory.base_memory_service import SearchMemoryResponse
@@ -26,8 +26,8 @@ from google.genai import types
 from rank_bm25 import BM25Okapi
 from sentence_transformers import SentenceTransformer, util
 
-from shared.settings import IST
 from shared.memory.store import DB_PATH, get_db, write_lock
+from shared.settings import IST
 
 logger = logging.getLogger(__name__)
 
@@ -41,14 +41,14 @@ class SQLiteMemoryService(BaseMemoryService):
         self._db_path = db_path
         self._model: Optional[SentenceTransformer] = None
 
-    # Lazy-loads SentenceTransformer on first search to avoid heavy import cost at service initialization.
+    # Lazy-loads SentenceTransformer on first search to avoid heavy import cost at service initialization.  # noqa: E501
     def _get_model(self) -> SentenceTransformer:
         """Lazy-load the embedding model."""
         if self._model is None:
             self._model = SentenceTransformer(EMBEDDING_MODEL)
         return self._model
 
-    # Called after a session completes. Extracts all events and persists as searchable memory entries.
+    # Called after a session completes. Extracts all events and persists as searchable memory entries.  # noqa: E501
     async def add_session_to_memory(self, session: Session) -> None:
         """Store all events from a session as memory entries."""
         async with write_lock():
@@ -60,14 +60,16 @@ class SQLiteMemoryService(BaseMemoryService):
 
                 entry_id = str(uuid.uuid4())
                 content_json = json.dumps(self._event_to_dict(event))
-                metadata_json = json.dumps({
-                    "app_name": session.app_name,
-                    "author": event.author,
-                })
+                metadata_json = json.dumps(
+                    {
+                        "app_name": session.app_name,
+                        "author": event.author,
+                    }
+                )
 
                 await conn.execute(
                     """INSERT INTO memory_entries
-                       (id, user_id, session_id, content_json, metadata_json, search_text, created_at)
+                       (id, user_id, session_id, content_json, metadata_json, search_text, created_at)  # noqa: E501
                        VALUES (?, ?, ?, ?, ?, ?, ?)""",
                     (
                         entry_id,
@@ -113,15 +115,17 @@ class SQLiteMemoryService(BaseMemoryService):
 
                 entry_id = str(uuid.uuid4())
                 content_json = json.dumps(self._event_to_dict(event))
-                metadata_json = json.dumps({
-                    "app_name": app_name or "finsight",
-                    "author": event.author,
-                    **(custom_metadata or {}),
-                })
+                metadata_json = json.dumps(
+                    {
+                        "app_name": app_name or "finsight",
+                        "author": event.author,
+                        **(custom_metadata or {}),
+                    }
+                )
 
                 await conn.execute(
                     """INSERT INTO memory_entries
-                       (id, user_id, session_id, content_json, metadata_json, search_text, created_at)
+                       (id, user_id, session_id, content_json, metadata_json, search_text, created_at)  # noqa: E501
                        VALUES (?, ?, ?, ?, ?, ?, ?)""",
                     (
                         entry_id,
@@ -135,7 +139,7 @@ class SQLiteMemoryService(BaseMemoryService):
                 )
             await conn.commit()
 
-    # Hybrid retrieval pipeline: BM25 keyword matching + embedding similarity fused via RRF (Reciprocal Rank Fusion). Returns top-10 ranked memories.
+    # Hybrid retrieval pipeline: BM25 keyword matching + embedding similarity fused via RRF (Reciprocal Rank Fusion). Returns top-10 ranked memories.  # noqa: E501
     async def search_memory(
         self,
         *,
@@ -192,10 +196,12 @@ class SQLiteMemoryService(BaseMemoryService):
                 timestamp=created_at,
             )
 
-            parsed.append({
-                "entry": entry,
-                "search_text": search_text or self._content_to_text(content),
-            })
+            parsed.append(
+                {
+                    "entry": entry,
+                    "search_text": search_text or self._content_to_text(content),
+                }
+            )
 
         if not parsed:
             return SearchMemoryResponse(memories=[])
@@ -220,7 +226,7 @@ class SQLiteMemoryService(BaseMemoryService):
 
         return SearchMemoryResponse(memories=memories)
 
-    # Tokenizes query and corpus, scores entries with BM25Okapi (term-frequency × inverse document frequency).
+    # Tokenizes query and corpus, scores entries with BM25Okapi (term-frequency × inverse document frequency).  # noqa: E501
     @staticmethod
     def _bm25_score(query: str, parsed: list[dict]) -> dict[str, float]:
         """Compute BM25 scores for all entries against the query."""
@@ -234,7 +240,7 @@ class SQLiteMemoryService(BaseMemoryService):
 
         return {p["entry"].id: float(s) for p, s in zip(parsed, scores)}
 
-    # Encodes query and all entry texts with sentence-transformers, computes pairwise cosine similarity.
+    # Encodes query and all entry texts with sentence-transformers, computes pairwise cosine similarity.  # noqa: E501
     def _embedding_score(self, query: str, parsed: list[dict]) -> dict[str, float]:
         """Compute cosine similarity between query embedding and entry embeddings."""
         try:
@@ -248,7 +254,7 @@ class SQLiteMemoryService(BaseMemoryService):
             logger.debug("Embedding search failed, using BM25 only", exc_info=True)
             return {}
 
-    # Reciprocal Rank Fusion: combined_score = 1/(k+rank_bm25) + 1/(k+rank_emb). Default k=60 dampens high-rank dominance.
+    # Reciprocal Rank Fusion: combined_score = 1/(k+rank_bm25) + 1/(k+rank_emb). Default k=60 dampens high-rank dominance.  # noqa: E501
     @staticmethod
     def _rrf_fuse(
         bm25: dict[str, float],
@@ -297,7 +303,7 @@ class SQLiteMemoryService(BaseMemoryService):
     @staticmethod
     def _tokenize(text: str) -> list[str]:
         """Simple whitespace + punctuation tokenizer."""
-        return re.findall(r'[a-zA-Z0-9]+', text.lower())
+        return re.findall(r"[a-zA-Z0-9]+", text.lower())
 
     @staticmethod
     def _event_to_dict(event: Event) -> dict:

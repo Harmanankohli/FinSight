@@ -4,10 +4,9 @@ import os
 from typing import Any
 
 from langfuse.span_filter import is_default_export_span
-from shared.settings import LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_HOST
-from shared.trace_context import current_user_id
 
-from shared.logging_config import logged_sync
+from shared.settings import LANGFUSE_HOST, LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY
+from shared.trace_context import current_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -24,9 +23,7 @@ def init_langfuse(service_name: str = "finsight") -> Any:
     if _initialized:
         return _langfuse_client
 
-    auth = base64.b64encode(
-        f"{LANGFUSE_PUBLIC_KEY}:{LANGFUSE_SECRET_KEY}".encode()
-    ).decode()
+    auth = base64.b64encode(f"{LANGFUSE_PUBLIC_KEY}:{LANGFUSE_SECRET_KEY}".encode()).decode()
 
     # Set OTLP env vars for any auto-instrumentation (OpenInference etc.)
     # The Langfuse SDK v4 creates its own OTLP exporter, but these vars help
@@ -103,20 +100,24 @@ def init_instrumentation(agent_type: str) -> None:
         return
     _instrumented.add(agent_type)
     if agent_type == "orchestrator":
-        from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
         from openinference.instrumentation.google_adk import GoogleADKInstrumentor
+        from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+
         HTTPXClientInstrumentor().instrument()
         GoogleADKInstrumentor().instrument()
     elif agent_type == "rag":
         from openinference.instrumentation.llama_index import LlamaIndexInstrumentor
         from opentelemetry.instrumentation.starlette import StarletteInstrumentor
+
         LlamaIndexInstrumentor().instrument()
         StarletteInstrumentor().instrument()
     elif agent_type == "quant":
         from opentelemetry.instrumentation.starlette import StarletteInstrumentor
+
         StarletteInstrumentor().instrument()
         try:
             from openinference.instrumentation.langchain import LangChainInstrumentor
+
             LangChainInstrumentor().instrument()
         except ImportError:
             pass
@@ -124,5 +125,6 @@ def init_instrumentation(agent_type: str) -> None:
         # "sentiment" retained as a back-compat key for the renamed Market Context agent
         from openinference.instrumentation.crewai import CrewAIInstrumentor
         from opentelemetry.instrumentation.starlette import StarletteInstrumentor
+
         CrewAIInstrumentor().instrument(skip_dep_check=True)
         StarletteInstrumentor().instrument()

@@ -21,15 +21,14 @@ from contextlib import asynccontextmanager
 from enum import IntEnum
 
 from shared.settings import LLM_MAX_CONCURRENT
-from shared.logging_config import logged
 
 logger = logging.getLogger(__name__)
 
 
 class Priority(IntEnum):
     CRITICAL = 0  # answer generation — never starved
-    NORMAL = 1    # warmup, misc
-    LOW = 2       # eval scoring — yields to production
+    NORMAL = 1  # warmup, misc
+    LOW = 2  # eval scoring — yields to production
 
 
 class LLMPriorityQueue:
@@ -59,7 +58,10 @@ class LLMPriorityQueue:
             self._active += 1
             logger.debug(
                 "[llm-q] slot acquired (%s pri=%s active=%d/%d)",
-                label, priority.name, self._active, self._max,
+                label,
+                priority.name,
+                self._active,
+                self._max,
             )
             return
 
@@ -68,7 +70,9 @@ class LLMPriorityQueue:
         heapq.heappush(self._heap, (int(priority), self._seq, fut))
         logger.info(
             "[llm-q] queued (%s pri=%s waiting=%d)",
-            label, priority.name, len(self._heap),
+            label,
+            priority.name,
+            len(self._heap),
         )
 
         try:
@@ -85,13 +89,16 @@ class LLMPriorityQueue:
                 fut.set_result(None)
                 logger.debug(
                     "[llm-q] slot handed off (%s → next, queue=%d)",
-                    label, len(self._heap),
+                    label,
+                    len(self._heap),
                 )
                 return
         self._active -= 1
         logger.debug(
             "[llm-q] slot released (%s active=%d/%d)",
-            label, self._active, self._max,
+            label,
+            self._active,
+            self._max,
         )
 
     @property
