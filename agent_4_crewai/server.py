@@ -1,49 +1,19 @@
 import asyncio
-import atexit
 import logging
-import os
 import sys
 
-if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+from shared.bootstrap import bootstrap
+_settings = bootstrap("market_context")
 
-import uvicorn
-from starlette.applications import Starlette
-
-from a2a.server.request_handlers import DefaultRequestHandler
-from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
-from shared.a2a_store import SQLiteTaskStore
-from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
-
-from shared.logging_config import logged, logged_sync, setup_file_logging
-from shared.observability import init_langfuse, init_instrumentation, shutdown_langfuse
-
-setup_file_logging("market_context")
-init_langfuse(service_name="market_context_agent")
-atexit.register(shutdown_langfuse)
+from shared.observability import init_instrumentation
 init_instrumentation("market_context")
 
-from starlette.responses import JSONResponse
-from starlette.routing import Route
+from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
+from shared.agent_server import build_agent_app
 
-from shared.generic_executor import GenericAgentExecutor
 from .executor import MarketContextAgent
 
 logger = logging.getLogger(__name__)
-
-
-@logged(log_args=False, log_result=False)
-async def health(request):
-    return JSONResponse({"status": "ok", "agent": "market_context"})
-
-
-@logged()
-async def release_evals(request):
-    from shared.eval_gate import release_evals as _release
-    n = await _release()
-    return JSONResponse({"released": n})
-
-host = os.environ.get("HOST", "localhost")
 
 agent_card = AgentCard(
     name="Market Context Agent",
@@ -52,7 +22,8 @@ agent_card = AgentCard(
     capabilities=AgentCapabilities(streaming=True),
     supported_interfaces=[
         AgentInterface(
-            protocol_binding="JSONRPC", url=f"http://{host}:8004/a2a"
+            protocol_binding="JSONRPC",
+            url=f"http://{_settings.host}:{_settings.agent_port_market}/a2a",
         )
     ],
     default_input_modes=["text", "text/plain"],
@@ -81,17 +52,12 @@ agent_card = AgentCard(
     ],
 )
 
-request_handler = DefaultRequestHandler(
-    agent_executor=GenericAgentExecutor(MarketContextAgent()),
-    task_store=SQLiteTaskStore(),
+app = build_agent_app(
     agent_card=agent_card,
+    agent=MarketContextAgent(),
+    service_name="market_context",
 )
 
-routes = [Route("/health", health), Route("/release-evals", release_evals, methods=["POST"])]
-routes.extend(create_agent_card_routes(agent_card))  # A2A agent card discovery
-routes.extend(create_jsonrpc_routes(request_handler, "/a2a"))  # JSON-RPC task endpoints
-
-app = Starlette(routes=routes, debug=True)
-
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8004)
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=_settings.agent_port_market)

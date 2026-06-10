@@ -38,8 +38,6 @@ Thumbs.db
 request.json
 test_server.py
 restart_adk.ps1
-tools/
-
 # Docs
 AGENTS.md
 AGENTS.html

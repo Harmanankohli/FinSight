@@ -45,16 +45,11 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, StreamingResponse
 
 from shared.agui_sse import sse
+from shared.guardrails import is_off_topic
 
 logger = logging.getLogger(__name__)
 
 from shared.logging_config import logged, logged_sync
-
-_NON_INVESTMENT_RE = re.compile(
-    r"\b(weather|recipe|sports score|movie|song|joke|cook(?:ing)?|weather forecast|"
-    r"horoscope|gaming|video game|celebrity|fashion|travel destination)\b",
-    re.IGNORECASE,
-)
 
 _AGENT_DISPLAY_NAMES = {
     "financial rag agent": "Financial RAG Agent",
@@ -175,7 +170,7 @@ async def _auto_save_brief(
                     bj = json.loads(existing.get("brief_json", "{}"))
                     stored = bj.get("response_text", "")
                 except Exception:
-                    pass
+                    logger.debug("Could not parse brief_json", exc_info=True)
                 if len(response_text) > len(stored):
                     await tm.update_response_text(existing["id"], response_text)
                 return
@@ -237,7 +232,7 @@ async def _stream(
     ))
 
     # Off-topic guardrail
-    if _NON_INVESTMENT_RE.search(user_text):
+    if is_off_topic(user_text):
         rejection = "I'm specialized in investment research. Please ask about stocks, portfolios, or financial analysis."
         yield sse(TextMessageStartEvent(type=EventType.TEXT_MESSAGE_START, message_id=msg_id, role="assistant"))
         yield sse(TextMessageContentEvent(type=EventType.TEXT_MESSAGE_CONTENT, message_id=msg_id, delta=rejection))

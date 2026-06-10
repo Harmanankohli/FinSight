@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 
 import httpx
 from starlette.requests import Request
@@ -15,45 +16,74 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from shared.logging_config import logged
-
-from shared.memory.store import DB_PATH, get_db, write_lock
+from shared.memory.store import get_db
 
 logger = logging.getLogger(__name__)
 
-_ADK_SESSION_DB = DB_PATH.parent / "adk_sessions.db"
+_TICKER_RE = re.compile(r"^[A-Z0-9.\^-]{1,10}$")
+_ERROR_ENVELOPE = lambda code, msg, status=400: JSONResponse(  # noqa: E731
+    {"error": {"code": code, "message": msg}}, status_code=status
+)
 
 
 def _user_id(request: Request) -> str | None:
     return request.headers.get("X-FinSight-User-Id")
 
 
-# ── /api/memory/ticker/{symbol} ──────────────────────────────────────────────
+def _parse_limit(request: Request, default: int = 10, max_val: int = 100) -> int | JSONResponse:
+    raw = request.query_params.get("limit", str(default))
+    try:
+        val = int(raw)
+    except (ValueError, TypeError):
+        return _ERROR_ENVELOPE("VALIDATION_ERROR", f"'limit' must be an integer, got: {raw!r}")
+    return max(1, min(val, max_val))
+
+
+def _validate_ticker(symbol: str) -> str | JSONResponse:
+    sym = symbol.upper()
+    if not _TICKER_RE.match(sym):
+        return _ERROR_ENVELOPE(
+            "VALIDATION_ERROR",
+            f"Invalid ticker '{symbol}'. Must match ^[A-Z0-9.^-]{{1,10}}$",
+        )
+    return sym
+
+
+# ── /api/memory/ticker/{symbol} ───────────────────────────────────────────────
 
 async def memory_ticker_history(request: Request) -> JSONResponse:
-    symbol = request.path_params["symbol"].upper()
-    limit = int(request.query_params.get("limit", "10"))
+    sym = _validate_ticker(request.path_params["symbol"])
+    if isinstance(sym, JSONResponse):
+        return sym
+    limit = _parse_limit(request)
+    if isinstance(limit, JSONResponse):
+        return limit
     user_id = _user_id(request)
     from shared.memory import TickerMemory
     tm = TickerMemory()
-    history = await tm.get_history(symbol, limit=limit, user_id=user_id)
+    history = await tm.get_history(sym, limit=limit, user_id=user_id)
     return JSONResponse(history)
 
 
 async def memory_ticker_latest(request: Request) -> JSONResponse:
-    symbol = request.path_params["symbol"].upper()
+    sym = _validate_ticker(request.path_params["symbol"])
+    if isinstance(sym, JSONResponse):
+        return sym
     from shared.memory import TickerMemory
     tm = TickerMemory()
-    latest = await tm.get_latest(symbol)
+    latest = await tm.get_latest(sym)
     if not latest:
-        return JSONResponse({"error": "No briefs found"}, status_code=404)
+        return _ERROR_ENVELOPE("NOT_FOUND", f"No briefs found for {sym}", status=404)
     return JSONResponse(latest)
 
 
 async def memory_ticker_changed(request: Request) -> JSONResponse:
-    symbol = request.path_params["symbol"].upper()
+    sym = _validate_ticker(request.path_params["symbol"])
+    if isinstance(sym, JSONResponse):
+        return sym
     from shared.memory import TickerMemory
     tm = TickerMemory()
-    result = await tm.has_changed(symbol)
+    result = await tm.has_changed(sym)
     if result is None:
         return JSONResponse({"changed": False, "reason": "insufficient_history"})
     return JSONResponse(result)
@@ -62,92 +92,34 @@ async def memory_ticker_changed(request: Request) -> JSONResponse:
 # ── /api/sessions ─────────────────────────────────────────────────────────────
 
 async def sessions_list(request: Request) -> JSONResponse:
-    """List all sessions (or filtered by user_id)."""
-    import aiosqlite
+    """List sessions, optionally filtered by user_id."""
+    limit = _parse_limit(request, default=50, max_val=200)
+    if isinstance(limit, JSONResponse):
+        return limit
     user_id = _user_id(request) or request.query_params.get("user_id")
-    db = None
+    from shared.memory.session_repo import SessionRepo
     try:
-        db = await aiosqlite.connect(str(_ADK_SESSION_DB))
-        if user_id:
-            cursor = await db.execute(
-                "SELECT id, user_id, app_name, update_time FROM sessions WHERE user_id = ? ORDER BY update_time DESC LIMIT 50",
-                (user_id,),
-            )
-        else:
-            cursor = await db.execute(
-                "SELECT id, user_id, app_name, update_time FROM sessions ORDER BY update_time DESC LIMIT 50"
-            )
-        rows = await cursor.fetchall()
-        result = []
-        for row in rows:
-            sid = row[0]
-            ev_cursor = await db.execute(
-                "SELECT COUNT(*) FROM events WHERE session_id = ?", (sid,)
-            )
-            ev_count = (await ev_cursor.fetchone())[0]
-            result.append({
-                "id": sid,
-                "user_id": row[1],
-                "app_name": row[2],
-                "last_update_time": row[3],
-                "event_count": ev_count,
-            })
-        return JSONResponse(result)
-    except Exception as exc:
+        repo = SessionRepo()
+        sessions = await repo.list_sessions(user_id=user_id, limit=limit)
+        return JSONResponse(sessions)
+    except Exception:
         logger.exception("Failed to list sessions")
-        return JSONResponse({"error": str(exc)}, status_code=500)
-    finally:
-        if db is not None:
-            await db.close()
+        return _ERROR_ENVELOPE("INTERNAL", "Failed to list sessions", status=500)
 
 
 async def session_events(request: Request) -> JSONResponse:
     """Return events for a specific session."""
-    import json as _json
-    import aiosqlite
     session_id = request.path_params["id"]
-    db = None
+    from shared.memory.session_repo import SessionRepo
     try:
-        db = await aiosqlite.connect(str(_ADK_SESSION_DB))
-        cursor = await db.execute(
-            "SELECT id, user_id, timestamp, event_data FROM events WHERE session_id = ? ORDER BY timestamp",
-            (session_id,),
-        )
-        rows = await cursor.fetchall()
-        if not rows:
-            return JSONResponse({"error": "Session not found or no events"}, status_code=404)
-        events = []
-        for row in rows:
-            try:
-                data = _json.loads(row[3]) if row[3] else {}
-            except Exception:
-                data = {}
-            author = data.get("author") or data.get("role") or ""
-            content_parts = []
-            content = data.get("content", {})
-            for part in (content.get("parts") or []):
-                if isinstance(part, dict):
-                    if part.get("text"):
-                        content_parts.append({"type": "text", "text": part["text"]})
-                    elif part.get("functionCall"):
-                        fc = part["functionCall"]
-                        content_parts.append({"type": "function_call", "name": fc.get("name", ""), "args": fc.get("args", {})})
-                    elif part.get("functionResponse"):
-                        fr = part["functionResponse"]
-                        content_parts.append({"type": "function_response", "name": fr.get("name", ""), "response": str(fr.get("response", ""))[:500]})
-            events.append({
-                "id": row[0],
-                "author": author,
-                "timestamp": row[2],
-                "content": content_parts,
-            })
+        repo = SessionRepo()
+        events = await repo.get_events(session_id)
+        if events is None:
+            return _ERROR_ENVELOPE("NOT_FOUND", "Session not found or no events", status=404)
         return JSONResponse({"session_id": session_id, "events": events})
-    except Exception as exc:
+    except Exception:
         logger.exception("Failed to load session events")
-        return JSONResponse({"error": str(exc)}, status_code=500)
-    finally:
-        if db is not None:
-            await db.close()
+        return _ERROR_ENVELOPE("INTERNAL", "Failed to load session events", status=500)
 
 
 # ── /api/reports ─────────────────────────────────────────────────────────────
@@ -157,6 +129,8 @@ _REPORT_CONTENT_TYPES = {
     "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "html": "text/html",
 }
+
+_SAFE_FILENAME_RE = re.compile(r"[^A-Za-z0-9._-]")
 
 
 async def _build_report_response(
@@ -176,12 +150,13 @@ async def _build_report_response(
         except json.JSONDecodeError:
             logger.debug("Could not parse brief_json for ticker report")
 
-    safe_date = (analysis_date or "report").replace(":", "-")
+    safe_date = _SAFE_FILENAME_RE.sub("-", analysis_date or "report")
     filename = f"FinSight_{ticker}_{safe_date}.{fmt}"
 
     if fmt == "html":
-        html_str = generate_html(brief_data, ticker, recommendation or "UNKNOWN",
-                                 confidence or 0.0, analysis_date or "")
+        html_str = generate_html(
+            brief_data, ticker, recommendation or "UNKNOWN", confidence or 0.0, analysis_date or ""
+        )
         return Response(
             content=html_str,
             media_type="text/html",
@@ -189,8 +164,7 @@ async def _build_report_response(
         )
 
     generator = generate_pptx if fmt == "pptx" else generate_docx
-    buf = generator(brief_data, ticker, recommendation or "UNKNOWN",
-                    confidence or 0.0, analysis_date or "")
+    buf = generator(brief_data, ticker, recommendation or "UNKNOWN", confidence or 0.0, analysis_date or "")
 
     return Response(
         content=buf.getvalue(),
@@ -200,11 +174,11 @@ async def _build_report_response(
 
 
 async def report_by_id(request: Request) -> Response:
-    """Download PPTX or DOCX for a specific brief by its database ID."""
+    """Download PPTX, DOCX, or HTML for a specific brief by its database ID."""
     brief_id = request.path_params["brief_id"]
     fmt = request.path_params["format"].lower()
     if fmt not in _REPORT_CONTENT_TYPES:
-        return JSONResponse({"error": "format must be pptx, docx, or html"}, status_code=400)
+        return _ERROR_ENVELOPE("VALIDATION_ERROR", "format must be pptx, docx, or html")
 
     conn = await get_db()
     cursor = await conn.execute(
@@ -214,24 +188,26 @@ async def report_by_id(request: Request) -> Response:
     )
     row = await cursor.fetchone()
     if not row:
-        return JSONResponse({"error": "Brief not found"}, status_code=404)
+        return _ERROR_ENVELOPE("NOT_FOUND", "Brief not found", status=404)
 
     ticker, rec, conf, brief_json_str, analysis_date = row
     return await _build_report_response(brief_json_str, ticker, rec, conf or 0.0, analysis_date or "", fmt)
 
 
 async def report_latest(request: Request) -> Response:
-    """Download PPTX or DOCX for the most recent brief of a ticker."""
-    symbol = request.path_params["symbol"].upper()
+    """Download PPTX, DOCX, or HTML for the most recent brief of a ticker."""
+    sym = _validate_ticker(request.path_params["symbol"])
+    if isinstance(sym, JSONResponse):
+        return sym
     fmt = request.path_params["format"].lower()
     if fmt not in _REPORT_CONTENT_TYPES:
-        return JSONResponse({"error": "format must be pptx, docx, or html"}, status_code=400)
+        return _ERROR_ENVELOPE("VALIDATION_ERROR", "format must be pptx, docx, or html")
 
     from shared.memory import TickerMemory
     tm = TickerMemory()
-    latest = await tm.get_latest(symbol)
+    latest = await tm.get_latest(sym)
     if not latest:
-        return JSONResponse({"error": f"No briefs found for {symbol}"}, status_code=404)
+        return _ERROR_ENVELOPE("NOT_FOUND", f"No briefs found for {sym}", status=404)
 
     return await _build_report_response(
         latest.get("brief_json"),
@@ -258,18 +234,19 @@ async def agent_health(request: Request) -> JSONResponse:
     from agent_1_adk.agent import _client
     agents = {a["name"]: a for a in _client.list_agents()}
     if name not in agents:
-        return JSONResponse({"error": f"Unknown agent: {name}"}, status_code=404)
+        return _ERROR_ENVELOPE("NOT_FOUND", f"Unknown agent: {name}", status=404)
 
-    # The agent card URL ends with /.well-known/agent-card — strip to get base
-    entry = _client._agents.get(name)
-    if not entry:
+    base_url = _client.get_agent_base_url(name)
+    if not base_url:
         return JSONResponse({"status": "unknown"})
-    base_url = entry["url"].rstrip("/")
-    health_url = f"{base_url}/health"
+    health_url = f"{base_url.rstrip('/')}/health"
     try:
         async with httpx.AsyncClient(timeout=5.0) as http:
             resp = await http.get(health_url)
-            return JSONResponse({"status": "ok" if resp.status_code == 200 else "degraded", "detail": resp.json()})
+            return JSONResponse({
+                "status": "ok" if resp.status_code == 200 else "degraded",
+                "detail": resp.json(),
+            })
     except Exception as exc:
         return JSONResponse({"status": "unreachable", "error": str(exc)})
 

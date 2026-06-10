@@ -2,20 +2,14 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-RUN pip install --no-cache-dir \
-    langgraph \
-    langchain-core \
-    yfinance \
-    pandas \
-    numpy \
-    scipy \
-    a2a-sdk \
-    starlette \
-    uvicorn \
-    httpx
+COPY pyproject.toml .
+RUN pip install --no-cache-dir ".[quant]"
 
 COPY agent_3_langgraph/ ./agent_3_langgraph/
 COPY shared/ ./shared/
+
+RUN useradd -r -u 1001 appuser && chown -R appuser /app
+USER appuser
 
 ENV HOST="0.0.0.0"
 

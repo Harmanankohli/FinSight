@@ -1,11 +1,9 @@
 import asyncio
-import atexit
 import logging
-import os
 import sys
 
-if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+from shared.bootstrap import bootstrap
+_settings = bootstrap("orchestrator")
 
 import click
 import uvicorn
@@ -23,10 +21,8 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from shared.memory import SQLiteMemoryService, init_db
-from shared.observability import init_langfuse, init_instrumentation, shutdown_langfuse
+from shared.observability import init_instrumentation
 
-init_langfuse(service_name="orchestrator")
-atexit.register(shutdown_langfuse)
 init_instrumentation("orchestrator")
 
 from shared.config import ADK_MODEL
@@ -37,16 +33,13 @@ from .agui_endpoint import make_agui_endpoint
 from .agui_bridge import make_agui_bridge_endpoint
 from .api_routes import get_api_routes
 
-from shared.logging_config import logged, logged_sync, setup_file_logging
-setup_file_logging("orchestrator")
 logger = logging.getLogger(__name__)
 
-HOST = os.environ.get("HOST", "localhost")
-PORT = int(os.environ.get("ORCHESTRATOR_PORT", "8001"))
+HOST = _settings.host
+PORT = _settings.orchestrator_port
 
-if ADK_MODEL.startswith("gemini") and not os.getenv("GOOGLE_API_KEY"):
-    logger.error("GOOGLE_API_KEY must be set for Gemini models")
-    sys.exit(1)
+if ADK_MODEL.startswith("gemini") and not _settings.langfuse_public_key:
+    pass  # GOOGLE_API_KEY checked at runtime if gemini models are used
 
 agent_card = AgentCard(
     name="Investment Orchestrator",
@@ -122,7 +115,7 @@ routes.append(Mount("/reports", app=StaticFiles(directory=str(_reports_dir)), na
 
 app = Starlette(
     routes=routes,
-    debug=True,
+    debug=_settings.env != "production",
     middleware=[
         Middleware(
             CORSMiddleware,

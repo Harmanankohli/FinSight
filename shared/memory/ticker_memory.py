@@ -207,8 +207,9 @@ class TickerMemory:
             return None
         latest = history[0]
         previous = history[1]
-        old_val = latest.get(field)
-        new_val = previous.get(field)
+        # G11 fix: old = previous (older), new = latest (newer)
+        old_val = previous.get(field)
+        new_val = latest.get(field)
         return {
             "old": old_val,
             "new": new_val,

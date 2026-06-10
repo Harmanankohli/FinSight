@@ -10,6 +10,11 @@ def _clean_env(monkeypatch):
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-lf-test")
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-lf-test")
 
+    from shared.settings import reset_settings_for_tests
+    reset_settings_for_tests()
+    yield
+    reset_settings_for_tests()
+
 
 @pytest_asyncio.fixture
 async def memory_db(tmp_path):

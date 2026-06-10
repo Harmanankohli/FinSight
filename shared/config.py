@@ -1,133 +1,75 @@
-"""Central configuration — all env vars read at import time.
+"""Configuration shim — re-exports Settings fields as module-level constants.
 
-Defaults target local development with LM Studio (port 1234).
+This file exists for backward compatibility. Imports snapshot values at first
+import (same behaviour as before). New code should import from shared.settings.
+Removal scheduled for WP 3.5.
 """
-import os
-import sys
-from datetime import timezone, timedelta
-from pathlib import Path
+from shared.settings import get_settings, IST  # noqa: F401 — IST re-exported
 
-# Indian Standard Time (UTC+5:30) — used throughout for timestamps
-IST = timezone(timedelta(hours=5, minutes=30), name="IST")
+_s = get_settings()
 
-# Load .env from project root before any config reads
-_dotenv_path = Path(__file__).resolve().parent.parent / ".env"
-if _dotenv_path.exists():
-    try:
-        from dotenv import load_dotenv
-        load_dotenv(_dotenv_path)
-    except ImportError:
-        for line in _dotenv_path.read_text().splitlines():
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, v = line.split("=", 1)
-                os.environ.setdefault(k.strip(), v.strip().strip("\"'"))
+# ── LLM ───────────────────────────────────────────────────────────────────────
+LLM_MODEL = _s.llm_model
+LLM_BASE_URL = _s.llm_base_url
+LLM_API_KEY = _s.llm_api_key
+ADK_MODEL = _s.adk_model
+LLM_SUMMARY_MODEL = _s.llm_summary_model
+LLM_EVAL_MODEL = _s.llm_eval_model
+LLM_MAX_CONCURRENT = _s.llm_max_concurrent
 
-# Skip HuggingFace Hub network checks — models are expected to be cached locally.
-# Set HF_HUB_OFFLINE=0 in .env to re-enable update checks (e.g. to pull a new model).
-os.environ.setdefault("HF_HUB_OFFLINE", "1")
+# ── Embedding ─────────────────────────────────────────────────────────────────
+EMBED_MODEL = _s.embed_model
+RERANKER_MODEL = _s.reranker_model
 
-# Ensure stdout/stderr use UTF-8 so RAGAS log messages with Unicode characters
-# (curly quotes, em-dashes) don't trigger UnicodeEncodeError on Windows (cp1252).
-for _stream in (sys.stdout, sys.stderr):
-    try:
-        _stream.reconfigure(encoding='utf-8')
-    except Exception:
-        pass
+# ── Host ──────────────────────────────────────────────────────────────────────
+HOST = _s.host
 
-# ── LLM (LM Studio / OpenAI-compatible local) ─────────────────────────────
-LLM_MODEL = os.environ.get("LLM_MODEL", "qwen/qwen3-30b-a3b-2507")
-LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "http://localhost:1234/v1")
-LLM_API_KEY = os.environ.get("LLM_API_KEY", "lmstudio")
-ADK_MODEL = os.environ.get("ADK_MODEL", "openai/qwen/qwen3-30b-a3b-2507")
-# Optional smaller/faster model for the 3-4 sentence quant summary; falls back to LLM_MODEL
-LLM_SUMMARY_MODEL = os.environ.get("LLM_SUMMARY_MODEL", LLM_MODEL)
-# Separate eval model for RAGAS so it doesn't contend with production inference
-LLM_EVAL_MODEL = os.environ.get("LLM_EVAL_MODEL", LLM_MODEL)
-# Max concurrent LLM calls per process — priority queue throttles eval when full
-LLM_MAX_CONCURRENT = int(os.environ.get("LLM_MAX_CONCURRENT", "2"))
+# ── Agent discovery ───────────────────────────────────────────────────────────
+AGENT_SEED_URLS = _s.agent_seed_urls
 
-# ── Embedding ─────────────────────────────────────────────────────────────
-EMBED_MODEL = os.environ.get("EMBED_MODEL", "all-MiniLM-L6-v2")
-RERANKER_MODEL = os.environ.get("RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2")
+# ── MCP / A2A timeouts ────────────────────────────────────────────────────────
+MCP_TIMEOUT = _s.mcp_timeout
+MCP_MAX_RETRIES = _s.mcp_max_retries
+A2A_TIMEOUT = _s.a2a_timeout
+A2A_TIMEOUT_RAG = _s.a2a_timeout_rag
+A2A_TIMEOUT_QUANT = _s.a2a_timeout_quant
+A2A_TIMEOUT_MARKET_CONTEXT = _s.a2a_timeout_market_context
+CHROMA_DIR = _s.chroma_dir
+MCP_SERVER_URL = _s.mcp_server_url
+MCP_SERVER_PORT = _s.mcp_server_port
+AGENT_REGISTRY_URL = _s.agent_registry_url
 
-# ── Host ──────────────────────────────────────────────────────────────────
-HOST = os.environ.get("HOST", "localhost")
+# ── Langfuse ──────────────────────────────────────────────────────────────────
+# Preserve placeholder strings so downstream callers that check for "pk-lf-..."
+# continue to work until WP 3.5 removes this shim.
+LANGFUSE_PUBLIC_KEY = _s.langfuse_public_key or "pk-lf-..."
+LANGFUSE_SECRET_KEY = _s.langfuse_secret_key or "sk-lf-..."
+LANGFUSE_HOST = _s.langfuse_host
 
-# ── Agent discovery (A2A sub-agent URLs, comma-separated) ────────────────
-AGENT_SEED_URLS = os.environ.get("AGENT_SEED_URLS", "http://localhost:8002,http://localhost:8003,http://localhost:8004")
+# ── SEC EDGAR ─────────────────────────────────────────────────────────────────
+SEC_API_BASE = _s.sec_api_base
+SEC_USER_AGENT = _s.sec_user_agent
 
-# ── MCP (Model Context Protocol) ─────────────────────────────────────────
-MCP_TIMEOUT = float(os.environ.get("MCP_TIMEOUT", "30.0"))
-MCP_MAX_RETRIES = int(os.environ.get("MCP_MAX_RETRIES", "3"))
-A2A_TIMEOUT = float(os.environ.get("A2A_TIMEOUT", "680.0"))
-A2A_TIMEOUT_RAG = float(os.environ.get("A2A_TIMEOUT_RAG", "600.0"))
-A2A_TIMEOUT_QUANT = float(os.environ.get("A2A_TIMEOUT_QUANT", "600.0"))
-# Market Context Agent (formerly "Sentiment") — old var name accepted for back-compat
-A2A_TIMEOUT_MARKET_CONTEXT = float(
-    os.environ.get("A2A_TIMEOUT_MARKET_CONTEXT")
-    or os.environ.get("A2A_TIMEOUT_SENTIMENT", "600.0")
-)
-CHROMA_DIR = os.environ.get("CHROMA_DIR", "./db/chroma_db")
-MCP_SERVER_URL = os.environ.get("MCP_SERVER_URL", "http://localhost:8010/sse")
-MCP_SERVER_PORT = int(os.environ.get("MCP_SERVER_PORT", "8010"))
-AGENT_REGISTRY_URL = os.environ.get("AGENT_REGISTRY_URL", "http://localhost:8010")
+# ── Redis ─────────────────────────────────────────────────────────────────────
+REDIS_URL = _s.redis_url
 
-# ── Langfuse (observability / tracing) ───────────────────────────────────
-LANGFUSE_PUBLIC_KEY = os.environ.get("LANGFUSE_PUBLIC_KEY", "pk-lf-...")
-LANGFUSE_SECRET_KEY = os.environ.get("LANGFUSE_SECRET_KEY", "sk-lf-...")
-LANGFUSE_HOST = os.environ.get("LANGFUSE_BASE_URL") or os.environ.get("LANGFUSE_HOST", "https://cloud.langfuse.com")
-
-# ── SEC EDGAR ─────────────────────────────────────────────────────────────
-SEC_API_BASE = os.environ.get("SEC_API_BASE", "https://www.sec.gov")
-SEC_USER_AGENT = os.environ.get(
-    "SEC_USER_AGENT",
-    "FinSight Research (dev-mode-set-SEC_USER_AGENT)",
-)
-
-# ── Redis (optional — enables cross-worker MCP cache sharing) ─────────────
-# Set REDIS_URL=redis://localhost:6379/0 in .env to activate.
-# Leave unset to use the default in-process TTLCache (single-worker dev).
-REDIS_URL = os.environ.get("REDIS_URL", "")
-
-# ── Feature flags ─────────────────────────────────────────────────────────
-EVAL_ENABLED = os.environ.get("EVAL_TRACE_ENABLED", "true").lower() == "true"
-# Kill switch — set to true to bypass all runtime RAGAS scoring without restart
-EVAL_RUNTIME_DISABLED = os.environ.get("EVAL_RUNTIME_DISABLED", "false").lower() == "true"
-# Per-minute eval burst limit (per process); 0 = unlimited
-EVAL_BURST_LIMIT = int(os.environ.get("EVAL_BURST_LIMIT", "30"))
-# Per-metric deadline so a stuck ragas call can't pin the eval pool
-EVAL_METRIC_TIMEOUT = float(os.environ.get("EVAL_METRIC_TIMEOUT", "90.0"))
+# ── Feature flags ─────────────────────────────────────────────────────────────
+EVAL_ENABLED = _s.eval_trace_enabled
+EVAL_RUNTIME_DISABLED = _s.eval_runtime_disabled
+EVAL_BURST_LIMIT = _s.eval_burst_limit
+EVAL_METRIC_TIMEOUT = _s.eval_metric_timeout
 
 
-from shared.logging_config import logged_sync
-
-
-@logged_sync(log_args=False, log_result=False)
 def validate() -> None:
-    """Raise EnvironmentError if required configuration is missing or has placeholder values."""
-    issues = []
-
-    if not LLM_BASE_URL or LLM_BASE_URL == "http://localhost:1234/v1":
-        pass  # local default is acceptable for dev
-
-    if not MCP_SERVER_URL:
-        issues.append("MCP_SERVER_URL is not set")
-
+    """Deprecated: use Settings.validate_runtime() via bootstrap() instead."""
+    import logging
+    logger = logging.getLogger(__name__)
     if LANGFUSE_PUBLIC_KEY in ("pk-lf-...", "", None):
-        import logging
-        logging.getLogger(__name__).warning(
+        logger.warning(
             "LANGFUSE_PUBLIC_KEY is a placeholder — Langfuse traces will not be recorded"
         )
-
     if "dev-mode" in SEC_USER_AGENT:
-        import logging
-        logging.getLogger(__name__).warning(
+        logger.warning(
             "SEC_USER_AGENT is placeholder — SEC may rate-limit or block. "
             "Set SEC_USER_AGENT='Your Name (your-email@example.com)' in .env"
-        )
-
-    if issues:
-        raise EnvironmentError(
-            "FinSight configuration errors:\n" + "\n".join(f"  - {i}" for i in issues)
         )

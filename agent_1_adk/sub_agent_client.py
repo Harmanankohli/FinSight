@@ -159,6 +159,11 @@ class SubAgentClient:
             for name, a in self._agents.items()
         ]
 
+    def get_agent_base_url(self, name: str) -> str | None:
+        """Return the base URL for a registered agent, or None if not found."""
+        entry = self._agents.get(name)
+        return entry["url"] if entry else None
+
     def list_skills(self) -> list[dict[str, str]]:
         return [
             {

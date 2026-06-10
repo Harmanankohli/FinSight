@@ -1,13 +1,17 @@
 services:
   agent-adk:
-    build: ./agent_1_adk
+    build:
+      context: .
+      dockerfile: agent_1_adk/Dockerfile
     ports: ["8001:8001"]
+    env_file: .env
     environment:
       - AGENT_LLAMAINDEX_URL=http://agent-llamaindex:8002
       - AGENT_LANGGRAPH_URL=http://agent-langgraph:8003
       - AGENT_CREWAI_URL=http://agent-crewai:8004
       - MCP_SERVER_URL=http://finsight-mcp:8010/sse
       - SEMANTIC_CACHE_ENABLED=false
+      - FINSIGHT_DB_PATH=/data/finsight_memory.db
     volumes:
       - finsight_memory:/data
     depends_on:
@@ -20,15 +24,19 @@ services:
       finsight-mcp:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 15s
+    restart: unless-stopped
 
   agent-llamaindex:
-    build: ./agent_2_llamaindex
+    build:
+      context: .
+      dockerfile: agent_2_llamaindex/Dockerfile
     ports: ["8002:8002"]
+    env_file: .env
     environment:
       - CHROMA_DIR=/data/chroma
       - MCP_SERVER_URL=http://finsight-mcp:8010/sse
@@ -38,55 +46,69 @@ services:
       finsight-mcp:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 30s
+    restart: unless-stopped
 
   agent-langgraph:
-    build: ./agent_3_langgraph
+    build:
+      context: .
+      dockerfile: agent_3_langgraph/Dockerfile
     ports: ["8003:8003"]
+    env_file: .env
     environment:
       - MCP_SERVER_URL=http://finsight-mcp:8010/sse
     depends_on:
       finsight-mcp:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/health')"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 15s
+    restart: unless-stopped
 
   agent-crewai:
-    build: ./agent_4_crewai
+    build:
+      context: .
+      dockerfile: agent_4_crewai/Dockerfile
     ports: ["8004:8004"]
+    env_file: .env
     environment:
       - MCP_SERVER_URL=http://finsight-mcp:8010/sse
     depends_on:
       finsight-mcp:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8004/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8004/health')"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 15s
+    restart: unless-stopped
 
   finsight-mcp:
-    build: ./mcp_servers
+    build:
+      context: .
+      dockerfile: mcp_servers/Dockerfile
     ports: ["8010:8010"]
+    env_file: .env
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8010/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8010/health')"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 20s
+    restart: unless-stopped
 
   redis:
     image: redis:7-alpine
     ports: ["6379:6379"]
+    restart: unless-stopped
 
 volumes:
   chroma_data:

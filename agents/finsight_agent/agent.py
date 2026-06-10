@@ -12,6 +12,9 @@ _src = str(Path(__file__).resolve().parent.parent.parent)
 if _src not in sys.path:
     sys.path.insert(0, _src)
 
+from shared.bootstrap import bootstrap
+bootstrap("adk_web")
+
 from google.genai import types
 
 from agent_1_adk.agent import root_agent
@@ -263,7 +266,7 @@ async def _auto_save_brief(session, user_query: str, response_text: str) -> None
                 bj = _json.loads(existing.get("brief_json", "{}"))
                 stored = bj.get("response_text", "")
             except Exception:
-                pass
+                logger.debug("Could not parse brief_json for %s", ticker, exc_info=True)
             if len(response_text) > len(stored):
                 await tm.update_response_text(existing["id"], response_text)
                 logger.info("Updated brief %s with longer text (%d > %d)",
@@ -362,7 +365,7 @@ async def _persist_memory_callback(callback_context) -> None:
             from shared.observability import get_langfuse_client
             trace_id = get_langfuse_client().get_current_trace_id()
         except Exception:
-            pass
+            logger.debug("Could not get Langfuse trace_id", exc_info=True)
         asyncio.create_task(_eval_score_response(user_query, response_text, trace_id))
         asyncio.create_task(_release_sub_agent_evals())
         logger.info("Orchestrator eval scheduled (trace=%s)", trace_id)

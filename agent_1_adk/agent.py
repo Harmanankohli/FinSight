@@ -1,28 +1,16 @@
 import asyncio
 import json
 import logging
-import os
 import sys
-from datetime import date, datetime
-
-if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+from datetime import datetime
 
 from google.adk.agents import LlmAgent
 from google.adk.tools.tool_context import ToolContext
 from google.genai import types as genai_types
-from shared.config import ADK_MODEL, IST, LLM_BASE_URL
-from shared.observability import init_langfuse
+from shared.config import ADK_MODEL, IST
 from shared.logging_config import logged, logged_sync
 
-init_langfuse(service_name="orchestrator")
-
-os.environ.setdefault("OPENAI_API_BASE", LLM_BASE_URL)
-os.environ.setdefault("OPENAI_API_KEY", "lmstudio")
-
 logger = logging.getLogger(__name__)
-
-_TODAY = date.today().isoformat()
 
 from .sub_agent_client import SubAgentClient
 

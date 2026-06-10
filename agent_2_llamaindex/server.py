@@ -1,51 +1,22 @@
 import asyncio
-import atexit
 import logging
-import os
 import sys
 
-if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+from shared.bootstrap import bootstrap
+_settings = bootstrap("rag")
 
-import uvicorn
-from starlette.applications import Starlette
-
-from a2a.server.request_handlers import DefaultRequestHandler
-from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
-from shared.a2a_store import SQLiteTaskStore
-from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
-
-from shared.logging_config import logged, logged_sync, setup_file_logging
-from shared.observability import init_langfuse, init_instrumentation, shutdown_langfuse
-
-setup_file_logging("rag_agent")
-init_langfuse(service_name="rag_agent")
-atexit.register(shutdown_langfuse)
+from shared.observability import init_instrumentation
 init_instrumentation("rag")
 
-from starlette.responses import JSONResponse
-from starlette.routing import Route
+from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
+from shared.agent_server import build_agent_app
+from shared.logging_config import logged, logged_sync
 
-from shared.generic_executor import GenericAgentExecutor
 from .executor import RAGAgent
 from .hybrid_search import HybridSearchPipeline
 from .index_manager import FinancialIndexManager
 
 logger = logging.getLogger(__name__)
-
-
-@logged(log_args=False, log_result=False)
-async def health(request):
-    return JSONResponse({"status": "ok", "agent": "rag"})
-
-
-@logged()
-async def release_evals(request):
-    from shared.eval_gate import release_evals as _release
-    n = await _release()
-    return JSONResponse({"released": n})
-
-host = os.environ.get("HOST", "localhost")
 
 agent_card = AgentCard(
     name="Financial RAG Agent",
@@ -54,7 +25,8 @@ agent_card = AgentCard(
     capabilities=AgentCapabilities(streaming=True),
     supported_interfaces=[
         AgentInterface(
-            protocol_binding="JSONRPC", url=f"http://{host}:8002/a2a"
+            protocol_binding="JSONRPC",
+            url=f"http://{_settings.host}:{_settings.agent_port_rag}/a2a",
         )
     ],
     default_input_modes=["text", "text/plain"],
@@ -83,34 +55,23 @@ agent_card = AgentCard(
     ],
 )
 
-request_handler = DefaultRequestHandler(
-    agent_executor=GenericAgentExecutor(RAGAgent()),
-    task_store=SQLiteTaskStore(),
-    agent_card=agent_card,
-)
-
 _warm_index_manager: FinancialIndexManager | None = None
 _warm_hybrid: HybridSearchPipeline | None = None
 
 
 @logged_sync()
 def _do_prewarm() -> tuple[FinancialIndexManager, HybridSearchPipeline]:
-    # Heavy synchronous work — runs once in the executor at startup so the
-    # first query doesn't pay the ~3-5s cold-start cost.
     import time
 
     t0 = time.perf_counter()
-    mgr = FinancialIndexManager()  # loads HuggingFace embedding model + Chroma client
+    mgr = FinancialIndexManager()
     t_embed = time.perf_counter() - t0
 
-    # Force an encode so the embedding model's weights/tokenizer are fully loaded
     try:
         mgr.embed_model.get_text_embedding("warmup")
-    except Exception as exc:  # non-fatal — warm-up is best-effort
+    except Exception as exc:
         logger.debug("Embedding warm-up encode failed: %s", exc)
 
-    # Pre-create the three known ChromaDB collections so the first per-collection
-    # `get_or_create_collection` call doesn't block on disk I/O.
     t1 = time.perf_counter()
     for coll in ("sec_filings", "news", "earnings"):
         try:
@@ -119,11 +80,10 @@ def _do_prewarm() -> tuple[FinancialIndexManager, HybridSearchPipeline]:
             logger.debug("Collection warm-up failed for %s: %s", coll, exc)
     t_chroma = time.perf_counter() - t1
 
-    # Pre-load the CrossEncoder reranker used by the hybrid retrieval pipeline.
     t2 = time.perf_counter()
     pipe = HybridSearchPipeline()
     try:
-        _ = pipe.reranker  # triggers CrossEncoder model download/load
+        _ = pipe.reranker
     except Exception as exc:
         logger.debug("CrossEncoder warm-up failed: %s", exc)
     t_rerank = time.perf_counter() - t2
@@ -137,7 +97,6 @@ def _do_prewarm() -> tuple[FinancialIndexManager, HybridSearchPipeline]:
 
 @logged()
 async def _prewarm():
-    # Off-load to a thread executor so startup doesn't block the event loop.
     global _warm_index_manager, _warm_hybrid
     loop = asyncio.get_event_loop()
     try:
@@ -146,11 +105,13 @@ async def _prewarm():
         logger.exception("RAG warm-up failed (non-fatal — first query will pay cold-start cost)")
 
 
-routes = [Route("/health", health), Route("/release-evals", release_evals, methods=["POST"])]
-routes.extend(create_agent_card_routes(agent_card))  # A2A agent card discovery
-routes.extend(create_jsonrpc_routes(request_handler, "/a2a"))  # JSON-RPC task endpoints
-
-app = Starlette(routes=routes, on_startup=[_prewarm], debug=True)
+app = build_agent_app(
+    agent_card=agent_card,
+    agent=RAGAgent(),
+    service_name="rag",
+    on_startup=[_prewarm],
+)
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8002)
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=_settings.agent_port_rag)

@@ -2,25 +2,14 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-RUN pip install --no-cache-dir \
-    google-adk \
-    a2a-sdk \
-    starlette \
-    uvicorn \
-    httpx \
-    langfuse \
-    opentelemetry-api \
-    opentelemetry-sdk \
-    opentelemetry-instrumentation-starlette \
-    opentelemetry-instrumentation-httpx \
-    openinference-instrumentation-google-adk \
-    python-dotenv \
-    aiosqlite \
-    sentence-transformers \
-    chromadb
+COPY pyproject.toml .
+RUN pip install --no-cache-dir ".[orchestrator]"
 
 COPY agent_1_adk/ ./agent_1_adk/
 COPY shared/ ./shared/
+
+RUN useradd -r -u 1001 appuser && chown -R appuser /app
+USER appuser
 
 ENV HOST="0.0.0.0"
 

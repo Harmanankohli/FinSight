@@ -15,7 +15,11 @@ import aiosqlite
 
 logger = logging.getLogger(__name__)
 
-DB_PATH = Path(__file__).resolve().parent.parent.parent / "db" / "finsight_memory.db"
+try:
+    from shared.settings import get_settings as _get_settings
+    DB_PATH = Path(_get_settings().finsight_db_path)
+except Exception:
+    DB_PATH = Path(__file__).resolve().parent.parent.parent / "db" / "finsight_memory.db"
 
 SCHEMA_VERSION = 3
 

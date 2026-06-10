@@ -2,19 +2,16 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-RUN pip install --no-cache-dir \
-    crewai \
-    a2a-sdk \
-    starlette \
-    uvicorn \
-    httpx \
-    pyyaml
+COPY pyproject.toml .
+RUN pip install --no-cache-dir ".[market]"
 
 COPY agent_4_crewai/ ./agent_4_crewai/
 COPY shared/ ./shared/
 
+RUN useradd -r -u 1001 appuser && chown -R appuser /app
+USER appuser
+
 ENV HOST="0.0.0.0"
-ENV GROQ_API_KEY=""
 
 EXPOSE 8004
 

@@ -21,7 +21,7 @@ import os
 from shared.config import AGENT_SEED_URLS, EVAL_ENABLED
 from shared.observability import get_langfuse_client
 from shared.runtime_eval import score_response as _eval_score_response
-from shared.ticker_utils import extract_ticker
+from shared.guardrails import extract_ticker, is_off_topic
 
 from shared.logging_config import logged, logged_sync
 
@@ -42,11 +42,6 @@ def _get_semantic_cache():
             logger.warning("SemanticCache init failed: %s", exc)
     return _semantic_cache
 
-_NON_INVESTMENT_RE = re.compile(
-    r"\b(weather|recipe|sports score|movie|song|joke|cook(?:ing)?|weather forecast|"
-    r"horoscope|gaming|video game|celebrity|fashion|travel destination)\b",
-    re.IGNORECASE,
-)
 _SIGNAL_RE = re.compile(r"\b(BUY|HOLD|SELL)\b")
 
 
@@ -143,7 +138,7 @@ class FinSightAgentExecutor(AgentExecutor):
 
         # Skip LLM inference for non-investment queries — saves cost and latency
         # ── Input Guardrail: off-topic filter ────────────────────────────────
-        if _NON_INVESTMENT_RE.search(original_input):
+        if is_off_topic(original_input):
             task = context.current_task
             if not task:
                 task = new_task_from_user_message(context.message)
@@ -338,7 +333,7 @@ class FinSightAgentExecutor(AgentExecutor):
                 try:
                     sc.set(original_input, text)
                 except Exception:
-                    pass
+                    logger.debug("Semantic cache write failed", exc_info=True)
 
         await updater.update_status(
             TaskState.TASK_STATE_COMPLETED,
@@ -475,7 +470,7 @@ class FinSightAgentExecutor(AgentExecutor):
                     bj = json.loads(existing.get("brief_json", "{}"))
                     stored = bj.get("response_text", "")
                 except Exception:
-                    pass
+                    logger.debug("Could not parse brief_json for %s", ticker, exc_info=True)
                 if len(response_text) > len(stored):
                     await tm.update_response_text(existing["id"], response_text)
                     logger.info("Updated existing brief %s with longer text (%d > %d)",
