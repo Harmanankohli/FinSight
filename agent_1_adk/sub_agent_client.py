@@ -15,7 +15,6 @@ from a2a.client import (
 )
 from a2a.helpers import (
     get_artifact_text,
-    get_data_parts,
     get_message_text,
     new_text_message,
 )
@@ -24,6 +23,14 @@ from a2a.types.a2a_pb2 import (
     SendMessageRequest,
     TaskState,
 )
+
+
+def _get_data_parts(parts: list) -> list:
+    """Return parts that have a protobuf struct/data payload.
+
+    Replaces ``get_data_parts`` which is not available in the installed a2a-sdk.
+    """
+    return [p for p in parts if p.HasField("data")]
 
 _TERMINAL_STATES = {
     TaskState.TASK_STATE_COMPLETED,
@@ -270,7 +277,7 @@ class SubAgentClient:
                 # 2. Artifact update — streaming result data
                 if event.HasField("artifact_update"):
                     parts = event.artifact_update.artifact.parts
-                    data_parts = get_data_parts(parts)
+                    data_parts = _get_data_parts(parts)
                     if data_parts:
                         result_text = json.dumps(data_parts[0])
                         return result_text
@@ -377,7 +384,7 @@ class SubAgentClient:
 
         # Data parts from task artifacts
         for art in task.artifacts:
-            data_parts = get_data_parts(art.parts)
+            data_parts = _get_data_parts(art.parts)
             if data_parts:
                 return json.dumps(data_parts[0])
 

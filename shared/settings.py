@@ -94,6 +94,7 @@ class Settings(BaseSettings):
     auth_refresh_ttl_seconds: int = 1_209_600
     service_auth_token: str = ""
     login_max_attempts: int = 5
+    trusted_proxies: str = ""          # comma-separated IPs; X-Forwarded-For only trusted from these
 
     # ── Sandbox ───────────────────────────────────────────────────────────
     sandbox_mode: str = "ast"

@@ -29,6 +29,7 @@
 ### WP 3.5 — Shim Removal & Cleanup
 - **`shared/config.py` removed**: All imports migrated to `shared.settings`. Last known consumers updated.
 - **`shared/report_generator.py` removed**: All imports migrated to `shared.reports`. Last known consumers updated.
+- **`ppt-generation-fix.md` removed**: All six fix markers verified applied in `shared/reports/` (WP 1.2). Doc was stale and no longer matched line numbers.
 - **ruff ratchet**: `ruff check .` clean.
 - **mypy ratchet**: `mypy shared agent_1_adk` clean.
 - **Zero DeprecationWarning**: Suite emits no deprecation warnings.

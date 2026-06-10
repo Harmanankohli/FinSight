@@ -62,15 +62,20 @@ _ERROR_ENVELOPE = lambda code, msg, status=400: JSONResponse(  # noqa: E731
 
 
 def _client_ip(request: Request) -> str:
-    """Extract client IP, respecting X-Forwarded-For from trusted proxies.
+    """Extract client IP, honoring X-Forwarded-For only from trusted proxies (EC5).
 
-    EC5: Currently no trusted proxy config — uses direct socket address.
+    If TRUSTED_PROXIES is empty, the direct socket address is always used — safe
+    default that prevents header spoofing. Set TRUSTED_PROXIES to the IP of your
+    Next.js / ingress container so per-IP lockout works correctly behind the proxy.
     """
-    forwarded = request.headers.get("X-Forwarded-For", "")
-    if forwarded:
-        # In future: check against trusted proxy list
-        return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
+    peer = request.client.host if request.client else ""
+    s = get_settings()
+    trusted = {p.strip() for p in s.trusted_proxies.split(",") if p.strip()}
+    if trusted and peer in trusted:
+        forwarded = request.headers.get("X-Forwarded-For", "")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+    return peer or "unknown"
 
 
 async def login(request: Request) -> JSONResponse:

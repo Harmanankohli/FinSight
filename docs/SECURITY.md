@@ -23,7 +23,7 @@ Tokens are validated on every request. Unauthenticated requests receive `401 Una
 - Default TTL: 15 minutes (access), 7 days (refresh)
 - Refresh at `POST /auth/refresh` — refresh token cookie is rotated on each use (old token invalidated)
 - Logout at `POST /auth/logout` — deletes refresh token from DB
-- Rate-limited lockout: 5 failed attempts → 60s cooldown (per user)
+- Rate-limited lockout: 5 failed attempts → 60s cooldown (per username+IP). IP is taken from the socket address unless the direct peer is in `TRUSTED_PROXIES`, in which case `X-Forwarded-For` is used. In Docker Compose, set `TRUSTED_PROXIES` to the Next.js container IP so per-IP lockout works correctly behind the proxy. **Known tradeoff:** username-keyed lockout allows an attacker to DoS a known username; this is accepted given the single-host deployment model.
 
 ### Service-to-Service Authentication
 
@@ -161,7 +161,7 @@ The MCP server applies rate limits to upstream data sources:
 
 ### Secrets in Environment
 
-All secrets and API keys are loaded from environment variables via `shared/config.py`. No hardcoded secrets exist in source code. The `.env.example` file contains placeholder values.
+All secrets and API keys are loaded from environment variables via `shared/settings.py`. No hardcoded secrets exist in source code. The `.env.example` file contains placeholder values.
 
 ### Service Binding
 
