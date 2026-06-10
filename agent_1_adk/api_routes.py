@@ -1,7 +1,8 @@
 """REST API routes for the Next.js frontend.
 
-All routes are read-only JSON endpoints. User identity is read from the
-X-FinSight-User-Id request header.
+All routes are read-only JSON endpoints. User identity is resolved from
+the auth principal when auth is enabled, falling back to the
+X-FinSight-User-Id request header in dev mode.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from starlette.routing import Route
 
 from shared.logging_config import logged
 from shared.memory.store import get_db
+from shared.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +29,29 @@ _ERROR_ENVELOPE = lambda code, msg, status=400: JSONResponse(  # noqa: E731
 
 
 def _user_id(request: Request) -> str | None:
+    """Resolve user ID from principal (auth mode) or X-FinSight-User-Id header (dev fallback)."""
+    s = get_settings()
+    if s.auth_enabled:
+        from shared.auth.middleware import get_principal
+        p = get_principal(request)
+        if p and p.kind == "user":
+            return p.subject
+        return None
     return request.headers.get("X-FinSight-User-Id")
+
+
+def _require_admin(request: Request) -> JSONResponse | None:
+    """Return None if allowed, or 403 JSONResponse. No-op when auth is disabled."""
+    s = get_settings()
+    if not s.auth_enabled:
+        return None
+    from shared.auth.tokens import AuthError
+    from shared.auth.middleware import require
+    try:
+        require(request, role="admin")
+        return None
+    except AuthError:
+        return _ERROR_ENVELOPE("FORBIDDEN", "Admin access required", status=403)
 
 
 def _parse_limit(request: Request, default: int = 10, max_val: int = 100) -> int | JSONResponse:
@@ -69,9 +93,10 @@ async def memory_ticker_latest(request: Request) -> JSONResponse:
     sym = _validate_ticker(request.path_params["symbol"])
     if isinstance(sym, JSONResponse):
         return sym
+    user_id = _user_id(request)
     from shared.memory import TickerMemory
     tm = TickerMemory()
-    latest = await tm.get_latest(sym)
+    latest = await tm.get_latest(sym, user_id=user_id)
     if not latest:
         return _ERROR_ENVELOPE("NOT_FOUND", f"No briefs found for {sym}", status=404)
     return JSONResponse(latest)
@@ -81,9 +106,10 @@ async def memory_ticker_changed(request: Request) -> JSONResponse:
     sym = _validate_ticker(request.path_params["symbol"])
     if isinstance(sym, JSONResponse):
         return sym
+    user_id = _user_id(request)
     from shared.memory import TickerMemory
     tm = TickerMemory()
-    result = await tm.has_changed(sym)
+    result = await tm.has_changed(sym, user_id=user_id)
     if result is None:
         return JSONResponse({"changed": False, "reason": "insufficient_history"})
     return JSONResponse(result)
@@ -110,10 +136,11 @@ async def sessions_list(request: Request) -> JSONResponse:
 async def session_events(request: Request) -> JSONResponse:
     """Return events for a specific session."""
     session_id = request.path_params["id"]
+    user_id = _user_id(request)
     from shared.memory.session_repo import SessionRepo
     try:
         repo = SessionRepo()
-        events = await repo.get_events(session_id)
+        events = await repo.get_events(session_id, user_id=user_id)
         if events is None:
             return _ERROR_ENVELOPE("NOT_FOUND", "Session not found or no events", status=404)
         return JSONResponse({"session_id": session_id, "events": events})
@@ -180,11 +207,12 @@ async def report_by_id(request: Request) -> Response:
     if fmt not in _REPORT_CONTENT_TYPES:
         return _ERROR_ENVELOPE("VALIDATION_ERROR", "format must be pptx, docx, or html")
 
+    user_id = _user_id(request)
     conn = await get_db()
     cursor = await conn.execute(
         "SELECT ticker, recommendation, confidence, brief_json, analysis_date "
-        "FROM ticker_briefs WHERE id = ?",
-        (brief_id,),
+        "FROM ticker_briefs WHERE id = ? AND (user_id = ? OR ? IS NULL)",
+        (brief_id, user_id, user_id),
     )
     row = await cursor.fetchone()
     if not row:
@@ -203,9 +231,10 @@ async def report_latest(request: Request) -> Response:
     if fmt not in _REPORT_CONTENT_TYPES:
         return _ERROR_ENVELOPE("VALIDATION_ERROR", "format must be pptx, docx, or html")
 
+    user_id = _user_id(request)
     from shared.memory import TickerMemory
     tm = TickerMemory()
-    latest = await tm.get_latest(sym)
+    latest = await tm.get_latest(sym, user_id=user_id)
     if not latest:
         return _ERROR_ENVELOPE("NOT_FOUND", f"No briefs found for {sym}", status=404)
 
@@ -223,6 +252,9 @@ async def report_latest(request: Request) -> Response:
 
 async def agents_list(request: Request) -> JSONResponse:
     """List discovered sub-agents with names, descriptions, and skills."""
+    denied = _require_admin(request)
+    if denied:
+        return denied
     from agent_1_adk.agent import _client
     agents = _client.list_agents()
     return JSONResponse(agents)
@@ -230,6 +262,9 @@ async def agents_list(request: Request) -> JSONResponse:
 
 async def agent_health(request: Request) -> JSONResponse:
     """Fan-out health check to a named agent's /health endpoint."""
+    denied = _require_admin(request)
+    if denied:
+        return denied
     name = request.path_params["name"]
     from agent_1_adk.agent import _client
     agents = {a["name"]: a for a in _client.list_agents()}

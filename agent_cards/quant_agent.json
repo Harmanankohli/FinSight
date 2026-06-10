@@ -61,5 +61,19 @@
                 "Has AAPL been consistently beating earnings estimates?"
             ]
         }
+    ],
+    "securitySchemes": {
+        "bearerAuth": {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "JWT"
+        }
+    },
+    "securityRequirements": [
+        {
+            "bearerAuth": [
+                "service"
+            ]
+        }
     ]
 }

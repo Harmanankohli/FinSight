@@ -100,6 +100,7 @@ app = build_agent_app(
     agent=QuantAgent(),
     service_name="quant",
     on_startup=[_prewarm_llm],
+    accept=frozenset({"service"}),
 )
 
 if __name__ == "__main__":

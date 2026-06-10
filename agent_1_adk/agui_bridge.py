@@ -75,13 +75,13 @@ def _extract_user_text(payload: RunAgentInput) -> str:
     return ""
 
 
-async def _get_today_cached_text(ticker: str) -> str | None:
+async def _get_today_cached_text(ticker: str, *, user_id: str | None = None) -> str | None:
     from datetime import datetime
     from shared.config import IST
     from shared.memory import TickerMemory
 
     tm = TickerMemory()
-    latest = await tm.get_latest(ticker, user_id=None)
+    latest = await tm.get_latest(ticker, user_id=user_id)
     if not latest:
         return None
     analysis_date = latest.get("analysis_date") or latest["created_at"][:10]
@@ -113,9 +113,9 @@ async def _build_memory_context(user_input: str, user_id: str) -> str:
 
     if ticker:
         tm = TickerMemory()
-        latest = await tm.get_latest(ticker, user_id=None)
+        latest = await tm.get_latest(ticker, user_id=user_id)
         if latest:
-            context = await tm.format_context(ticker, max_tokens=300)
+            context = await tm.format_context(ticker, max_tokens=300, user_id=user_id)
             if context:
                 analysis_date = latest.get("analysis_date")
                 if not analysis_date:
@@ -161,7 +161,7 @@ async def _auto_save_brief(
             return
 
         tm = TickerMemory()
-        existing = await tm.get_latest(ticker, user_id=None)
+        existing = await tm.get_latest(ticker, user_id=user_id)
         if existing:
             ad = existing.get("analysis_date") or existing["created_at"][:10]
             if ad == datetime.now(IST).date().isoformat():
@@ -244,7 +244,7 @@ async def _stream(
     from shared.ticker_utils import extract_ticker
     ticker_hint = extract_ticker(user_text) or "unknown"
     if ticker_hint != "unknown":
-        cached = await _get_today_cached_text(ticker_hint)
+        cached = await _get_today_cached_text(ticker_hint, user_id=user_id)
         if cached:
             yield sse(TextMessageStartEvent(type=EventType.TEXT_MESSAGE_START, message_id=msg_id, role="assistant"))
             chunk_size = 500

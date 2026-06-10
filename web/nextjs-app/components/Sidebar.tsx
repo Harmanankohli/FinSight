@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { getRecentQueries, RecentQuery } from "@/lib/recentQueries";
+import { useAuth } from "@/contexts/AuthContext";
 
 const NAV = [
   { href: "/", label: "Overview", icon: "M3 9.5 12 3l9 6.5V21H3z" },
@@ -19,6 +20,7 @@ interface LfTrace {
 
 export function Sidebar() {
   const pathname = usePathname();
+  const { user, logout } = useAuth();
   const [recent, setRecent] = useState<RecentQuery[]>([]);
   const [traces, setTraces] = useState<LfTrace[]>([]);
 
@@ -101,7 +103,15 @@ export function Sidebar() {
       )}
 
       <div className="sb-foot">
-        <span className="dot-live"></span> 5 services · AG-UI
+        {user && (
+          <>
+            <span style={{ fontSize: 12, fontWeight: 600, color: "var(--clay-deep)" }}>{user.username}</span>
+            <span style={{ flex: 1 }} />
+            <button onClick={logout} className="sb-logout" title="Sign out">↩</button>
+          </>
+        )}
+        {!user && <span className="dot-live"></span>}
+        <span style={{ marginLeft: user ? 6 : 0, fontSize: 10, color: "var(--text-muted)" }}>5 services · AG-UI</span>
       </div>
     </aside>
   );

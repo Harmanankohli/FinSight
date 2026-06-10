@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 current_trace_id: contextvars.ContextVar[str | None] = contextvars.ContextVar("trace_id", default=None)
 current_session_id: contextvars.ContextVar[str | None] = contextvars.ContextVar("session_id", default=None)
+current_user_id: contextvars.ContextVar[str | None] = contextvars.ContextVar("user_id", default=None)
 
 # Sentinel separator: a marker between the JSON prefix and the real task text.
 # Using a triple-angled delimiter + newline makes accidental collisions with
@@ -22,21 +23,27 @@ current_session_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 _SEPARATOR = "\n<<<TASK>>>\n"
 
 
-def inject_trace_context(task_text: str, trace_id: str, parent_span_id: str) -> str:
+def inject_trace_context(task_text: str, trace_id: str, parent_span_id: str, user_id: str | None = None) -> str:
     """Prepend a JSON trace envelope to *task_text*.
 
     The caller (orchestrator or parent agent) injects its current trace_id
     and parent_span_id so the downstream agent can create child spans that
     form a unified trace tree across A2A boundaries.
+
+    If *user_id* is provided, it is included in the envelope so sub-agents
+    can scope their resource access to the originating user.
     """
-    if not trace_id or not parent_span_id:
+    if not user_id and (not trace_id or not parent_span_id):
         return task_text
-    prefix = json.dumps({
-        "_trace": {
+    envelope: dict = {}
+    if trace_id and parent_span_id:
+        envelope["_trace"] = {
             "trace_id": trace_id,
             "parent_span_id": parent_span_id,
         }
-    })
+    if user_id:
+        envelope["_user"] = {"id": user_id}
+    prefix = json.dumps(envelope)
     return f"{prefix}{_SEPARATOR}{task_text}"
 
 
@@ -73,3 +80,23 @@ def extract_trace_ids(task_text: str) -> tuple[str | None, str | None, str]:
             current_trace_id.set(trace_id)
         return trace_id, parent_span_id, clean_query
     return None, None, clean_query
+
+
+def extract_user_id(task_text: str) -> str | None:
+    """Extract user_id from the trace envelope in *task_text*, if present.
+
+    Parses the JSON prefix independently of the trace context so that
+    a user_id-only envelope (without ``_trace``) is still extracted.
+    Returns the user_id string or None.
+    """
+    if _SEPARATOR not in task_text:
+        return None
+    prefix_raw, _ = task_text.split(_SEPARATOR, 1)
+    try:
+        prefix = json.loads(prefix_raw)
+        user_info = prefix.get("_user")
+        if isinstance(user_info, dict):
+            return user_info.get("id")
+    except (json.JSONDecodeError, AttributeError):
+        pass
+    return None

@@ -35,7 +35,7 @@ _TERMINAL_STATES = {
 from shared.config import AGENT_SEED_URLS, A2A_TIMEOUT, A2A_TIMEOUT_RAG, A2A_TIMEOUT_QUANT, A2A_TIMEOUT_MARKET_CONTEXT
 from shared.logging_config import logged, logged_sync
 from shared.observability import get_langfuse_client
-from shared.trace_context import inject_trace_context, current_trace_id
+from shared.trace_context import inject_trace_context, current_trace_id, current_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -49,10 +49,14 @@ class SubAgentClient:
     Uses ``A2ACardResolver`` for standard-compliant agent discovery and
     ``ClientFactory`` for creating A2A client connections, matching the
     patterns used in the official A2A samples.
+
+    *bearer_token*, if provided, is sent as an ``Authorization`` header
+    on all outbound HTTP requests to sub-agents (service auth).
     """
 
-    def __init__(self) -> None:
+    def __init__(self, bearer_token: str | None = None) -> None:
         self._agents: dict[str, dict[str, Any]] = {}
+        self._bearer_token = bearer_token
 
     # Retry with backoff: handles slow-starting agents by retrying failed URLs up to 3 times
     async def discover(self, retries: int = 3, delay: float = 5.0) -> None:
@@ -67,7 +71,10 @@ class SubAgentClient:
             if u.strip()
         ]
         pending = list(urls)
-        http = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+        http = httpx.AsyncClient(
+            timeout=httpx.Timeout(10.0),
+            headers={"Authorization": f"Bearer {self._bearer_token}"} if self._bearer_token else None,
+        )
         try:
             for attempt in range(retries):
                 if not pending:
@@ -184,7 +191,10 @@ class SubAgentClient:
         if entry.get("_client") is not None:
             return entry["_client"]
 
-        http = httpx.AsyncClient(timeout=httpx.Timeout(A2A_TIMEOUT))
+        http = httpx.AsyncClient(
+            timeout=httpx.Timeout(A2A_TIMEOUT),
+            headers={"Authorization": f"Bearer {self._bearer_token}"} if self._bearer_token else None,
+        )
         config = ClientConfig(
             streaming=True,
             httpx_client=http,
@@ -217,19 +227,20 @@ class SubAgentClient:
             )
 
         # Propagate Langfuse trace context to sub-agents for end-to-end observability
-        # --- Inject distributed trace context ---
+        # --- Inject distributed trace context + user_id ---
         lf = get_langfuse_client()
         trace_id = lf.get_current_trace_id()
         parent_span_id = lf.get_current_observation_id()
+        user_id = current_user_id.get()
         if trace_id:
             current_trace_id.set(trace_id)
-        if trace_id and parent_span_id:
-            task_str = inject_trace_context(task_str, trace_id, parent_span_id)
+        if trace_id and parent_span_id or user_id:
+            task_str = inject_trace_context(task_str, trace_id, parent_span_id, user_id=user_id)
             logger.debug(
                 "Injected trace context into task for '%s': trace=%s",
-                agent_name, trace_id[:8]
+                agent_name, trace_id[:8] if trace_id else "none"
             )
-        # ----------------------------------------
+        # ------------------------------------------------
 
         message = new_text_message(task_str, role=1)
         req = SendMessageRequest(message=message)

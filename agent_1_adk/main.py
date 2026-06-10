@@ -32,6 +32,7 @@ from .agent_executor import FinSightAgentExecutor
 from .agui_endpoint import make_agui_endpoint
 from .agui_bridge import make_agui_bridge_endpoint
 from .api_routes import get_api_routes
+from .auth_routes import get_auth_routes
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,13 @@ agent_card = AgentCard(
     ],
 )
 
+# Add bearer auth security scheme to the agent card
+_scheme = agent_card.security_schemes.get_or_create("bearerAuth")
+_scheme.http_auth_security_scheme.scheme = "bearer"
+_scheme.http_auth_security_scheme.bearer_format = "JWT"
+_req = agent_card.security_requirements.add()
+_req.schemes.get_or_create("bearerAuth")
+
 task_store = SQLiteTaskStore()
 
 # session_service: persists conversation turns; memory_service: enables semantic recall (load_memory tool)
@@ -99,19 +107,47 @@ _ALLOWED_ORIGINS = [
     "http://127.0.0.1:3000",
 ]
 
-# Three route groups: health check, AG-UI (RAGAS evaluation), and A2A protocol (sub-agent clients)
+from shared.auth.middleware import build_auth_middleware
+
+# Three route groups: health check, AG-UI (RAGAS evaluation), A2A protocol, auth, and REST API
 routes = [Route("/health", health)]
 routes.append(Route("/agentic_chat", make_agui_endpoint(runner), methods=["POST"]))
 routes.append(Route("/a2a-agui", make_agui_bridge_endpoint(runner), methods=["POST"]))
 routes.extend(create_agent_card_routes(agent_card))
 routes.extend(create_jsonrpc_routes(request_handler, "/a2a"))
 routes.extend(get_api_routes())
+routes.extend(get_auth_routes())
 
-# Serve generated reports as static files (PPTX/DOCX downloads)
+# Serve generated reports as static files (PPTX/DOCX downloads) — authenticated
 from pathlib import Path as _Path
 _reports_dir = _Path("db/reports")
 _reports_dir.mkdir(parents=True, exist_ok=True)
-routes.append(Mount("/reports", app=StaticFiles(directory=str(_reports_dir)), name="reports"))
+from starlette.responses import FileResponse
+from shared.auth.middleware import require as _require_auth
+
+_SAFE_FILENAME_RE = __import__("re", fromlist=["compile"]).compile(r"[^A-Za-z0-9._-]")
+
+
+async def _authenticated_report(request):
+    """GET /reports/{filename} — authenticated report download."""
+    try:
+        _require_auth(request, kinds=("user", "service"))
+    except Exception:
+        return JSONResponse({"error": {"code": "UNAUTHENTICATED", "message": "Authentication required"}}, status_code=401)
+    filename = request.path_params.get("filename", "")
+    if not _SAFE_FILENAME_RE.sub("", filename) == filename:
+        return JSONResponse({"error": {"code": "VALIDATION_ERROR", "message": "Invalid filename"}}, status_code=400)
+    file_path = (_reports_dir / filename).resolve()
+    try:
+        file_path.relative_to(_reports_dir.resolve())
+    except ValueError:
+        return JSONResponse({"error": {"code": "FORBIDDEN", "message": "Path traversal blocked"}}, status_code=403)
+    if not file_path.is_file():
+        return JSONResponse({"error": {"code": "NOT_FOUND", "message": "File not found"}}, status_code=404)
+    return FileResponse(str(file_path))
+
+
+routes.append(Route("/reports/{filename}", _authenticated_report, methods=["GET"]))
 
 app = Starlette(
     routes=routes,
@@ -123,8 +159,9 @@ app = Starlette(
             allow_methods=["GET", "POST", "OPTIONS"],
             allow_headers=["*"],
             expose_headers=["X-FinSight-User-Id"],
-        )
-    ],
+        ),
+    ]
+    + build_auth_middleware(_settings),
 )
 
 

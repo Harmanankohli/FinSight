@@ -45,6 +45,7 @@ async def get_shared_mcp() -> "MCPClient":
 
     Uses double-checked locking so concurrent first callers collapse into one
     connect_all() instead of each paying the SSE handshake cost.
+    Injects bearer token from settings when auth is enabled.
     """
     global _global_client
     if _global_client is not None and _global_client._connected:
@@ -52,8 +53,11 @@ async def get_shared_mcp() -> "MCPClient":
     async with _client_lock:
         if _global_client is None or not _global_client._connected:
             from shared.config import MCP_SERVER_URL, MCP_TIMEOUT
+            from shared.settings import get_settings
+            _s = get_settings()
+            _token = _s.service_auth_token if _s.auth_enabled else None
             _global_client = MCPClient(
-                configs=[MCPServerConfig(name="finsight-mcp", url=MCP_SERVER_URL)],
+                configs=[MCPServerConfig(name="finsight-mcp", url=MCP_SERVER_URL, auth=_token)],
                 timeout=MCP_TIMEOUT,
             )
             await _global_client.connect_all()
@@ -195,9 +199,12 @@ class MCPClient:
     # attempt creates a fresh transport session from scratch—stale state from
     # the prior failure is discarded.
     async def _connect_server(self, server: MCPServerConfig) -> None:
+        headers = None
+        if server.auth:
+            headers = {"Authorization": f"Bearer {server.auth}"}
         for attempt in range(self.max_retries):
             try:
-                ctx = sse_client(url=server.url)
+                ctx = sse_client(url=server.url, headers=headers)
                 streams = await ctx.__aenter__()
                 read_stream, write_stream = streams
                 session = await ClientSession(read_stream, write_stream).__aenter__()

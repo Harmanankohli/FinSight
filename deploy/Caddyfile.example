@@ -1,0 +1,70 @@
+# Caddyfile — TLS termination + reverse proxy for FinSight
+#
+# Usage:
+#   1. Replace example.com with your domain
+#   2. Ensure DNS A/AAAA records point to this host
+#   3. Run: caddy run
+#
+# Caddy auto-provisions Let's Encrypt certificates.
+# In production, restrict the request_body to a sane max (default: no limit).
+
+example.com {
+    # Frontend (Next.js)
+    handle_path /_next/* {
+        reverse_proxy localhost:3000
+    }
+
+    handle_path /auth/* {
+        reverse_proxy localhost:8080
+    }
+
+    handle_path /api/orch/* {
+        reverse_proxy localhost:8080
+    }
+
+    handle_path /research/* {
+        reverse_proxy localhost:3000
+    }
+
+    handle_path /trace/* {
+        reverse_proxy localhost:3000
+    }
+
+    handle_path /memory/* {
+        reverse_proxy localhost:3000
+    }
+
+    handle_path /operator/* {
+        reverse_proxy localhost:3000
+    }
+
+    # Reports service
+    handle_path /reports/* {
+        reverse_proxy localhost:8001
+    }
+
+    # Fallback: Next.js public assets + pages
+    handle {
+        reverse_proxy localhost:3000
+    }
+
+    # Security headers
+    header {
+        Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+
+    # Rate limit (per-IP, 30 req/s burst)
+    rate_limit {
+        zone dynamic {
+            key {remote_host}
+            events 30
+            window 1s
+        }
+    }
+
+    # Request body limit (10 MB)
+    request_body /api/* 10MB
+}

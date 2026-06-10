@@ -14,10 +14,15 @@ export const POST = async (req: NextRequest) => {
     req.headers.get("x-finsight-user-id") ||
     req.cookies.get("finsight_user_id")?.value ||
     "";
+  const token = req.cookies.get("finsight_token")?.value || "";
+
+  const headers: Record<string, string> = {};
+  if (userId) headers["X-FinSight-User-Id"] = userId;
+  if (token) headers["Authorization"] = `Bearer ${token}`;
 
   const agent = new HttpAgent({
     url: `${ORCHESTRATOR_URL}/a2a-agui`,
-    headers: userId ? { "X-FinSight-User-Id": userId } : {},
+    headers,
   });
 
   const runtime = new CopilotRuntime({

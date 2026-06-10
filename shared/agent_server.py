@@ -14,18 +14,21 @@ from a2a.types import AgentCard
 from shared.a2a_store import SQLiteTaskStore
 from shared.base_agent import BaseAgent
 from shared.bootstrap import bootstrap
+from a2a.types.a2a_pb2 import HTTPAuthSecurityScheme, SecurityRequirement, SecurityScheme
 from shared.generic_executor import GenericAgentExecutor
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 
-def build_auth_middleware(settings) -> list:  # type: ignore[type-arg]
-    """Phase-1 stub: returns empty list (auth off).
+def build_auth_middleware(settings, accept=None) -> list:  # type: ignore[type-arg]
+    """Build auth middleware list from the shared auth toolkit.
 
-    WP 2.1 replaces this with real AuthMiddleware and re-exports from here.
+    Re-exported for backward compatibility with WP 1.4 callers.
+    Delegates to shared.auth.middleware.build_auth_middleware.
     """
-    return []
+    from shared.auth.middleware import build_auth_middleware as _build
+    return _build(settings, accept=accept)
 
 
 def _health(service_name: str):
@@ -40,6 +43,18 @@ async def _release_evals(request):
     return JSONResponse({"released": n})
 
 
+def _add_security_to_card(card: AgentCard, *, accept: frozenset[str] | None = None) -> None:
+    """Add bearer auth security schemes and requirements to an AgentCard."""
+    scheme = card.security_schemes.get_or_create("bearerAuth")
+    scheme.http_auth_security_scheme.scheme = "bearer"
+    scheme.http_auth_security_scheme.bearer_format = "JWT"
+
+    req = card.security_requirements.add()
+    sl = req.schemes.get_or_create("bearerAuth")
+    if accept is not None and "service" in accept and "user" not in accept:
+        sl.values.append("service")
+
+
 def build_agent_app(
     *,
     agent_card: AgentCard,
@@ -47,14 +62,21 @@ def build_agent_app(
     service_name: str,
     on_startup: Sequence[Callable] = (),
     extra_routes: Sequence[Route] = (),
+    accept: frozenset[str] | None = None,
 ) -> Starlette:
     """Build a Starlette ASGI app for an A2A sub-agent.
 
     Includes /health, /release-evals, A2A card routes, and JSON-RPC routes.
     bootstrap() is called here if not already called by the entrypoint.
+
+    *accept* controls which principal kinds pass the auth middleware:
+    - ``None`` (default): both ``user`` and ``service``
+    - ``frozenset({"service"})``: only service tokens (sub-agents)
     """
     from shared.settings import get_settings
     settings = get_settings()
+
+    _add_security_to_card(agent_card, accept=accept)
 
     handler = DefaultRequestHandler(
         agent_executor=GenericAgentExecutor(agent),
@@ -74,5 +96,5 @@ def build_agent_app(
         routes=routes,
         on_startup=list(on_startup),
         debug=settings.env != "production",
-        middleware=build_auth_middleware(settings),
+        middleware=build_auth_middleware(settings, accept=accept),
     )

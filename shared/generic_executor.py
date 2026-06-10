@@ -2,7 +2,7 @@ import asyncio
 import logging
 
 from a2a.helpers import new_task_from_user_message, new_text_message
-from shared.trace_context import extract_trace_ids, current_trace_id, current_session_id
+from shared.trace_context import extract_trace_ids, extract_user_id, current_trace_id, current_session_id, current_user_id
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.types import (
@@ -60,6 +60,9 @@ class GenericAgentExecutor(AgentExecutor):
         trace_id_val, _, _ = extract_trace_ids(query)
         if trace_id_val:
             current_trace_id.set(trace_id_val)
+        user_id = extract_user_id(query)
+        if user_id:
+            current_user_id.set(user_id)
         if task and task.context_id:
             current_session_id.set(task.context_id)
 

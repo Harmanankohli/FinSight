@@ -6,6 +6,7 @@ New code should import from here; shim removed in WP 3.5.
 from __future__ import annotations
 
 import os
+import shutil
 from datetime import timezone, timedelta
 from typing import Optional
 
@@ -44,7 +45,7 @@ class Settings(BaseSettings):
     agent_port_rag: int = 8002
     agent_port_quant: int = 8003
     agent_port_market: int = 8004
-    mcp_host: str = "0.0.0.0"
+    mcp_host: str = "127.0.0.1"
     mcp_port: int = 8010          # env: MCP_PORT (finsight_server)
     mcp_server_port: int = 8010   # env: MCP_SERVER_PORT (clients)
     mcp_server_url: str = "http://localhost:8010/sse"
@@ -147,6 +148,10 @@ class Settings(BaseSettings):
                 problems.append("ENV=production requires AUTH_ENABLED=true")
             if "dev-mode" in self.sec_user_agent:
                 problems.append("SEC_USER_AGENT placeholder in production")
+            if self.sandbox_mode == "ast" and sys.platform == "win32":
+                problems.append("SANDBOX_MODE=ast is insecure on Windows (no resource limits); set SANDBOX_MODE=disabled or use container")
+            if self.sandbox_mode == "container" and shutil.which("docker") is None:
+                problems.append("SANDBOX_MODE=container requires Docker to be installed and running")
         if problems:
             raise EnvironmentError(
                 "FinSight config errors:\n" + "\n".join(f"  - {p}" for p in problems)

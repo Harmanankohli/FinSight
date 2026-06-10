@@ -51,5 +51,19 @@
                 "Is TSLA expensive relative to auto sector peers?"
             ]
         }
+    ],
+    "securitySchemes": {
+        "bearerAuth": {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "JWT"
+        }
+    },
+    "securityRequirements": [
+        {
+            "bearerAuth": [
+                "service"
+            ]
+        }
     ]
 }

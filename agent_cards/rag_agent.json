@@ -63,5 +63,19 @@
                 "What market events are affecting MSFT?"
             ]
         }
+    ],
+    "securitySchemes": {
+        "bearerAuth": {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "JWT"
+        }
+    },
+    "securityRequirements": [
+        {
+            "bearerAuth": [
+                "service"
+            ]
+        }
     ]
 }

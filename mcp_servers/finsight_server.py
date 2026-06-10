@@ -55,6 +55,8 @@ def get_app():
     if _starlette_app is None:
         with _app_lock:
             if _starlette_app is None:
+                from shared.auth.middleware import build_auth_middleware
+                from shared.settings import get_settings
                 from starlette.applications import Starlette
                 from starlette.routing import Route, Mount
                 from starlette.responses import JSONResponse
@@ -63,10 +65,14 @@ def get_app():
                     return JSONResponse({"status": "ok", "agent": "mcp"})
 
                 mcp_asgi = app.sse_app()
-                _starlette_app = Starlette(routes=[
-                    Route("/health", health),
-                    Mount("/", app=mcp_asgi),
-                ])
+                _mcp_settings = get_settings()
+                _starlette_app = Starlette(
+                    routes=[
+                        Route("/health", health),
+                        Mount("/", app=mcp_asgi),
+                    ],
+                    middleware=build_auth_middleware(_mcp_settings, accept=frozenset({"service"})),
+                )
     return _starlette_app
 
 

@@ -32,3 +32,21 @@ class TokenBucket:
                 deficit = 1 - self.tokens
             logger.debug("Rate limiter sleeping %.2fs (%.1f tokens available)", deficit / self.rate, self.tokens)
             await asyncio.sleep(deficit / self.rate)
+
+    async def try_acquire(self) -> bool:
+        """Non-blocking equivalent of acquire().
+
+        Returns True if a token was acquired, False if rate-limited.
+        Never sleeps.
+        """
+        async with self._lock:
+            now = time.monotonic()
+            self.tokens = min(
+                self.burst,
+                self.tokens + (now - self.last) * self.rate,
+            )
+            self.last = now
+            if self.tokens >= 1:
+                self.tokens -= 1
+                return True
+            return False

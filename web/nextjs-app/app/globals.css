@@ -223,5 +223,49 @@ code, pre, .mono { font-family: var(--mono); }
 .ev-ms { font-family: var(--mono); font-size: 10px; color: var(--text-muted); }
 .ev-args { padding: 0 10px 9px; font-family: var(--mono); font-size: 10px; color: var(--text-muted); }
 
+/* ── Sidebar extras ──────────────────────────────────────── */
+.sb-logout {
+  background: none; border: 1px solid var(--sand); border-radius: 6px;
+  width: 26px; height: 26px; display: grid; place-items: center;
+  cursor: pointer; color: var(--text-muted); font-size: 14px; line-height: 1;
+  transition: background 0.14s, color 0.14s;
+}
+.sb-logout:hover { background: var(--sand); color: var(--text-primary); }
+
+/* ── Login page ──────────────────────────────────────────── */
+.login-page {
+  height: 100vh; display: grid; place-items: center;
+  background: var(--ivory);
+}
+.login-card {
+  width: 360px; background: var(--ivory-dark); border: 1px solid var(--sand);
+  border-radius: var(--radius); padding: 40px 36px;
+  box-shadow: var(--shadow-md);
+}
+.login-logo { display: flex; align-items: center; gap: 12px; margin-bottom: 32px; }
+.login-name { font-family: var(--serif); font-weight: 700; font-size: 22px; color: var(--clay-deep); }
+.login-tag { font-size: 11px; letter-spacing: 0.04em; color: var(--text-muted); margin-top: 1px; }
+.login-error {
+  background: var(--sell-bg); color: var(--sell); border: 1px solid var(--sell);
+  border-radius: var(--radius-sm); padding: 9px 13px; font-size: 13px; margin-bottom: 16px;
+}
+.login-card label { display: block; margin-bottom: 16px; }
+.login-label { display: block; font-size: 12px; font-weight: 600; color: var(--text-secondary); margin-bottom: 5px; }
+.login-card input {
+  width: 100%; padding: 10px 13px; border: 1px solid var(--sand-deep);
+  border-radius: var(--radius-sm); font-size: 14px; font-family: var(--sans);
+  background: #fff; color: var(--text-primary); outline: none;
+  transition: border-color 0.14s;
+}
+.login-card input:focus { border-color: var(--clay); }
+.login-card input::placeholder { color: var(--text-muted); }
+.login-btn {
+  width: 100%; padding: 11px; border: none; border-radius: var(--radius-sm);
+  background: var(--clay); color: #fff; font-size: 15px; font-weight: 600;
+  cursor: pointer; transition: background 0.14s;
+}
+.login-btn:hover { background: var(--clay-deep); }
+.login-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
 /* ── CopilotKit overrides ────────────────────────────────── */
 [data-copilotkit-chat] { background: var(--ivory) !important; border: none !important; }

@@ -14,6 +14,10 @@ const nextConfig: NextConfig = {
         destination: `${ORCHESTRATOR_URL}/:path*`,
       },
       {
+        source: "/auth/:path*",
+        destination: `${ORCHESTRATOR_URL}/auth/:path*`,
+      },
+      {
         source: "/reports/:path*",
         destination: `${ORCHESTRATOR_URL}/reports/:path*`,
       },

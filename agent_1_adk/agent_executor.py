@@ -22,6 +22,7 @@ from shared.config import AGENT_SEED_URLS, EVAL_ENABLED
 from shared.observability import get_langfuse_client
 from shared.runtime_eval import score_response as _eval_score_response
 from shared.guardrails import extract_ticker, is_off_topic
+from shared.trace_context import current_user_id
 
 from shared.logging_config import logged, logged_sync
 
@@ -116,6 +117,7 @@ class FinSightAgentExecutor(AgentExecutor):
         self._task = asyncio.current_task()
         context_id = context.context_id
         user_id = _resolve_user_id(context)
+        current_user_id.set(user_id)
 
         await self.ensure_session(user_id, context_id)
 

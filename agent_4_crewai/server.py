@@ -56,6 +56,7 @@ app = build_agent_app(
     agent_card=agent_card,
     agent=MarketContextAgent(),
     service_name="market_context",
+    accept=frozenset({"service"}),
 )
 
 if __name__ == "__main__":

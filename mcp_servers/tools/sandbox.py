@@ -31,4 +31,4 @@ async def execute_python(code: str, timeout: int = 30) -> dict:
     Returns:
         dict with keys: success, stdout, stderr, result ({type, value})
     """
-    return await _run_sandbox(code, timeout)
+    return await _run_sandbox(code, timeout, principal="mcp-server")

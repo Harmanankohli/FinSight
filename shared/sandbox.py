@@ -7,17 +7,28 @@ Three-layer security model:
      memory error, or segfault cannot affect the parent server.
   3. OS-level resource limits (_sandbox_preexec, Unix only) — CPU time (25s),
      address space (512 MB), and file descriptor caps applied in the child.
+
+Mode (SANDBOX_MODE):
+  - ``ast`` (default): AST gate + subprocess + resource limits (Unix only)
+  - ``container``: Docker container with strict isolation
+  - ``disabled``: returns error immediately, code never runs
 """
 
 from __future__ import annotations
 
 import ast
+import asyncio
+import hashlib
 import json
 import logging
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
+import uuid
+
+from shared.auth.audit import log_sandbox_execution
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +71,80 @@ _RESTRICTED_ATTRS: frozenset[str] = frozenset([
     "__globals__", "__builtins__", "__code__", "__closure__",
     "__wrapped__",
 ])
+
+# ── Mode resolution ───────────────────────────────────────────────────────────
+
+
+def _get_sandbox_mode() -> str:
+    """Read SANDBOX_MODE from settings, lazily, to avoid import-time issues."""
+    from shared.settings import get_settings
+    return get_settings().sandbox_mode
+
+
+def _docker_available() -> bool:
+    """Check whether the docker CLI is on PATH."""
+    return shutil.which("docker") is not None
+
+
+async def _run_container(code: str, timeout: int = 30) -> dict:
+    """Run *code* in a Docker container with strict resource isolation.
+
+    Container spec:
+      - ``--network none`` — no network egress
+      - ``--read-only`` + ``--tmpfs /tmp:size=64m`` — limited writable scratch
+      - ``--memory 512m --cpus 1`` — resource caps
+      - ``--user 65534:65534`` — nobody:nogroup, no file ownership
+      - ``python:3.12-slim python -I -S -`` — isolated interpreter, code on stdin
+
+    If Docker is not available at runtime, falls back to ``ast`` mode with a
+    warning and re-dispatches to the AST sandbox.
+    """
+    if not _docker_available():
+        logger.warning("Docker not available for container mode — falling back to AST sandbox")
+        return await run_sandbox(code, timeout, principal="mcp-server")
+
+    tag = uuid.uuid4().hex[:12]
+    docker_cmd = [
+        "docker", "run", "--rm",
+        "--network", "none",
+        "--memory", "512m",
+        "--cpus", "1",
+        "--read-only",
+        "--tmpfs", "/tmp:size=64m",
+        "--user", "65534:65534",
+        "--label", f"finsight-sandbox={tag}",
+        "python:3.12-slim",
+        "python", "-I", "-S", "-",
+    ]
+
+    loop = asyncio.get_event_loop()
+
+    try:
+        proc = await loop.run_in_executor(
+            None,
+            lambda: subprocess.run(
+                docker_cmd,
+                input=code,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            ),
+        )
+    except subprocess.TimeoutExpired:
+        try:
+            subprocess.run(
+                f"docker kill $(docker ps -q --filter label=finsight-sandbox={tag})",
+                shell=True, capture_output=True, timeout=5,
+            )
+        except Exception:
+            logger.debug("Docker kill fallback failed (non-fatal)")
+        logger.warning("Container sandbox timed out after %ds", timeout)
+        return {"success": False, "stdout": "", "stderr": f"Timed out after {timeout}s", "result": None}
+    except Exception as exc:
+        logger.warning("Container sandbox subprocess failed: %s", exc)
+        return {"success": False, "stdout": "", "stderr": str(exc), "result": None}
+
+    return _parse_sandbox_output(proc)
 
 
 # ── Static AST safety check ───────────────────────────────────────────────────
@@ -202,13 +287,49 @@ def _sandbox_preexec() -> None:
         logger.debug("Resource limits unavailable (expected on Windows)")
 
 
-async def run_sandbox(code: str, timeout: int = 30) -> dict:
-    """Run *code* through the hardened subprocess sandbox.
+async def run_sandbox(code: str, timeout: int = 30, principal: str = "mcp-server") -> dict:
+    """Run *code* through the configured sandbox mode.
 
-    Returns ``{success, stdout, stderr, result}`` where *result* is
-    ``{type, value}`` extracted from the last ``result = ...`` assignment,
-    or ``None`` if the code set no result variable.
+    Mode is read from ``SANDBOX_MODE`` at call time:
+      - ``disabled`` — code never runs, returns error dict
+      - ``ast`` (default) — AST gate + subprocess + resource limits (Unix only)
+      - ``container`` — Docker container with strict isolation
+
+    Audit-logs every invocation with principal, sha256(code), duration, exit status.
+
+    Args:
+        code:      Python code string to execute.
+        timeout:   Wall-clock timeout in seconds (default 30).
+        principal: Principal identifier for audit logging (default ``mcp-server``).
+
+    Returns:
+        dict with keys: success, stdout, stderr, result ({type, value})
     """
+    mode = _get_sandbox_mode()
+
+    if mode == "disabled":
+        logger.info("Sandbox disabled — blocking code execution")
+        return {"success": False, "stdout": "", "stderr": "execute_python disabled by SANDBOX_MODE", "result": None}
+
+    t0 = asyncio.get_event_loop().time()
+
+    if mode == "container":
+        result = await _run_container(code, timeout)
+    else:
+        result = await _run_ast(code, timeout)
+
+    duration = asyncio.get_event_loop().time() - t0
+
+    # Audit log
+    code_sha = hashlib.sha256(code.encode()).hexdigest()
+    exit_status = 0 if result.get("success") else 1
+    log_sandbox_execution(principal, code_sha, duration, exit_status)
+
+    return result
+
+
+async def _run_ast(code: str, timeout: int = 30) -> dict:
+    """Run *code* through the AST gate + subprocess sandbox (default mode)."""
     safe, reason = _check_code_safety(code)
     if not safe:
         logger.warning("Sandbox blocked code: %s", reason)
@@ -221,7 +342,6 @@ async def run_sandbox(code: str, timeout: int = 30) -> dict:
         with os.fdopen(runner_fd, "w", encoding="utf-8") as f:
             f.write(_SANDBOX_RUNNER)
 
-        # preexec_fn only works on Unix; Windows subprocess has no setrlimit
         preexec = _sandbox_preexec if sys.platform != "win32" else None
 
         proc = subprocess.run(
@@ -232,12 +352,10 @@ async def run_sandbox(code: str, timeout: int = 30) -> dict:
             timeout=timeout,
             preexec_fn=preexec,
         )
+        return _parse_sandbox_output(proc)
     except subprocess.TimeoutExpired:
         logger.warning("Sandbox timed out after %ds", timeout)
-        return {
-            "success": False, "stdout": "",
-            "stderr": f"Timed out after {timeout}s", "result": None,
-        }
+        return {"success": False, "stdout": "", "stderr": f"Timed out after {timeout}s", "result": None}
     except Exception as exc:
         logger.warning("Sandbox subprocess failed: %s", exc)
         return {"success": False, "stdout": "", "stderr": str(exc), "result": None}
@@ -247,6 +365,9 @@ async def run_sandbox(code: str, timeout: int = 30) -> dict:
         except OSError:
             logger.debug("Could not unlink temp runner %s", runner_path)
 
+
+def _parse_sandbox_output(proc: subprocess.CompletedProcess) -> dict:
+    """Parse stdout/stderr from a sandbox subprocess into a result dict."""
     result = None
     clean_lines: list[str] = []
     for line in proc.stdout.splitlines():

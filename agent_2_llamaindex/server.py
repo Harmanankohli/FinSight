@@ -110,6 +110,7 @@ app = build_agent_app(
     agent=RAGAgent(),
     service_name="rag",
     on_startup=[_prewarm],
+    accept=frozenset({"service"}),
 )
 
 if __name__ == "__main__":

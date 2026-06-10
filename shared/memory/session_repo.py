@@ -118,9 +118,15 @@ class SessionRepo:
             for r in rows
         ]
 
-    async def get_events(self, session_id: str) -> list[dict[str, Any]] | None:
-        """Return flattened events for a session. Returns None if session not found."""
+    async def get_events(self, session_id: str, user_id: str | None = None) -> list[dict[str, Any]] | None:
+        """Return flattened events for a session. Returns None if session not found or not owned."""
         db = await _get_adk_db()
+        if user_id:
+            cursor = await db.execute(
+                "SELECT 1 FROM sessions WHERE id = ? AND user_id = ?", (session_id, user_id)
+            )
+            if not await cursor.fetchone():
+                return None
         cursor = await db.execute(
             "SELECT id, user_id, timestamp, event_data FROM events "
             "WHERE session_id = ? ORDER BY timestamp",

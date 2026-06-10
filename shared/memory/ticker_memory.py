@@ -199,10 +199,10 @@ class TickerMemory:
 
     # Compares latest two briefs on a given field (default: recommendation). Detects upgrades/downgrades across analyses.
     async def has_changed(
-        self, ticker: str, field: str = "recommendation"
+        self, ticker: str, field: str = "recommendation", *, user_id: Optional[str] = None
     ) -> Optional[dict]:
         """Compare latest vs previous brief on a field. Returns {old, new, changed}."""
-        history = await self.get_history(ticker, limit=2)
+        history = await self.get_history(ticker, limit=2, user_id=user_id)
         if len(history) < 2:
             return None
         latest = history[0]
@@ -217,13 +217,13 @@ class TickerMemory:
         }
 
     # Builds a compact ~300-token summary for prompt injection. Keeps rec, confidence, date, change delta, and truncated rationale.
-    async def format_context(self, ticker: str, max_tokens: int = 300) -> str:
+    async def format_context(self, ticker: str, max_tokens: int = 300, *, user_id: Optional[str] = None) -> str:
         """Generate a compact memory summary for prompt injection.
 
         Budget: ~300 tokens (~1200 chars). Truncates rationale,
         keeps ticker + recommendation + confidence + date + change delta.
         """
-        history = await self.get_history(ticker, limit=2)
+        history = await self.get_history(ticker, limit=2, user_id=user_id)
         if not history:
             return ""
 

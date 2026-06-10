@@ -76,16 +76,19 @@ class SemanticCache:
     # cached response if the nearest neighbour exceeds the threshold AND its
     # timestamp is within TTL. Cross-day matches are filtered out via the
     # `date` metadata so identical queries on different days don't collide.
-    def get(self, query: str) -> str | None:
+    def get(self, query: str, *, user_id: str | None = None) -> str | None:
         self._ensure_ready()
         if self._col is None or self._embedder is None:
             return None
         try:
             emb = self._embedder.encode(query).tolist()
+            _where: dict = {"date": _today_key()}
+            if user_id:
+                _where["user_id"] = user_id
             results = self._col.query(
                 query_embeddings=[emb],
                 n_results=1,
-                where={"date": _today_key()},
+                where=_where,
                 include=["metadatas", "distances"],
             )
             distances = results.get("distances", [[]])[0]
@@ -105,7 +108,7 @@ class SemanticCache:
 
     # Stores query + response embedding with today's date and a timestamp.
     # Response is truncated to 4000 chars to keep Chroma metadata size bounded.
-    def set(self, query: str, response: str) -> None:
+    def set(self, query: str, response: str, *, user_id: str | None = None) -> None:
         self._ensure_ready()
         if self._col is None or self._embedder is None:
             return
@@ -118,6 +121,7 @@ class SemanticCache:
                     "response": response[:4000],
                     "ts": str(time.time()),
                     "date": _today_key(),
+                    "user_id": user_id or "__system__",
                 }],
                 ids=[str(uuid4())],
             )
