@@ -1,0 +1,26 @@
+{
+  "final_recommendation": "BUY",
+  "recommendation_rationale": "NVDA continues to lead the AI semiconductor space with exceptional margin expansion and accelerating data center revenue. Our analysis supports a BUY rating with 12-month upside to $1,200.",
+  "disclaimer": "For informational purposes only. Not financial advice.",
+  "quant_metrics": {
+    "sharpe_ratio": 2.34,
+    "annual_volatility": 0.42,
+    "beta": 1.85,
+    "var_95_daily": -0.038,
+    "max_drawdown": -0.32,
+    "dcf_intrinsic_value": 1150.0,
+    "monte_carlo": {
+      "p10": 680.0,
+      "p50": 950.0,
+      "p90": 1350.0
+    }
+  },
+  "sentiment_intelligence": {
+    "avg_price_target": 1100.0,
+    "analyst_consensus": "Strong Buy",
+    "insider_signal": "Buying"
+  },
+  "rag_insights": {
+    "revenue_growth_yoy": 1.22
+  }
+}

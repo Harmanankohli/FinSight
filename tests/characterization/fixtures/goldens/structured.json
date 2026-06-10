@@ -1,0 +1,115 @@
+{
+  "analysis_date": "2024-01-15",
+  "company_name": "NVDA",
+  "confidence": 0.85,
+  "disclaimer": "For informational purposes only. Not financial advice.",
+  "exchange": "",
+  "executive_summary": "NVDA continues to lead the AI semiconductor space with exceptional margin expansion and accelerating data center revenue. Our analysis supports a BUY rating with 12-month upside to $1,200.",
+  "financials": [
+    [
+      "Revenue Growth",
+      "+122.0%",
+      "YoY"
+    ],
+    [
+      "Beta",
+      "1.85",
+      "vs. S&P 500"
+    ],
+    [
+      "Sharpe Ratio",
+      "2.34",
+      "Risk-Adjusted"
+    ],
+    [
+      "VaR (95%, daily)",
+      "-3.8%",
+      "Daily"
+    ]
+  ],
+  "kpi_chips": [
+    {
+      "context": "Year-over-year",
+      "label": "Revenue Growth",
+      "positive": true,
+      "value": "+122.0%"
+    },
+    {
+      "context": "Risk-adjusted return",
+      "label": "Sharpe Ratio",
+      "positive": true,
+      "value": "2.34"
+    },
+    {
+      "context": "Strong Buy",
+      "label": "Analyst Target",
+      "positive": true,
+      "value": "$1,100.00"
+    },
+    {
+      "context": "Annualized",
+      "label": "Annual Volatility",
+      "positive": false,
+      "value": "+42.0%"
+    }
+  ],
+  "opportunities": [
+    "Strong operational execution"
+  ],
+  "peer_names": [],
+  "peers": [],
+  "recommendation": "BUY",
+  "risks": [
+    "Market volatility",
+    "Regulatory changes"
+  ],
+  "scenarios": {
+    "base": "$1,100.00",
+    "bear": "$680.00",
+    "bull": "$1,350.00",
+    "dcf": "$1,150.00"
+  },
+  "scorecard": [
+    [
+      "Risk Profile",
+      "High",
+      "moderate"
+    ],
+    [
+      "Analyst Consensus",
+      "Strong Buy",
+      "bullish"
+    ],
+    [
+      "Insider Signal",
+      "Buying",
+      "strong"
+    ],
+    [
+      "Recommendation",
+      "BUY",
+      "strong"
+    ]
+  ],
+  "sections": [],
+  "sector": "",
+  "ticker": "NVDA",
+  "valuation_table": [
+    [
+      "DCF Fair Value",
+      "$1,150.00"
+    ],
+    [
+      "Analyst Price Target",
+      "$1,100.00"
+    ],
+    [
+      "Bull Case (MC p90)",
+      "$1,350.00"
+    ],
+    [
+      "Bear Case (MC p10)",
+      "$680.00"
+    ]
+  ]
+}
