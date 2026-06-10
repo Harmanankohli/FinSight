@@ -55,10 +55,11 @@ def generate_html(
     recommendation: str,
     confidence: float,
     analysis_date: str,
+    company_info: dict | None = None,
 ) -> str:
     """Generate a standalone HTML investment deck. Returns HTML string."""
     logger.info("Generating HTML report for %s", ticker)
-    deck = _extract_deck_data(brief_data, ticker, recommendation, confidence, analysis_date)
+    deck = _extract_deck_data(brief_data, ticker, recommendation, confidence, analysis_date, company_info=company_info)
     ctx = _deck_to_template_context(deck)
     template = _get_jinja_env().get_template("investment_deck.html")
     result = template.render(**ctx)

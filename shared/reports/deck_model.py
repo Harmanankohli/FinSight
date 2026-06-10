@@ -22,6 +22,22 @@ class Section:
 
 
 @dataclass
+class ExtractionCtx:
+    """Carries state through the staged extraction pipeline."""
+    data: DeckData
+    text: str
+    sections: list[Section]
+    tables: list[ParsedTable]
+    extracted_metrics: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
+class ParsedTable:
+    headers: list[str]
+    rows: list[dict[str, str]]
+
+
+@dataclass
 class DeckData:
     """Enriched report data matching the deck template slides."""
     ticker: str
@@ -47,6 +63,9 @@ class DeckData:
     # Slide 8: Risk-reward
     opportunities: list[str] = field(default_factory=list)
     risks: list[str] = field(default_factory=list)
+    # R.3: provenance flags — set True when real extraction produced items
+    risks_extracted: bool = False
+    opportunities_extracted: bool = False
     # Extra content sections (overflow)
     sections: list[Section] = field(default_factory=list)
     disclaimer: str = _DEFAULT_DISCLAIMER

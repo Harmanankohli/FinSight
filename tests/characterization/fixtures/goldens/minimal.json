@@ -11,6 +11,7 @@
     "Strong operational execution",
     "Market positioning"
   ],
+  "opportunities_extracted": false,
   "peer_names": [],
   "peers": [],
   "recommendation": "BUY",
@@ -18,6 +19,7 @@
     "Market volatility",
     "Regulatory changes"
   ],
+  "risks_extracted": false,
   "scenarios": {},
   "scorecard": [
     [

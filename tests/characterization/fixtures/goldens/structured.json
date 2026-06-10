@@ -56,6 +56,7 @@
   "opportunities": [
     "Strong operational execution"
   ],
+  "opportunities_extracted": false,
   "peer_names": [],
   "peers": [],
   "recommendation": "BUY",
@@ -63,6 +64,7 @@
     "Market volatility",
     "Regulatory changes"
   ],
+  "risks_extracted": false,
   "scenarios": {
     "base": "$1,100.00",
     "bear": "$680.00",

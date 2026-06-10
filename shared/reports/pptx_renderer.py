@@ -9,7 +9,7 @@ from types import SimpleNamespace
 logger = logging.getLogger(__name__)
 
 from shared.reports.deck_model import DeckData, Section, _DEFAULT_DISCLAIMER
-from shared.reports.extraction import _extract_deck_data, _enrich_from_markdown
+from shared.reports.extraction import _extract_deck_data, _enrich_from_markdown, fit_text
 
 # ── Colour palette — modern navy/blue (matches deck template) ────────────────
 _NAVY = "0C1425"
@@ -104,7 +104,8 @@ def _pptx_slide_thesis(deck: DeckData, h: SimpleNamespace) -> None:
     border.fill.fore_color.rgb = h.rgb(_BLUE)
     border.line.fill.background()
     h.rounded_rect(s, 0.87, thesis_top, 11.5, thesis_h, _SURFACE)
-    h.text(s, 1.2, thesis_top + 0.3, 10.8, thesis_h - 0.6, deck.executive_summary, 20, color=_TEXT, font=h.FONT)
+    fitted_text, fitted_size = fit_text(deck.executive_summary, 10.8, thesis_h - 0.6)
+    h.text(s, 1.2, thesis_top + 0.3, 10.8, thesis_h - 0.6, fitted_text, fitted_size, color=_TEXT, font=h.FONT)
     h.footer(s)
 
 
@@ -161,8 +162,27 @@ def _pptx_slide_valuation(deck: DeckData, h: SimpleNamespace) -> None:
     s = h.add_slide()
     h.slide_label(s, "VALUATION")
     h.slide_title(s, "Scenario Analysis")
+
+    # P5 dedup: determine scenario card labels from the scenarios dict
+    _scenario_card_labels = set()
+    scenario_list = []
+    if deck.scenarios.get("bull"):
+        scenario_list.append(("Bull Case", deck.scenarios["bull"], _GREEN_DARK))
+        _scenario_card_labels.add("Bull Case Target")
+    if deck.scenarios.get("base"):
+        scenario_list.append(("Base Case", deck.scenarios["base"], _BLUE))
+        _scenario_card_labels.add("Base Case")
+    if deck.scenarios.get("dcf"):
+        scenario_list.append(("DCF Fair Value", deck.scenarios["dcf"], _AMBER))
+        _scenario_card_labels.add("DCF Fair Value")
+    if deck.scenarios.get("bear"):
+        scenario_list.append(("Bear Case", deck.scenarios["bear"], _RED))
+        _scenario_card_labels.add("Bear Case Target")
+
+    # Cards preferred when ≥2 scenarios; skip those rows from valuation table
+    show_cards = len(scenario_list) >= 2
     if deck.valuation_table:
-        vtbl_rows = deck.valuation_table[:6]
+        vtbl_rows = [r for r in deck.valuation_table[:10] if not show_cards or r[0] not in _scenario_card_labels][:6]
         vtbl_shape = s.shapes.add_table(
             len(vtbl_rows) + 1, 2,
             h.Inches(0.83), h.Inches(2.4), h.Inches(5.5), h.Inches(min(4.0, 0.55 + len(vtbl_rows) * 0.52)),
@@ -198,23 +218,15 @@ def _pptx_slide_valuation(deck: DeckData, h: SimpleNamespace) -> None:
                 cell.margin_top = h.Pt(10)
                 cell.margin_bottom = h.Pt(10)
                 cell.margin_left = h.Pt(16)
-    card_x = 7.0
-    card_w = 5.5
-    card_h = 0.95
-    scenario_list = []
-    if deck.scenarios.get("bull"):
-        scenario_list.append(("Bull Case", deck.scenarios["bull"], _GREEN_DARK))
-    if deck.scenarios.get("base"):
-        scenario_list.append(("Base Case", deck.scenarios["base"], _BLUE))
-    if deck.scenarios.get("dcf"):
-        scenario_list.append(("DCF Fair Value", deck.scenarios["dcf"], _AMBER))
-    if deck.scenarios.get("bear"):
-        scenario_list.append(("Bear Case", deck.scenarios["bear"], _RED))
-    for i, (label, value, color) in enumerate(scenario_list):
-        cy = 2.4 + i * (card_h + 0.2)
-        h.rounded_rect(s, card_x, cy, card_w, card_h, _SURFACE)
-        h.text(s, card_x + 0.3, cy + 0.12, card_w - 0.6, 0.2, label.upper(), 10, color=_TEXT_LIGHT, font=h.FONT, bold=True)
-        h.text(s, card_x + 0.3, cy + 0.38, card_w - 0.6, 0.45, value, 28, bold=True, color=color, font=h.MONO)
+    if show_cards:
+        card_x = 7.0
+        card_w = 5.5
+        card_h = 0.95
+        for i, (label, value, color) in enumerate(scenario_list):
+            cy = 2.4 + i * (card_h + 0.2)
+            h.rounded_rect(s, card_x, cy, card_w, card_h, _SURFACE)
+            h.text(s, card_x + 0.3, cy + 0.12, card_w - 0.6, 0.2, label.upper(), 10, color=_TEXT_LIGHT, font=h.FONT, bold=True)
+            h.text(s, card_x + 0.3, cy + 0.38, card_w - 0.6, 0.45, value, 28, bold=True, color=color, font=h.MONO)
     h.footer(s)
 
 
@@ -420,6 +432,7 @@ def generate_pptx(
     recommendation: str,
     confidence: float,
     analysis_date: str,
+    company_info: dict | None = None,
 ) -> BytesIO:
     from pptx import Presentation
     from pptx.dml.color import RGBColor
@@ -431,7 +444,7 @@ def generate_pptx(
         return RGBColor.from_string(hex_str)
 
     logger.info("Generating PPTX report for %s", ticker)
-    deck = _extract_deck_data(brief_data, ticker, recommendation, confidence, analysis_date)
+    deck = _extract_deck_data(brief_data, ticker, recommendation, confidence, analysis_date, company_info=company_info)
     prs = Presentation()
     prs.slide_width = Inches(13.33)
     prs.slide_height = Inches(7.5)

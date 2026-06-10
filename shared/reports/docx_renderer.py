@@ -38,9 +38,10 @@ def _extract_docx_content(
     recommendation: str,
     confidence: float,
     analysis_date: str,
+    company_info: dict | None = None,
 ) -> DeckData:
     """Wrapper for DOCX — reuses the deck extractor."""
-    return _extract_deck_data(brief_data, ticker, recommendation, confidence, analysis_date)
+    return _extract_deck_data(brief_data, ticker, recommendation, confidence, analysis_date, company_info=company_info)
 
 
 def generate_docx(
@@ -49,6 +50,7 @@ def generate_docx(
     recommendation: str,
     confidence: float,
     analysis_date: str,
+    company_info: dict | None = None,
 ) -> BytesIO:
     from docx import Document
     from docx.shared import Pt, RGBColor, Inches
@@ -63,7 +65,7 @@ def generate_docx(
         return RGBColor(r, g, b)
 
     logger.info("Generating DOCX report for %s", ticker)
-    deck = _extract_docx_content(brief_data, ticker, recommendation, confidence, analysis_date)
+    deck = _extract_docx_content(brief_data, ticker, recommendation, confidence, analysis_date, company_info=company_info)
     doc = Document()
 
     for section in doc.sections:

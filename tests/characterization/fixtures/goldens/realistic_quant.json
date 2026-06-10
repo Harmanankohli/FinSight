@@ -28,31 +28,12 @@
     "Strong operational execution in new product ramps",
     "Expanding software and services attach rate via CUDA ecosystem"
   ],
+  "opportunities_extracted": true,
   "peer_names": [
-    "Current",
-    "YoY Change",
     "AMD",
     "INTC"
   ],
   "peers": [
-    {
-      "col0": "$44.1B",
-      "col1": "$44.1B",
-      "col2": "+122%",
-      "metric": "Revenue"
-    },
-    {
-      "col0": "73.8%",
-      "col1": "73.8%",
-      "col2": "+8.2pp",
-      "metric": "Gross Margin"
-    },
-    {
-      "col0": "$18.8B",
-      "col1": "$18.8B",
-      "col2": "+681%",
-      "metric": "Operating Income"
-    },
     {
       "col0": "65.2x",
       "col1": "48.3x",
@@ -79,6 +60,7 @@
     "Competitive threat from custom silicon (Google TPU, AWS Trainium)",
     "Valuation premium leaves little margin for execution missteps"
   ],
+  "risks_extracted": true,
   "scenarios": {
     "base": "$1,100.00",
     "bear": "$680.00",

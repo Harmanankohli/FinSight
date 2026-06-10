@@ -51,17 +51,17 @@ def _load_or_write_golden(name: str, actual: dict) -> dict:
 @pytest.fixture(autouse=True)
 def _no_yfinance():
     """All extraction tests run offline — block yfinance and clear in-process cache."""
-    import shared.report_generator as _rg
-    _rg._ticker_cache.clear()
+    import shared.reports.extraction as _ext
+    _ext._ticker_cache.clear()
     with patch("yfinance.Ticker", side_effect=RuntimeError("yfinance blocked in tests")):
         yield
-    _rg._ticker_cache.clear()
+    _ext._ticker_cache.clear()
 
 
 @pytest.mark.parametrize("fixture_name", FIXTURES)
 def test_extraction_golden(fixture_name: str):
     """Extract deck data from fixture and compare against stored golden."""
-    from shared.report_generator import _extract_deck_data
+    from shared.reports.extraction import _extract_deck_data
 
     brief = _load_fixture(fixture_name)
     deck = _extract_deck_data(
@@ -84,7 +84,8 @@ def test_extraction_golden(fixture_name: str):
 
 @pytest.mark.parametrize("fixture_name", FIXTURES)
 def test_extraction_always_returns_deck_data(fixture_name: str):
-    from shared.report_generator import DeckData, _extract_deck_data
+    from shared.reports.extraction import _extract_deck_data
+    from shared.reports.deck_model import DeckData
 
     brief = _load_fixture(fixture_name)
     deck = _extract_deck_data(brief, "NVDA", "BUY", 0.85, "2024-01-15")
@@ -96,7 +97,7 @@ def test_extraction_always_returns_deck_data(fixture_name: str):
 
 @pytest.mark.parametrize("fixture_name", FIXTURES)
 def test_extraction_lists_are_lists(fixture_name: str):
-    from shared.report_generator import _extract_deck_data
+    from shared.reports.extraction import _extract_deck_data
 
     brief = _load_fixture(fixture_name)
     deck = _extract_deck_data(brief, "NVDA", "BUY", 0.85, "2024-01-15")
@@ -111,16 +112,15 @@ def test_extraction_lists_are_lists(fixture_name: str):
     assert isinstance(deck.sections, list)
 
 
-def test_realistic_fixture_reproduces_p1_peer_names():
-    """P1: non-peer table columns leak into peer_names (goldens capture this bug)."""
-    from shared.report_generator import _extract_deck_data
+def test_realistic_fixture_p1_fixed():
+    """P1: non-peer table columns no longer leak into peer_names (WP R.1)."""
+    from shared.reports.extraction import _extract_deck_data
 
     brief = _load_fixture("realistic_quant")
     deck = _extract_deck_data(brief, "NVDA", "BUY", 0.85, "2024-01-15")
-    # P1 bug: financial table headers 'Current' / 'YoY Change' appear as peer names
-    # This assertion documents the broken behaviour — Phase R will fix and invert it.
     peer_names_set = set(deck.peer_names)
-    assert "Current" in peer_names_set or "YoY Change" in peer_names_set, (
-        "P1 regression: expected financial-table columns to leak into peer_names "
-        "(this test documents the existing bug; update when WP R.1 fixes it)"
-    )
+    assert "Current" not in peer_names_set, "Financial header leaked into peer_names"
+    assert "YoY Change" not in peer_names_set, "Financial header leaked into peer_names"
+    assert "AMD" in peer_names_set, "AMD should be in peer_names"
+    assert "INTC" in peer_names_set, "INTC should be in peer_names"
+    assert len(deck.peer_names) == 2, "Only AMD and INTC should be peer names"
