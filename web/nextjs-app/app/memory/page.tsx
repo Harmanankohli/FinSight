@@ -76,8 +76,29 @@ function MemoryContent() {
   };
 
   useEffect(() => {
-    if (urlTicker) { setInput(urlTicker); fetchBriefs(urlTicker); }
-    else fetchAll();
+    const ticker = urlTicker;
+    if (ticker) {
+      fetch(`/api/orch/api/memory/ticker/${ticker.toUpperCase()}`)
+        .then((r) => r.ok ? r.json() : [])
+        .then((data) => { setSearchedTicker(ticker.toUpperCase()); setBriefs(data); })
+        .catch(() => { setBriefs([]); })
+        .finally(() => setLoading(false));
+    } else {
+      const all: Brief[] = [];
+      const seen = new Set<string>();
+      Promise.all(COMMON_TICKERS.map((t) =>
+        fetch(`/api/orch/api/memory/ticker/${t}`)
+          .then((r) => r.ok ? r.json() : [])
+          .then((items: Brief[]) => { for (const b of items) if (!seen.has(b.id)) { seen.add(b.id); all.push(b); } })
+          .catch(() => {})
+      ))
+        .then(() => {
+          all.sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
+          setSearchedTicker("all");
+          setBriefs(all);
+        })
+        .finally(() => setLoading(false));
+    }
   }, [urlTicker]);
 
   const handleSubmit = (e: FormEvent) => {
@@ -89,12 +110,11 @@ function MemoryContent() {
   const toggleExpand = (id: string) => {
     setExpanded((prev) => {
       const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   };
-
-  const signalClass = (r: string) => r === "BUY" ? "buy" : r === "SELL" ? "sell" : "hold";
 
   const parseText = (b: Brief): string => {
     try {

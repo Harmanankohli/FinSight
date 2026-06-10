@@ -15,8 +15,7 @@ jobs:
       - uses: astral-sh/setup-uv@v4
         with:
           version: "latest"
-      - run: uv pip install --system --break-system-packages "ruff>=0.7.0"
-      - run: ruff check .
+      - run: uvx ruff check .
 
   type-check:
     name: Type check (mypy)
@@ -26,8 +25,9 @@ jobs:
       - uses: astral-sh/setup-uv@v4
         with:
           version: "latest"
-      - run: uv pip install --system --break-system-packages -e ".[dev]"
-      - run: mypy shared agent_1_adk
+      - run: uv venv .venv
+      - run: uv pip install -e ".[dev]"
+      - run: uv run mypy shared agent_1_adk
 
   test:
     name: Unit tests (AUTH_ENABLED=${{ matrix.auth }})
@@ -49,8 +49,9 @@ jobs:
       - uses: astral-sh/setup-uv@v4
         with:
           version: "latest"
-      - run: uv pip install --system --break-system-packages -e ".[dev]"
-      - run: pytest -m "not integration and not external and not openapi" --cov=shared --cov=agent_1_adk --cov-report=xml -q
+      - run: uv venv .venv
+      - run: uv pip install -e ".[dev]"
+      - run: uv run pytest -m "not integration and not external and not openapi" --cov=shared --cov=agent_1_adk --cov-report=xml -q
       - uses: codecov/codecov-action@v4
         if: always()
         with:
@@ -82,9 +83,10 @@ jobs:
       - uses: astral-sh/setup-uv@v4
         with:
           version: "latest"
-      - run: uv pip install --system --break-system-packages -e ".[dev]"
-      - run: python scripts/generate_openapi.py --check
-      - run: pytest -m "not integration and not external" -m openapi
+      - run: uv venv .venv
+      - run: uv pip install -e ".[dev]"
+      - run: uv run python scripts/generate_openapi.py --check
+      - run: uv run pytest -m "not integration and not external" -m openapi
 
   docker:
     name: Docker build (${{ matrix.service }})

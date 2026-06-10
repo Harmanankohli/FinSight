@@ -89,18 +89,6 @@ function TraceContent() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetch("/api/traces")
-      .then((r) => r.json())
-      .then((d) => {
-        if (d.error) { setError(d.error); setLoading(false); return; }
-        setTraces(d.traces || []);
-        setLoading(false);
-        if (urlTraceId) loadTrace(urlTraceId);
-      })
-      .catch((e) => { setError(e.message); setLoading(false); });
-  }, [urlTraceId]);
-
   const loadTrace = async (id: string) => {
     setSelectedId(id);
     setDetailLoading(true);
@@ -114,6 +102,18 @@ function TraceContent() {
     } catch (e) { setError(String(e)); setObs([]); }
     setDetailLoading(false);
   };
+
+  useEffect(() => {
+    fetch("/api/traces")
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.error) { setError(d.error); setLoading(false); return; }
+        setTraces(d.traces || []);
+        setLoading(false);
+        if (urlTraceId) loadTrace(urlTraceId);
+      })
+      .catch((e) => { setError(e.message); setLoading(false); });
+  }, [urlTraceId]);
 
   const tree = buildTree(obs);
   const flat = flattenTree(tree);

@@ -17,12 +17,11 @@ export interface TraceEntry {
   [key: string]: unknown;
 }
 
-export type TraceFilterResult = {
-  matched: boolean;
-  category: "auth_denied" | "auth_success" | "auth_lockout" | "other";
-  reason?: string;
-  user_id?: string;
-};
+type AuthCategory = "auth_denied" | "auth_success" | "auth_lockout";
+
+export type TraceFilterResult =
+  | { matched: true; category: AuthCategory; reason?: string; user_id?: string }
+  | { matched: false; category: "other" };
 
 const AUTH_DENIED_RE = /auth\.denied\s+reason=(\S+)/;
 const AUTH_LOCKOUT_RE = /(?:Account locked|Login failure)/;
@@ -82,7 +81,7 @@ export function classifyTraceEntry(entry: TraceEntry): TraceFilterResult {
  */
 export function filterAuthTraces(
   entries: TraceEntry[],
-  categories?: Array<"auth_denied" | "auth_success" | "auth_lockout">,
+  categories?: AuthCategory[],
 ): TraceEntry[] {
   return entries.filter((e) => {
     const result = classifyTraceEntry(e);
