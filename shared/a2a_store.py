@@ -17,7 +17,7 @@ from a2a.types import a2a_pb2
 from a2a.types.a2a_pb2 import Task
 from google.protobuf.json_format import MessageToJson, Parse
 
-from shared.config import IST
+from shared.settings import IST
 from shared.memory.store import DB_PATH, get_db, write_lock
 
 logger = logging.getLogger(__name__)

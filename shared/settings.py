@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import sys
 from datetime import timezone, timedelta
 from typing import Optional
 
@@ -172,3 +173,41 @@ def reset_settings_for_tests() -> None:
     """Clear the settings singleton so the next call to get_settings() re-reads env."""
     global _settings
     _settings = None
+
+
+# ── Module-level convenience constants (migrated from shared/config.py) ──
+# These snapshot at first import, matching the old behavior. New code should
+# use get_settings() for dynamic access.
+_s = get_settings()
+
+LLM_MODEL = _s.llm_model
+LLM_BASE_URL = _s.llm_base_url
+LLM_API_KEY = _s.llm_api_key
+ADK_MODEL = _s.adk_model
+LLM_SUMMARY_MODEL = _s.llm_summary_model
+LLM_EVAL_MODEL = _s.llm_eval_model
+LLM_MAX_CONCURRENT = _s.llm_max_concurrent
+EMBED_MODEL = _s.embed_model
+RERANKER_MODEL = _s.reranker_model
+HOST = _s.host
+AGENT_SEED_URLS = _s.agent_seed_urls
+MCP_TIMEOUT = _s.mcp_timeout
+MCP_MAX_RETRIES = _s.mcp_max_retries
+A2A_TIMEOUT = _s.a2a_timeout
+A2A_TIMEOUT_RAG = _s.a2a_timeout_rag
+A2A_TIMEOUT_QUANT = _s.a2a_timeout_quant
+A2A_TIMEOUT_MARKET_CONTEXT = _s.a2a_timeout_market_context
+CHROMA_DIR = _s.chroma_dir
+MCP_SERVER_URL = _s.mcp_server_url
+MCP_SERVER_PORT = _s.mcp_server_port
+AGENT_REGISTRY_URL = _s.agent_registry_url
+LANGFUSE_PUBLIC_KEY = _s.langfuse_public_key or "pk-lf-..."
+LANGFUSE_SECRET_KEY = _s.langfuse_secret_key or "sk-lf-..."
+LANGFUSE_HOST = _s.langfuse_host
+SEC_API_BASE = _s.sec_api_base
+SEC_USER_AGENT = _s.sec_user_agent
+REDIS_URL = _s.redis_url
+EVAL_ENABLED = _s.eval_trace_enabled
+EVAL_RUNTIME_DISABLED = _s.eval_runtime_disabled
+EVAL_BURST_LIMIT = _s.eval_burst_limit
+EVAL_METRIC_TIMEOUT = _s.eval_metric_timeout

@@ -77,7 +77,7 @@ def _extract_user_text(payload: RunAgentInput) -> str:
 
 async def _get_today_cached_text(ticker: str, *, user_id: str | None = None) -> str | None:
     from datetime import datetime
-    from shared.config import IST
+    from shared.settings import IST
     from shared.memory import TickerMemory
 
     tm = TickerMemory()
@@ -104,7 +104,7 @@ async def _get_today_cached_text(ticker: str, *, user_id: str | None = None) -> 
 
 async def _build_memory_context(user_input: str, user_id: str) -> str:
     from datetime import datetime
-    from shared.config import IST
+    from shared.settings import IST
     from shared.memory import PortfolioStore, TickerMemory
     from shared.ticker_utils import extract_ticker
 
@@ -151,7 +151,7 @@ async def _auto_save_brief(
 ) -> None:
     """Persist the investment brief to TickerMemory after synthesis completes."""
     from datetime import datetime
-    from shared.config import IST
+    from shared.settings import IST
     from shared.memory import PerformanceTracker, TickerMemory
     from shared.ticker_utils import extract_ticker
 

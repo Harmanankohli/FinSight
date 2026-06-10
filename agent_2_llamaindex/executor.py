@@ -7,7 +7,7 @@ from datetime import date, datetime, timezone
 from shared.base_agent import BaseAgent
 from shared.logging_config import logged, logged_sync
 from shared.mcp_client import get_shared_mcp
-from shared.config import EVAL_ENABLED
+from shared.settings import EVAL_ENABLED
 from shared.memory.store import is_filing_ingested, mark_filing_ingested
 from shared.observability import get_langfuse_client
 from shared.runtime_eval import score_rag_response as _eval_rag_response

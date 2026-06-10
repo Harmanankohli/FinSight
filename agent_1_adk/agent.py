@@ -7,7 +7,7 @@ from datetime import datetime
 from google.adk.agents import LlmAgent
 from google.adk.tools.tool_context import ToolContext
 from google.genai import types as genai_types
-from shared.config import ADK_MODEL, IST
+from shared.settings import ADK_MODEL, IST
 from shared.logging_config import logged, logged_sync
 
 logger = logging.getLogger(__name__)

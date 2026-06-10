@@ -35,7 +35,7 @@ async def test_three_dispatch_coroutines_run_concurrently():
 
 def test_timeout_map_uses_market_context_key():
     """The substring lookup matches the new agent name 'Market Context Agent'."""
-    from shared.config import A2A_TIMEOUT_MARKET_CONTEXT, A2A_TIMEOUT_RAG, A2A_TIMEOUT_QUANT, A2A_TIMEOUT
+    from shared.settings import A2A_TIMEOUT_MARKET_CONTEXT, A2A_TIMEOUT_RAG, A2A_TIMEOUT_QUANT, A2A_TIMEOUT
 
     _TIMEOUT_MAP = {
         "rag": A2A_TIMEOUT_RAG,

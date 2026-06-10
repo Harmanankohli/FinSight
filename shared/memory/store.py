@@ -234,7 +234,7 @@ async def is_filing_ingested(edgar_url: str, db_path: Path = DB_PATH) -> bool:
 async def mark_filing_ingested(edgar_url: str, ticker: str, db_path: Path = DB_PATH) -> None:
     """Record that a filing has been ingested."""
     from datetime import datetime
-    from shared.config import IST
+    from shared.settings import IST
     async with write_lock():
         conn = await get_db(db_path)
         await conn.execute(

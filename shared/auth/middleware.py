@@ -131,11 +131,13 @@ class AuthMiddleware:
         token = _parse_auth_header(auth_header)
 
         if not token:
+            logger.info("auth.denied reason=missing_header path=%s", path)
             await self._send_json(send, 401, "UNAUTHENTICATED", "Missing or malformed Authorization header")
             return
 
         # E4: reject short/empty tokens before any comparison
         if len(token) < 16:
+            logger.info("auth.denied reason=short_token path=%s len=%d", path, len(token))
             await self._send_json(send, 401, "UNAUTHENTICATED", "Invalid credentials")
             return
 
@@ -160,11 +162,13 @@ class AuthMiddleware:
 
         # Neither matched
         if "service" in self.accept and "user" not in self.accept:
-            # Service-only endpoint — 403 (wrong kind)
+            logger.info("auth.denied reason=wrong_kind path=%s expected=service", path)
             await self._send_json(send, 403, "FORBIDDEN", "Service authentication required")
         elif "user" in self.accept and "service" not in self.accept:
+            logger.info("auth.denied reason=invalid_token path=%s", path)
             await self._send_json(send, 401, "UNAUTHENTICATED", "Invalid or expired token")
         else:
+            logger.info("auth.denied reason=no_match path=%s", path)
             await self._send_json(send, 401, "UNAUTHENTICATED", "Invalid or expired token")
 
     async def _send_json(self, send: Any, status: int, code: str, message: str) -> None:

@@ -5,7 +5,7 @@ import numpy as np
 from rank_bm25 import BM25Okapi
 from sentence_transformers import CrossEncoder
 
-from shared.config import RERANKER_MODEL
+from shared.settings import RERANKER_MODEL
 from shared.logging_config import logged, logged_sync
 from llama_index.core.schema import NodeWithScore, TextNode
 

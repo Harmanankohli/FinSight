@@ -30,21 +30,27 @@ jobs:
       - run: mypy shared agent_1_adk
 
   test:
-    name: Unit tests
+    name: Unit tests (AUTH_ENABLED=${{ matrix.auth }})
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        auth: ["false", "true"]
     env:
       LLM_API_KEY: test-key
       LLM_BASE_URL: http://localhost:1234/v1
       LANGFUSE_PUBLIC_KEY: pk-lf-test
       LANGFUSE_SECRET_KEY: sk-lf-test
       REPORTS_OFFLINE: "true"
+      AUTH_ENABLED: ${{ matrix.auth }}
+      AUTH_JWT_SECRETS: ${{ matrix.auth == 'true' && 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' || '' }}
+      SERVICE_AUTH_TOKEN: ${{ matrix.auth == 'true' && 'bbbbbbbbbbbbbbbb' || '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
         with:
           version: "latest"
       - run: uv pip install --system -e ".[dev]"
-      - run: pytest -m "not integration and not external" --cov=shared --cov=agent_1_adk --cov-report=xml -q
+      - run: pytest -m "not integration and not external and not openapi" --cov=shared --cov=agent_1_adk --cov-report=xml -q
       - uses: codecov/codecov-action@v4
         if: always()
         with:
@@ -67,6 +73,18 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npx tsc --noEmit
+
+  openapi:
+    name: OpenAPI spec check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+      - run: uv pip install --system -e ".[dev]"
+      - run: python scripts/generate_openapi.py --check
+      - run: pytest -m "not integration and not external" -m openapi
 
   docker:
     name: Docker build (${{ matrix.service }})

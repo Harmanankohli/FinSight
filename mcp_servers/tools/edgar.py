@@ -13,7 +13,7 @@ import httpx
 from bs4 import BeautifulSoup
 from langfuse import observe
 
-from shared.config import SEC_USER_AGENT
+from shared.settings import SEC_USER_AGENT
 from shared.logging_config import logged
 
 from mcp_servers._app import app

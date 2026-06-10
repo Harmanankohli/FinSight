@@ -52,7 +52,7 @@ async def get_shared_mcp() -> "MCPClient":
         return _global_client
     async with _client_lock:
         if _global_client is None or not _global_client._connected:
-            from shared.config import MCP_SERVER_URL, MCP_TIMEOUT
+            from shared.settings import MCP_SERVER_URL, MCP_TIMEOUT
             from shared.settings import get_settings
             _s = get_settings()
             _token = _s.service_auth_token if _s.auth_enabled else None

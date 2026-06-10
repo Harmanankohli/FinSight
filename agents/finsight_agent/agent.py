@@ -18,7 +18,7 @@ bootstrap("adk_web")
 from google.genai import types
 
 from agent_1_adk.agent import root_agent
-from shared.config import AGENT_SEED_URLS, EVAL_ENABLED
+from shared.settings import AGENT_SEED_URLS, EVAL_ENABLED
 from shared.runtime_eval import score_response as _eval_score_response
 
 __all__ = ["root_agent"]
@@ -42,7 +42,7 @@ async def _memory_cache_callback(callback_context) -> types.Content | None:
     """Before-agent callback: short-circuit with today's cached brief if available."""
     import json
     from datetime import datetime
-    from shared.config import IST
+    from shared.settings import IST
     from shared.memory import TickerMemory
     from shared.ticker_utils import extract_ticker
 
@@ -243,7 +243,7 @@ async def _auto_save_brief(session, user_query: str, response_text: str) -> None
     then persists via TickerMemory + PerformanceTracker.
     """
     from datetime import datetime
-    from shared.config import IST
+    from shared.settings import IST
     from shared.memory import PerformanceTracker, TickerMemory
     from shared.ticker_utils import extract_ticker
 

@@ -11,7 +11,7 @@ from shared.logging_config import logged, logged_sync
 logger = logging.getLogger(__name__)
 
 from crewai import LLM as CrewLLM
-from shared.config import ADK_MODEL, LLM_BASE_URL, LLM_API_KEY
+from shared.settings import ADK_MODEL, LLM_BASE_URL, LLM_API_KEY
 
 _LLM = CrewLLM(model=ADK_MODEL, base_url=LLM_BASE_URL, api_key=LLM_API_KEY, temperature=0.3)
 

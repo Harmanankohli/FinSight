@@ -241,4 +241,18 @@ pythonpath = ["."]
 markers = [
     "integration: marks tests requiring live services (deselect with -m 'not integration')",
     "external: marks tests that make real network calls",
+    "auth: marks tests covering authentication and authorization",
+    "openapi: marks the OpenAPI spec regeneration test",
 ]
+
+[tool.coverage.report]
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "def __repr__",
+    "if __name__ == .__main__.:",
+]
+fail_under = 0  # informational; WP 3.1 sets per-package thresholds
+
+[tool.coverage.paths]
+source = ["."]
+

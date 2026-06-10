@@ -12,7 +12,7 @@ from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from shared.report_generator import generate_docx
+from shared.reports import generate_docx
 
 
 # ── Fixtures ────────────────────────────────────────────────────────────────────

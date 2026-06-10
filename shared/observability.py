@@ -4,7 +4,8 @@ import os
 from typing import Any
 
 from langfuse.span_filter import is_default_export_span
-from shared.config import LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_HOST
+from shared.settings import LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_HOST
+from shared.trace_context import current_user_id
 
 from shared.logging_config import logged_sync
 
@@ -62,6 +63,17 @@ def get_langfuse_client() -> Any:
     if not _initialized:
         return init_langfuse()
     return _langfuse_client
+
+
+def trace_with_user(observation: Any) -> Any:
+    """Tag a Langfuse observation with the current user_id from ContextVar (WP 3.3)."""
+    uid = current_user_id.get()
+    if uid and observation:
+        try:
+            observation.update(user_id=uid)
+        except Exception:
+            pass
+    return observation
 
 
 def flush_langfuse() -> None:

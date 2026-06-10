@@ -6,7 +6,7 @@ from langfuse.langchain import CallbackHandler
 
 from shared.base_agent import BaseAgent
 from shared.logging_config import logged, logged_sync
-from shared.config import EVAL_ENABLED
+from shared.settings import EVAL_ENABLED
 from shared.observability import get_langfuse_client
 from shared.runtime_eval import score_quant_response as _eval_quant_response
 from shared.runtime_eval import score_quant_deterministic

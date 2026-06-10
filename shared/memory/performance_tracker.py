@@ -12,7 +12,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-from shared.config import IST
+from shared.settings import IST
 from shared.memory.store import DB_PATH, get_db, write_lock
 
 

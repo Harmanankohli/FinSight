@@ -26,7 +26,7 @@ from google.genai import types
 from rank_bm25 import BM25Okapi
 from sentence_transformers import SentenceTransformer, util
 
-from shared.config import IST
+from shared.settings import IST
 from shared.memory.store import DB_PATH, get_db, write_lock
 
 logger = logging.getLogger(__name__)

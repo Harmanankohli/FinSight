@@ -4,6 +4,46 @@
 
 FinSight is a multi-agent investment research system where four specialized agents communicate via the **Google A2A Protocol** (Agent-to-Agent). The orchestrator (ADK `LlmAgent`) discovers sub-agents at startup via `A2ACardResolver`, delegates tasks via a single `send_message` tool, and the LLM routes to all agents in parallel (instructed via system prompt to emit all `send_message` calls in one assistant turn). Each sub-agent processes tasks internally using its own framework and tools.
 
+## Trust Boundaries (Auth)
+
+Phase 2 introduced three trust boundaries between components. All default to open (`AUTH_ENABLED=false`); when enabled, each boundary requires specific credential types:
+
+```
+                           AUTH_ENABLED=true
+┌──────────────────────────────────────────────────────────────────┐
+│                        Boundary A (User→Frontend→Orchestrator)    │
+│  Browser ──https──→ Next proxy ──Bearer JWT──→ Starlette app      │
+│  /login  → refresh cookie  │  /api/* → access_token in header     │
+│  Public: /health, /.well-known/, /auth/login|refresh|logout       │
+│  AuthMiddleware(accept={"user","service"}) on all /api/* paths    │
+└──────────────────────────────────────────────────────────────────┘
+                         │
+                         │ A2A JSON-RPC (Boundary B)
+                         │ Service bearer token in Authorization header
+                         ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                     Boundary B (Orchestrator↔Sub-Agents)          │
+│  Orchestrator ──A2A /a2a──→ Sub-agent (RAG/Quant/Market)         │
+│  Service token in client default headers                          │
+│  AuthMiddleware(accept={"service"}) on /a2a, /release-evals       │
+│  User context propagated via A2A message metadata (_user envelope)│
+└──────────────────────────────────────────────────────────────────┘
+                         │
+                         │ MCP SSE (Boundary C)
+                         │ Service bearer token in SSE headers
+                         ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                     Boundary C (Agents↔MCP Server)                │
+│  Sub-agents ──SSE──→ MCP Server (finsight-mcp)                   │
+│  MCPServerConfig.headers injects bearer token                     │
+│  AuthMiddleware(accept={"service"}) on SSE Mount                  │
+│  Public: /health (compose healthchecks)                           │
+└──────────────────────────────────────────────────────────────────┘
+
+When AUTH_ENABLED=false (default): all boundaries are open, X-FinSight-User-Id
+header used as dev convention for user identity (no verification).
+```
+
 ## Communication Pattern
 
 ```

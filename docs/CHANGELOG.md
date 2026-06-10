@@ -1,5 +1,38 @@
 # Changelog
 
+## v2.0 — Phase 3: Quality, Observability, Docs & Shim Removal
+
+### WP 3.1 — Auth Contract Tests & CI Matrix
+- **Auth matrix CI**: `AUTH_ENABLED={false,true}` matrix in CI; tests run twice (auth on/off).
+- **Auth marker**: `pytest -m auth` for auth-related tests; `pytest -m openapi` for spec tests.
+- **Contract tests**: `test_auth_contract.py` — parametrized auth × route matrix: every REST route × {auth on/off} × {none, user, service, admin}. Covers public paths, protected routes, admin gating.
+- **A2A protocol test**: `test_a2a_protocol.py` — in-process `GenericAgentExecutor` lifecycle: WORKING→artifact→COMPLETED, FAILED, CANCELED, INPUT_REQUIRED, structured data artifacts.
+- **Coverage gates**: `test-auth` Makefile target; coverage config in pyproject.toml.
+
+### WP 3.2 — FastAPI Sub-App & OpenAPI Spec
+- **Response models**: Extended `shared/models.py` with `HealthResponse`, `ErrorResponse`, `MemoryTickerItem`, `MemoryTickerChangedResponse`, `SessionListItem`, `SessionEventsResponse`, `AgentListItem`, `AgentHealthResponse`, `LoginRequest`, `LoginResponse`, `TokenResponse`, `MeResponse`, `LogoutResponse`, `UserInfo`.
+- **FastAPI spec app**: `agent_1_adk/api_fastapi.py` — FastAPI app shadowing all REST + auth routes with response models, tags, and summaries. Used exclusively for OpenAPI spec generation.
+- **OpenAPI spec generated**: `docs/openapi.json` — 13 paths, 16 schemas, auto-generated.
+- **Spec regeneration script**: `scripts/generate_openapi.py` — `python scripts/generate_openapi.py` writes spec; `--check` verifies it's current.
+- **CI enforcement**: `openapi` job checks spec is up to date.
+
+### WP 3.3 — Langfuse User Context & Trace Filter
+- **User_id propagation**: `trace_with_user()` helper in `shared/observability.py` tags Langfuse observations with `current_user_id` from ContextVar.
+- **Auth denied logging**: Structured `auth.denied reason=... path=...` log lines in `AuthMiddleware` for missing header, short token, wrong kind, and invalid token.
+- **Trace filter**: `web/nextjs-app/lib/traceFilter.ts` — heuristics classifying trace entries by auth category (`auth_denied`, `auth_success`, `auth_lockout`). `filterAuthTraces()`, `countAuthDeniedByReason()`, `countAuthDeniedByUser()` utilities.
+
+### WP 3.4 — Documentation Updates
+- **CHANGELOG**: Phase 3 entries added.
+- **ARCHITECTURE.md**: Trust-boundary diagram for A/B/C auth boundaries.
+- **CI docs**: OpenAPI spec check job documented.
+
+### WP 3.5 — Shim Removal & Cleanup
+- **`shared/config.py` removed**: All imports migrated to `shared.settings`. Last known consumers updated.
+- **`shared/report_generator.py` removed**: All imports migrated to `shared.reports`. Last known consumers updated.
+- **ruff ratchet**: `ruff check .` clean.
+- **mypy ratchet**: `mypy shared agent_1_adk` clean.
+- **Zero DeprecationWarning**: Suite emits no deprecation warnings.
+
 ## v1.40 — Report Extraction Hardening, Logging Overhaul, Agent Instruction Fixes
 
 ### Report Generator — Extraction Hardening (cf285b8)

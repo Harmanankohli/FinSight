@@ -18,7 +18,7 @@ from langfuse import propagate_attributes
 
 import os
 
-from shared.config import AGENT_SEED_URLS, EVAL_ENABLED
+from shared.settings import AGENT_SEED_URLS, EVAL_ENABLED
 from shared.observability import get_langfuse_client
 from shared.runtime_eval import score_response as _eval_score_response
 from shared.guardrails import extract_ticker, is_off_topic
@@ -77,7 +77,7 @@ class FinSightAgentExecutor(AgentExecutor):
         """Return today's cached analysis text, or None if not available."""
         import json
         from datetime import datetime
-        from shared.config import IST
+        from shared.settings import IST
         from shared.memory import TickerMemory
 
         tm = TickerMemory()
@@ -415,7 +415,7 @@ class FinSightAgentExecutor(AgentExecutor):
     async def _build_memory_context(self, user_input: str, user_id: str) -> str:
         """Build compact memory context for prompt injection."""
         from datetime import datetime
-        from shared.config import IST
+        from shared.settings import IST
         from shared.memory import PortfolioStore, TickerMemory
         from shared.ticker_utils import extract_ticker
 
@@ -455,7 +455,7 @@ class FinSightAgentExecutor(AgentExecutor):
     ) -> None:
         """Parse response and store brief + portfolio + performance record."""
         from datetime import datetime
-        from shared.config import IST
+        from shared.settings import IST
         from shared.memory import PerformanceTracker, PortfolioStore, TickerMemory
         from shared.models import QueryContext
         from shared.ticker_utils import extract_ticker

@@ -61,7 +61,7 @@ class SemanticCache:
         try:
             import chromadb
             from sentence_transformers import SentenceTransformer
-            from shared.config import CHROMA_DIR, EMBED_MODEL
+            from shared.settings import CHROMA_DIR, EMBED_MODEL
 
             client = chromadb.PersistentClient(path=CHROMA_DIR)
             self._col = client.get_or_create_collection(

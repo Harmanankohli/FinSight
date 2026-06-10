@@ -168,7 +168,7 @@ async def _build_report_response(
     analysis_date: str,
     fmt: str,
 ) -> Response:
-    from shared.report_generator import generate_pptx, generate_docx, generate_html
+    from shared.reports import generate_pptx, generate_docx, generate_html
 
     brief_data: dict = {}
     if brief_json_str:

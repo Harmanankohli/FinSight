@@ -57,7 +57,7 @@ class RedisCache:
                 return self._redis
             try:
                 import redis.asyncio as aioredis  # optional dep
-                from shared.config import REDIS_URL
+                from shared.settings import REDIS_URL
                 client = aioredis.from_url(
                     REDIS_URL,
                     decode_responses=False,
@@ -138,7 +138,7 @@ def make_cache(
     Callers need no conditional logic — the returned object has an identical
     interface regardless of which implementation is returned.
     """
-    from shared.config import REDIS_URL
+    from shared.settings import REDIS_URL
     if REDIS_URL:
         return RedisCache(ttl_seconds=ttl_seconds, namespace=namespace, max_entries=max_entries)
     return TTLCache(ttl_seconds=ttl_seconds, max_entries=max_entries)

@@ -25,7 +25,7 @@ from shared.observability import init_instrumentation
 
 init_instrumentation("orchestrator")
 
-from shared.config import ADK_MODEL
+from shared.settings import ADK_MODEL
 
 from .agent import root_agent
 from .agent_executor import FinSightAgentExecutor

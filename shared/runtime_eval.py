@@ -44,7 +44,7 @@ import hashlib
 import logging
 import time
 
-from shared.config import (
+from shared.settings import (
     EVAL_RUNTIME_DISABLED,
     EVAL_BURST_LIMIT,
     EVAL_METRIC_TIMEOUT,
@@ -159,7 +159,7 @@ async def _setup_ragas_clients():
         logger.debug("ragas / instructor / openai not installed — runtime eval skipped")
         return None
 
-    from shared.config import LLM_BASE_URL, LLM_EVAL_MODEL, EMBED_MODEL
+    from shared.settings import LLM_BASE_URL, LLM_EVAL_MODEL, EMBED_MODEL
 
     class _STEmbeddings(BaseRagasEmbedding):
         def __init__(self, model_name: str) -> None:

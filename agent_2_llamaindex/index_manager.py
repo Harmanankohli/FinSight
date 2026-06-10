@@ -19,7 +19,7 @@ import chromadb
 
 from llama_index.core.response_synthesizers import get_response_synthesizer
 
-from shared.config import LLM_MODEL, EMBED_MODEL, CHROMA_DIR, LLM_BASE_URL, LLM_API_KEY
+from shared.settings import LLM_MODEL, EMBED_MODEL, CHROMA_DIR, LLM_BASE_URL, LLM_API_KEY
 from shared.logging_config import logged, logged_sync
 
 logger = logging.getLogger(__name__)

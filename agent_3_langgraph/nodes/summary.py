@@ -4,7 +4,7 @@ import logging
 from datetime import date
 
 from shared.logging_config import logged
-from shared.config import LLM_SUMMARY_MODEL, LLM_BASE_URL, LLM_API_KEY
+from shared.settings import LLM_SUMMARY_MODEL, LLM_BASE_URL, LLM_API_KEY
 from shared.llm_queue import llm_queue, Priority
 
 from ..state import QuantAnalysisState

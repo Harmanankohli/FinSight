@@ -11,7 +11,7 @@ from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from shared.report_generator import generate_pptx
+from shared.reports import generate_pptx
 
 
 WMT_RESPONSE_TEXT = (
