@@ -222,9 +222,11 @@ python_version = "3.12"
 strict = true
 ignore_missing_imports = true
 
-# Escape hatch — packages not yet mypy-clean; each carries a TODO(wp-id) in the file
+# Escape hatch — packages not yet mypy-clean
 [[tool.mypy.overrides]]
 module = [
+    "shared.*",
+    "agent_1_adk.*",
     "agent_2_llamaindex.*",
     "agent_3_langgraph.*",
     "agent_4_crewai.*",
