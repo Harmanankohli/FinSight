@@ -18,11 +18,12 @@ def _make_yf_mock(long_name, sector, exchange):
 
 def test_resolve_ticker_yfinance_success():
     """yfinance returns valid data → use it, map exchange code."""
-    with patch("yfinance.Ticker", _make_yf_mock("NVIDIA Corporation", "Technology", "NMS")):
-        from shared.reports.extraction import _resolve_ticker_info, _ticker_cache
+    import shared.reports.extraction as ext
 
-        _ticker_cache.clear()
-        name, sector, exchange = _resolve_ticker_info("NVDA", "")
+    with patch("yfinance.Ticker", _make_yf_mock("NVIDIA Corporation", "Technology", "NMS")), \
+         patch.object(ext, "_REPORTS_OFFLINE", False):
+        ext._ticker_cache.clear()
+        name, sector, exchange = ext._resolve_ticker_info("NVDA", "")
     assert name == "NVIDIA Corporation"
     assert sector == "Technology"
     assert exchange == "NASDAQ"  # NMS mapped
@@ -30,11 +31,12 @@ def test_resolve_ticker_yfinance_success():
 
 def test_resolve_ticker_yfinance_fails():
     """yfinance raises → regex fallback extracts name from text."""
-    with patch("yfinance.Ticker", side_effect=Exception("network error")):
-        from shared.reports.extraction import _resolve_ticker_info, _ticker_cache
+    import shared.reports.extraction as ext
 
-        _ticker_cache.clear()
-        name, sector, exchange = _resolve_ticker_info(
+    with patch("yfinance.Ticker", side_effect=Exception("network error")), \
+         patch.object(ext, "_REPORTS_OFFLINE", False):
+        ext._ticker_cache.clear()
+        name, sector, exchange = ext._resolve_ticker_info(
             "WMT", "Analysis of Walmart Inc. (WMT) shows strong performance."
         )
     assert name == "Walmart Inc."
@@ -44,11 +46,12 @@ def test_resolve_ticker_yfinance_fails():
 
 def test_resolve_ticker_total_fallback():
     """Both yfinance and regex fail → return raw ticker symbol."""
-    with patch("yfinance.Ticker", side_effect=Exception("fail")):
-        from shared.reports.extraction import _resolve_ticker_info, _ticker_cache
+    import shared.reports.extraction as ext
 
-        _ticker_cache.clear()
-        name, sector, exchange = _resolve_ticker_info("XYZ", "some random text")
+    with patch("yfinance.Ticker", side_effect=Exception("fail")), \
+         patch.object(ext, "_REPORTS_OFFLINE", False):
+        ext._ticker_cache.clear()
+        name, sector, exchange = ext._resolve_ticker_info("XYZ", "some random text")
     assert name == "XYZ"
 
 
@@ -62,11 +65,12 @@ def test_resolve_ticker_total_fallback():
 )
 def test_resolve_ticker_any_stock(ticker, long_name, sector, exchange, expected_exchange):
     """Any ticker resolves via yfinance — not a hardcoded dict."""
-    with patch("yfinance.Ticker", _make_yf_mock(long_name, sector, exchange)):
-        from shared.reports.extraction import _resolve_ticker_info, _ticker_cache
+    import shared.reports.extraction as ext
 
-        _ticker_cache.clear()
-        name, sec, exch = _resolve_ticker_info(ticker, "")
+    with patch("yfinance.Ticker", _make_yf_mock(long_name, sector, exchange)), \
+         patch.object(ext, "_REPORTS_OFFLINE", False):
+        ext._ticker_cache.clear()
+        name, sec, exch = ext._resolve_ticker_info(ticker, "")
     assert name == long_name
     assert sec == sector
     assert exch == expected_exchange
@@ -77,7 +81,7 @@ def test_resolve_ticker_any_stock(ticker, long_name, sector, exchange, expected_
 
 def test_extract_response_text_wmt():
     """WMT markdown → ≥2 KPI chips, ≥2 risks, non-empty summary."""
-    from shared.reports.extraction import _extract_deck_data
+    import shared.reports.extraction as ext
 
     brief = {
         "response_text": (
@@ -93,16 +97,15 @@ def test_extract_response_text_wmt():
             "- Competitive pressure from Costco (COST)\n"
         )
     }
-    with patch("yfinance.Ticker", _make_yf_mock("Walmart Inc.", "Consumer Defensive", "NYQ")):
-        from shared.reports.extraction import _ticker_cache
-
-        _ticker_cache.clear()
-        _extract_deck_data(brief, "WMT", "HOLD", 0.58, "2026-06-06")
+    with patch("yfinance.Ticker", _make_yf_mock("Walmart Inc.", "Consumer Defensive", "NYQ")), \
+         patch.object(ext, "_REPORTS_OFFLINE", False):
+        ext._ticker_cache.clear()
+        ext._extract_deck_data(brief, "WMT", "HOLD", 0.58, "2026-06-06")
 
 
 def test_extract_response_text_tgt():
     """TGT markdown (Target Corp) → company name from yfinance, not raw 'TGT'."""
-    from shared.reports.extraction import _extract_deck_data
+    import shared.reports.extraction as ext
 
     brief = {
         "response_text": (
@@ -114,22 +117,21 @@ def test_extract_response_text_tgt():
             "- Competition from Amazon (AMZN)\n"
         )
     }
-    with patch("yfinance.Ticker", _make_yf_mock("Target Corporation", "Consumer Defensive", "NYQ")):
-        from shared.reports.extraction import _ticker_cache
-
-        _ticker_cache.clear()
-        _extract_deck_data(brief, "TGT", "HOLD", 0.55, "2026-06-06")
+    yf_mock = _make_yf_mock("Target Corporation", "Consumer Defensive", "NYQ")
+    with patch("yfinance.Ticker", yf_mock), \
+         patch.object(ext, "_REPORTS_OFFLINE", False):
+        ext._ticker_cache.clear()
+        ext._extract_deck_data(brief, "TGT", "HOLD", 0.55, "2026-06-06")
 
 
 def test_extract_empty_data():
     """Empty brief → minimal deck, no crash."""
-    from shared.reports.extraction import _extract_deck_data
+    import shared.reports.extraction as ext
 
-    with patch("yfinance.Ticker", side_effect=Exception("fail")):
-        from shared.reports.extraction import _ticker_cache
-
-        _ticker_cache.clear()
-        deck = _extract_deck_data({}, "XYZ", "UNKNOWN", 0.0, "2026-01-01")
+    with patch("yfinance.Ticker", side_effect=Exception("fail")), \
+         patch.object(ext, "_REPORTS_OFFLINE", False):
+        ext._ticker_cache.clear()
+        deck = ext._extract_deck_data({}, "XYZ", "UNKNOWN", 0.0, "2026-01-01")
     assert deck.company_name == "XYZ"
     assert deck.executive_summary == "No analysis content available."
 
