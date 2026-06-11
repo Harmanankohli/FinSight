@@ -16,6 +16,12 @@ def _stub_modules():
     obs_mock = MagicMock()
     obs_mock.init_langfuse = MagicMock()
     stubs = {
+        "google": MagicMock(),
+        "google.adk": MagicMock(),
+        "google.adk.agents": MagicMock(),
+        "google.adk.tools": MagicMock(),
+        "google.adk.tools.tool_context": MagicMock(),
+        "google.genai": MagicMock(),
         "langfuse": MagicMock(),
         "langfuse.span_filter": MagicMock(),
         "shared.observability": obs_mock,

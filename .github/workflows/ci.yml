@@ -55,17 +55,10 @@ jobs:
           cache-dependency-glob: "pyproject.toml"
       - run: uv venv .venv
       - run: uv pip install --no-deps -e .
-      - run: uv pip install pytest pytest-asyncio pytest-cov httpx pydantic pydantic-settings pyjwt starlette aiosqlite numpy python-pptx python-docx jinja2 python-dotenv argon2-cffi
+      - run: uv pip install pytest pytest-asyncio httpx pydantic pydantic-settings pyjwt starlette aiosqlite numpy python-pptx python-docx jinja2 python-dotenv argon2-cffi
       - name: Run unit tests
-        run: |
-          .venv/bin/coverage run --source=shared,agent_1_adk -m pytest tests/unit -m "not integration and not external and not openapi" -q
-          .venv/bin/coverage xml -o coverage.xml
+        run: .venv/bin/python -m pytest tests/unit -m "not integration and not external and not openapi" -q
         timeout-minutes: 5
-      - uses: codecov/codecov-action@v4
-        if: always()
-        with:
-          files: coverage.xml
-          fail_ci_if_error: false
 
   frontend:
     name: Frontend (lint + typecheck)
