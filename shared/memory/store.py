@@ -226,7 +226,7 @@ async def prune_old_records(days: int | None = None) -> dict[str, int]:
             cur = await conn.execute(f"DELETE FROM {table} WHERE created_at < ?", (cutoff,))
             deleted[table] = cur.rowcount
         await conn.commit()
-    logger.info("Pruned old records: %s", deleted)
+    logger.info("Pruned old records: %s", str(deleted))
     return deleted
 
 

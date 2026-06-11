@@ -12,7 +12,8 @@ import sys
 from datetime import timedelta, timezone
 from typing import Optional
 
-from pydantic import model_validator
+import pydantic
+from pydantic import AliasChoices, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # IST timezone — not env-controlled; exported here for central import
@@ -73,7 +74,10 @@ class Settings(BaseSettings):
     # ── Observability ─────────────────────────────────────────────────────
     langfuse_public_key: Optional[str] = None  # None → Langfuse disabled
     langfuse_secret_key: Optional[str] = None
-    langfuse_host: str = "https://cloud.langfuse.com"  # also accepts LANGFUSE_BASE_URL
+    langfuse_host: str = pydantic.Field(
+        default="https://cloud.langfuse.com",
+        validation_alias=AliasChoices("LANGFUSE_HOST", "LANGFUSE_BASE_URL"),
+    )
 
     # ── SEC EDGAR ─────────────────────────────────────────────────────────
     sec_api_base: str = "https://www.sec.gov"
@@ -116,10 +120,6 @@ class Settings(BaseSettings):
                 )
             except (ValueError, TypeError):
                 pass
-        # LANGFUSE_BASE_URL is an alias for LANGFUSE_HOST
-        langfuse_base = os.environ.get("LANGFUSE_BASE_URL")
-        if langfuse_base:
-            object.__setattr__(self, "langfuse_host", langfuse_base)
         # llm_summary_model / llm_eval_model fall back to llm_model when unset
         if not self.llm_summary_model:
             object.__setattr__(self, "llm_summary_model", self.llm_model)

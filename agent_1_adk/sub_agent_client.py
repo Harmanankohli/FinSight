@@ -23,6 +23,7 @@ from a2a.types.a2a_pb2 import (
     SendMessageRequest,
     TaskState,
 )
+from google.protobuf.json_format import MessageToDict
 
 
 def _get_data_parts(parts: list) -> list:
@@ -31,6 +32,11 @@ def _get_data_parts(parts: list) -> list:
     Replaces ``get_data_parts`` which is not available in the installed a2a-sdk.
     """
     return [p for p in parts if p.HasField("data")]
+
+
+def _data_part_to_json(part: Any) -> str:
+    """Serialize a protobuf Part's data field to a JSON string."""
+    return json.dumps(MessageToDict(part.data))
 
 
 _TERMINAL_STATES = {
@@ -283,7 +289,7 @@ class SubAgentClient:
                     parts = event.artifact_update.artifact.parts
                     data_parts = _get_data_parts(parts)
                     if data_parts:
-                        result_text = json.dumps(data_parts[0])
+                        result_text = _data_part_to_json(data_parts[0])
                         return result_text
                     art_text = get_artifact_text(event.artifact_update.artifact)
                     if art_text:
@@ -382,7 +388,7 @@ class SubAgentClient:
         for art in task.artifacts:
             data_parts = _get_data_parts(art.parts)
             if data_parts:
-                return json.dumps(data_parts[0])
+                return _data_part_to_json(data_parts[0])
 
         # Text from task artifacts
         for art in task.artifacts:

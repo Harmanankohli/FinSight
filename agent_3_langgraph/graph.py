@@ -70,10 +70,10 @@ class QuantAnalysisGraph:
         builder.add_node("run_stress_test", stress_test_node)
         builder.add_node("run_dcf", dcf_valuation_node)
         builder.add_node("portfolio_correlation", correlation_node)
-        builder.add_node("peer_comparison", peer_comparison_node)
+        builder.add_node("run_peer_comparison", peer_comparison_node)
         builder.add_node("analyst_positioning", analyst_positioning_node)
         builder.add_node("options_flow", options_flow_node)
-        builder.add_node("insider_signals", insider_signals_node)
+        builder.add_node("run_insider_signals", insider_signals_node)
         builder.add_node("format_output", format_output_node)
         builder.add_node("llm_summary", llm_summary_node)
 
@@ -81,7 +81,7 @@ class QuantAnalysisGraph:
         builder.add_edge(START, "fetch_prices")
         builder.add_edge(START, "fetch_fundamentals")
         builder.add_edge(START, "options_flow")
-        builder.add_edge(START, "insider_signals")
+        builder.add_edge(START, "run_insider_signals")
 
         # Price path: fetch_prices → compute + technicals in parallel
         builder.add_edge("fetch_prices", "compute_base_metrics")
@@ -105,15 +105,15 @@ class QuantAnalysisGraph:
         # analyst_positioning), causing LangGraph to trigger format_output multiple times in
         # the same step, which raises INVALID_CONCURRENT_GRAPH_UPDATE on every key it writes.
         # fundamentals data is available to format_output through the shared state regardless.
-        builder.add_edge("fetch_fundamentals", "peer_comparison")
+        builder.add_edge("fetch_fundamentals", "run_peer_comparison")
         builder.add_edge("fetch_fundamentals", "analyst_positioning")
 
         # All paths fan-in at format_output
         builder.add_edge("portfolio_correlation", "format_output")
-        builder.add_edge("peer_comparison", "format_output")
+        builder.add_edge("run_peer_comparison", "format_output")
         builder.add_edge("analyst_positioning", "format_output")
         builder.add_edge("options_flow", "format_output")
-        builder.add_edge("insider_signals", "format_output")
+        builder.add_edge("run_insider_signals", "format_output")
 
         builder.add_edge("format_output", "llm_summary")
         builder.add_edge("llm_summary", END)

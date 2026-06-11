@@ -21,10 +21,11 @@ interface LfTrace {
 export function Sidebar() {
   const pathname = usePathname();
   const { user, logout } = useAuth();
-  const [recent, setRecent] = useState<RecentQuery[]>(() => getRecentQueries());
+  const [recent, setRecent] = useState<RecentQuery[]>([]);
   const [traces, setTraces] = useState<LfTrace[]>([]);
 
   useEffect(() => {
+    setRecent(getRecentQueries());
     const h = () => setRecent(getRecentQueries());
     window.addEventListener("finsight:recent-queries-changed", h);
 

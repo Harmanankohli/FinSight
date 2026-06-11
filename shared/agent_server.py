@@ -48,14 +48,13 @@ async def _release_evals(request):
 
 def _add_security_to_card(card: AgentCard, *, accept: frozenset[str] | None = None) -> None:
     """Add bearer auth security schemes and requirements to an AgentCard."""
-    scheme = card.security_schemes.get_or_create("bearerAuth")
-    scheme.http_auth_security_scheme.scheme = "bearer"
-    scheme.http_auth_security_scheme.bearer_format = "JWT"
+    card.security_schemes["bearerAuth"].http_auth_security_scheme.scheme = "bearer"
+    card.security_schemes["bearerAuth"].http_auth_security_scheme.bearer_format = "JWT"
 
     req = card.security_requirements.add()
-    sl = req.schemes.get_or_create("bearerAuth")
+    sl = req.schemes["bearerAuth"]
     if accept is not None and "service" in accept and "user" not in accept:
-        sl.values.append("service")
+        sl.list.append("service")
 
 
 def build_agent_app(
