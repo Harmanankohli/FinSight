@@ -113,7 +113,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <tr><td>Quant</td><td>LangChain + LangGraph (state machine, MCP data) + LangChain SQLiteCache</td></tr>
 <tr><td>Market Context</td><td>CrewAI (macro regime + peer landscape synthesis)</td></tr>
 <tr><td>MCP Server</td><td>FastMCP (agent registry + data tools + TTL caching)</td></tr>
-<tr><td>Report Generator</td><td><code>shared/report_generator.py</code> &mdash; python-pptx (PPTX), python-docx (DOCX), Jinja2 (HTML)</td></tr>
+<tr><td>Report Generator</td><td><code>shared/reports/</code> package &mdash; python-pptx (PPTX), python-docx (DOCX), Jinja2 (HTML)</td></tr>
 <tr><td>Frontend</td><td>Next.js 16 + CopilotKit 1.59 + @ag-ui/client (<code>web/nextjs-app/</code>) via <code>POST /a2a-agui</code></td></tr>
 <tr><td>Evaluation</td><td>RAGAS offline pipeline + runtime per-query eval (per-metric streaming, client caching, 180s timeout) + custom financial rubrics</td></tr>
 <tr><td>LLM</td><td>LM Studio (local, OpenAI-compatible)</td></tr>
@@ -179,7 +179,7 @@ uv run adk web --port 8080 --session_service_uri sqlite://./db/adk_sessions.db -
 <h2>Configuration</h2>
 <table>
 <tr><th>Variable</th><th>Default</th><th>Description</th></tr>
-<tr><td><code>ADK_MODEL</code></td><td><code>openai/mistralai/ministral-3-14b-reasoning</code></td><td>LLM model for the orchestrator (default <code>openai/qwen/qwen3-30b-a3b-2507</code> in <code>config.py</code>)</td></tr>
+<tr><td><code>ADK_MODEL</code></td><td><code>openai/mistralai/ministral-3-14b-reasoning</code></td><td>LLM model for the orchestrator (default <code>openai/qwen/qwen3-30b-a3b-2507</code> in <code>settings.py</code>)</td></tr>
 <tr><td><code>AGENT_SEED_URLS</code></td><td><code>http://localhost:8002,http://localhost:8003,http://localhost:8004</code></td><td>A2A agent discovery URLs</td></tr>
 <tr><td><code>A2A_TIMEOUT</code></td><td><code>680.0</code></td><td>Timeout for A2A communication (seconds)</td></tr>
 <tr><td><code>LLM_BASE_URL</code></td><td><code>http://localhost:1234/v1</code></td><td>LM Studio OpenAI-compatible endpoint</td></tr>
@@ -202,12 +202,12 @@ uv run adk web --port 8080 --session_service_uri sqlite://./db/adk_sessions.db -
 <tr><td><a href="docs/DESIGN_DECISIONS.html">DESIGN_DECISIONS.html</a></td><td>Evolution log: why each design choice was made</td></tr>
 <tr><td><a href="docs/CHANGELOG.html">CHANGELOG.html</a></td><td>Version history</td></tr>
 <tr><td><a href="docs/TESTS.html">TESTS.html</a></td><td>Test coverage, patterns, running instructions</td></tr>
-<tr><td><a href="docs/SECURITY.html">SECURITY.html</a></td><td>Python sandbox model, restricted imports, responsible disclosure</td></tr>
+<tr><td><a href="docs/SECURITY.html">SECURITY.html</a></td><td>Auth model, Python sandbox, trusted proxies, hardening history</td></tr>
 <tr><td><a href="web/nextjs-app/README.md">web/nextjs-app/README.md</a></td><td>Frontend architecture &mdash; pages, components, design system, data flow</td></tr>
 </table>
 
 <h2>Testing</h2>
-<p><strong>~220 parametrized test cases</strong> across 19 test files &mdash; see <a href="docs/TESTS.html">TESTS.html</a> for details.</p>
+<p><strong>~300 parametrized test cases</strong> across 27 test files &mdash; see <a href="docs/TESTS.html">TESTS.html</a> for details.</p>
 
 <hr>
 <p style="font-size:.85rem;color:#888">Apache 2.0 License</p>

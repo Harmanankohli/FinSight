@@ -77,7 +77,7 @@ All A2A communication uses `A2ACardResolver` for standard discovery and `ClientF
 | Quant | LangChain + LangGraph (state machine, MCP data) + LangChain SQLiteCache |
 | Market Context | CrewAI (macro regime + peer landscape synthesis) |
 | MCP Server | FastMCP (agent registry + data tools + TTL caching) |
-| Report Generator | `shared/report_generator.py` — python-pptx (PPTX), python-docx (DOCX), Jinja2 (HTML) |
+| Report Generator | `shared/reports/` package — python-pptx (PPTX), python-docx (DOCX), Jinja2 (HTML) |
 | Frontend | Next.js 16 + CopilotKit 1.59 + @ag-ui/client (`web/nextjs-app/`) via `POST /a2a-agui` |
 | Evaluation | RAGAS offline pipeline + runtime per-query eval (per-metric streaming, client caching, 180s timeout) + custom financial rubrics |
 | LLM | LM Studio (local, OpenAI-compatible) |
@@ -195,8 +195,20 @@ stop_servers.bat
 │   ├── quant_agent.json
 │   └── market_context_agent.json
 │
-├── mcp_servers/              # Unified MCP Server
-│   ├── finsight_server.py    # Registry + all data tools (port 8010)
+├── mcp_servers/              # MCP Server (split into per-tool modules, v1.41)
+│   ├── _app.py               # 78-line composition root
+│   ├── finsight_server.py    # get_app() re-export (port 8010)
+│   ├── tools/                # Per-tool modules
+│   │   ├── agent_registry.py # find_agent(), resource endpoints
+│   │   ├── market_data.py    # get_prices(), get_financials()
+│   │   ├── edgar.py          # SEC EDGAR filing tools
+│   │   ├── ticker.py         # validate_ticker(), resolve_company_ticker()
+│   │   ├── sentiment.py      # news, sentiment indicators
+│   │   └── sandbox.py        # execute_python() with AST gate + container mode
+│   ├── infra/                # Shared infrastructure
+│   │   ├── rate_limiters.py  # TokenBucket rate limiter
+│   │   ├── embed.py          # sentence-transformers lazy loader
+│   │   └── news_fetch.py     # RSS feed fetchers
 │   └── Dockerfile
 │
 ├── shared/                   # Shared libraries
@@ -206,10 +218,16 @@ stop_servers.bat
 │   ├── logging_config.py     # setup_file_logging(), @logged/@logged_sync decorators
 │   ├── trace_context.py      # Distributed trace context injection/extraction
 │   ├── observability.py      # Langfuse singleton initialization
-│   ├── config.py             # Centralized .env configuration + startup validation
+│   ├── settings.py           # Pydantic-settings BaseSettings (replaces config.py)
+│   ├── bootstrap.py          # Process-level side-effects (event loop, HF_HUB_OFFLINE, encoding)
+│   ├── config.py             # Removed in v2.0 (migrated to settings.py)
 │   ├── mcp_client.py         # MCP client with dynamic tool discovery
-│   ├── models.py             # Pydantic data models (DeckData, SentimentIntelligence, …)
-│   ├── report_generator.py   # generate_pptx / generate_docx / generate_html
+│   ├── models.py             # Pydantic data models (DeckData, etc.)
+│   ├── reports/              # Report generation package (replaces report_generator.py)
+│   │   ├── extraction.py     # _extract_deck_data() pipeline
+│   │   ├── pptx_renderer.py  # generate_pptx()
+│   │   ├── docx_renderer.py  # generate_docx()
+│   │   └── html_renderer.py  # generate_html()
 │   ├── semantic_cache.py     # ChromaDB-backed semantic cache (cosine sim, TTL 1h)
 │   ├── templates/            # Jinja2 templates for HTML report generation
 │   │   ├── investment_deck.html  # 9-slide deck template
@@ -220,13 +238,17 @@ stop_servers.bat
 │       ├── portfolio_store.py # User profile, holdings persistence
 │       ├── performance_tracker.py # Recommendation outcome tracking + live price capture
 │       ├── memory_service.py # ADK BaseMemoryService (load_memory tool)
+│       ├── user_store.py     # Argon2 password hashing, user CRUD, refresh tokens
+│       ├── session_repo.py   # JOIN-based session listing (eliminates N+1)
 │       └── __init__.py       # Exports
 │
 ├── web/nextjs-app/           # Next.js 16 + CopilotKit 1.59 frontend
 │
 ├── tests/
-│   ├── regression/           # Report generator regression tests (PPTX, DOCX, HTML)
-│   └── unit/                 # Unit tests
+│   ├── characterization/     # Phase 0 — 45 golden + contract tests (4 files)
+│   ├── regression/           # Report generator + corpus regression tests
+│   ├── security/             # Sandbox AST gate tests (~45 parametrized)
+│   └── unit/                 # Unit tests (incl. auth, protocol, openapi)
 │
 ├── run_adk_web.bat           # Start all services
 ├── stop_servers.bat          # Stop all services
@@ -240,7 +262,7 @@ Key environment variables in `.env`:
 
 | Variable | Default | Description |
 |---|---|---|
-| `ADK_MODEL` | `openai/mistralai/ministral-3-14b-reasoning` | LLM model for the orchestrator (default `openai/qwen/qwen3-30b-a3b-2507` in `config.py`) |
+| `ADK_MODEL` | `openai/mistralai/ministral-3-14b-reasoning` | LLM model for the orchestrator (default `openai/qwen/qwen3-30b-a3b-2507` in `settings.py`) |
 | `AGENT_SEED_URLS` | `http://localhost:8002,http://localhost:8003,http://localhost:8004` | A2A agent discovery URLs |
 | `A2A_TIMEOUT` | `680.0` | Timeout for A2A communication (seconds) |
 | `LLM_BASE_URL` | `http://localhost:1234/v1` | LM Studio OpenAI-compatible endpoint |
@@ -263,12 +285,12 @@ Key environment variables in `.env`:
 | `docs/DESIGN_DECISIONS.md` | Evolution log: why each design choice was made |
 | `docs/CHANGELOG.md` | Version history |
 | `docs/TESTS.md` | Test coverage, patterns, RAGAS evaluation, running instructions |
-| `SECURITY.md` | Python sandbox model, restricted imports, responsible disclosure |
+| `docs/SECURITY.md` | Auth model, Python sandbox, trusted proxies, hardening history |
 | `web/nextjs-app/README.md` | Frontend architecture — pages, components, design system, data flow |
 
 ## Testing
 
-**~220 parametrized test cases** across 19 test files — see [TESTS.md](docs/TESTS.md) for details.
+**~300 parametrized test cases** across 27 test files — see [TESTS.md](docs/TESTS.md) for details.
 
 ## License
 

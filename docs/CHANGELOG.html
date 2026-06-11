@@ -79,6 +79,218 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <li><strong>Zoom/drag</strong> (<code>docs/diagrams/shared.js</code>): Fixed pointer event handling so pan and zoom interactions work correctly on all diagram pages.</li>
 </ul>
 
+<h2>v2.1 &mdash; Post-Phase-3 CI Hardening &amp; Runtime Fixes</h2>
+
+<h3 class="version">Runtime Error Resolutions (9264985)</h3>
+<ul>
+<li><strong>A2A AgentCard security scheme API</strong>: Fixed protobuf <code>get_or_create</code>/<code>.values</code> usage &mdash; <code>securitySchemes</code> and <code>securityRequirements</code> use <code>StringList</code>/<code>RepeatedCompositeContainer</code> correctly.</li>
+<li><strong>LangGraph node name collision</strong>: <code>peer_comparison</code> and <code>insider_signals</code> node names conflicted with <code>QuantAnalysisState</code> key names &mdash; renamed to avoid <code>INVALID_CONCURRENT_GRAPH_UPDATE</code>.</li>
+<li><strong>Protobuf Part serialization</strong> (<code>sub_agent_client.py</code>): <code>MessageToDict</code> replaces manual dict construction for <code>Part</code> protobuf messages &mdash; prevents <code>TypeError</code> on non-serializable fields.</li>
+<li><strong>CrewAI instrumentor crash</strong> (<code>crewai&gt;=0.95</code>): <code>try/except ModuleNotFoundError</code> around CrewAIInstrumentor import &mdash; prevents crash when <code>crewai</code> is not installed in the test env.</li>
+<li><strong>LANGFUSE_BASE_URL resolution</strong>: Pydantic <code>AliasChoices</code> replaces <code>os.environ</code> fallback &mdash; <code>LANGFUSE_BASE_URL</code> env var now correctly overrides the default.</li>
+<li><strong>Sidebar hydration mismatch</strong> (<code>Sidebar.tsx</code>): <code>getRecentQueries</code> deferred to <code>useEffect</code> &mdash; prevents Next.js SSR hydration error from localStorage reads.</li>
+<li><strong>Proxy.ts disabled</strong>: <code>proxy.ts</code> renamed to <code>proxy.ts.disabled</code> &mdash; the middleware forced login redirect to CopilotKit Cloud even with <code>AUTH_ENABLED=false</code>.</li>
+</ul>
+
+<h3 class="version">CI Pipeline Hardening (096922e&ndash;b2dc5a4)</h3>
+<ul>
+<li><strong>Ruff cleanup</strong>: <code>ruff check --fix</code> + <code>ruff format</code> across 121 files (4581 insertions, 2256 deletions). Auto-fixed 221 issues (E501 line length, I001 import sort, E402 import order, F401 unused imports, E701 statement style). Inline <code># noqa: E501</code> on unbreakable long strings. File-level <code># ruff: noqa: E402</code> on entrypoints with bootstrap-before-import pattern. Added <code>ExtractionCtx</code> to <code>shared/reports/__init__.__all__</code> (F401). Renamed <code>l</code> to <code>lbl</code> in extraction generators (E741).</li>
+<li><strong>uv venv for Python jobs</strong>: All CI Python jobs now create a uv venv before installing &mdash; fixes <code>PermissionError</code> on editable installs with <code>uv pip install --system</code>.</li>
+<li><strong>--break-system-packages flag</strong>: <code>UV_BREAK_SYSTEM_PACKAGES</code> env var doesn&rsquo;t work with <code>uv</code>; the <code>--break-system-packages</code> flag must be passed directly to each <code>uv pip install --system</code> call for PEP 668 compliance on Ubuntu 24.04.</li>
+<li><strong><code>__init__.py</code> for mypy</strong>: Added missing <code>__init__.py</code> files in <code>agent_1_adk/</code> and <code>shared/</code> packages. Extended mypy overrides to <code>shared.*</code> and <code>agent_1_adk.*</code>.</li>
+<li><strong>Docker build context fix</strong>: Dockerfiles reference <code>pyproject.toml</code> and <code>shared/</code> from repo root, but CI was using agent subdirectory as context. Changed to <code>-f</code> flag with <code>.</code> context.</li>
+<li><strong>Slim test deps</strong>: Test job installs only ~15 packages instead of all 293 base deps (avoids PyTorch, CUDA, all agent frameworks) via <code>--no-deps -e .</code>. Scope test job to <code>tests/unit/</code> only.</li>
+<li><strong>Lazy memory imports</strong>: <code>shared/memory/__init__.py</code> imports made lazy via <code>__getattr__</code> &mdash; importing <code>store.py</code> or <code>ticker_memory.py</code> no longer pulls in <code>google.adk</code>.</li>
+<li><strong>22 test failure fixes</strong>: <code>extract_ticker()</code> case bug (removed <code>query.upper()</code>); isolated <code>test_settings</code> from .env and CI env var leaks; wrapped <code>agents_list</code> handler in try/except for missing <code>google.adk</code>; added <code>pytest.importorskip(&quot;yfinance&quot;)</code> for deck extraction tests; used neutral metrics in HOLD test; fixed signal_scores nesting; set <code>SANDBOX_MODE=disabled</code> for Windows.</li>
+<li><strong>Coverage/pytest hang fixes</strong>: Replaced <code>uv run pytest --cov</code> with direct pytest. Added <code>pytest_unconfigure</code> hook that detects leaked non-daemon aiosqlite threads and <code>os._exit()</code>s with real session status. 5-minute timeout on CI test step.</li>
+<li><strong><code>_REPORTS_OFFLINE</code> patching</strong>: CI sets <code>REPORTS_OFFLINE=true</code> which skips the yfinance code path at module import time. Tests now patch the module-level flag to <code>False</code> so the yfinance mock is actually exercised.</li>
+<li><strong>Google ADK stubs in slim CI</strong>: <code>google.adk</code>/<code>google.genai</code> stubs added to <code>test_save_brief_persists_synthesis</code> &mdash; prevents <code>ModuleNotFoundError</code> when ADK is not installed in slim test env.</li>
+</ul>
+
+<h2>v2.0 &mdash; Phase 3: Quality, Observability, Docs &amp; Shim Removal</h2>
+
+<h3 class="version">WP 3.1 &mdash; Auth Contract Tests &amp; CI Matrix</h3>
+<ul>
+<li><strong>Auth matrix CI</strong>: <code>AUTH_ENABLED={false,true}</code> matrix in CI; tests run twice (auth on/off).</li>
+<li><strong>Auth marker</strong>: <code>pytest -m auth</code> for auth-related tests; <code>pytest -m openapi</code> for spec tests.</li>
+<li><strong>Contract tests</strong>: <code>test_auth_contract.py</code> &mdash; parametrized auth x route matrix: every REST route x {auth on/off} x {none, user, service, admin}. Covers public paths, protected routes, admin gating.</li>
+<li><strong>A2A protocol test</strong>: <code>test_a2a_protocol.py</code> &mdash; in-process <code>GenericAgentExecutor</code> lifecycle: WORKING to artifact to COMPLETED, FAILED, CANCELED, INPUT_REQUIRED, structured data artifacts.</li>
+<li><strong>Coverage gates</strong>: <code>test-auth</code> Makefile target; coverage config in pyproject.toml.</li>
+</ul>
+
+<h3 class="version">WP 3.2 &mdash; FastAPI Sub-App &amp; OpenAPI Spec</h3>
+<ul>
+<li><strong>Response models</strong>: Extended <code>shared/models.py</code> with <code>HealthResponse</code>, <code>ErrorResponse</code>, <code>MemoryTickerItem</code>, <code>MemoryTickerChangedResponse</code>, <code>SessionListItem</code>, <code>SessionEventsResponse</code>, <code>AgentListItem</code>, <code>AgentHealthResponse</code>, <code>LoginRequest</code>, <code>LoginResponse</code>, <code>TokenResponse</code>, <code>MeResponse</code>, <code>LogoutResponse</code>, <code>UserInfo</code>.</li>
+<li><strong>FastAPI spec app</strong>: <code>agent_1_adk/api_fastapi.py</code> &mdash; FastAPI app shadowing all REST + auth routes with response models, tags, and summaries. Used exclusively for OpenAPI spec generation.</li>
+<li><strong>OpenAPI spec generated</strong>: <code>docs/openapi.json</code> &mdash; 13 paths, 16 schemas, auto-generated.</li>
+<li><strong>Spec regeneration script</strong>: <code>scripts/generate_openapi.py</code> &mdash; <code>python scripts/generate_openapi.py</code> writes spec; <code>--check</code> verifies it&rsquo;s current.</li>
+<li><strong>CI enforcement</strong>: <code>openapi</code> job checks spec is up to date.</li>
+</ul>
+
+<h3 class="version">WP 3.3 &mdash; Langfuse User Context &amp; Trace Filter</h3>
+<ul>
+<li><strong>User_id propagation</strong>: <code>trace_with_user()</code> helper in <code>shared/observability.py</code> tags Langfuse observations with <code>current_user_id</code> from ContextVar.</li>
+<li><strong>Auth denied logging</strong>: Structured <code>auth.denied reason=... path=...</code> log lines in <code>AuthMiddleware</code> for missing header, short token, wrong kind, and invalid token.</li>
+<li><strong>Trace filter</strong>: <code>web/nextjs-app/lib/traceFilter.ts</code> &mdash; heuristics classifying trace entries by auth category (<code>auth_denied</code>, <code>auth_success</code>, <code>auth_lockout</code>). <code>filterAuthTraces()</code>, <code>countAuthDeniedByReason()</code>, <code>countAuthDeniedByUser()</code> utilities.</li>
+</ul>
+
+<h3 class="version">WP 3.4 &mdash; Documentation Updates</h3>
+<ul>
+<li><strong>CHANGELOG</strong>: Phase 3 entries added.</li>
+<li><strong>ARCHITECTURE.md</strong>: Trust-boundary diagram for A/B/C auth boundaries.</li>
+<li><strong>CI docs</strong>: OpenAPI spec check job documented.</li>
+</ul>
+
+<h3 class="version">WP 3.5 &mdash; Shim Removal &amp; Cleanup</h3>
+<ul>
+<li><strong><code>shared/config.py</code> removed</strong>: All imports migrated to <code>shared.settings</code>. Last known consumers updated.</li>
+<li><strong><code>shared/report_generator.py</code> removed</strong>: All imports migrated to <code>shared.reports</code>. Last known consumers updated.</li>
+<li><strong><code>ppt-generation-fix.md</code> removed</strong>: All six fix markers verified applied in <code>shared/reports/</code> (WP 1.2). Doc was stale and no longer matched line numbers.</li>
+<li><strong>ruff ratchet</strong>: <code>ruff check .</code> clean.</li>
+<li><strong>mypy ratchet</strong>: <code>mypy shared agent_1_adk</code> clean.</li>
+<li><strong>Zero DeprecationWarning</strong>: Suite emits no deprecation warnings.</li>
+</ul>
+
+<h3 class="version">WP 3.6 &mdash; Auth Audit Gap Fixes (01eaafa)</h3>
+<ul>
+<li><strong><code>TRUSTED_PROXIES</code> setting</strong>: <code>_client_ip()</code> now only reads <code>X-Forwarded-For</code> when the direct peer IP is in <code>TRUSTED_PROXIES</code>. Empty list (default) always uses socket address &mdash; closes IP-spoofing lockout bypass (EC5).</li>
+<li><strong><code>sub_agent_client.py</code> NameError fix</strong>: <code>__get_data_parts</code> renamed to <code>_get_data_parts</code> (double underscore caused <code>NameError</code> at both call sites). <code>a2a.types</code> import block moved above the function.</li>
+<li><strong><code>ppt-generation-fix.md</code> deleted</strong>: Stale audit doc &mdash; all six markers verified applied in <code>shared/reports/</code>. Line numbers no longer matched codebase.</li>
+<li><strong>SECURITY.md updated</strong>: Documented trusted-proxy lockout behaviour and known username-DoS tradeoff. Fixed stale <code>shared/config.py</code> reference.</li>
+</ul>
+
+<h2>v1.43 &mdash; Phase 2: Full Auth Implementation (WP 2.1&ndash;2.7)</h2>
+
+<h3 class="version">WP 2.1 &mdash; Shared Auth Toolkit</h3>
+<ul>
+<li><strong><code>shared/auth/</code> package</strong>: <code>tokens.py</code> (JWT generation/validation with HS256, access+refresh tokens), <code>middleware.py</code> (Starlette ASGI <code>AuthMiddleware</code> with path-based exemptions, principal-kind routing), <code>audit.py</code> (structured auth.denied logs).</li>
+<li><strong>Principal-kind routing</strong>: Middleware accepts path-specific <code>accept</code> sets (<code>{&quot;user&quot;}</code>, <code>{&quot;service&quot;}</code>, <code>{&quot;user&quot;,&quot;service&quot;}</code>). Orchestrator <code>/api/*</code> paths accept user tokens; sub-agent <code>/a2a</code> paths accept service tokens; <code>/health</code> paths are public.</li>
+</ul>
+
+<h3 class="version">WP 2.2 &mdash; User Store &amp; Auth Routes</h3>
+<ul>
+<li><strong><code>shared/memory/user_store.py</code></strong>: Argon2id password hashing, user CRUD, refresh token management with rotation. SQLite-backed.</li>
+<li><strong><code>agent_1_adk/auth_routes.py</code></strong>: <code>POST /auth/login</code>, <code>POST /auth/refresh</code>, <code>POST /auth/logout</code> with httpOnly refresh cookie + JSON access token response.</li>
+<li><strong>Next.js auth UI</strong>: <code>web/nextjs-app/app/login/page.tsx</code> &mdash; login form, <code>AuthContext.tsx</code> &mdash; React context for auth state, <code>Providers.tsx</code> &mdash; wraps app with auth provider, <code>lib/auth.ts</code> &mdash; client-side token management.</li>
+<li><strong>Rate-limited lockout</strong>: 5 failed attempts to 60s cooldown per username+IP. IP from socket address unless peer is in <code>TRUSTED_PROXIES</code>.</li>
+<li><strong><code>scripts/create_user.py</code></strong>: Interactive user creation with Argon2 password hashing.</li>
+</ul>
+
+<h3 class="version">WP 2.3 &mdash; Resource Scoping</h3>
+<ul>
+<li><strong><code>ticker_memory.py</code></strong>: Brief queries filtered by <code>user_id</code> &mdash; users only see their own briefs.</li>
+<li><strong><code>session_repo.py</code></strong>: Session queries filtered by <code>user_id</code> &mdash; users only see their own sessions.</li>
+<li><strong><code>api_routes.py</code></strong>: All memory/session/agent endpoints read <code>X-FinSight-User-Id</code> header for user identity.</li>
+<li><strong><code>semantic_cache.py</code></strong>: Cache keys include <code>user_id</code> &mdash; multi-user cache won&rsquo;t cross-pollinate.</li>
+</ul>
+
+<h3 class="version">WP 2.4 &mdash; A2A Service Auth</h3>
+<ul>
+<li><strong><code>sub_agent_client.py</code></strong>: Service bearer token injected into <code>A2AClientRequest.default_headers</code>. Propagated to sub-agents on every A2A call.</li>
+<li><strong><code>agent_server.py</code></strong>: <code>AuthMiddleware(accept={&quot;service&quot;})</code> wraps sub-agent A2A endpoints (<code>/a2a</code>, <code>/release-evals</code>). Service token validated before any A2A handler runs.</li>
+<li><strong>User context propagation</strong>: <code>_user</code> envelope in A2A message metadata carries <code>current_user_id</code> across service boundaries.</li>
+</ul>
+
+<h3 class="version">WP 2.5 &mdash; MCP Service Auth</h3>
+<ul>
+<li><strong><code>finsight_server.py</code></strong>: <code>AuthMiddleware(accept={&quot;service&quot;})</code> wraps the SSE mount. Only valid service tokens can establish SSE connections.</li>
+<li><strong><code>mcp_client.py</code></strong>: <code>MCPServerConfig</code> carries <code>token</code> field &mdash; injected as <code>Authorization: Bearer &lt;token&gt;</code> in the SSE <code>Url</code> header on connect.</li>
+</ul>
+
+<h3 class="version">WP 2.6 &mdash; Sandbox Hardening</h3>
+<ul>
+<li><strong>Container mode</strong>: <code>SANDBOX_MODE=container</code> runs user code in <code>docker run --rm --network none --memory 512m --cpus 1 --read-only --tmpfs /tmp:size=64m --user 65534:65534 python:3.12-slim</code>. Falls back to <code>ast</code> mode with warning if Docker unavailable.</li>
+<li><strong>Audit logging</strong>: <code>log_sandbox_execution()</code> logs principal, mode, exit code, and truncated output for every sandbox invocation.</li>
+<li><strong>Production guard</strong>: <code>PRODUCTION=true</code> refuses to start with <code>ast</code> mode on Windows or <code>container</code> without Docker.</li>
+</ul>
+
+<h3 class="version">WP 2.7 &mdash; Secrets &amp; Transport Docs</h3>
+<ul>
+<li><strong><code>deploy/Caddyfile.example</code></strong>: TLS termination config with reverse proxy for all 5 services.</li>
+<li><strong><code>.env.example</code></strong>: <code>AUTH_JWT_SECRETS</code>, <code>SERVICE_AUTH_TOKEN</code>, <code>TRUSTED_PROXIES</code> documented.</li>
+<li><strong><code>SECURITY.md</code> rewrite</strong>: Full auth architecture, hardening history, known limitations table.</li>
+<li><strong>Agent cards updated</strong>: All 4 agent cards include <code>securitySchemes</code> + <code>securityRequirements</code> for A2A SDK negotiation.</li>
+</ul>
+
+<h3 class="version">Auth Contract Tests (042/042 passing)</h3>
+<ul>
+<li><code>test_auth_tokens.py</code> (132 lines) &mdash; JWT generation, validation, expiry, rotation, signature verification</li>
+<li><code>test_auth_middleware.py</code> (189 lines) &mdash; middleware chain, path exemptions, principal-kind routing, auth-off mode</li>
+<li><code>test_auth_routes.py</code> (145 lines) &mdash; login/refresh/logout cycle, rate-limited lockout, cookie signing</li>
+<li><code>test_auth_audit.py</code> (41 lines) &mdash; structured auth.denied logging patterns</li>
+<li><code>test_user_store.py</code> (146 lines) &mdash; Argon2 hashing, user CRUD, refresh token rotation</li>
+</ul>
+
+<h2>v1.42 &mdash; Phase R: Table Classification, Bounded Bull/Bear Extraction, Corpus Harness</h2>
+
+<h3 class="version">Table Classification &amp; Staged Extraction Pipeline</h3>
+<p><strong><code>shared/reports/extraction.py</code></strong> (d071c70):</p>
+<ul>
+<li><strong>Table classification</strong>: <code>_classify_table_types()</code> detects and classifies markdown tables into valuation, financial, scorecard, peer comparison, or general types &mdash; enables type-appropriate extraction.</li>
+<li><strong>Bounded bull/bear extraction</strong>: <code>_extract_bull_bear_bounded()</code> uses section boundary markers to extract exactly one &ldquo;Bull Case&rdquo; and one &ldquo;Bear Case&rdquo; block &mdash; prevents the LLM&rsquo;s verbose output from flooding the extraction with duplicate narratives.</li>
+<li><strong>Staged pipeline</strong>: Extraction proceeds in ordered stages: section parser to table classifier to bounded extraction to metric enrichment to fallback defaults. Each stage feeds the next; earlier stages don&rsquo;t block later ones.</li>
+<li><strong>Robust header detection</strong>: <code>_parse_markdown_sections()</code> handles <code>##</code>, <code>###</code>, <code>####</code> and mixed heading styles without losing content to regex boundary mismatches.</li>
+<li><strong>Bare ticker peer extraction</strong>: When no <code>CompanyName (TICKER)</code> format is found, a fallback scans for bare tickers in peer context (&ldquo;peers like DLTR&rdquo;, &ldquo;from COST&rdquo;) &mdash; populates <code>peer_names</code> from informal mentions.</li>
+<li><strong>Risk/opportunity from inline bold blocks</strong>: Extracts risks from <code>**Bearish Signals:**</code> and <code>**Headwinds:**</code> blocks, opportunities from <code>**Bullish Signals:**</code> and <code>**Tailwinds:**</code> blocks &mdash; fallback when no dedicated section header matches.</li>
+</ul>
+
+<h3 class="version">Corpus Regression Harness</h3>
+<ul>
+<li><strong><code>tests/regression/test_corpus_invariants.py</code></strong> (126 lines, new): 7 corpus fixtures (<code>hostile.json</code>, <code>one_liner.json</code>, <code>quant_heavy.json</code>, <code>sentiment_heavy.json</code>, <code>table_free_prose.json</code>, <code>table_heavy.json</code>, <code>unicode_long.json</code>) covering real-world LLM output patterns. Invariant tests: no crashes, no empty sections, required fields populated for every corpus entry. Fixture-driven: adding a new corpus JSON file automatically creates test cases via parametrization.</li>
+<li><strong><code>scripts/export_brief_fixtures.py</code></strong> (new, 44 lines): Exports real <code>TickerMemory</code> briefs as corpus fixtures for regression testing.</li>
+</ul>
+
+<h2>v1.41 &mdash; Phase 1: Centralized Settings, Module Splits, Guardrails, Docker Hardening</h2>
+
+<h3 class="version">WP 1.1 &mdash; MCP Server Module Split</h3>
+<ul>
+<li><strong><code>mcp_servers/finsight_server.py</code></strong> (2095 lines) split into <code>mcp_servers/tools/</code> (agent_registry, market_data, edgar, ticker, sentiment, sandbox) and <code>mcp_servers/infra/</code> (rate_limiters, embed, news_fetch) with <code>mcp_servers/_app.py</code> (78-line composition root) &mdash; <code>get_app()</code> factory wiring everything.</li>
+</ul>
+
+<h3 class="version">WP 1.2 &mdash; Report Generator Module Split</h3>
+<ul>
+<li><strong><code>shared/report_generator.py</code></strong> (1638 lines) split into <code>shared/reports/</code> package: <code>deck_model.py</code> (DeckData dataclass), <code>extraction.py</code> (extraction pipeline), <code>pptx_renderer.py</code>, <code>docx_renderer.py</code>, <code>html_renderer.py</code>. Back-compat shim preserved in <code>shared/report_generator.py</code>.</li>
+</ul>
+
+<h3 class="version">WP 1.3 &mdash; LangGraph Nodes Split</h3>
+<ul>
+<li><strong><code>agent_3_langgraph/nodes.py</code></strong> (1286 lines) split into <code>agent_3_langgraph/nodes/</code> package: <code>calculations.py</code>, <code>data_fetch.py</code>, <code>technical.py</code>, <code>dcf.py</code>, <code>monte_carlo.py</code>, <code>portfolio.py</code>, <code>summary.py</code>.</li>
+</ul>
+
+<h3 class="version">WP 1.4 &mdash; Agent Server Factory</h3>
+<ul>
+<li><strong><code>shared/agent_server.py</code></strong>: <code>build_agent_app()</code> factory for A2A sub-agents. All three sub-agent servers (<code>agent_2_llamaindex/server.py</code>, <code>agent_3_langgraph/server.py</code>, <code>agent_4_crewai/server.py</code>) converted to use the shared factory pattern &mdash; eliminates duplicate Starlette setup code.</li>
+</ul>
+
+<h3 class="version">WP 1.5 &mdash; Centralized Pydantic Settings</h3>
+<ul>
+<li><strong><code>shared/settings.py</code></strong> (new, 169 lines): pydantic-settings <code>BaseSettings</code> class with back-compat aliases (<code>LLM_BASE_URL</code> to <code>OPENAI_BASE_URL</code> to <code>LM_STUDIO_BASE_URL</code>), <code>validate_runtime()</code> production-mode enforcement, <code>get_settings()</code> singleton (lazy-loaded, cached after first call). All env vars migrated from <code>shared/config.py</code> re-exports.</li>
+<li><strong><code>shared/bootstrap.py</code></strong> (new, 62 lines): Centralises process-level side-effects &mdash; sets event loop policy, <code>HF_HUB_OFFLINE</code>, stdout encoding, <code>LANGFUSE_SECONDARY_KEY</code> patching. Called once per process.</li>
+</ul>
+
+<h3 class="version">WP 1.6 &mdash; Performance Fixes</h3>
+<ul>
+<li><strong><code>shared/memory/session_repo.py</code></strong>: <code>JOIN</code> query replaces N+1 session list pattern &mdash; single SQL query instead of 1 + N round-trips for session event counts.</li>
+<li><strong><code>agent_1_adk/api_routes.py</code></strong>: Input validation with error envelopes, filename safety in report downloads.</li>
+<li><strong><code>shared/memory/ticker_memory.py</code></strong>: <code>has_changed()</code> old/new parameter swap fix &mdash; was comparing current against current, always returning <code>False</code>.</li>
+</ul>
+
+<h3 class="version">WP 1.7 &mdash; Guardrails Unification</h3>
+<ul>
+<li><strong><code>shared/guardrails.py</code></strong>: <code>_NON_INVESTMENT_RE</code> regex unified from two separate copies.</li>
+<li><strong>Dead <code>_TODAY</code> constant removed</strong> from <code>agent_1_adk/agent.py</code> (G6).</li>
+<li><strong>Silent except to logger.debug(exc_info=True)</strong>: Executor, bridge, and agent error handlers now log with traceback instead of swallowing.</li>
+</ul>
+
+<h3 class="version">WP 1.8 &mdash; Docker Hardening</h3>
+<ul>
+<li><strong><code>.dockerignore</code></strong> added.</li>
+<li><strong><code>pyproject.toml</code></strong>: <code>setuptools.packages.find</code> + per-service extras (<code>orchestrator</code>/<code>rag</code>/<code>quant</code>/<code>market</code>/<code>mcp_server</code>).</li>
+<li><strong>All 5 Dockerfiles</strong>: <code>pip install &quot;.[svc]&quot;</code> + non-root <code>USER</code> + repo-root build context.</li>
+<li><strong><code>docker-compose.yml</code></strong>: Python urllib healthchecks (G19), <code>FINSIGHT_DB_PATH</code> volume (G3), <code>env_file</code>, <code>restart: unless-stopped</code>.</li>
+<li><strong><code>shared/memory/store.py</code></strong>: DB path from settings (G2) &mdash; no more hardcoded paths.</li>
+</ul>
+
 <h2>v1.39 &mdash; Report Generator: HTML Format, Robust Extraction, Route Fixes</h2>
 
 <h3 class="version">Phase 1 &mdash; DeckData Layer: Robust Extraction for Any Ticker</h3>

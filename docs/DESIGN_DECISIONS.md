@@ -188,7 +188,7 @@ Evaluation results are only useful if they're tracked over time. Pushing scores 
 
 **Why `max_retries=5` instead of the previous `max_retries=1`?** LM Studio periodically unloads idle models from GPU memory. When a RAGAS metric call arrives after an idle period, LM Studio reloads the model — the first request times out, succeeding on retry. With `max_retries=1`, the single retry was sometimes insufficient for model reload (~2-5s). Increasing to 5 gives the SDK enough budget to absorb reload latency at the httpx layer rather than failing instructor's structured-output calls. The `instructor.from_openai(max_retries=1)` override was removed so instructor calls inherit the client's retry count. Separate `asyncio.TimeoutError` handling prevents timeouts from appearing as bare colons in logs.
 
-**Why `sys.stdout.reconfigure(encoding='utf-8')`?** RAGAS internal log messages (from `ragas/llms/base.py`) contain Unicode characters like curly quotes (`\u2010`, `\u2011`) when formatting LLM responses. On Windows with cp1252 console encoding, these characters trigger `UnicodeEncodeError`, producing noisy "--- Logging error ---" tracebacks. Setting UTF-8 at import time in `shared/config.py` prevents this for both stdout and stderr.
+**Why `sys.stdout.reconfigure(encoding='utf-8')`?** RAGAS internal log messages (from `ragas/llms/base.py`) contain Unicode characters like curly quotes (`\u2010`, `\u2011`) when formatting LLM responses. On Windows with cp1252 console encoding, these characters trigger `UnicodeEncodeError`, producing noisy "--- Logging error ---" tracebacks. Setting UTF-8 at import time in `shared/bootstrap.py` (moved from `shared/config.py` in v1.41) prevents this for both stdout and stderr.
 
 **Why `_push_scores` skips when trace_id is None?** With placeholder Langfuse API keys (`pk-lf-...`), `langfuse.create_score()` with no `trace_id` sends an API request missing the required trace identifier. The Langfuse cloud API rejects these with "Bad request" errors. Since eval tasks may run outside any active trace context, the early return when `trace_id is None` avoids pointless API failures.
 
@@ -489,6 +489,103 @@ The unified finsight MCP server (`finsight_server.py`) hosts agent registry + da
 **Problem**: The Python sandbox allowed potentially dangerous imports (`builtins`, `gc`, `threading`, `multiprocessing`, etc.) that could be used to escape the subprocess.
 
 **Solution**: Expanded `_RESTRICTED_IMPORTS` and `_RESTRICTED_ATTRS` blocklists. Subprocess runs with `-I` (isolated) and `-S` (no site) flags. RLIMIT applied on Unix.
+
+## Why Centralized Pydantic Settings (v1.41)
+
+### Problem
+
+Configuration was scattered across `shared/config.py` with module-level `os.environ.get()` calls and `try/except ImportError` fallbacks. No type validation — a typo in `.env` silently defaulted. `os.environ["HF_HUB_OFFLINE"] = "1"` at `shared/config.py` import time produced side effects just by importing the config module.
+
+### Solution
+
+`shared/settings.py` uses pydantic-settings `BaseSettings`:
+
+```python
+class Settings(BaseSettings):
+    llm_base_url: str = Field("http://localhost:1234/v1", alias="LLM_BASE_URL")
+    llm_api_key: str = Field("lmstudio", alias="LLM_API_KEY")
+    ...
+```
+
+**Back-compat aliases**: `LLM_BASE_URL` walks through `OPENAI_BASE_URL` → `LM_STUDIO_BASE_URL` → default via `AliasChoices`.
+
+**Singleton lazy-load**: `get_settings()` caches after first call — no import-time side effects.
+
+**Process-level side-effects** moved to `shared/bootstrap.py`: sets event loop policy, `HF_HUB_OFFLINE`, stdout encoding. Called once per process entry point.
+
+**Why not just fix `shared/config.py`?** The file had grown to ~184 lines of module-level code with hard-to-track import order dependencies. A fresh `pydantic-settings` class was fewer lines, self-documenting, and eliminated all import-time side-effect bugs.
+
+## Why Split the Monolithic Modules (v1.41)
+
+### MCP Server (2095 lines → 7 files + 1 composition root)
+
+Monolithic `finsight_server.py` had all 18 MCP tools + agent registry + rate limiters + news fetchers in one file. Any import or change risked breaking unrelated tools. Splitting by domain (`tools/` for tools, `infra/` for infrastructure) made each module independently testable and editable. The 78-line `_app.py` composition root wires everything together — no tool module knows about the others.
+
+### Report Generator (1638 lines → 5 files)
+
+Same pattern: extraction pipeline, PPTX renderer, DOCX renderer, HTML renderer, and deck model each became their own file. The `shared/report_generator.py` shim (re-exporting public API) remained until v2.0 for backward compatibility, then was removed.
+
+### LangGraph Nodes (1286 lines → 7 files)
+
+`nodes.py` was the largest file in the project. Split by node domain (calculations, data_fetch, technical, dcf, monte_carlo, portfolio, summary) — each file is < 400 lines. The `__init__.py` re-exports all node functions through a clean public API.
+
+## Why Phase R Table Classification (v1.42)
+
+### Problem
+
+The extraction pipeline in `shared/reports/extraction.py` treated all markdown tables identically — it extracted data from tables but had no understanding of *what kind* of table it was parsing. A valuation table and a peer comparison table were both processed the same way, producing schema-ambiguous output.
+
+### Solution
+
+`_classify_table_types()` inspects table headers and context to classify into: valuation, financial, scorecard, peer comparison, or general. Each classification feeds a type-specific extraction strategy. This means:
+- Valuation tables → populate `DeckData.valuation_table` with target price, upside, P/E
+- Financial tables → populate `DeckData.financials` with revenue, margins, growth
+- Scorecard tables → populate `DeckData.scorecard` dimensions
+
+## Why CI Pipeline Phase 0 Before Feature Work (v1.41)
+
+### Problem
+
+Before Phase 0, the project had no CI pipeline, no characterization tests, and heavy dependencies (PyTorch, CUDA) installed for every run. Developers frequently broke each other's code without knowing until runtime.
+
+### Solution
+
+Phase 0 established:
+1. **CI pipeline** (GitHub Actions): lint (ruff), type (mypy), unit tests (pytest), frontend (next lint + tsc), Docker build matrix
+2. **Characterization tests** (45 tests): golden regression for extraction, API contract tests, MCP tool shapes, quant node I/O
+3. **Dependency hygiene**: removed `psycopg2-binary`, `boto3`, `streamlit`, `litellm`, `langsmith` from main deps; moved to `[future]` extras; added `aiosqlite` (was missing but imported everywhere); upper-bounded `a2a-sdk<2.0`, `langgraph<0.3`, `crewai<1.0`
+
+**Why characterization tests before unit tests?** Characterization tests document current behaviour — they pass on the existing codebase without fixing anything. This creates a safety net for refactoring: if you change the extraction pipeline and 4 golden tests break, you know exactly what you changed.
+
+## Why TRUSTED_PROXIES for IP Lockout (v1.43)
+
+The rate-limited lockout uses IP per-username to prevent brute-force attacks. But in Docker Compose, the Next.js proxy forwards all requests — `request.client.host` on the orchestrator sees the proxy's IP, not the browser's. Every login attempt appears to come from the proxy's IP, making per-IP lockout useless because all users share the proxy's IP.
+
+**Why not trust X-Forwarded-For unconditionally?** An attacker can spoof `X-Forwarded-For` to hit a different username's lockout counter or bypass their own lockout. The `TRUSTED_PROXIES` setting restricts `X-Forwarded-For` trust to specific proxy IPs — only when the direct peer matches a trusted proxy is the forwarded header used.
+
+**Why default empty?** An empty `TRUSTED_PROXIES` always uses the socket address, which is correct for direct connections (non-Docker, non-proxy setups). The user must explicitly configure proxy IPs when deploying behind a reverse proxy.
+
+## Why Disable proxy.ts Middleware (v2.1)
+
+The `proxy.ts` middleware in `web/nextjs-app/proxy.ts` redirected unauthorized requests to the CopilotKit Cloud login page. Even with `AUTH_ENABLED=false`, the middleware intercepted requests and forced a login redirect — breaking the local development flow where users expect to bypass authentication entirely.
+
+**Fix**: Renamed to `proxy.ts.disabled`. The middleware is git-history preserved but not loaded by Next.js. When auth is re-enabled for production, rename back and verify the redirect condition checks `AUTH_ENABLED` before redirecting.
+
+## Why Full Auth Implementation (v1.43)
+
+### Problem
+
+The original `X-FinSight-User-Id` header convention provided no security — any client could impersonate any user. As the system gained Docker deployment and sub-agent communication, the need for authenticated inter-service communication became critical.
+
+### Solution
+
+A 3-boundary auth model (A: User→Frontend→Orchestrator, B: Orchestrator↔Sub-Agent, C: Agent↔MCP) with bearer JWT tokens for users and static bearer tokens for services. Default off (`AUTH_ENABLED=false`), opt-in via `.env`.
+
+**Why JWT instead of session cookies?** The orchestrator serves both a Next.js frontend and A2A clients. JWT access tokens are transport-agnostic — they work over REST, A2A JSON-RPC, and SSE connections. Session cookies only work for browser→server communication.
+
+**Why Argon2id instead of bcrypt?** Argon2id is the current OWASP-recommended password hashing algorithm. It's memory-hard (resistant to GPU attacks) and time-hard (resistant to ASIC attacks). The `argon2-cffi` library is pure Python with a C FFI binding — no system dependency.
+
+**Why rate-limited lockout instead of exponential backoff?** Lockout provides a clear signal to legitimate users ("try again in 60s") while making brute-force impractical. The cooldown is short enough that users don't abandon the application but long enough to prevent meaningful password guessing.
 
 ## Model Change: gpt-oss-20b → qwen
 
@@ -843,7 +940,7 @@ HuggingFace `sentence-transformers` and `transformers` make network calls to `hu
 
 ### Solution
 
-`shared/config.py` sets `os.environ["HF_HUB_OFFLINE"] = "1"` at import time, before any HuggingFace code is imported or executed. This tells the `huggingface_hub` library to skip all network calls — it assumes models are already cached locally from a prior online run.
+`shared/bootstrap.py` sets `os.environ["HF_HUB_OFFLINE"] = "1"` before any HuggingFace code is imported or executed (moved from `shared/config.py` in v1.41). This tells the `huggingface_hub` library to skip all network calls — it assumes models are already cached locally from a prior online run.
 
 **Why at the top of `config.py` instead of in `.env`?** HuggingFace libraries read `HF_HUB_OFFLINE` at import time via `os.environ.get()`. If `.env` is loaded later (e.g. after the `config` import chain), the embedding model import happens before the env var is set. Setting it via `os.environ.setdefault()` at module level guarantees it's in place before any HuggingFace code runs.
 
@@ -1048,7 +1145,7 @@ The cost of the library (version pinning, audit, CI caching) outweighs the benef
 
 Log aggregators operate in UTC internally. Local timestamps (IST, EST, etc.) require timezone-aware parsing at query time, which is fragile across DST changes and deployment regions. UTC ISO-8601 is unambiguous, sortable, and natively supported by every log system. The `ts` field in each JSON line is the exact moment the log was emitted, independent of the server's timezone.
 
-The existing `IST` convention in `shared/config.py` is for *business logic* timestamps (analysis_date, created_at) where users think in local time. Log timestamps are for *operations* — UTC is the standard.
+The existing `IST` convention in `shared/settings.py` is for *business logic* timestamps (analysis_date, created_at) where users think in local time. Log timestamps are for *operations* — UTC is the standard.
 
 ### Why make the StreamHandler idempotency check more specific?
 

@@ -223,7 +223,7 @@ Content-Type: application/vnd.openxmlformats-officedocument.presentationml.prese
 Content-Disposition: attachment; filename="FinSight_{ticker}_{date}.{format}" (PPTX/DOCX)
 ```
 
-**Report format endpoints** are served via `generate_pptx()`, `generate_docx()`, and `generate_html()` in `shared/report_generator.py`. The HTML format uses a Jinja2 template (`shared/templates/investment_deck.html`) with an embedded `deck-stage.js` web component for slide navigation. All three formats share a common `_extract_deck_data()` extraction pipeline.
+**Report format endpoints** are served via `generate_pptx()`, `generate_docx()`, and `generate_html()` in the `shared/reports/` package (split from `shared/report_generator.py` in v1.41; the monolithic shim was removed in v2.0). The HTML format uses a Jinja2 template (`shared/templates/investment_deck.html`) with an embedded `deck-stage.js` web component for slide navigation. All three formats share a common `_extract_deck_data()` extraction pipeline in `shared/reports/extraction.py`.
 
 ---
 
@@ -334,7 +334,76 @@ Standard HTTP status codes:
 
 ## Authentication
 
-FinSight does not implement user authentication. User identity is read from the `X-FinSight-User-Id` request header — a convention for multi-user differentiation, not a security mechanism. The system is designed for local/single-user deployment.
+FinSight implements two authentication modes, controlled by `AUTH_ENABLED` in `.env`:
+
+### Auth Disabled (`AUTH_ENABLED=false`, default)
+
+User identity is read from the `X-FinSight-User-Id` request header — a convention for multi-user differentiation without security. Falls back to `forwarded_props.user_id` in AG-UI requests, then auto-generated `anon-{uuid}`. Suitable for local/single-user deployment.
+
+### Auth Enabled (`AUTH_ENABLED=true`)
+
+Full bearer JWT authentication with three principal kinds:
+
+| Kind | Token | Routes |
+|---|---|---|
+| **User** | JWT from `/auth/login` (Argon2 password) | Orchestrator `/api/*`, AG-UI bridge, reports |
+| **Service** | Static `SERVICE_AUTH_TOKEN` env var | A2A `/a2a`, `/release-evals`, MCP SSE |
+| **Public** | None | `/health`, `/.well-known/*`, `/auth/login\|refresh\|logout` |
+
+#### Login
+
+```
+POST /auth/login
+Content-Type: application/json
+
+{"username": "admin", "password": "secret123"}
+```
+
+**Response**: `200 OK`
+
+```json
+{
+  "access_token": "eyJhbG...",
+  "expires_in": 900,
+  "token_type": "Bearer"
+}
+```
+
+Also sets `refresh_token` httpOnly cookie (7-day TTL, rotated on use).
+
+#### Refresh
+
+```
+POST /auth/refresh
+Cookie: refresh_token=<token>
+```
+
+**Response**: `200 OK` — same response shape as login, new access token + rotated refresh cookie.
+
+#### Logout
+
+```
+POST /auth/logout
+Cookie: refresh_token=<token>
+```
+
+**Response**: `200 OK` — deletes refresh token from DB.
+
+#### Rate-Limited Lockout
+
+- 5 failed login attempts per username+IP → 60s cooldown
+- IP from direct socket address unless peer is in `TRUSTED_PROXIES` (Docker Compose: set to Next.js container IP)
+- **Known tradeoff**: username-keyed lockout allows DoS of a known username; accepted for single-host deployment
+
+#### Token Generation
+
+```bash
+# User JWT signing secret (32+ hex characters)
+openssl rand -hex 32
+
+# Service-to-service shared secret (16+ characters)
+openssl rand -hex 16
+```
 
 ---
 

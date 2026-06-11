@@ -1,11 +1,28 @@
 # MCP Server
 
-Single unified MCP server (`mcp_servers/finsight_server.py`) hosting both agent registry and data tools.
+MCP server hosting both agent registry and data tools. Split from a single monolithic file (2095 lines) into per-tool modules (v1.41):
+
+```
+mcp_servers/
+  ├── _app.py                # 78-line composition root with get_app() factory
+  ├── finsight_server.py     # re-exports get_app() for backward compat
+  ├── tools/
+  │   ├── agent_registry.py  # find_agent(), resource://agent_cards/*
+  │   ├── market_data.py     # get_prices(), get_financials(), get_options_chain()
+  │   ├── edgar.py           # SEC EDGAR tools (filings, content, search)
+  │   ├── ticker.py          # validate_ticker(), resolve_company_ticker()
+  │   ├── sentiment.py       # news, sentiment indicators, earnings history
+  │   └── sandbox.py         # execute_python() with AST gate + container mode
+  └── infra/
+      ├── rate_limiters.py   # TokenBucket rate limiter
+      ├── embed.py           # sentence-transformers lazy loader
+      └── news_fetch.py      # RSS feed fetchers (Yahoo, CNBC, MarketWatch, DDG fallback)
+```
 
 ## Overview
 
 | Port | Tools | Registry |
-|---|---|---|---|
+|---|---|---|
 | 8010 | `get_prices`, `get_financials`, `get_options_chain`, `get_company_filings`, `get_financial_filings`, `get_filing_content`, `validate_ticker`, `resolve_company_ticker`, `full_text_search`, `get_news_sentiment`, `get_earnings_calendar`, `get_insider_transactions`, `get_peers`, `get_macro_indicators`, `get_scenario_shocks`, `get_sentiment_indicators`, `get_earnings_history`, `execute_python` | `find_agent`, `resource://agent_cards/list`, `resource://agent_cards/{name}` |
 
 No API keys required (SEC uses public API, news uses RSS feeds). Windows-compatible — `import resource` guarded by platform check.
@@ -70,7 +87,7 @@ Public API — no key required.
 | `validate_ticker` | `ticker` | Validates ticker against SEC database (cached CIK map) |
 | `resolve_company_ticker` | `text` | Natural language company name to ticker (SEC reverse index + Yahoo fallback) |
 
-**Note**: Requires valid `User-Agent` header. Set via `SEC_USER_AGENT` env var in `.env` (format: `Your Name (your-email@example.com)`) — see `shared/config.py`. The RAG agent uses `get_filing_content` to fetch and index actual SEC filing content.
+**Note**: Requires valid `User-Agent` header. Set via `SEC_USER_AGENT` env var in `.env` (format: `Your Name (your-email@example.com)`) — see `shared/settings.py`. The RAG agent uses `get_filing_content` to fetch and index actual SEC filing content.
 
 ### Financial News Tools
 
@@ -124,6 +141,20 @@ mcp = MCPClient(configs=[MCPServerConfig(name="finsight", url="http://localhost:
 await mcp.connect_all()
 result = await mcp.call_tool_by_name("get_prices", {"ticker": "NVDA"})
 ```
+
+### Service Auth (v1.43)
+
+When `AUTH_ENABLED=true`, pass the service token via `MCPServerConfig`:
+
+```python
+config = MCPServerConfig(
+    name="finsight",
+    url="http://localhost:8010/sse",
+    token=SERVICE_AUTH_TOKEN  # injected as Authorization: Bearer <token>
+)
+```
+
+The MCP server wraps its SSE mount with `AuthMiddleware(accept={"service"})` — only valid service tokens can establish SSE connections.
 
 ### Parsing Tool Results
 

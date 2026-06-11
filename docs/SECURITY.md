@@ -33,6 +33,16 @@ Tokens are validated on every request. Unauthenticated requests receive `401 Una
 - MCP client (`shared/mcp_client.py`) injects `SERVICE_AUTH_TOKEN` into every outbound SSE connection
 - Agent cards include `securitySchemes` + `securityRequirements` for automatic A2A SDK negotiation
 
+### Trusted Proxies (IP Lockout)
+
+The rate-limited lockout key combines username + IP. By default, the IP is read from the direct socket address (`request.client.host`). In Docker Compose, the Next.js proxy forwards requests — the socket address is the proxy's IP, not the browser's. Set `TRUSTED_PROXIES` to the proxy's IP so `X-Forwarded-For` is used:
+
+```ini
+TRUSTED_PROXIES=172.18.0.5   # Next.js proxy container IP
+```
+
+Empty list (default) always uses socket address — `X-Forwarded-For` is never trusted.
+
 ### Token Generation
 
 ```bash
@@ -196,7 +206,10 @@ If you discover a security vulnerability in FinSight:
 
 | Version | Change |
 |---|---|
-| v1.42 | Bearer auth middleware for all HTTP endpoints. JWT user auth (Argon2 passwords, refresh token rotation). Service-to-service A2A + MCP authentication. Sandbox container mode (Docker). Audit logging for all sandbox invocations. |
+| v2.1 | `TRUSTED_PROXIES` setting closes IP-spoofing lockout bypass (EC5). `proxy.ts.disabled` — middleware that forced login redirect even with `AUTH_ENABLED=false` removed. `sub_agent_client.py` NameError fix (`__get_data_parts` → `_get_data_parts`). `SECURITY.md` fixed stale `shared/config.py` reference. |
+| v2.0 | Phase 3 auth audit — contract tests, parametrized auth × route matrix, `trace_with_user()` for Langfuse user_id propagation. |
+| v1.43 | Bearer auth middleware for all HTTP endpoints. JWT user auth (Argon2 passwords, refresh token rotation, rate-limited lockout). Service-to-service A2A + MCP authentication. Sandbox container mode (Docker). Audit logging for all sandbox invocations. `TRUSTED_PROXIES` prevents IP-spoofing lockout bypass. |
+| v1.41 | Centralized settings (`shared/settings.py` pydantic-settings) replaces `shared/config.py`. `shared/bootstrap.py` centralises process-level side-effects. MCP server module split (reduces attack surface per tool). Non-root USER in Dockerfiles. |
 | v1.40 | Deferred Eval Gate (`shared/eval_gate.py`) — sub-agent evals held until orchestrator releases them. Prevents concurrent eval-LLM competition. |
 | v1.38 | LLM Priority Queue (`shared/llm_queue.py`) — 3-tier async semaphore prevents RAGAS eval starvation of production LLM inference. |
 | v1.36 | `_ALLOWED_TABLES` whitelist in `prune_old_records()` prevents SQL injection via table name. |

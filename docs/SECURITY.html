@@ -99,10 +99,31 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <li><strong>Integration tests</strong> (marked <code>@pytest.mark.integration</code>): Spawn actual subprocess to verify runtime enforcement, timeout handling, and runtime import blocking</li>
 </ul>
 
+<h2>Authentication</h2>
+
+<h3>Trusted Proxies (IP Lockout)</h3>
+<p>The rate-limited lockout key combines username + IP. By default, the IP is read from the direct socket address (<code>request.client.host</code>). In Docker Compose, the Next.js proxy forwards requests &mdash; the socket address is the proxy's IP, not the browser's. Set <code>TRUSTED_PROXIES</code> to the proxy's IP so <code>X-Forwarded-For</code> is used:</p>
+<pre><code>TRUSTED_PROXIES=172.18.0.5   # Next.js proxy container IP</code></pre>
+<p>Empty list (default) always uses socket address &mdash; <code>X-Forwarded-For</code> is never trusted.</p>
+
+<h3>Token Generation</h3>
+<pre><code># User JWT signing secret (32+ hex characters)
+openssl rand -hex 32
+
+# Service-to-service shared secret (16+ characters)
+openssl rand -hex 16</code></pre>
+
 <h2>Network Security</h2>
 
-<h3>No Authentication</h3>
-<p>FinSight does not implement user authentication. The <code>X-FinSight-User-Id</code> header is a convention for multi-user differentiation, not a security mechanism. The system is designed for local/single-user deployment.</p>
+<h3>Bearer Auth Middleware</h3>
+<p>All HTTP endpoints are protected by <code>AuthMiddleware</code> when <code>AUTH_ENABLED=true</code>. Tokens are validated on every request. Unauthenticated requests receive <code>401 Unauthorized</code>.</p>
+<ul>
+<li><strong>User tokens</strong>: JWT with HS256 signing, 15-minute TTL, validated on every orchestrator <code>/api/*</code> request</li>
+<li><strong>Service tokens</strong>: Static bearer tokens shared between orchestration and sub-agents via <code>SERVICE_AUTH_TOKEN</code> env var</li>
+<li><strong>MCP authentication</strong>: <code>AuthMiddleware(accept={"service"})</code> wraps the SSE mount &mdash; only valid service tokens can establish SSE connections</li>
+</ul>
+
+<h3>CORS</h3>
 
 <h3>CORS</h3>
 <p>The orchestrator allows cross-origin requests from <code>http://localhost:3000</code> and <code>http://127.0.0.1:3000</code> only. No other origins are permitted.</p>
@@ -121,7 +142,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 </table>
 
 <h3>No Secrets in Code</h3>
-<p>All secrets and API keys are loaded from environment variables via <code>shared/config.py</code>. No hardcoded secrets exist in source code. The <code>.env.example</code> file contains placeholder values.</p>
+<p>All secrets and API keys are loaded from environment variables via <code>shared/settings.py</code>. No hardcoded secrets exist in source code. The <code>.env.example</code> file contains placeholder values.</p>
 
 <h2>Known Limitations</h2>
 <table>
@@ -130,7 +151,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 </thead>
 <tbody>
 <tr><td>No HTTPS</td><td>Traffic is unencrypted</td><td>System is local-only; not exposed to the internet</td></tr>
-<tr><td>No authentication</td><td>Anyone with network access can query</td><td>Deploy behind a firewall or VPN</td></tr>
+<tr><td>Username-keyed lockout allows DoS of known username</td><td>Attacker can lock out a user by repeatedly failing login</td><td>Acceptable for single-host deployment; use VPN in production</td></tr>
 <tr><td>No input sanitization on MCP tools</td><td>Tool parameters are passed directly to yfinance/SEC</td><td>yfinance and SEC are public APIs with their own rate limits</td></tr>
 <tr><td>SQLite databases are unencrypted</td><td>DB files on disk are readable</td><td><code>db/</code> is gitignored; deploy with appropriate file permissions</td></tr>
 <tr><td><code>RLIMIT_*</code> not enforced on Windows</td><td>Sandbox on Windows relies on AST gate + subprocess isolation only</td><td>Avoid running <code>execute_python</code> on Windows in untrusted environments</td></tr>
@@ -157,6 +178,10 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <tr><td>v1.25</td><td><code>SEC_USER_AGENT</code> and <code>LLM_API_KEY</code> moved to env vars. No hardcoded secrets.</td></tr>
 <tr><td>v1.25</td><td>SQLite WAL mode + busy_timeout set once at singleton init.</td></tr>
 <tr><td>v1.36</td><td><code>_ALLOWED_TABLES</code> whitelist in <code>prune_old_records()</code> prevents SQL injection via table name.</td></tr>
+<tr><td>v1.41</td><td>Centralized settings (<code>shared/settings.py</code> pydantic-settings) replaces <code>shared/config.py</code>. <code>shared/bootstrap.py</code> centralises process-level side-effects. MCP server module split (reduces attack surface per tool). Non-root USER in Dockerfiles.</td></tr>
+<tr><td>v1.43</td><td>Bearer auth middleware for all HTTP endpoints. JWT user auth (Argon2 passwords, refresh token rotation, rate-limited lockout). Service-to-service A2A + MCP authentication. Sandbox container mode (Docker). Audit logging for all sandbox invocations. <code>TRUSTED_PROXIES</code> prevents IP-spoofing lockout bypass.</td></tr>
+<tr><td>v2.0</td><td>Phase 3 auth audit &mdash; contract tests, parametrized auth &times; route matrix, <code>trace_with_user()</code> for Langfuse user_id propagation.</td></tr>
+<tr><td>v2.1</td><td><code>TRUSTED_PROXIES</code> setting closes IP-spoofing lockout bypass (EC5). <code>proxy.ts.disabled</code> &mdash; middleware that forced login redirect even with <code>AUTH_ENABLED=false</code> removed. <code>sub_agent_client.py</code> NameError fix (<code>__get_data_parts</code> &rarr; <code>_get_data_parts</code>). <code>SECURITY.md</code> fixed stale <code>shared/config.py</code> reference.</td></tr>
 </tbody>
 </table>
 

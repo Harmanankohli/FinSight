@@ -279,7 +279,56 @@ Content-Disposition: attachment; filename="FinSight_{ticker}_{date}.{format}"  (
 <hr>
 
 <h2>Authentication</h2>
-<p>FinSight does not implement user authentication. User identity is read from the <code>X-FinSight-User-Id</code> request header &mdash; a convention for multi-user differentiation, not a security mechanism. The system is designed for local/single-user deployment.</p>
+<p>FinSight implements two authentication modes, controlled by <code>AUTH_ENABLED</code> in <code>.env</code>:</p>
+
+<h3>Auth Disabled (<code>AUTH_ENABLED=false</code>, default)</h3>
+<p>User identity is read from the <code>X-FinSight-User-Id</code> request header &mdash; a convention for multi-user differentiation without security. Falls back to <code>forwarded_props.user_id</code> in AG-UI requests, then auto-generated <code>anon-{uuid}</code>. Suitable for local/single-user deployment.</p>
+
+<h3>Auth Enabled (<code>AUTH_ENABLED=true</code>)</h3>
+<p>Full bearer JWT authentication with three principal kinds:</p>
+<table>
+<tr><th>Kind</th><th>Token</th><th>Routes</th></tr>
+<tr><td><strong>User</strong></td><td>JWT from <code>/auth/login</code> (Argon2 password)</td><td>Orchestrator <code>/api/*</code>, AG-UI bridge, reports</td></tr>
+<tr><td><strong>Service</strong></td><td>Static <code>SERVICE_AUTH_TOKEN</code> env var</td><td>A2A <code>/a2a</code>, <code>/release-evals</code>, MCP SSE</td></tr>
+<tr><td><strong>Public</strong></td><td>None</td><td><code>/health</code>, <code>/.well-known/*</code>, <code>/auth/login|refresh|logout</code></td></tr>
+</table>
+
+<h4>Login</h4>
+<pre><code>POST /auth/login
+Content-Type: application/json
+
+{"username": "admin", "password": "secret123"}</code></pre>
+<p><strong>Response</strong>: <code>200 OK</code></p>
+<pre><code>{
+  "access_token": "eyJhbG...",
+  "expires_in": 900,
+  "token_type": "Bearer"
+}</code></pre>
+<p>Also sets <code>refresh_token</code> httpOnly cookie (7-day TTL, rotated on use).</p>
+
+<h4>Refresh</h4>
+<pre><code>POST /auth/refresh
+Cookie: refresh_token=&lt;token&gt;</code></pre>
+<p><strong>Response</strong>: <code>200 OK</code> &mdash; same response shape as login, new access token + rotated refresh cookie.</p>
+
+<h4>Logout</h4>
+<pre><code>POST /auth/logout
+Cookie: refresh_token=&lt;token&gt;</code></pre>
+<p><strong>Response</strong>: <code>200 OK</code> &mdash; deletes refresh token from DB.</p>
+
+<h4>Rate-Limited Lockout</h4>
+<ul>
+<li>5 failed login attempts per username+IP &rarr; 60s cooldown</li>
+<li>IP from direct socket address unless peer is in <code>TRUSTED_PROXIES</code> (Docker Compose: set to Next.js container IP)</li>
+<li><strong>Known tradeoff</strong>: username-keyed lockout allows DoS of a known username; accepted for single-host deployment</li>
+</ul>
+
+<h4>Token Generation</h4>
+<pre><code># User JWT signing secret (32+ hex characters)
+openssl rand -hex 32
+
+# Service-to-service shared secret (16+ characters)
+openssl rand -hex 16</code></pre>
 
 <hr>
 

@@ -95,6 +95,15 @@ A2A Request &rarr; FinSightAgentExecutor.execute()
 <li><strong>Programmatic AgentCards</strong> &mdash; built in code using protobuf <code>AgentCard(...)</code> instead of static JSON files</li>
 </ul>
 
+<h2>Agent Server Factory (v1.41)</h2>
+<p>All three sub-agent servers (<code>agent_2_llamaindex/server.py</code>, <code>agent_3_langgraph/server.py</code>, <code>agent_4_crewai/server.py</code>) use <code>build_agent_app()</code> from <code>shared/agent_server.py</code>. This shared factory:</p>
+<ul>
+<li>Creates Starlette app with A2A routes, health check, agent card, and <code>/release-evals</code> endpoint</li>
+<li>Wraps with <code>AuthMiddleware</code> when auth is enabled</li>
+<li>Sets up Langfuse instrumentation, file logging, and startup warm-up hooks</li>
+<li>Eliminates ~100 lines of duplicate server setup per sub-agent</li>
+</ul>
+
 <h2>GenericAgentExecutor Pattern</h2>
 <p>All sub-agents extend <code>BaseAgent</code> and implement <code>stream()</code>. A shared <code>GenericAgentExecutor</code> handles A2A lifecycle:</p>
 <pre>A2A Request &rarr; DefaultRequestHandler &rarr; GenericAgentExecutor.execute()
@@ -181,6 +190,19 @@ RAGAgent._ensure_ingested(ticker) [background]:
 <p><strong>Sector-Relative Scoring</strong>: <code>format_output_node</code> now passes <code>peer_comparison.medians</code> (sector medians for PE, EV/EBITDA, ROE, margins, D/E) into <code>_score_fundamental_value</code> and <code>_score_fundamental_quality</code>. When available, these use <code>_relative_score()</code> to score metrics relative to the sector median instead of absolute universal thresholds &mdash; making fundamental scoring sector-aware.</p>
 
 <p><strong>Live Scenario Shocks</strong>: <code>stress_test_node</code> fetches <code>get_scenario_shocks(sector)</code> via MCP for live historical crash returns per sector ETF (QQQ for tech, XLF for financials, etc.), replacing hardcoded S&P-only fallbacks.</p>
+
+<h3>Quant Agent &mdash; LangGraph Module Split (v1.41)</h3>
+<p><code>agent_3_langgraph/nodes.py</code> (1286 lines) was split into <code>agent_3_langgraph/nodes/</code> package:</p>
+<ul>
+<li><code>calculations.py</code> &mdash; <code>_run_monte_carlo()</code>, <code>_score_fundamental_*()</code>, <code>_weighted_vote()</code></li>
+<li><code>data_fetch.py</code> &mdash; <code>fetch_prices_node</code>, <code>fetch_fundamentals_node</code></li>
+<li><code>technical.py</code> &mdash; <code>technical_analysis_node</code>, <code>compute_metrics_node</code></li>
+<li><code>dcf.py</code> &mdash; <code>dcf_valuation_node</code></li>
+<li><code>monte_carlo.py</code> &mdash; stress analysis, scenario shocks</li>
+<li><code>portfolio.py</code> &mdash; <code>correlation_node</code>, <code>portfolio_correlation</code></li>
+<li><code>summary.py</code> &mdash; <code>format_output_node</code>, <code>llm_summary_node</code></li>
+</ul>
+<p>Each file is &lt; 400 lines. The <code>__init__.py</code> re-exports all node functions through a clean public API.</p>
 
 <h3>Quant Agent &mdash; LangGraph Fan-In Topology</h3>
 <p>The quant agent's LangGraph state machine required three fixes in v1.33-1.34 to handle concurrent fan-in writes:</p>
@@ -275,27 +297,21 @@ RAGAgent._ensure_ingested(ticker) [background]:
 </ol>
 
 <h2>MCP Architecture</h2>
-<p>Single unified MCP server (<code>mcp_servers/finsight_server.py</code>, port 8010) hosting agent registry + all data tools:</p>
-<pre>&#x250C;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2510;
-&#x2502;              finsight-mcp (port 8010)                 &#x2502;
-&#x2502;                                                       &#x2502;
-&#x2502;  Agent Registry         &#x2502;  Data Sources                    &#x2502;
-&#x2502;  &#x251C;&#x2500;&#x2500; find_agent()       &#x2502;  &#x251C;&#x2500;&#x2500; get_prices()                &#x2502;
-&#x2502;  &#x251C;&#x2500;&#x2500; resource://agent_cards/list   &#x2502;  &#x251C;&#x2500;&#x2500; get_financials()            &#x2502;
-&#x2502;  &#x2514;&#x2500;&#x2500; resource://agent_cards/{name}  &#x2502;  &#x251C;&#x2500;&#x2500; get_options_chain()         &#x2502;
-&#x2502;                         &#x2502;  &#x251C;&#x2500;&#x2500; get_company_filings()       &#x2502;
-&#x2502;                         &#x2502;  &#x251C;&#x2500;&#x2500; get_financial_filings()     &#x2502;
-&#x2502;                         &#x2502;  &#x251C;&#x2500;&#x2500; get_filing_content()        &#x2502;
-&#x2502;                         &#x2502;  &#x251C;&#x2500;&#x2500; validate_ticker()           &#x2502;
-&#x2502;                         &#x2502;  &#x251C;&#x2500;&#x2500; resolve_company_ticker()    &#x2502;
-&#x2502;                         &#x2502;  &#x251C;&#x2500;&#x2500; full_text_search()          &#x2502;
-&#x2502;                         &#x2502;  &#x251C;&#x2500;&#x2500; get_news_sentiment()        &#x2502;
-&#x2502;                         &#x2502;  &#x251C;&#x2500;&#x2500; get_earnings_calendar()         &#x2502;
-&#x2502;                         &#x2502;  &#x251C;&#x2500;&#x2500; get_insider_transactions()    &#x2502;
-&#x2502;                         &#x2502;  &#x251C;&#x2500;&#x2500; get_peers()                   &#x2502;
-&#x2502;                         &#x2502;  &#x251C;&#x2500;&#x2500; get_scenario_shocks()         &#x2502;
-&#x2502;                         &#x2502;  &#x2514;&#x2500;&#x2500; execute_python()            &#x2502;
-&#x2514;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2518;</pre>
+<p>MCP server split from a single monolithic file (<code>mcp_servers/finsight_server.py</code>, 2095 lines) into a package with per-tool modules (v1.41):</p>
+<pre>mcp_servers/
+  &#x251C;&#x2500;&#x2500; _app.py              # 78-line composition root with get_app() factory
+  &#x251C;&#x2500;&#x2500; finsight_server.py   # re-exports get_app() for backward compat
+  &#x251C;&#x2500;&#x2500; tools/
+  &#x2502;   &#x251C;&#x2500;&#x2500; agent_registry.py   # find_agent(), resource endpoints
+  &#x2502;   &#x251C;&#x2500;&#x2500; market_data.py      # get_prices(), get_financials(), get_options_chain()
+  &#x2502;   &#x251C;&#x2500;&#x2500; edgar.py            # SEC EDGAR tools (filings, content, search)
+  &#x2502;   &#x251C;&#x2500;&#x2500; ticker.py           # validate_ticker(), resolve_company_ticker()
+  &#x2502;   &#x251C;&#x2500;&#x2500; sentiment.py        # news, sentiment indicators, earnings
+  &#x2502;   &#x2514;&#x2500;&#x2500; sandbox.py          # execute_python() with AST gate
+  &#x2514;&#x2500;&#x2500; infra/
+      &#x251C;&#x2500;&#x2500; rate_limiters.py    # TokenBucket rate limiter
+      &#x251C;&#x2500;&#x2500; embed.py            # sentence-transformers lazy loader
+      &#x2514;&#x2500;&#x2500; news_fetch.py       # RSS feed fetchers</pre>
 <p>Agent cards loaded from <code>agent_cards/*.json</code>, embedded via <code>sentence-transformers</code>, queried via <code>find_agent</code> tool using dot-product similarity.</p>
 
 <h2>Timeout Architecture</h2>
@@ -320,8 +336,36 @@ RAGAgent._ensure_ingested(ticker) [background]:
 <tr><td>Response parse failure</td><td><code>json.JSONDecodeError</code> caught, text used as-is</td></tr>
 </table>
 
+<h2>CI Pipeline</h2>
+<p>A GitHub Actions CI pipeline runs on every push (v1.41, Phase 0):</p>
+<table>
+<tr><th>Job</th><th>Command</th><th>Scope</th></tr>
+<tr><td><strong>lint</strong></td><td><code>ruff check .</code> + <code>ruff format --check</code></td><td>All Python files</td></tr>
+<tr><td><strong>type</strong></td><td><code>mypy shared agent_1_adk</code></td><td>shared/ + orchestrator only (other modules escape-hatched)</td></tr>
+<tr><td><strong>test</strong></td><td><code>pytest tests/unit/ -v</code></td><td>Unit tests with slim deps (no PyTorch/CUDA)</td></tr>
+<tr><td><strong>frontend</strong></td><td><code>npx next lint</code> + <code>npx tsc --noEmit</code></td><td>web/nextjs-app/</td></tr>
+<tr><td><strong>openapi</strong></td><td><code>python scripts/generate_openapi.py --check</code></td><td>docs/openapi.json freshness</td></tr>
+<tr><td><strong>docker</strong></td><td>Docker build for all 5 services (continue-on-error)</td><td>Dockerfiles</td></tr>
+</table>
+<p>Test job uses <code>--no-deps -e .</code> to install only ~15 packages instead of all 293 base deps (avoids PyTorch, CUDA, all agent frameworks). A <code>AUTH_ENABLED={false,true}</code> matrix runs auth contract tests twice.</p>
+
+<h2>Centralized Settings &amp; Bootstrap</h2>
+<p>Configuration migrated from <code>shared/config.py</code> (re-exporting shim, removed in v2.0) to <code>shared/settings.py</code>:</p>
+<ul>
+<li><strong>pydantic-settings <code>BaseSettings</code></strong>: Type-safe env var loading with back-compat aliases (<code>LLM_BASE_URL</code> to <code>OPENAI_BASE_URL</code> to <code>LM_STUDIO_BASE_URL</code>)</li>
+<li><strong><code>get_settings()</code> singleton</strong>: Lazy-loaded, cached after first call</li>
+<li><strong><code>validate_runtime()</code></strong>: Production-mode enforcement (e.g., refuses <code>ast</code> sandbox on Windows)</li>
+</ul>
+<p>Process-level side-effects centralized in <code>shared/bootstrap.py</code>:</p>
+<ul>
+<li>Event loop policy (<code>WindowsSelectorEventLoopPolicy</code> on Windows)</li>
+<li><code>HF_HUB_OFFLINE=1</code></li>
+<li><code>sys.stdout.reconfigure(encoding='utf-8')</code></li>
+<li><code>LANGFUSE_SECONDARY_KEY</code> patching</li>
+</ul>
+
 <h2>LLM Configuration</h2>
-<p>All agents use LM Studio (OpenAI-compatible local API). The <code>config.py</code> default is <code>qwen/qwen3-30b-a3b-2507</code>; developers commonly override to <code>mistralai/ministral-3-14b-reasoning</code> via <code>.env</code> for faster local inference. All LLM calls are throttled by <code>LLMPriorityQueue</code> (3 priority tiers) to prevent eval scoring from starving production inference; concurrency controlled by <code>LLM_MAX_CONCURRENT</code> env var (default 2).</p>
+<p>All agents use LM Studio (OpenAI-compatible local API). The <code>shared/settings.py</code> default is <code>qwen/qwen3-30b-a3b-2507</code>; developers commonly override to <code>mistralai/ministral-3-14b-reasoning</code> via <code>.env</code> for faster local inference. All LLM calls are throttled by <code>LLMPriorityQueue</code> (3 priority tiers) to prevent eval scoring from starving production inference; concurrency controlled by <code>LLM_MAX_CONCURRENT</code> env var (default 2).</p>
 <table>
 <tr><th>Agent</th><th>Model (default)</th><th>Provider</th></tr>
 <tr><td>Orchestrator (ADK)</td><td><code>qwen/qwen3-30b-a3b-2507</code></td><td><code>openai/</code> prefix (LM Studio endpoint)</td></tr>
@@ -384,7 +428,7 @@ Sub-agents (agent_2, agent_3, agent_4)
 <p>After each agent produces a response, a fire-and-forget background task scores it using RAGAS metrics that require no ground-truth reference. Scores are pushed to Langfuse per-trace (linked by <code>trace_id</code>).</p>
 
 <h3>Feature flag</h3>
-<p>All sidecar evals are gated by <code>EVAL_TRACE_ENABLED</code> in <code>.env</code> (default <code>True</code>). The flag is exposed as <code>EVAL_ENABLED</code> in <code>shared/config.py</code>; every agent's <code>asyncio.create_task(_eval_*)</code> call site checks it. Set <code>EVAL_TRACE_ENABLED=False</code> to disable all per-agent runtime scoring with no code changes &mdash; useful for fast iteration when LM Studio judge calls add 5&ndash;180s of background work per query.</p>
+<p>All sidecar evals are gated by <code>EVAL_TRACE_ENABLED</code> in <code>.env</code> (default <code>True</code>). The flag is exposed as <code>EVAL_ENABLED</code> in <code>shared.settings</code>; every agent's <code>asyncio.create_task(_eval_*)</code> call site checks it. Set <code>EVAL_TRACE_ENABLED=False</code> to disable all per-agent runtime scoring with no code changes &mdash; useful for fast iteration when LM Studio judge calls add 5&ndash;180s of background work per query.</p>
 
 <h3>Orchestrator eval hook lives in <code>after_agent_callback</code></h3>
 <p>When the orchestrator runs through <code>adk web</code> (the path <code>run_adk_web.bat</code> uses), the ADK Web runner is responsible &mdash; <code>FinSightAgentExecutor</code> is never invoked. The orchestrator's eval is therefore scheduled from <code>agents/finsight_agent/agent.py</code>'s <code>_persist_memory_callback</code>, not from <code>agent_executor.py</code>. The callback first runs <code>_is_analysis_turn(session.events)</code>: if <code>save_brief</code> was not called in this turn (e.g. the user only asked "what were my last recommendations?"), both memory persist and eval are skipped to avoid polluting long-term memory with conversational queries.</p>
@@ -536,7 +580,7 @@ runner = Runner(
 </ul>
 
 <h3>Timezone</h3>
-<p>All datetime operations use <strong>IST (UTC+5:30)</strong>, defined as <code>IST = timezone(timedelta(hours=5, minutes=30), name="IST")</code> in <code>shared/config.py</code>. This applies to agent timestamps, memory created_at fields, analysis_date comparisons, and performance evaluation timestamps. Previously mixed UTC/local timestamps caused same-day cache mismatches on non-IST machines.</p>
+<p>All datetime operations use <strong>IST (UTC+5:30)</strong>, defined as <code>IST = timezone(timedelta(hours=5, minutes=30), name="IST")</code> in <code>shared/settings.py</code>. This applies to agent timestamps, memory created_at fields, analysis_date comparisons, and performance evaluation timestamps. Previously mixed UTC/local timestamps caused same-day cache mismatches on non-IST machines.</p>
 
 <h3>SQLite Schema</h3>
 <pre>sessions (id, user_id, created_at, updated_at)
@@ -550,7 +594,7 @@ ingested_filings (edgar_url PRIMARY KEY, ticker, ingested_at)  -- v1.18</pre>
 <p><code>ingested_filings</code> tracks which SEC EDGAR document URLs have been indexed into ChromaDB. The RAG agent checks this table before fetching filing content &mdash; already-indexed URLs are skipped, preventing redundant ingest on restart.</p>
 
 <h3>HF_HUB_OFFLINE</h3>
-<p><code>shared/config.py</code> sets <code>HF_HUB_OFFLINE=1</code> at import time before any HuggingFace code runs. This prevents network calls to <code>huggingface.co</code> when loading <code>sentence-transformers</code> or embedding models &mdash; models must be cached locally from a prior online run. Set <code>HF_HUB_OFFLINE=0</code> in <code>.env</code> to re-enable download checks.</p>
+<p><code>shared/bootstrap.py</code> sets <code>HF_HUB_OFFLINE=1</code> before any HuggingFace code runs (moved from <code>shared/config.py</code> in v1.41). This prevents network calls to <code>huggingface.co</code> when loading <code>sentence-transformers</code> or embedding models &mdash; models must be cached locally from a prior online run. Set <code>HF_HUB_OFFLINE=0</code> in <code>.env</code> to re-enable download checks.</p>
 
 <h3>Auto-Save Flow</h3>
 <p>After each successful response, the executor automatically persists:</p>
@@ -562,7 +606,15 @@ ingested_filings (edgar_url PRIMARY KEY, ticker, ingested_at)  -- v1.18</pre>
 <p>The LLM does not need to call any tool to persist memory &mdash; auto-save happens on every response.</p>
 
 <h2>Report Generator</h2>
-<p><code>shared/report_generator.py</code> converts a stored investment brief into a downloadable PPTX, DOCX, or self-contained HTML deck. The orchestrator's <code>generate_report</code> tool dispatches to the appropriate public function based on the requested format.</p>
+<p>Report generation is a separate subsystem in <code>shared/reports/</code> package (split from the monolithic <code>shared/report_generator.py</code> in v1.41) that produces three output formats (PPTX, DOCX, HTML) from the same shared data extraction pipeline. It is invoked via HTTP API routes in <code>agent_1_adk/api_routes.py</code>.</p>
+<pre>shared/reports/
+  &#x251C;&#x2500;&#x2500; __init__.py        # public API re-exports generate_pptx/docx/html
+  &#x251C;&#x2500;&#x2500; deck_model.py      # DeckData dataclass with 16+ typed fields
+  &#x251C;&#x2500;&#x2500; extraction.py      # _extract_deck_data() pipeline with robust regex
+  &#x251C;&#x2500;&#x2500; pptx_renderer.py   # 9 slide builder functions + _SlidesHelper
+  &#x251C;&#x2500;&#x2500; docx_renderer.py   # DOCX-specific rendering preserving Word structure
+  &#x2514;&#x2500;&#x2500; html_renderer.py   # Jinja2 template rendering with deck-stage.js</pre>
+<p>Back-compat shim <code>shared/report_generator.py</code> was removed in v2.0 (Phase 3.5).</p>
 
 <h3>Public API</h3>
 <table>

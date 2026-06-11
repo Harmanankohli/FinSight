@@ -1,5 +1,39 @@
 # Changelog
 
+## v2.1 — Post-Phase-3 CI Hardening & Runtime Fixes
+
+### Runtime Error Resolutions (9264985)
+
+- **A2A AgentCard security scheme API**: Fixed protobuf `get_or_create`/`.values` usage — `securitySchemes` and `securityRequirements` use `StringList`/`RepeatedCompositeContainer` correctly.
+- **LangGraph node name collision**: `peer_comparison` and `insider_signals` node names conflicted with `QuantAnalysisState` key names — renamed to avoid `INVALID_CONCURRENT_GRAPH_UPDATE`.
+- **Protobuf Part serialization** (`sub_agent_client.py`): `MessageToDict` replaces manual dict construction for `Part` protobuf messages — prevents `TypeError` on non-serializable fields.
+- **CrewAI instrumentor crash** (`crewai>=0.95`): `try/except ModuleNotFoundError` around CrewAIInstrumentor import — prevents crash when `crewai` is not installed in the test env.
+- **LANGFUSE_BASE_URL resolution**: Pydantic `AliasChoices` replaces `os.environ` fallback — `LANGFUSE_BASE_URL` env var now correctly overrides the default.
+- **Sidebar hydration mismatch** (`Sidebar.tsx`): `getRecentQueries` deferred to `useEffect` — prevents Next.js SSR hydration error from localStorage reads.
+- **Proxy.ts disabled**: `proxy.ts` renamed to `proxy.ts.disabled` — the middleware forced login redirect to CopilotKit Cloud even with `AUTH_ENABLED=false`.
+
+### CI Pipeline Hardening (096922e–b2dc5a4)
+
+- **Ruff cleanup**: `ruff check --fix` + `ruff format` across 121 files (4581 insertions, 2256 deletions). Auto-fixed 221 issues (E501 line length, I001 import sort, E402 import order, F401 unused imports, E701 statement style). Inline `# noqa: E501` on unbreakable long strings. File-level `# ruff: noqa: E402` on entrypoints with bootstrap-before-import pattern. Added `ExtractionCtx` to `shared/reports/__init__.__all__` (F401). Renamed `l` → `lbl` in extraction generators (E741).
+- **uv venv for Python jobs**: All CI Python jobs now create a uv venv before installing — fixes `PermissionError` on editable installs with `uv pip install --system`.
+- **--break-system-packages flag**: `UV_BREAK_SYSTEM_PACKAGES` env var doesn't work with `uv`; the `--break-system-packages` flag must be passed directly to each `uv pip install --system` call for PEP 668 compliance on Ubuntu 24.04.
+- **`__init__.py` for mypy**: Added missing `__init__.py` files in `agent_1_adk/` and `shared/` packages. Extended mypy overrides to `shared.*` and `agent_1_adk.*` (never strict-clean).
+- **Docker build context fix**: Dockerfiles reference `pyproject.toml` and `shared/` from repo root, but CI was using agent subdirectory as context. Changed to `-f` flag with `.` context.
+- **Slim test deps**: Test job installs only ~15 packages instead of all 293 base deps (avoids PyTorch, CUDA, all agent frameworks) via `--no-deps -e .`. Scope test job to `tests/unit/` only. Enable uv cache on all Python CI jobs.
+- **Lazy memory imports**: `shared/memory/__init__.py` imports made lazy via `__getattr__` — importing `store.py` or `ticker_memory.py` no longer pulls in `google.adk`.
+- **22 test failure fixes**:
+  - `extract_ticker()` case bug: removed `query.upper()` that turned every word into a ticker candidate
+  - Isolated `test_settings` from `.env` file and CI `AUTH_ENABLED` env var leak
+  - Isolated `TestAuthOff` from CI `AUTH_ENABLED` env var
+  - Wrapped `agents_list` handler in try/except for missing `google.adk`
+  - Added `pytest.importorskip("yfinance")` for deck extraction tests
+  - Used neutral metrics in HOLD test to avoid weight redistribution
+  - Fixed signal_scores nesting in runtime_eval gate test
+  - Set `SANDBOX_MODE=disabled` in production validation test for Windows
+- **Coverage/pytest hang fixes**: `uv run pytest --cov` hangs indefinitely after tests complete. Replaced with coverage run directly via venv binary, then removed coverage entirely — run pytest directly. Added `pytest_unconfigure` hook that detects leaked non-daemon aiosqlite threads and `os._exit()`s with real session status. 5-minute timeout on CI test step as safety net.
+- **`_REPORTS_OFFLINE` patching**: CI sets `REPORTS_OFFLINE=true` which skips the yfinance code path at module import time. Tests now patch the module-level flag to `False` so the yfinance mock is actually exercised.
+- **Google ADK stubs in slim CI**: `google.adk`/`google.genai` stubs added to `test_save_brief_persists_synthesis` — prevents `ModuleNotFoundError` when ADK is not installed in slim test env.
+
 ## v2.0 — Phase 3: Quality, Observability, Docs & Shim Removal
 
 ### WP 3.1 — Auth Contract Tests & CI Matrix
@@ -33,6 +67,137 @@
 - **ruff ratchet**: `ruff check .` clean.
 - **mypy ratchet**: `mypy shared agent_1_adk` clean.
 - **Zero DeprecationWarning**: Suite emits no deprecation warnings.
+
+### WP 3.6 — Auth Audit Gap Fixes (01eaafa)
+- **`TRUSTED_PROXIES` setting**: `_client_ip()` now only reads `X-Forwarded-For` when the direct peer IP is in `TRUSTED_PROXIES`. Empty list (default) always uses socket address — closes IP-spoofing lockout bypass (EC5).
+- **`sub_agent_client.py` NameError fix**: `__get_data_parts` renamed to `_get_data_parts` (double underscore caused `NameError` at both call sites — line 280, 387). `a2a.types` import block moved above the function.
+- **`ppt-generation-fix.md` deleted**: Stale audit doc — all six markers verified applied in `shared/reports/`. Line numbers no longer matched codebase.
+- **SECURITY.md updated**: Documented trusted-proxy lockout behaviour and known username-DoS tradeoff. Fixed stale `shared/config.py` reference.
+
+## v1.43 — Phase 2: Full Auth Implementation (WP 2.1–2.7)
+
+### WP 2.1 — Shared Auth Toolkit
+- **`shared/auth/` package**: `tokens.py` (JWT generation/validation with HS256, access+refresh tokens), `middleware.py` (Starlette ASGI `AuthMiddleware` with path-based exemptions, principal-kind routing), `audit.py` (structured auth.denied logs).
+- **Principal-kind routing**: Middleware accepts path-specific `accept` sets (`{"user"}`, `{"service"}`, `{"user","service"}`). Orchestrator `/api/*` paths accept user tokens; sub-agent `/a2a` paths accept service tokens; `/health` paths are public.
+
+### WP 2.2 — User Store & Auth Routes
+- **`shared/memory/user_store.py`**: Argon2id password hashing, user CRUD, refresh token management with rotation. SQLite-backed.
+- **`agent_1_adk/auth_routes.py`**: `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout` with httpOnly refresh cookie + JSON access token response.
+- **Next.js auth UI**: `web/nextjs-app/app/login/page.tsx` — login form, `AuthContext.tsx` — React context for auth state, `Providers.tsx` — wraps app with auth provider, `lib/auth.ts` — client-side token management.
+- **Rate-limited lockout**: 5 failed attempts → 60s cooldown per username+IP. IP from socket address unless peer is in `TRUSTED_PROXIES`.
+- **`scripts/create_user.py`**: Interactive user creation with Argon2 password hashing.
+
+### WP 2.3 — Resource Scoping
+- **`ticker_memory.py`**: Brief queries filtered by `user_id` — users only see their own briefs.
+- **`session_repo.py`**: Session queries filtered by `user_id` — users only see their own sessions.
+- **`api_routes.py`**: All memory/session/agent endpoints read `X-FinSight-User-Id` header for user identity.
+- **`semantic_cache.py`**: Cache keys include `user_id` — multi-user cache won't cross-pollinate.
+
+### WP 2.4 — A2A Service Auth
+- **`sub_agent_client.py`**: Service bearer token injected into `A2AClientRequest.default_headers`. Propagated to sub-agents on every A2A call.
+- **`agent_server.py`**: `AuthMiddleware(accept={"service"})` wraps sub-agent A2A endpoints (`/a2a`, `/release-evals`). Service token validated before any A2A handler runs.
+- **User context propagation**: `_user` envelope in A2A message metadata carries `current_user_id` across service boundaries.
+
+### WP 2.5 — MCP Service Auth
+- **`finsight_server.py`**: `AuthMiddleware(accept={"service"})` wraps the SSE mount. Only valid service tokens can establish SSE connections.
+- **`mcp_client.py`**: `MCPServerConfig` carries `token` field — injected as `Authorization: Bearer <token>` in the SSE `Url` header on connect.
+
+### WP 2.6 — Sandbox Hardening
+- **Container mode**: `SANDBOX_MODE=container` runs user code in `docker run --rm --network none --memory 512m --cpus 1 --read-only --tmpfs /tmp:size=64m --user 65534:65534 python:3.12-slim`. Falls back to `ast` mode with warning if Docker unavailable.
+- **Audit logging**: `log_sandbox_execution()` logs principal, mode, exit code, and truncated output for every sandbox invocation.
+- **Production guard**: `PRODUCTION=true` refuses to start with `ast` mode on Windows or `container` without Docker.
+
+### WP 2.7 — Secrets & Transport Docs
+- **`deploy/Caddyfile.example`**: TLS termination config with reverse proxy for all 5 services.
+- **`.env.example`**: `AUTH_JWT_SECRETS`, `SERVICE_AUTH_TOKEN`, `TRUSTED_PROXIES` documented.
+- **`SECURITY.md` rewrite**: Full auth architecture, hardening history, known limitations table.
+- **Agent cards updated**: All 4 agent cards include `securitySchemes` + `securityRequirements` for A2A SDK negotiation.
+
+### Auth Contract Tests (042/042 passing)
+- `test_auth_tokens.py` (132 lines) — JWT generation, validation, expiry, rotation, signature verification
+- `test_auth_middleware.py` (189 lines) — middleware chain, path exemptions, principal-kind routing, auth-off mode
+- `test_auth_routes.py` (145 lines) — login/refresh/logout cycle, rate-limited lockout, cookie signing
+- `test_auth_audit.py` (41 lines) — structured auth.denied logging patterns
+- `test_user_store.py` (146 lines) — Argon2 hashing, user CRUD, refresh token rotation
+
+## v1.42 — Phase R: Table Classification, Bounded Bull/Bear Extraction, Corpus Harness
+
+### Table Classification & Staged Extraction Pipeline
+
+**`shared/reports/extraction.py`** (d071c70):
+- **Table classification**: `_classify_table_types()` detects and classifies markdown tables into valuation, financial, scorecard, peer comparison, or general types — enables type-appropriate extraction.
+- **Bounded bull/bear extraction**: `_extract_bull_bear_bounded()` uses section boundary markers to extract exactly one "Bull Case" and one "Bear Case" block — prevents the LLM's verbose output from flooding the extraction with duplicate narratives.
+- **Staged pipeline**: Extraction proceeds in ordered stages: section parser → table classifier → bounded extraction → metric enrichment → fallback defaults. Each stage feeds the next; earlier stages don't block later ones.
+- **Robust header detection**: `_parse_markdown_sections()` handles `##`, `###`, `####` and mixed heading styles without losing content to regex boundary mismatches.
+- **Bare ticker peer extraction**: When no `CompanyName (TICKER)` format is found, a fallback scans for bare tickers in peer context ("peers like DLTR", "from COST") — populates `peer_names` from informal mentions.
+- **Risk/opportunity from inline bold blocks**: Extracts risks from `**Bearish Signals:**` and `**Headwinds:**` blocks, opportunities from `**Bullish Signals:**` and `**Tailwinds:**` blocks — fallback when no dedicated section header matches.
+
+### Corpus Regression Harness
+
+**`tests/regression/test_corpus_invariants.py`** (126 lines, new):
+- 7 corpus fixtures (`hostile.json`, `one_liner.json`, `quant_heavy.json`, `sentiment_heavy.json`, `table_free_prose.json`, `table_heavy.json`, `unicode_long.json`) covering real-world LLM output patterns.
+- Invariant tests: no crashes, no empty sections, required fields populated for every corpus entry.
+- Fixture-driven: adding a new corpus JSON file automatically creates test cases via parametrization.
+
+**`scripts/export_brief_fixtures.py`** (new, 44 lines): Exports real `TickerMemory` briefs as corpus fixtures for regression testing.
+
+## v1.41 — Phase 1: Centralized Settings, Module Splits, Guardrails, Docker Hardening
+
+### WP 1.1 — MCP Server Module Split
+
+**`mcp_servers/finsight_server.py`** (2095 lines) split into:
+- `mcp_servers/tools/` (agent_registry, market_data, edgar, ticker, sentiment, sandbox) — per-tool modules
+- `mcp_servers/infra/` (rate_limiters, embed, news_fetch) — shared infrastructure
+- `mcp_servers/_app.py` (78-line composition root) — `get_app()` factory, wires everything
+
+### WP 1.2 — Report Generator Module Split
+
+**`shared/report_generator.py`** (1638 lines) split into `shared/reports/` package:
+- `deck_model.py` — `DeckData` dataclass
+- `extraction.py` — extraction pipeline (`_extract_deck_data`)
+- `pptx_renderer.py` — `generate_pptx()`
+- `docx_renderer.py` — `generate_docx()`
+- `html_renderer.py` — `generate_html()`
+- Back-compat shim preserved in `shared/report_generator.py`
+
+### WP 1.3 — LangGraph Nodes Split
+
+**`agent_3_langgraph/nodes.py`** (1286 lines) split into `agent_3_langgraph/nodes/` package:
+- `calculations.py`, `data_fetch.py`, `technical.py`, `dcf.py`, `monte_carlo.py`, `portfolio.py`, `summary.py`
+
+### WP 1.4 — Agent Server Factory
+
+**`shared/agent_server.py`**: `build_agent_app()` factory for A2A sub-agents. All three sub-agent servers (`agent_2_llamaindex/server.py`, `agent_3_langgraph/server.py`, `agent_4_crewai/server.py`) converted to use the shared factory pattern — eliminates duplicate Starlette setup code.
+
+### WP 1.5 — Centralized Pydantic Settings
+
+**`shared/settings.py`** (new, 169 lines): pydantic-settings `BaseSettings` class with:
+- Back-compat aliases (`LLM_BASE_URL` ↔ `OPENAI_BASE_URL` ↔ `LM_STUDIO_BASE_URL`)
+- `validate_runtime()` — production-mode enforcement
+- `get_settings()` singleton — lazy-loaded, cached after first call
+- All env vars migrated from `shared/config.py` re-exports
+
+**`shared/bootstrap.py`** (new, 62 lines): Centralises process-level side-effects — sets event loop policy, `HF_HUB_OFFLINE`, stdout encoding, `LANGFUSE_SECONDARY_KEY` patching. Called once per process.
+
+### WP 1.6 — Performance Fixes
+
+- **`shared/memory/session_repo.py`**: `JOIN` query replaces N+1 session list pattern — single SQL query instead of 1 + N round-trips for session event counts.
+- **`agent_1_adk/api_routes.py`**: Input validation with error envelopes, filename safety in report downloads.
+- **`shared/memory/ticker_memory.py`**: `has_changed()` old/new parameter swap fix — was comparing current against current, always returning `False`.
+
+### WP 1.7 — Guardrails Unification
+
+- **`shared/guardrails.py`**: `_NON_INVESTMENT_RE` regex unified from two separate copies.
+- **Dead `_TODAY` constant removed** from `agent_1_adk/agent.py` (G6).
+- **Silent except→logger.debug(exc_info=True)**: Executor, bridge, and agent error handlers now log with traceback instead of swallowing.
+
+### WP 1.8 — Docker Hardening
+
+- `.dockerignore` added
+- `pyproject.toml`: `setuptools.packages.find` + per-service extras (`orchestrator`/`rag`/`quant`/`market`/`mcp_server`)
+- All 5 Dockerfiles: `pip install ".[svc]"` + non-root `USER` + repo-root build context
+- `docker-compose.yml`: Python urllib healthchecks (G19), `FINSIGHT_DB_PATH` volume (G3), `env_file`, `restart: unless-stopped`
+- `shared/memory/store.py`: DB path from settings (G2) — no more hardcoded paths
 
 ## v1.40 — Report Extraction Hardening, Logging Overhaul, Agent Instruction Fixes
 

@@ -104,6 +104,14 @@ A2A Request → FinSightAgentExecutor.execute()
 - **WindowsSelectorEventLoopPolicy** — prevents ConnectionResetError noise on Windows
 - **Programmatic AgentCards** — built in code using protobuf `AgentCard(...)` instead of static JSON files
 
+## Agent Server Factory (v1.41)
+
+All three sub-agent servers (`agent_2_llamaindex/server.py`, `agent_3_langgraph/server.py`, `agent_4_crewai/server.py`) use `build_agent_app()` from `shared/agent_server.py`. This shared factory:
+- Creates Starlette app with A2A routes, health check, agent card, and `/release-evals` endpoint
+- Wraps with `AuthMiddleware` when auth is enabled
+- Sets up Langfuse instrumentation, file logging, and startup warm-up hooks
+- Eliminates ~100 lines of duplicate server setup per sub-agent
+
 ## GenericAgentExecutor Pattern
 
 All sub-agents extend `BaseAgent` and implement `stream()`. A shared `GenericAgentExecutor` handles A2A lifecycle:
@@ -200,6 +208,19 @@ A2A Request → DefaultRequestHandler → GenericAgentExecutor(QuantAgent)
 **Sector-Relative Scoring**: `format_output_node` now passes `peer_comparison.medians` (sector medians for PE, EV/EBITDA, ROE, margins, D/E) into `_score_fundamental_value` and `_score_fundamental_quality`. When available, these use `_relative_score()` to score metrics relative to the sector median instead of absolute universal thresholds — making fundamental scoring sector-aware.
 
 **Live Scenario Shocks**: `stress_test_node` fetches `get_scenario_shocks(sector)` via MCP for live historical crash returns per sector ETF (QQQ for tech, XLF for financials, etc.), replacing hardcoded S&P-only fallbacks.
+
+### Quant Agent — LangGraph Module Split (v1.41)
+
+`agent_3_langgraph/nodes.py` (1286 lines) was split into `agent_3_langgraph/nodes/` package:
+- `calculations.py` — `_run_monte_carlo()`, `_score_fundamental_*()`, `_weighted_vote()`
+- `data_fetch.py` — `fetch_prices_node`, `fetch_fundamentals_node`
+- `technical.py` — `technical_analysis_node`, `compute_metrics_node`
+- `dcf.py` — `dcf_valuation_node`
+- `monte_carlo.py` — stress analysis, scenario shocks
+- `portfolio.py` — `correlation_node`, `portfolio_correlation`
+- `summary.py` — `format_output_node`, `llm_summary_node`
+
+Each file is < 400 lines. The `__init__.py` re-exports all node functions through a clean public API.
 
 ### Quant Agent — LangGraph Fan-In Topology
 
@@ -313,29 +334,23 @@ Sized by `LLM_MAX_CONCURRENT` (default 2). Uses `heapq` with `(priority, seq, as
 
 ## MCP Architecture
 
-Single unified MCP server (`mcp_servers/finsight_server.py`, port 8010) hosting agent registry + all data tools:
+MCP server split from a single monolithic file (`mcp_servers/finsight_server.py`, 2095 lines) into a package with per-tool modules (v1.41):
 
 ```
-┌──────────────────────────────────────────────────────┐
-│              finsight-mcp (port 8010)                 │
-│                                                       │
-│  Agent Registry         │  Data Sources                    │
-│  ├── find_agent()       │  ├── get_prices()                │
-│  ├── resource://agent_cards/list   │  ├── get_financials()            │
-│  └── resource://agent_cards/{name}  │  ├── get_options_chain()         │
-│                         │  ├── get_company_filings()       │
-│                         │  ├── get_financial_filings()     │
-│                         │  ├── get_filing_content()        │
-│                         │  ├── validate_ticker()           │
-│                         │  ├── resolve_company_ticker()    │
-│                         │  ├── full_text_search()          │
-│                         │  ├── get_news_sentiment()        │
-│                         │  ├── get_earnings_calendar()         │
-│                         │  ├── get_insider_transactions()    │
-│                         │  ├── get_peers()                   │
-│                         │  ├── get_scenario_shocks()         │
-│                         │  └── execute_python()            │
-└──────────────────────────────────────────────────────┘
+mcp_servers/
+  ├── _app.py              # 78-line composition root with get_app() factory
+  ├── finsight_server.py   # re-exports get_app() for backward compat
+  ├── tools/
+  │   ├── agent_registry.py   # find_agent(), resource endpoints
+  │   ├── market_data.py      # get_prices(), get_financials(), get_options_chain()
+  │   ├── edgar.py            # SEC EDGAR tools (filings, content, search)
+  │   ├── ticker.py           # validate_ticker(), resolve_company_ticker()
+  │   ├── sentiment.py        # news, sentiment indicators, earnings
+  │   └── sandbox.py          # execute_python() with AST gate
+  └── infra/
+      ├── rate_limiters.py    # TokenBucket rate limiter
+      ├── embed.py            # sentence-transformers lazy loader
+      └── news_fetch.py       # RSS feed fetchers
 ```
 
 Agent cards loaded from `agent_cards/*.json`, embedded via `sentence-transformers`, queried via `find_agent` tool using dot-product similarity.
@@ -363,9 +378,38 @@ Timeouts configured via `.env` with `A2A_TIMEOUT=680.0`:
 | Agent unavailable | Skipped, LLM works with what it has |
 | Response parse failure | `json.JSONDecodeError` caught, text used as-is |
 
+## CI Pipeline
+
+A GitHub Actions CI pipeline runs on every push (v1.41, Phase 0):
+
+| Job | Command | Scope |
+|---|---|---|
+| **lint** | `ruff check .` + `ruff format --check` | All Python files |
+| **type** | `mypy shared agent_1_adk` | shared/ + orchestrator only (other modules escape-hatched) |
+| **test** | `pytest tests/unit/ -v` | Unit tests with slim deps (no PyTorch/CUDA) |
+| **frontend** | `npx next lint` + `npx tsc --noEmit` | web/nextjs-app/ |
+| **openapi** | `python scripts/generate_openapi.py --check` | docs/openapi.json freshness |
+| **docker** | Docker build for all 5 services (continue-on-error) | Dockerfiles |
+
+Test job uses `--no-deps -e .` to install only ~15 packages instead of all 293 base deps (avoids PyTorch, CUDA, all agent frameworks). A `AUTH_ENABLED={false,true}` matrix runs auth contract tests twice.
+
+## Centralized Settings & Bootstrap
+
+Configuration migrated from `shared/config.py` (re-exporting shim, removed in v2.0) to `shared/settings.py`:
+
+- **pydantic-settings `BaseSettings`**: Type-safe env var loading with back-compat aliases (`LLM_BASE_URL` ↔ `OPENAI_BASE_URL` ↔ `LM_STUDIO_BASE_URL`)
+- **`get_settings()` singleton**: Lazy-loaded, cached after first call
+- **`validate_runtime()`**: Production-mode enforcement (e.g., refuses `ast` sandbox on Windows)
+
+Process-level side-effects centralized in `shared/bootstrap.py`:
+- Event loop policy (`WindowsSelectorEventLoopPolicy` on Windows)
+- `HF_HUB_OFFLINE=1`
+- `sys.stdout.reconfigure(encoding='utf-8')`
+- `LANGFUSE_SECONDARY_KEY` patching
+
 ## LLM Configuration
 
-All agents use LM Studio (OpenAI-compatible local API). The `config.py` default is `qwen/qwen3-30b-a3b-2507`; developers commonly override to `mistralai/ministral-3-14b-reasoning` via `.env` for faster local inference. All LLM calls are throttled by `LLMPriorityQueue` (3 priority tiers) to prevent eval scoring from starving production inference; concurrency controlled by `LLM_MAX_CONCURRENT` env var (default 2).
+All agents use LM Studio (OpenAI-compatible local API). The `shared/settings.py` default is `qwen/qwen3-30b-a3b-2507`; developers commonly override to `mistralai/ministral-3-14b-reasoning` via `.env` for faster local inference. All LLM calls are throttled by `LLMPriorityQueue` (3 priority tiers) to prevent eval scoring from starving production inference; concurrency controlled by `LLM_MAX_CONCURRENT` env var (default 2).
 
 ### Cross-Process Eval Coordination
 
@@ -474,7 +518,7 @@ All conversation events (user messages, agent responses, tool calls) are persist
 
 ### Timezone
 
-All datetime operations use **IST (UTC+5:30)**, defined as `IST = timezone(timedelta(hours=5, minutes=30), name="IST")` in `shared/config.py`. This applies to agent timestamps, memory created_at fields, analysis_date comparisons, and performance evaluation timestamps. Previously mixed UTC/local timestamps caused same-day cache mismatches on non-IST machines.
+All datetime operations use **IST (UTC+5:30)**, defined as `IST = timezone(timedelta(hours=5, minutes=30), name="IST")` in `shared/settings.py`. This applies to agent timestamps, memory created_at fields, analysis_date comparisons, and performance evaluation timestamps. Previously mixed UTC/local timestamps caused same-day cache mismatches on non-IST machines.
 
 ### Memory Cache Callback (before_agent_callback)
 
@@ -607,7 +651,7 @@ ingested_filings (edgar_url PRIMARY KEY, ticker, ingested_at)  -- v1.18
 
 ### HF_HUB_OFFLINE
 
-`shared/config.py` sets `HF_HUB_OFFLINE=1` at import time before any HuggingFace code runs. This prevents network calls to `huggingface.co` when loading `sentence-transformers` or embedding models — models must be cached locally from a prior online run. Set `HF_HUB_OFFLINE=0` in `.env` to re-enable download checks.
+`shared/bootstrap.py` sets `HF_HUB_OFFLINE=1` before any HuggingFace code runs (moved from `shared/config.py` in v1.41). This prevents network calls to `huggingface.co` when loading `sentence-transformers` or embedding models — models must be cached locally from a prior online run. Set `HF_HUB_OFFLINE=0` in `.env` to re-enable download checks.
 
 ## Runtime RAGAS Evaluation
 
@@ -615,7 +659,7 @@ After each agent produces a response, a fire-and-forget background task scores i
 
 ### Feature flag
 
-All sidecar evals are gated by `EVAL_TRACE_ENABLED` in `.env` (default `True`). The flag is exposed as `EVAL_ENABLED` in `shared/config.py`; every agent's `asyncio.create_task(_eval_*)` call site checks it. Set `EVAL_TRACE_ENABLED=False` to disable all per-agent runtime scoring with no code changes — useful for fast iteration when LM Studio judge calls add 5–180s of background work per query.
+All sidecar evals are gated by `EVAL_TRACE_ENABLED` in `.env` (default `True`). The flag is exposed as `EVAL_ENABLED` in `shared.settings`; every agent's `asyncio.create_task(_eval_*)` call site checks it. Set `EVAL_TRACE_ENABLED=False` to disable all per-agent runtime scoring with no code changes — useful for fast iteration when LM Studio judge calls add 5–180s of background work per query.
 
 ### Orchestrator eval hook lives in `after_agent_callback`
 
@@ -718,7 +762,19 @@ All databases are stored under the `db/` folder at the project root — the enti
 
 ## Report Generation
 
-Report generation is a separate subsystem in `shared/report_generator.py` that produces three output formats (PPTX, DOCX, HTML) from the same shared data extraction pipeline. It is invoked via HTTP API routes in `agent_1_adk/api_routes.py`.
+Report generation is a separate subsystem in `shared/reports/` package (split from the monolithic `shared/report_generator.py` in v1.41) that produces three output formats (PPTX, DOCX, HTML) from the same shared data extraction pipeline. It is invoked via HTTP API routes in `agent_1_adk/api_routes.py`.
+
+```
+shared/reports/
+  ├── __init__.py        # public API re-exports generate_pptx/docx/html
+  ├── deck_model.py      # DeckData dataclass with 16+ typed fields
+  ├── extraction.py      # _extract_deck_data() pipeline with robust regex
+  ├── pptx_renderer.py   # 9 slide builder functions + _SlidesHelper
+  ├── docx_renderer.py   # DOCX-specific rendering preserving Word structure
+  └── html_renderer.py   # Jinja2 template rendering with deck-stage.js
+```
+
+Back-compat shim `shared/report_generator.py` was removed in v2.0 (Phase 3.5).
 
 ### API Routes
 
@@ -787,9 +843,9 @@ HTTP Request → api_routes.py handler
 
 | Component | File | Purpose |
 |---|---|---|
-| `_extract_deck_data()` | `shared/report_generator.py` | Shared extraction pipeline — returns `DeckData` dataclass |
-| `_rsi_status()` | `shared/report_generator.py` | Classifies RSI (Overbought/Bullish/Neutral/Oversold) |
-| `_SlidesHelper` | `shared/report_generator.py` | PPTX namespace class — shared state + 9 slide builders |
-| `_get_jinja_env()` | `shared/report_generator.py` | Lazy-loaded Jinja2 environment for HTML templates |
+| `_extract_deck_data()` | `shared/reports/extraction.py` | Shared extraction pipeline — returns `DeckData` dataclass |
+| `_rsi_status()` | `shared/reports/extraction.py` | Classifies RSI (Overbought/Bullish/Neutral/Oversold) |
+| `_SlidesHelper` | `shared/reports/pptx_renderer.py` | PPTX namespace class — shared state + 9 slide builders |
+| `_get_jinja_env()` | `shared/reports/html_renderer.py` | Lazy-loaded Jinja2 environment for HTML templates |
 | `investment_deck.html` | `shared/templates/` | HTML template with slide blocks |
 | `deck-stage.js` | `shared/templates/` | Web component for interactive slide navigation |

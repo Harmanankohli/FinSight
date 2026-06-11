@@ -38,21 +38,31 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 
 <h1>Test Coverage</h1>
 
-<p><strong>~135 test functions (~220 parametrized cases)</strong> across 19 test files + offline evaluation driver. v1.39 added 30 tests: 10 unit tests for DeckData extraction and 20 regression tests covering DOCX, PPTX, and HTML report generation.</p>
+<p><strong>~235 test functions (~300 parametrized cases) across 27 test files + offline evaluation driver. v1.39 added DOCX/HTML/PPTX regression tests. Phase 0 added 45 characterization tests (4 files). Phase 3 added auth contract tests (3 files). Phase R added corpus regression harness (1 file).</strong></p>
 
 <h2>Running Tests</h2>
 <pre><code>pytest                          # all unit tests
 pytest -v                       # verbose
 pytest tests/unit/              # unit tests only
+pytest tests/characterization/  # characterization tests only
+pytest -m auth                  # auth-related tests (Phase 3)
+pytest -m openapi               # OpenAPI spec tests
 pytest -m integration           # integration/smoke tests (requires running services)
-pytest -m "not integration"     # unit tests only (default)</code></pre>
+pytest -m "not integration"     # unit tests only (default)
+pytest -m "not external"        # exclude tests that need external services</code></pre>
 
 <h2>Test Layout</h2>
 <pre><code>tests/
-&crarr; conftest.py                          # env isolation, memory_db fixture
+&crarr; conftest.py                          # env isolation, memory_db fixture, os._exit hook
 &crarr; evaluation/                          # offline RAGAS eval (standalone, not pytest)
 &crarr;   &crarr; golden_set.jsonl               # 5 golden examples (NVDA, AAPL)
 &crarr;   &crarr; run_offline_eval.py             # offline evaluation driver
+&crarr; characterization/                    # Phase 0 &mdash; 45 tests, 4 files
+&crarr;   &crarr; conftest.py                   # fixtures, mocks, golden loader
+&crarr;   &crarr; test_api_contracts.py         # ASGI in-process API route tests
+&crarr;   &crarr; test_deck_extraction_golden.py # golden tests (4 fixtures, UPDATE_GOLDENS=1)
+&crarr;   &crarr; test_mcp_tool_shapes.py       # MCP tool return-shape contracts
+&crarr;   &crarr; test_quant_nodes_io.py        # per-node state-in/state-out
 &crarr; integration/
 &crarr;   &crarr; test_mcp_server_smoke.py         # 4 &mdash; MCP + agent card endpoint reachability
 &crarr;   &crarr; test_behavioral_signals_e2e.py   # 5 &mdash; options, insider, positioning,
@@ -66,30 +76,35 @@ pytest -m "not integration"     # unit tests only (default)</code></pre>
 &crarr;   &crarr; test_html_regression.py          # 8 &mdash; HTML: valid output, empty brief,
 &crarr;   &crarr;                                 #     unknown ticker, non-standard rec, unicode,
 &crarr;   &crarr;                                 #     markdown tables, inline JS, XSS autoescaping
+&crarr;   &crarr; test_corpus_invariants.py        # 7 &mdash; Phase R: corpus fixture invariants
+&crarr;   &crarr;                                 #     (hostile, one_liner, quant_heavy, etc.)
 &crarr; security/
 &crarr;   &crarr; test_sandbox.py                  # 11 (parametrized ~45+) &mdash; AST gate + subprocess
 &crarr; unit/
-&crarr;   &crarr; test_deck_data_extraction.py     # 10 (parametrized) &mdash; WMT/NVDA/TGT DeckData,
-&crarr;   &crarr;                                 #     yfinance fallback, table parsing
+&crarr;   &crarr; test_deck_data_extraction.py     # 38 &mdash; Phase R: extraction pipeline edge cases
 &crarr;   &crarr; test_models.py                   # 10 &mdash; Pydantic model construction, round-trip
-&crarr;   &crarr; test_quant_graph_nodes.py        # 18 &mdash; compute_metrics, stress_test, Monte Carlo,
-&crarr;   &crarr;                                 #     format_output, peer_comparison, behavioral
-&crarr;   &crarr; test_parallel_dispatch.py        # 3 &mdash; concurrent gather, timeout map,
-&crarr;   &crarr;                                 #     key isolation (Phase 2/3)
-&crarr;   &crarr; test_runtime_eval_gates.py       # 9 &mdash; circuit breaker, SHA-256 dedup, burst,
-&crarr;   &crarr;                                 #     kill switch, gate, deterministic (Phase 4)
-&crarr;   &crarr; test_ticker_utils.py             # 11 (parametrized ~15+) &mdash; ticker format,
-&crarr;   &crarr;                                 #     extraction, holdings, financial stop words
-&crarr;   &crarr; test_ttl_cache.py                # 9 &mdash; cache hit/miss/expiry, single-flight,
-&crarr;   &crarr;                                 #     LRU eviction
-&crarr;   &crarr; test_rate_limiter.py             # 4 &mdash; burst, rate enforcement, refill
-&crarr;   &crarr; test_trace_context.py            # 8 &mdash; inject/extract round-trip, edge cases
+&crarr;   &crarr; test_quant_graph_nodes.py        # 18 &mdash; quant metrics, signals, voting
+&crarr;   &crarr; test_parallel_dispatch.py        # 3 &mdash; concurrent gather, timeout map
+&crarr;   &crarr; test_runtime_eval_gates.py       # 9 &mdash; circuit breaker, dedup, burst
+&crarr;   &crarr; test_ticker_utils.py             # 11 (~15 parametrized) &mdash; extraction, parsing
+&crarr;   &crarr; test_ttl_cache.py                # 9 &mdash; hit/miss/expiry, LRU
+&crarr;   &crarr; test_rate_limiter.py             # 4 &mdash; burst, refill
+&crarr;   &crarr; test_trace_context.py            # 8 &mdash; inject/extract
+&crarr;   &crarr; test_settings.py                 # Phase 1: pydantic-settings validation
+&crarr;   &crarr; test_auth_tokens.py              # 132 &mdash; Phase 2: JWT gen, validation, rotation
+&crarr;   &crarr; test_auth_middleware.py          # 189 &mdash; Phase 2: middleware chain, routing
+&crarr;   &crarr; test_auth_routes.py              # 145 &mdash; Phase 2: login/refresh/logout, lockout
+&crarr;   &crarr; test_auth_audit.py               # 41 &mdash; Phase 2: structured auth.denied logs
+&crarr;   &crarr; test_user_store.py               # 146 &mdash; Phase 2: Argon2, user CRUD
+&crarr;   &crarr; test_auth_contract.py            # 170 &mdash; Phase 3: parametrized auth &times; route matrix
+&crarr;   &crarr; test_a2a_protocol.py             # 167 &mdash; Phase 3: A2A lifecycle, failure modes
+&crarr;   &crarr; test_openapi_spec.py             # 73 &mdash; Phase 3: spec regeneration check
 &crarr;   &crarr; memory/
-&crarr;       &crarr; test_memory_store.py         # 5 &mdash; table creation, indexes, WAL, idempotency
-&crarr;       &crarr; test_ticker_memory.py        # 7 &mdash; store/get_latest, history, flip detection
-&crarr;       &crarr; test_save_brief_persists_synthesis.py  # 2 &mdash; synthesis-wins, rationale-fallback</code></pre>
+&crarr;       &crarr; test_memory_store.py         # 5 &mdash; tables, indexes, WAL
+&crarr;       &crarr; test_ticker_memory.py        # 7 &mdash; store/get_latest, flip detection
+&crarr;       &crarr; test_save_brief_persists_synthesis.py  # 2 &mdash; synthesis wins, rationale fallback</code></pre>
 
-<p><strong>Total: ~220 parametrized test cases across 19 test files.</strong></p>
+<p><strong>Total: ~300 parametrized test cases across 27 test files.</strong></p>
 
 <h2>Key Patterns</h2>
 <ul>
@@ -99,6 +114,44 @@ pytest -m "not integration"     # unit tests only (default)</code></pre>
 <li><strong>Asyncio</strong>: All tests use <code>pytest-asyncio</code> with <code>asyncio_mode = "auto"</code> and <code>asyncio_default_fixture_loop_scope = "function"</code>.</li>
 <li><strong>Runtime eval gated</strong>: <code>test_runtime_eval_gates.py</code> verifies circuit breaker, SHA-256 dedup, burst limiter, kill switch, unified gate, and <code>score_quant_deterministic</code> schema validation without LLM calls.</li>
 </ul>
+
+<h2>Characterization Tests (Phase 0)</h2>
+<p>4 test files (45 tests) providing golden regression and contract verification:</p>
+<table>
+<tr><th>File</th><th>Scope</th></tr>
+<tr><td><code>test_api_contracts.py</code></td><td>ASGI in-process API route tests with temp SQLite DB and pre-stubbed ADK/a2a-sdk modules. Covers all REST endpoints with auth on/off states.</td></tr>
+<tr><td><code>test_deck_extraction_golden.py</code></td><td>Golden tests over 4 fixtures (minimal/structured/empty/realistic_quant). Goldens written on first run via <code>UPDATE_GOLDENS=1</code>. Includes P1-regression test documenting current bug.</td></tr>
+<tr><td><code>test_mcp_tool_shapes.py</code></td><td>MCP tool return-shape tests with mocked yfinance/feedparser. No network required. Validates each tool&rsquo;s response schema.</td></tr>
+<tr><td><code>test_quant_nodes_io.py</code></td><td>Per-node state-in/state-out with stubbed MCP client. Each LangGraph node tested in isolation with synthetic inputs.</td></tr>
+</table>
+
+<h2>Corpus Regression Tests (Phase R)</h2>
+<p><code>test_corpus_invariants.py</code> (126 lines) provides invariant testing across 7 corpus fixtures:</p>
+<table>
+<tr><th>Fixture</th><th>Purpose</th></tr>
+<tr><td><code>hostile.json</code></td><td>Malformed/malicious LLM output</td></tr>
+<tr><td><code>one_liner.json</code></td><td>Single-line LLM responses</td></tr>
+<tr><td><code>quant_heavy.json</code></td><td>Mostly quantitative data, little prose</td></tr>
+<tr><td><code>sentiment_heavy.json</code></td><td>Mostly narrative, few metrics</td></tr>
+<tr><td><code>table_free_prose.json</code></td><td>No markdown tables, pure prose</td></tr>
+<tr><td><code>table_heavy.json</code></td><td>Many markdown tables</td></tr>
+<tr><td><code>unicode_long.json</code></td><td>Long text with unicode characters</td></tr>
+</table>
+<p>Fixtures driven: adding a new corpus JSON file automatically creates test cases via parametrization.</p>
+
+<h2>Auth &amp; Contract Tests (Phase 2 &amp; 3)</h2>
+<p>7 test files covering authentication, authorization, and protocol contracts:</p>
+<table>
+<tr><th>File</th><th>Lines</th><th>Scope</th></tr>
+<tr><td><code>test_auth_tokens.py</code></td><td>132</td><td>JWT generation, validation, expiry, rotation, signature verification</td></tr>
+<tr><td><code>test_auth_middleware.py</code></td><td>189</td><td>Middleware chain, path exemptions, principal-kind routing, auth-off mode</td></tr>
+<tr><td><code>test_auth_routes.py</code></td><td>145</td><td>Login/refresh/logout cycle, rate-limited lockout, cookie signing</td></tr>
+<tr><td><code>test_auth_audit.py</code></td><td>41</td><td>Structured auth.denied logging patterns</td></tr>
+<tr><td><code>test_user_store.py</code></td><td>146</td><td>Argon2 hashing, user CRUD, refresh token rotation</td></tr>
+<tr><td><code>test_auth_contract.py</code></td><td>170</td><td>Parametrized auth x route matrix: every REST route x {auth on/off} x {none, user, service, admin}</td></tr>
+<tr><td><code>test_a2a_protocol.py</code></td><td>167</td><td>In-process GenericAgentExecutor lifecycle: WORKING to artifact to COMPLETED, FAILED, CANCELED, INPUT_REQUIRED, structured data artifacts</td></tr>
+<tr><td><code>test_openapi_spec.py</code></td><td>73</td><td>Spec regeneration check: verifies <code>docs/openapi.json</code> matches generated output</td></tr>
+</table>
 
 <h2>Regression Tests</h2>
 <p>20 tests across 3 files in <code>tests/regression/</code>. Run without service dependencies &mdash; all generators operate offline against synthetic brief data:</p>
@@ -123,7 +176,7 @@ pytest -m "not integration"     # unit tests only (default)</code></pre>
 </ul>
 
 <h2>Test Configuration</h2>
-<p>Defined in <code>pyproject.toml</code>: <code>asyncio_mode = "auto"</code>, <code>asyncio_default_fixture_loop_scope = "function"</code>, custom markers <code>integration</code> and <code>external</code>.</p>
+<p>Defined in <code>pyproject.toml</code>: <code>asyncio_mode = "auto"</code>, <code>asyncio_default_fixture_loop_scope = "function"</code>, custom markers <code>integration</code>, <code>external</code>, <code>auth</code>, and <code>openapi</code>.</p>
 
 <hr>
 <p style="font-size:.85rem;color:#888"><a href="index.html">Back to docs hub</a></p>

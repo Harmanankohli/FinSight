@@ -27,7 +27,7 @@ The orchestrator uses a single `LlmAgent` with three tools (`send_message`, `gen
 12. **Memory pruning** — `prune_old_records()` called on startup deletes rows older than `MEMORY_RETENTION_DAYS=90` from `ticker_briefs`, `recommendation_records`, and `memory_entries`. Uses existing `write_lock()` for concurrency safety. Returns dict of `{table: rows_deleted}`.
 13. **Cancellation support** — `FinSightAgentExecutor.cancel()` stores `asyncio.current_task()`, catches `CancelledError`, emits `TASK_STATE_CANCELED`.
 14. **IST timezone** — All datetime comparisons use `IST = timezone(timedelta(hours=5, minutes=30))`. Relevant for "today" comparisons in memory cache callback and auto-save timestamping.
-15. **Per-agent timeouts** — `SubAgentClient.send_message()` wraps streaming in `asyncio.wait_for()` with per-agent timeouts from `shared/config.py`: RAG=600s, Quant=600s, Market Context=600s, fallback = global `A2A_TIMEOUT=680s`. Timeout returns clean `{"error": "agent_timeout", ...}` JSON to the LLM.
+15. **Per-agent timeouts** — `SubAgentClient.send_message()` wraps streaming in `asyncio.wait_for()` with per-agent timeouts from `shared.settings`: RAG=600s, Quant=600s, Market Context=600s, fallback = global `A2A_TIMEOUT=680s`. Timeout returns clean `{"error": "agent_timeout", ...}` JSON to the LLM.
 
 All A2A communication uses `ClientFactory` + `BaseClient` from the official `a2a-sdk`. Streaming events are handled correctly: intermediate SUBMITTED/WORKING events are skipped, only `artifact_update` events (data or text) and terminal `status_update` events are returned to the LLM.
 
@@ -379,7 +379,8 @@ All four agents share a common infrastructure layer:
 | **`@logged` timing decorator** | Applied to all three sub-agent `_build_response()` methods and `SubAgentClient.send_message()`. Logs elapsed time and entry/exit. |
 | **Lazy OpenTelemetry** | `init_instrumentation("<agent_type>")` replaces module-level `*Instrumentor().instrument()` calls. Called from each server entry point. |
 | **SQLiteTaskStore** | Replaces `InMemoryTaskStore` in all four server entry points. Tasks survive process restarts. |
-| **`LLM_API_KEY` env var** | Replaces hardcoded `api_key="lmstudio"`. All agent files (`index_manager.py`, `nodes.py`, `crew.py`) import `LLM_API_KEY` from `shared/config.py`. |
+| **`LLM_API_KEY` env var** | Replaces hardcoded `api_key="lmstudio"`. All agent files import from `shared.settings` (was `shared/config.py`, removed in v2.0). |
+| **Centralized settings** | `shared/settings.py` (pydantic-settings `BaseSettings`) with back-compat aliases, `validate_runtime()`, `get_settings()` singleton. `shared/bootstrap.py` centralises process-level side-effects (event loop policy, `HF_HUB_OFFLINE`, stdout encoding). |
 | **Per-service log levels** | `LOG_LEVEL_<SERVICE>` env vars (e.g. `LOG_LEVEL_ORCHESTRATOR=DEBUG`). |
 | **`SEC_USER_AGENT` env var** | Replaces hardcoded SEC user agent string in MCP server filing requests. |
 | **LLM Priority Queue** | `LLMPriorityQueue` in `shared/llm_queue.py` (process-local, heap-based async semaphore). Three tiers: `CRITICAL` (quant summary, crew kickoff), `NORMAL` (warmup ping), `LOW` (RAGAS eval). Default `LLM_MAX_CONCURRENT=2`. Prevents eval starvation of production inference. |
@@ -387,7 +388,7 @@ All four agents share a common infrastructure layer:
 
 ## Phase Map
 
-The project evolved through seven phases, each adding distinct agent capabilities:
+The project evolved through thirteen phases, each adding distinct agent capabilities:
 
 | Phase | Version | What Changed |
 |---|---|---|
@@ -400,3 +401,8 @@ The project evolved through seven phases, each adding distinct agent capabilitie
 | **Phase 7** | v1.38 | Deferred Eval Gate (`shared/eval_gate.py`) — cross-process eval coordination. Sub-agents defer evals via `defer_eval()` instead of `asyncio.create_task()`; orchestrator POSTs `/release-evals` after synthesis. Confidence regex updated for "Confidence Score: X" format. AG-UI bridge auto-saves briefs and strips null optional fields recursively for CopilotKit Zod compatibility. |
 | **Phase 8** | v1.39 | Report generator overhaul: `_resolve_ticker_info()` via yfinance replaces hardcoded 28-symbol dict; `_parse_markdown_tables()` captures structured LLM table data before markdown cleanup (fixes empty Financial Performance slides); Momentum/RSI added as 6th scorecard dimension; `generate_html()` added as public API using Jinja2 templates (`shared/templates/`), wired into routes and agent tool dispatch; 9 PPTX slide generators extracted into standalone functions; AG-UI bridge serialization fix for `LoadMemoryResponse`; report route ordering fixed so `/ticker/{symbol}/latest/{format}` matches before generic `/{brief_id}/{format}` catch-all; Python 3.12 lookbehind crash fixed; 30 new regression + unit tests. |
 | **Phase 9** | v1.40 | Report extraction hardening: section parser extended to `###`/`####` headers; Bear Case target, bare ticker peers (DLTR/COST), Bearish/Bullish Signals inline blocks, Tailwinds/Headwinds labels added to extraction pipeline; structured peer comparison from Quant + Sentiment agents; Monte Carlo p10/p50/p90 scenario cards. Agent: custom `load_memory` wrapper returns plain `str` (fixes serialization crash); `send_message`-first instruction hardened; `generate_report` removed from LLM tool list. Circular import in `shared/trace_context.py` fixed. Logging overhaul: 11 silent excepts fixed, 7 files got logger, operational log statements, noisy third-party loggers suppressed, `@logged` on `GenericAgentExecutor.execute()`. Diagram Mermaid syntax + zoom/drag fixed. |
+| **Phase 10** | v1.41 | Centralized settings (`shared/settings.py` pydantic-settings), module splits (MCP server → `tools/` + `infra/`, report_generator → `shared/reports/`, nodes.py → `nodes/`), guardrails unification, Docker hardening (non-root USER, per-service extras, healthchecks), `build_agent_app()` factory. |
+| **Phase R** | v1.42 | Table classification, bounded bull/bear extraction, staged extraction pipeline, corpus regression harness (7 fixtures, invariant tests), `export_brief_fixtures.py` script. |
+| **Phase 11** | v1.43 | Full auth implementation — JWT tokens, Argon2 passwords, refresh rotation, AuthMiddleware with principal-kind routing, user store, rate-limited lockout, A2A service auth, MCP SSE auth, sandbox container mode (`SANDBOX_MODE=container`), Caddyfile.example, 42 auth unit tests. |
+| **Phase 12** | v2.0 | Contract tests (auth matrix, A2A protocol), OpenAPI spec (13 paths, 16 schemas, CI-enforced), trace filter (`traceFilter.ts`, `trace_with_user()`), shim removal (`shared/config.py`/`report_generator.py` deleted, ruff/mypy clean). |
+| **—** | v2.1 | Post-Phase-3 runtime fixes (6 error resolutions), CI hardening (ruff cleanup, uv venv, slim test deps, lazy memory imports, 22 test fixes, coverage/pytest hang fixes), proxy.ts disabled. |
