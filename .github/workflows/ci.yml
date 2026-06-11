@@ -57,6 +57,7 @@ jobs:
       - run: uv pip install --no-deps -e .
       - run: uv pip install pytest pytest-asyncio pytest-cov httpx pydantic pydantic-settings pyjwt starlette aiosqlite numpy python-pptx python-docx jinja2 python-dotenv argon2-cffi
       - run: uv run pytest tests/unit -m "not integration and not external and not openapi" --cov=shared --cov=agent_1_adk --cov-report=xml -q
+        timeout-minutes: 5
       - uses: codecov/codecov-action@v4
         if: always()
         with:
