@@ -223,8 +223,8 @@ async def test_format_output_hold_when_no_signals():
     state = _base_state(
         ticker="HOLD",
         metrics={
-            "sharpe_ratio": 0.5,
-            "annual_volatility": 0.20,
+            "sharpe_ratio": 0.3,
+            "annual_volatility": 0.30,
             "beta": 1.0,
             "var_95_daily": -0.015,
             "max_drawdown": -0.12,

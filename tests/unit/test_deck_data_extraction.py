@@ -1,8 +1,10 @@
 """Tests for shared.report_generator data extraction."""
 
-from unittest.mock import MagicMock, patch
-
 import pytest
+
+pytest.importorskip("yfinance")
+
+from unittest.mock import MagicMock, patch  # noqa: E402
 
 
 def _make_yf_mock(long_name, sector, exchange):

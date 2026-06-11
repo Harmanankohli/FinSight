@@ -15,8 +15,11 @@ def _reset():
 # ── Env precedence ────────────────────────────────────────────────────────────
 
 
-def test_default_values():
-    s = Settings()
+def test_default_values(monkeypatch):
+    monkeypatch.delenv("AUTH_ENABLED", raising=False)
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+    monkeypatch.setenv("_ENV_FILE", "")  # prevent .env file from being read
+    s = Settings(_env_file=None)
     assert s.llm_model == "qwen/qwen3-30b-a3b-2507"
     assert s.env == "development"
     assert s.auth_enabled is False
@@ -149,7 +152,8 @@ def test_validate_runtime_production_placeholder_sec_raises(monkeypatch):
     monkeypatch.setenv("AUTH_ENABLED", "true")
     monkeypatch.setenv("AUTH_JWT_SECRETS", "a" * 32)
     monkeypatch.setenv("SERVICE_AUTH_TOKEN", "b" * 16)
-    # SEC_USER_AGENT left as default placeholder
+    monkeypatch.setenv("SANDBOX_MODE", "disabled")
+    monkeypatch.setenv("SEC_USER_AGENT", "FinSight Research (dev-mode-set-SEC_USER_AGENT)")
     s = Settings()
     with pytest.raises(EnvironmentError, match="SEC_USER_AGENT"):
         s.validate_runtime()

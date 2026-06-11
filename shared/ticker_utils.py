@@ -186,14 +186,10 @@ def clean_query_for_resolution(text: str) -> str:
 # (3) $ prefix as explicit signal, (4) isolated uppercase words,
 # (5) case-insensitive fallback for lowercase tickers like "aapl".
 def extract_ticker(query: str) -> str:
-    query = query.upper()
-    # All-uppercase parens = ticker symbol e.g. "Visa (V)" or "buy (NVDA)".
     m = re.search(r"\(([A-Z]{1,5}(?:\.[A-Z]{1,2})?)\)", query)
     if m and not _is_financial_stop_word(m.group(1)):
         return m.group(1)
 
-    # Mixed-case parens = company name e.g. "V (Visa)" — the pre-paren word is
-    # the ticker. Handles single-char tickers (V, Y) that no other pattern catches.
     m = re.search(r"\b([A-Z]{1,5})\s+\([A-Za-z][a-z]", query)
     if m and not _is_financial_stop_word(m.group(1)):
         return m.group(1)
@@ -201,9 +197,8 @@ def extract_ticker(query: str) -> str:
     m = re.search(
         r"(?:for|of|about|buy|sell|invest|in)\s+\$?([A-Z]{1,5}(?:\.[A-Z]{1,2})?)\b",
         query,
-        re.IGNORECASE,
     )
-    if m and re.fullmatch(r"[A-Z]{1,5}(?:\.[A-Z]{1,2})?", m.group(1)):
+    if m and not _is_financial_stop_word(m.group(1)):
         return m.group(1)
 
     m = re.search(r"\$([A-Z]{1,5}(?:\.[A-Z]{1,2})?)\b", query)

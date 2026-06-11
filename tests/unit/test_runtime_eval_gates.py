@@ -69,15 +69,18 @@ def test_score_quant_deterministic_catches_missing_signals():
 
 def test_score_quant_deterministic_accepts_full_payload():
     result = {
-        "signal_scores": {
-            "risk_quality": 0.5,
-            "dcf": 0.3,
-            "fund_value": 0.0,
-            "fund_quality": 0.1,
-            "tech_trend": 0.2,
-            "tech_momentum": 0.4,
-            "peer_positioning": 0.1,
-            "behavioral": 0.0,
+        "metrics": {
+            "signal_scores": {
+                "risk_quality": 0.5,
+                "dcf_value": 0.3,
+                "fundamental_value": 0.0,
+                "fundamental_quality": 0.1,
+                "technicals_trend": 0.2,
+                "technicals_momentum": 0.4,
+                "peer_positioning": 0.1,
+                "behavioral": 0.0,
+            },
+            "quant_confidence": 0.7,
         },
         "options_signals": {"pc_vol": 0.5},
         "insider_signals": {"count": 3},
@@ -85,7 +88,6 @@ def test_score_quant_deterministic_accepts_full_payload():
         "monte_carlo": {"p50": 200.0, "prob_profit": 0.6},
         "peer_comparison": {"rankings": {"pe_rank": 2}},
         "recommendation": "BUY",
-        "confidence_score": 0.7,
     }
     checks = runtime_eval.score_quant_deterministic(result)
     assert checks["passed"] is True

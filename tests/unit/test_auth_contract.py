@@ -94,8 +94,9 @@ class TestAuthOff:
     AUTH_OPEN = [r for r in AUTH_ROUTES if r[0] != "/auth/refresh"]
 
     @pytest.mark.parametrize("path,method", AUTH_OPEN + API_ROUTES)
-    async def test_open_when_auth_disabled(self, path, method):
-        app = _build_app()
+    async def test_open_when_auth_disabled(self, path, method, monkeypatch):
+        monkeypatch.setenv("AUTH_ENABLED", "false")
+        app = _build_app({"auth_enabled": False})
         async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE) as client:
             r = await client.request(method, path)
         assert r.status_code != 401, f"{method} {path} should not be blocked"

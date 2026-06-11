@@ -269,10 +269,13 @@ async def agents_list(request: Request) -> JSONResponse:
     denied = _require_admin(request)
     if denied:
         return denied
-    from agent_1_adk.agent import _client
+    try:
+        from agent_1_adk.agent import _client
 
-    agents = _client.list_agents()
-    return JSONResponse(agents)
+        agents = _client.list_agents()
+        return JSONResponse(agents)
+    except Exception as exc:
+        return _ERROR_ENVELOPE("INTERNAL", str(exc), status=500)
 
 
 async def agent_health(request: Request) -> JSONResponse:
