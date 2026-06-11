@@ -10,7 +10,10 @@ from datetime import date, timedelta
 
 import numpy as np
 
-from agent_3_langgraph.nodes import (
+pytest_importorskip = __import__("pytest").importorskip
+pytest_importorskip("langgraph")
+
+from agent_3_langgraph.nodes import (  # noqa: E402
     compute_metrics_node,
     format_output_node,
     stress_test_node,

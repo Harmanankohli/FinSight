@@ -8,18 +8,22 @@ Provides persistent storage for:
 - Recommendation performance (via PerformanceTracker)
 """
 
-# Session conversation history with hybrid BM25 + embedding search.
-from shared.memory.memory_service import SQLiteMemoryService
-
-# Recommendation outcomes with win-rate tracking.
-from shared.memory.performance_tracker import PerformanceTracker
-
-# User portfolio holdings and risk profile.
-from shared.memory.portfolio_store import PortfolioStore
 from shared.memory.store import DB_PATH, get_db, init_db
-
-# Per-ticker investment briefs and recommendation history.
 from shared.memory.ticker_memory import TickerMemory
+
+
+def __getattr__(name: str):
+    if name == "SQLiteMemoryService":
+        from shared.memory.memory_service import SQLiteMemoryService
+        return SQLiteMemoryService
+    if name == "PerformanceTracker":
+        from shared.memory.performance_tracker import PerformanceTracker
+        return PerformanceTracker
+    if name == "PortfolioStore":
+        from shared.memory.portfolio_store import PortfolioStore
+        return PortfolioStore
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     "DB_PATH",
