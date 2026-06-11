@@ -16,17 +16,26 @@ def _stub_modules():
     obs_mock = MagicMock()
     obs_mock.init_langfuse = MagicMock()
     stubs = {
-        "google": MagicMock(),
-        "google.adk": MagicMock(),
-        "google.adk.agents": MagicMock(),
-        "google.adk.tools": MagicMock(),
-        "google.adk.tools.tool_context": MagicMock(),
-        "google.genai": MagicMock(),
         "langfuse": MagicMock(),
         "langfuse.span_filter": MagicMock(),
         "shared.observability": obs_mock,
         "agent_1_adk.sub_agent_client": sub_client_mock,
     }
+    # Only stub google.* when the real ADK is absent (slim CI) — a blanket
+    # "google" stub breaks google.protobuf for other test files locally.
+    try:
+        import google.adk  # noqa: F401
+    except ImportError:
+        stubs.update(
+            {
+                "google": MagicMock(),
+                "google.adk": MagicMock(),
+                "google.adk.agents": MagicMock(),
+                "google.adk.tools": MagicMock(),
+                "google.adk.tools.tool_context": MagicMock(),
+                "google.genai": MagicMock(),
+            }
+        )
     for name, mock in stubs.items():
         sys.modules.setdefault(name, mock)
 
