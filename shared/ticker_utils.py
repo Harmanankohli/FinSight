@@ -276,19 +276,19 @@ def extract_ticker(query: str) -> str:
 
 _HOLDINGS_PATTERNS = [
     re.compile(
-        r"(?:portfolio|holdings?)\s*(?::|holds?|contains?|includes?|consists?\s+of)\s*([A-Z]{1,5}(?:\s*,\s*[A-Z]{1,5})*(?:\s+(?:and|&)\s*[A-Z]{1,5})?)",
+        r"(?:portfolio|holdings?)\s*(?::|holds?|contains?|includes?|consists?\s+of)\s*(\b[A-Z]{1,5}\b(?:\s*,\s*\b[A-Z]{1,5}\b)*(?:\s+(?:and|&)\s*\b[A-Z]{1,5}\b)?)",
         re.IGNORECASE,
     ),
     re.compile(
-        r"(?:I\s+(?:own|hold|have|am\s+invested\s+in)|my\s+(?:current\s+)?(?:portfolio|holdings?|positions?))\s+(?:include|consist)\s+(?:of\s+)?(?:the\s+)?(?:following\s+)?(?:tickers?\s*:?\s*)?([A-Z]{1,5}(?:\s*,\s*[A-Z]{1,5})*(?:\s+(?:and|&)\s*[A-Z]{1,5})?)",
+        r"(?:I\s+(?:own|hold|have|am\s+invested\s+in)|my\s+(?:current\s+)?(?:portfolio|holdings?|positions?))\s+(?:include|consist)\s+(?:of\s+)?(?:the\s+)?(?:following\s+)?(?:tickers?\s*:?\s*)?(\b[A-Z]{1,5}\b(?:\s*,\s*\b[A-Z]{1,5}\b)*(?:\s+(?:and|&)\s*\b[A-Z]{1,5}\b)?)",
         re.IGNORECASE,
     ),
     re.compile(
-        r"(?:my\s+(?:current\s+)?(?:portfolio|holdings?|positions?))\s+are\s+([A-Z]{1,5}(?:\s*,\s*[A-Z]{1,5})*(?:\s+(?:and|&)\s*[A-Z]{1,5})?)",
+        r"(?:my\s+(?:current\s+)?(?:portfolio|holdings?|positions?))\s+are\s+(\b[A-Z]{1,5}\b(?:\s*,\s*\b[A-Z]{1,5}\b)*(?:\s+(?:and|&)\s*\b[A-Z]{1,5}\b)?)",
         re.IGNORECASE,
     ),
     re.compile(
-        r"(?:currently\s+)?(?:own|hold|have)\s*:?\s*([A-Z]{1,5}(?:\s*,\s*[A-Z]{1,5})*(?:\s+(?:and|&)\s*[A-Z]{1,5})?)",
+        r"(?:I|we)\s+(?:currently\s+)?(?:own|hold|have)\s*:?\s*(\b[A-Z]{1,5}\b(?:\s*,\s*\b[A-Z]{1,5}\b)*(?:\s+(?:and|&)\s*\b[A-Z]{1,5}\b)?)",
         re.IGNORECASE,
     ),
 ]
@@ -385,7 +385,10 @@ def extract_holdings(query: str, exclude_ticker: str = "") -> list[str]:
             result = [
                 t.strip().upper()
                 for t in tickers
-                if t.strip() and is_valid_ticker_format(t.strip().upper())
+                if t.strip()
+                and is_valid_ticker_format(t.strip().upper())
+                and not _is_financial_stop_word(t.strip().upper())
+                and t.strip().lower() not in _QUERY_NOISE_WORDS
             ]
             if exclude_ticker:
                 result = [t for t in result if t != exclude_ticker]
