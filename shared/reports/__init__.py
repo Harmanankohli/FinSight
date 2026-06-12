@@ -36,7 +36,7 @@ def generate_pptx(
         html_str = generate_html(brief_data, ticker, recommendation, confidence, analysis_date)
         return html_to_pptx_sync(html_str)
     except Exception:
-        logger.debug("Playwright PPTX sync failed, using legacy renderer", exc_info=True)
+        logger.warning("Playwright PPTX sync failed, using legacy renderer", exc_info=True)
         return _legacy_generate_pptx(brief_data, ticker, recommendation, confidence, analysis_date)
 
 
@@ -54,7 +54,7 @@ async def generate_pptx_async(
         html_str = generate_html(brief_data, ticker, recommendation, confidence, analysis_date)
         return await html_to_pptx(html_str)
     except Exception:
-        logger.debug("Playwright PPTX async failed, using legacy renderer", exc_info=True)
+        logger.warning("Playwright PPTX async failed, using legacy renderer", exc_info=True)
         return _legacy_generate_pptx(brief_data, ticker, recommendation, confidence, analysis_date)
 
 
@@ -72,7 +72,7 @@ async def generate_pdf_async(
         html_str = generate_html(brief_data, ticker, recommendation, confidence, analysis_date)
         return await html_to_pdf(html_str)
     except Exception:
-        logger.debug("Playwright PDF failed, returning HTML as fallback", exc_info=True)
+        logger.warning("Playwright PDF failed, returning HTML as fallback", exc_info=True)
         html_str = generate_html(brief_data, ticker, recommendation, confidence, analysis_date)
         return BytesIO(html_str.encode("utf-8"))
 

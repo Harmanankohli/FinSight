@@ -83,7 +83,11 @@ async def send_message(agent_name: str, task: str, tool_context: ToolContext) ->
 
 
 def pop_agent_responses(session_id: str) -> dict[str, dict]:
-    """Pop and return captured agent responses for a session. Sweeps stale entries."""
+    """Pop and return captured agent responses for a session. Sweeps stale entries.
+
+    Falls back to the most recent entry if exact session_id match fails,
+    since ADK's internal session ID may differ from the A2A context_id.
+    """
     cutoff = time.monotonic() - 300
     stale = [k for k, (ts, _) in _agent_responses.items() if ts < cutoff]
     for k in stale:
@@ -93,6 +97,15 @@ def pop_agent_responses(session_id: str) -> dict[str, dict]:
         session_id, list(_agent_responses.keys()),
     )
     entry = _agent_responses.pop(session_id, None)
+    if entry is None and _agent_responses:
+        # Session ID mismatch fallback: use the most recent entry
+        best_key = max(_agent_responses, key=lambda k: _agent_responses[k][0])
+        entry = _agent_responses.pop(best_key)
+        logger.warning(
+            "pop_agent_responses: exact match failed for session=%s, "
+            "falling back to most recent entry key=%s",
+            session_id, best_key,
+        )
     result = entry[1] if entry else {}
     logger.info(
         "pop_agent_responses: session=%s found=%s agents=%s",

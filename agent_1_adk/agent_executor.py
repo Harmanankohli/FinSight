@@ -106,7 +106,19 @@ class FinSightAgentExecutor(AgentExecutor):
             data = json.loads(latest.get("brief_json", "{}"))
             response_text = data.get("response_text", "")
         except Exception:
+            data = {}
             response_text = ""
+
+        has_agent_data = any(
+            k in data for k in ("quant_response", "rag_response", "sentiment_response")
+        )
+        if not has_agent_data:
+            logger.info(
+                "Memory cache SKIP for %s — brief exists but missing agent outputs, "
+                "allowing re-run to capture structured data",
+                ticker,
+            )
+            return None
 
         logger.info(
             "Memory cache HIT for %s (rec=%s, conf=%.2f, text_len=%d)",
@@ -460,7 +472,17 @@ class FinSightAgentExecutor(AgentExecutor):
                         raw = latest["created_at"]
                         analysis_date = raw.split("T")[0] if "T" in raw else raw[:10]
                     today = datetime.now(IST).date().isoformat()
-                    if analysis_date == today:
+                    # Only mark as TODAY if the brief has agent outputs;
+                    # incomplete briefs should trigger a fresh analysis
+                    has_agent_data = False
+                    try:
+                        bj = json.loads(latest.get("brief_json", "{}"))
+                        has_agent_data = any(
+                            k in bj for k in ("quant_response", "rag_response", "sentiment_response")
+                        )
+                    except Exception:
+                        pass
+                    if analysis_date == today and has_agent_data:
                         parts.append(
                             f"[TODAY — analysis is current, you may return it directly without calling agents again] {context}"  # noqa: E501
                         )
