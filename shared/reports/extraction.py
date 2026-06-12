@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -1097,6 +1098,191 @@ def _enrich_from_markdown(
         stage(ctx)
 
 
+def _safe_parse(val):
+    if isinstance(val, dict):
+        return val
+    if isinstance(val, str):
+        try:
+            return json.loads(val)
+        except (json.JSONDecodeError, TypeError):
+            return {}
+    return {}
+
+
+def _populate_from_agent_outputs(data: DeckData, brief_data: dict, response_text: str) -> None:
+    """Populate DeckData from structured agent output dicts stored in brief_json."""
+    quant = _safe_parse(brief_data.get("quant_response"))
+    rag = _safe_parse(brief_data.get("rag_response"))
+    sentiment = _safe_parse(brief_data.get("sentiment_response"))
+
+    # ── Quant response ─────────────────────────────────────────────────────
+    if quant:
+        metrics = quant.get("metrics") or {}
+        if metrics.get("sharpe_ratio") is not None:
+            sr = metrics["sharpe_ratio"]
+            data.kpi_chips.append(
+                {"label": "Sharpe Ratio", "value": f"{sr:.2f}", "context": "Risk-adjusted return", "positive": sr > 0}
+            )
+            data.financials.append(("Sharpe Ratio", f"{sr:.2f}", "Risk-Adjusted"))
+        if metrics.get("annual_volatility") is not None:
+            av = metrics["annual_volatility"]
+            data.kpi_chips.append(
+                {"label": "Annual Volatility", "value": _fmt_pct(av, True), "context": "Annualized", "positive": av < 0.25}
+            )
+            data.financials.append(("Volatility", _fmt_pct(av, True), "Annualized"))
+        if metrics.get("beta") is not None:
+            data.kpi_chips.append(
+                {"label": "Beta", "value": f"{metrics['beta']:.2f}", "context": "Mkt sensitivity", "positive": metrics["beta"] < 1.0}
+            )
+            data.financials.append(("Beta", f"{metrics['beta']:.2f}", "vs. S&P 500"))
+        if metrics.get("var_95_daily") is not None:
+            data.financials.append(("VaR (95%, daily)", _fmt_pct(metrics["var_95_daily"], True), "Daily"))
+
+        dcf = quant.get("dcf_valuation") or {}
+        if dcf.get("fair_value") is not None:
+            fv = dcf["fair_value"]
+            data.valuation_table.append(("DCF Fair Value", _fmt_dollar(fv)))
+            data.scenarios["dcf"] = _fmt_dollar(fv)
+
+        mc = quant.get("monte_carlo") or {}
+        if mc.get("p90") is not None:
+            data.valuation_table.append(("Bull Case (p90)", _fmt_dollar(mc["p90"])))
+            data.scenarios["bull"] = _fmt_dollar(mc["p90"])
+        if mc.get("p50") is not None:
+            data.valuation_table.append(("Base Case (p50)", _fmt_dollar(mc["p50"])))
+            data.scenarios["base"] = _fmt_dollar(mc["p50"])
+        if mc.get("p10") is not None:
+            data.valuation_table.append(("Bear Case (p10)", _fmt_dollar(mc["p10"])))
+            data.scenarios["bear"] = _fmt_dollar(mc["p10"])
+
+        fundamentals = quant.get("fundamentals") or {}
+        _FUND_MAP = {
+            "pe_ratio": ("P/E Ratio", False),
+            "trailing_pe": ("P/E Ratio", False),
+            "forward_pe": ("Forward P/E", False),
+            "roe": ("ROE", True),
+            "operating_margin": ("Operating Margin", True),
+            "revenue_growth": ("Revenue Growth", True),
+            "profit_margin": ("Net Margin", True),
+            "current_ratio": ("Current Ratio", False),
+            "debt_to_equity": ("Debt/Equity", False),
+            "dividend_yield": ("Dividend Yield", True),
+            "trailing_eps": ("EPS", False),
+        }
+        for key, (label, is_pct) in _FUND_MAP.items():
+            if key in fundamentals and fundamentals[key] is not None:
+                val = fundamentals[key]
+                data.financials.append((label, _fmt_pct(val, is_pct) if is_pct else f"{val:.2f}", _FIN_CONTEXT.get(label, "")))
+
+        technicals = quant.get("technicals") or {}
+        if technicals.get("rsi") is not None:
+            rsi = technicals["rsi"]
+            data.kpi_chips.append(
+                {"label": "RSI", "value": f"{rsi:.0f}", "context": "Momentum (14-day)", "positive": 30 <= rsi <= 70}
+            )
+            signal = "Overbought" if rsi > 70 else "Bullish" if rsi >= 50 else "Neutral" if rsi >= 30 else "Oversold"
+            badge = "expensive" if rsi > 70 else "bullish" if rsi >= 50 else "moderate" if rsi >= 30 else "strong"
+            data.scorecard.append(("Momentum", signal, badge))
+        if technicals.get("macd_signal"):
+            macd = technicals["macd_signal"]
+            macd_badge = "bullish" if "bull" in macd.lower() else "expensive" if "bear" in macd.lower() else "moderate"
+            data.scorecard.append(("Technical Outlook", macd.capitalize(), macd_badge))
+        elif technicals.get("trend"):
+            trend = technicals["trend"]
+            trend_badge = "bullish" if "bull" in trend.lower() else "expensive" if "bear" in trend.lower() else "moderate"
+            data.scorecard.append(("Technical Outlook", trend.capitalize(), trend_badge))
+
+        peers = quant.get("peer_comparison") or {}
+        if isinstance(peers, dict) and peers.get("peers"):
+            peer_tickers = [p for p in peers["peers"] if p != data.ticker][:2]
+            data.peer_names = peer_tickers
+            comparison = peers.get("comparison") or {}
+            for key, label in [("pe", "P/E Ratio"), ("ev_ebitda", "EV/EBITDA"), ("rev_growth", "Revenue Growth"), ("op_margin", "Operating Margin"), ("roe", "ROE")]:
+                row = {"metric": label}
+                tv = comparison.get(data.ticker, {}).get(key)
+                row["col0"] = f"{tv * 100:.1f}%" if "growth" in key or "margin" in key or "roe" in key else f"{tv:.1f}" if isinstance(tv, (int, float)) else "N/A"
+                for ci, pt in enumerate(peer_tickers):
+                    pv = comparison.get(pt, {}).get(key)
+                    row[f"col{ci + 1}"] = f"{pv * 100:.1f}%" if "growth" in key or "margin" in key or "roe" in key else f"{pv:.1f}" if isinstance(pv, (int, float)) else "N/A"
+                data.peers.append(row)
+
+        stress = quant.get("stress_test") or {}
+        if stress.get("cvar_95") is not None:
+            data.valuation_table.append(("CVaR (95%)", _fmt_pct(stress["cvar_95"], True)))
+        if stress.get("max_drawdown") is not None:
+            data.valuation_table.append(("Max Drawdown", _fmt_pct(stress["max_drawdown"], True)))
+
+        if quant.get("recommendation"):
+            qrec = quant["recommendation"].upper()
+            q_badge = "strong" if qrec == "BUY" else "bullish" if qrec == "HOLD" else "expensive"
+            data.scorecard.append(("Quant Signal", qrec, q_badge))
+
+    # ── RAG response ───────────────────────────────────────────────────────
+    if rag:
+        summary = rag.get("summary") or ""
+        if summary:
+            data.executive_summary = _strip_markdown(summary[:1200])
+        sources = rag.get("sources") or []
+        if sources:
+            source_text = "\n".join(f"- {s}" if isinstance(s, str) else f"- {s.get('title', s.get('url', ''))}" for s in sources[:5])
+            data.sections.append(Section("Cited Sources", source_text))
+
+    # ── Sentiment response ─────────────────────────────────────────────────
+    if sentiment:
+        tailwinds = sentiment.get("key_tailwinds") or []
+        if tailwinds and not data.opportunities:
+            data.opportunities = [_clean_item(t) or t for t in tailwinds[:5] if _clean_item(t)]
+            if data.opportunities:
+                data.opportunities_extracted = True
+        headwinds = sentiment.get("key_headwinds") or []
+        if headwinds and not data.risks:
+            data.risks = [_clean_item(h) or h for h in headwinds[:5] if _clean_item(h)]
+            if data.risks:
+                data.risks_extracted = True
+
+        si_peers = sentiment.get("peer_comparison") or []
+        if isinstance(si_peers, list) and si_peers and not data.peer_names:
+            for pc in si_peers[:2]:
+                sym = pc.get("ticker", "")
+                if sym and sym != data.ticker and sym not in data.peer_names:
+                    data.peer_names.append(sym)
+            all_keys = set()
+            for pc in si_peers[:2]:
+                all_keys.update((pc.get("metrics") or {}).keys())
+            for mn in sorted(all_keys):
+                row = {"metric": mn, "col0": "N/A"}
+                for ci, pc in enumerate(si_peers[:2]):
+                    row[f"col{ci + 1}"] = str((pc.get("metrics") or {}).get(mn, "N/A"))
+                data.peers.append(row)
+
+        narrative = sentiment.get("narrative") or ""
+        if narrative:
+            data.sections.append(Section("Market Narrative", narrative[:1200]))
+
+        signal = sentiment.get("overall_signal") or ""
+        if signal:
+            sig_badge = "bullish" if "bull" in signal.lower() or signal.upper() == "BUY" else "expensive" if "bear" in signal.lower() or signal.upper() == "SELL" else "moderate"
+            data.scorecard.append(("Market Sentiment", signal.capitalize(), sig_badge))
+
+    # ── Executive summary synthesis ────────────────────────────────────────
+    if not data.executive_summary:
+        parts = []
+        if quant.get("reasoning"):
+            parts.append(quant["reasoning"][:400])
+        if rag.get("summary"):
+            parts.append(rag["summary"][:400])
+        if sentiment.get("narrative"):
+            parts.append(sentiment["narrative"][:400])
+        if parts:
+            data.executive_summary = _strip_markdown(" ".join(parts)[:1200])
+
+    # ── Final recommendation scorecard entry ───────────────────────────────
+    rec = data.recommendation
+    data.scorecard.append(
+        ("Recommendation", rec, "strong" if rec == "BUY" else "bullish" if rec == "HOLD" else "expensive")
+    )
+
+
 def _extract_deck_data(
     brief_data: dict,
     ticker: str,
@@ -1316,6 +1502,12 @@ def _extract_deck_data(
             data.sections.append(Section("Market Narrative", si["narrative"]))
 
         return data
+
+    # ── Raw agent outputs path ─────────────────────────────────────────────
+    if any(k in brief_data for k in ("quant_response", "rag_response", "sentiment_response")):
+        _populate_from_agent_outputs(data, brief_data, response_text)
+        if data.kpi_chips and (data.financials or data.executive_summary):
+            return data
 
     # ── Minimal response_text path ────────────────────────────────────────────
     response_text = brief_data.get("response_text", "")
