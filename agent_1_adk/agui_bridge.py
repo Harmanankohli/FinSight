@@ -94,7 +94,14 @@ async def _get_today_cached_text(ticker: str, *, user_id: str | None = None) -> 
         data = json.loads(latest.get("brief_json", "{}"))
         response_text = data.get("response_text", "")
     except Exception:
+        data = {}
         response_text = ""
+    has_agent_data = any(
+        k in data for k in ("quant_response", "rag_response", "sentiment_response")
+    )
+    if not has_agent_data:
+        logger.info("Cache SKIP for %s — missing agent outputs, allowing re-run", ticker)
+        return None
     if response_text:
         return f"**{ticker} — {rec}** (confidence: {conf:.0%})\n\n{response_text}"
     if rec != "UNKNOWN":
@@ -123,7 +130,15 @@ async def _build_memory_context(user_input: str, user_id: str) -> str:
                     raw = latest["created_at"]
                     analysis_date = raw.split("T")[0] if "T" in raw else raw[:10]
                 today = datetime.now(IST).date().isoformat()
-                if analysis_date == today:
+                has_agent_data = False
+                try:
+                    bj = json.loads(latest.get("brief_json", "{}"))
+                    has_agent_data = any(
+                        k in bj for k in ("quant_response", "rag_response", "sentiment_response")
+                    )
+                except Exception:
+                    pass
+                if analysis_date == today and has_agent_data:
                     parts.append(
                         f"[TODAY — analysis is current, you may return it directly without calling agents again] {context}"  # noqa: E501
                     )
@@ -155,6 +170,7 @@ async def _auto_save_brief(
     """Persist the investment brief to TickerMemory after synthesis completes."""
     from datetime import datetime
 
+    from agent_1_adk.agent import pop_agent_responses
     from shared.memory import PerformanceTracker, TickerMemory
     from shared.settings import IST
     from shared.ticker_utils import extract_ticker
@@ -164,19 +180,45 @@ async def _auto_save_brief(
         if not ticker:
             return
 
+        agent_outputs = pop_agent_responses(session_id)
+        extra = {}
+        for agent_name, data in agent_outputs.items():
+            name_lower = agent_name.lower()
+            if "rag" in name_lower:
+                if "context_texts" in data:
+                    data["context_texts"] = [t[:500] for t in data["context_texts"][:3]]
+                extra["rag_response"] = data
+            elif "quant" in name_lower:
+                extra["quant_response"] = data
+            elif "market" in name_lower or "sentiment" in name_lower:
+                extra["sentiment_response"] = data
+
         tm = TickerMemory()
         existing = await tm.get_latest(ticker, user_id=user_id)
         if existing:
             ad = existing.get("analysis_date") or existing["created_at"][:10]
             if ad == datetime.now(IST).date().isoformat():
                 stored = ""
+                bj = {}
                 try:
                     bj = json.loads(existing.get("brief_json", "{}"))
                     stored = bj.get("response_text", "")
                 except Exception:
                     logger.debug("Could not parse brief_json", exc_info=True)
-                if len(response_text) > len(stored):
-                    await tm.update_response_text(existing["id"], response_text)
+                needs_update = len(response_text) > len(stored)
+                has_new_agent_data = extra and not any(
+                    k in bj for k in ("quant_response", "rag_response", "sentiment_response")
+                )
+                if needs_update or has_new_agent_data:
+                    if has_new_agent_data:
+                        bj.update(extra)
+                    if needs_update:
+                        bj["response_text"] = response_text
+                    await tm.update_brief_json(existing["id"], json.dumps(bj))
+                    logger.info(
+                        "Updated existing brief %s (text=%s, agents=%s)",
+                        existing["id"], needs_update, has_new_agent_data,
+                    )
                 return
 
         rec_m = _REC_RE.search(response_text)
@@ -195,6 +237,7 @@ async def _auto_save_brief(
             response_text=response_text,
             recommendation=rec,
             confidence=round(conf, 2),
+            extra_data=extra if extra else None,
         )
 
         pt = PerformanceTracker()
@@ -204,7 +247,7 @@ async def _auto_save_brief(
             recommendation=rec,
             confidence=round(conf, 2),
         )
-        logger.info("Auto-saved brief: %s %s (%.0f%%)", ticker, rec, conf * 100)
+        logger.info("Auto-saved brief: %s %s (%.0f%%) agents=%s", ticker, rec, conf * 100, list(extra.keys()))
     except Exception:
         logger.debug("Auto-save brief failed", exc_info=True)
 
