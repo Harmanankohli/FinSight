@@ -1263,8 +1263,24 @@ def _populate_from_agent_outputs(data: DeckData, brief_data: dict, response_text
                 data.peers.append(row)
 
         narrative = sentiment.get("narrative") or ""
+        if isinstance(narrative, list):
+            narrative = " ".join(str(n) for n in narrative)
+        elif isinstance(narrative, dict):
+            narrative = narrative.get("text") or narrative.get("summary") or str(narrative)
+        narrative = str(narrative).strip()
+        if narrative.startswith("```"):
+            narrative = re.sub(r"^```\w*\n?", "", narrative)
+            narrative = re.sub(r"\n?```$", "", narrative)
+            try:
+                parsed = json.loads(narrative)
+                if isinstance(parsed, dict):
+                    narrative = parsed.get("narrative", narrative)
+                    if isinstance(narrative, list):
+                        narrative = " ".join(str(n) for n in narrative)
+            except (json.JSONDecodeError, TypeError):
+                pass
         if narrative:
-            data.sections.append(Section("Market Narrative", narrative[:1200]))
+            data.sections.append(Section("Market Narrative", _strip_markdown(str(narrative)[:1200])))
 
         signal = str(sentiment.get("overall_signal") or "")
         if signal:

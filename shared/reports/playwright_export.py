@@ -18,8 +18,15 @@ logger = logging.getLogger(__name__)
 _executor = ProcessPoolExecutor(max_workers=2)
 
 
+def _set_proactor_policy() -> None:
+    """Ensure the child process uses ProactorEventLoop on Windows."""
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
+
 def _pptx_worker(html: str) -> bytes:
     """Run in a child process — has its own ProactorEventLoop on Windows."""
+    _set_proactor_policy()
     from io import BytesIO as _BytesIO
 
     from playwright.sync_api import sync_playwright
@@ -69,6 +76,7 @@ def _pptx_worker(html: str) -> bytes:
 
 def _pdf_worker(html: str) -> bytes:
     """Run in a child process — has its own ProactorEventLoop on Windows."""
+    _set_proactor_policy()
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as pw:

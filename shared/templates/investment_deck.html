@@ -559,7 +559,17 @@
   </section>
   {% endif %}
 
-  <!-- ─── SLIDE 9: CONCLUSION ─── -->
+  <!-- ─── ADDITIONAL SECTIONS (Cited Sources, Market Narrative, etc.) ─── -->
+  {% for sec in deck.sections %}
+  <section data-label="{{ sec.title }}">
+    <div class="slide-label anim-up">{{ sec.title|upper }}</div>
+    <h2 class="slide-title anim-up" style="margin-bottom:40px;">{{ sec.title }}</h2>
+
+    <div class="thesis-block anim-up" style="white-space:pre-line;">{{ sec.body }}</div>
+  </section>
+  {% endfor %}
+
+  <!-- ─── CONCLUSION ─── -->
   <section class="dark" data-label="Conclusion" style="justify-content: center; align-items: center; text-align: center;">
     <div class="slide-label light anim-up">Conclusion</div>
     <div class="divider anim-up" style="margin-left:auto;margin-right:auto;background:var(--blue);margin-bottom:20px;"></div>
