@@ -61,7 +61,7 @@
  *     <section data-label="Title">...</section>
  *     <section data-label="Agenda">...</section>
  *   </deck-stage>
- *   <script src="deck-stage.js"></script>
+ *   <script src="deck-stage.js"><\/script>
  *
  * The :not(:defined) rule prevents a flash of the first slide at its
  * authored styles before this script runs and attaches the shadow root.

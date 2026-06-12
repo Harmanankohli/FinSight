@@ -266,6 +266,7 @@ class FinSightAgentExecutor(AgentExecutor):
                             user_input,
                             user_id,
                             original_input,
+                            context_id=context_id,
                         )
                         logger.info(
                             "Collected %d events, calling _add_events_to_memory",
@@ -298,6 +299,7 @@ class FinSightAgentExecutor(AgentExecutor):
         user_input: str = "",
         user_id: str = "",
         original_input: str = "",
+        context_id: str = "",
     ) -> None:
         if not (event.content and event.content.parts and event.content.parts[0].text):
             if span:
@@ -334,7 +336,8 @@ class FinSightAgentExecutor(AgentExecutor):
             span.update(output={"synthesis": text[:2000]}, metadata={"completed": True})
 
         if "[TODAY" not in user_input:
-            asyncio.create_task(self._store_memory(user_input, text, task.context_id, user_id))
+            session_for_pop = context_id or task.context_id
+            asyncio.create_task(self._store_memory(user_input, text, session_for_pop, user_id))
         if EVAL_ENABLED:
             asyncio.create_task(
                 _eval_score_response(
@@ -504,24 +507,36 @@ class FinSightAgentExecutor(AgentExecutor):
             elif "market" in name_lower or "sentiment" in name_lower:
                 extra["sentiment_response"] = data
 
+        logger.info(
+            "_store_memory: ticker=%s session=%s extra_keys=%s",
+            ticker, session_id, list(extra.keys()),
+        )
+
         tm = TickerMemory()
         existing = await tm.get_latest(ticker, user_id=user_id)
         if existing:
             ad = existing.get("analysis_date") or existing["created_at"][:10]
             if ad == datetime.now(IST).date().isoformat():
                 stored = ""
+                bj = {}
                 try:
                     bj = json.loads(existing.get("brief_json", "{}"))
                     stored = bj.get("response_text", "")
                 except Exception:
                     logger.debug("Could not parse brief_json for %s", ticker, exc_info=True)
-                if len(response_text) > len(stored):
-                    await tm.update_response_text(existing["id"], response_text)
+                needs_update = len(response_text) > len(stored)
+                has_new_agent_data = extra and not any(
+                    k in bj for k in ("quant_response", "rag_response", "sentiment_response")
+                )
+                if needs_update or has_new_agent_data:
+                    if has_new_agent_data:
+                        bj.update(extra)
+                    if needs_update:
+                        bj["response_text"] = response_text
+                    await tm.update_brief_json(existing["id"], json.dumps(bj))
                     logger.info(
-                        "Updated existing brief %s with longer text (%d > %d)",
-                        existing["id"],
-                        len(response_text),
-                        len(stored),
+                        "Updated existing brief %s (text_update=%s, agent_data=%s)",
+                        existing["id"], needs_update, has_new_agent_data,
                     )
                 else:
                     logger.debug("Skip _store_memory — brief already stored today for %s", ticker)

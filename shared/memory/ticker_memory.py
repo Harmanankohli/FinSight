@@ -124,6 +124,18 @@ class TickerMemory:
         logger.debug("Updated response_text for %s", record_id)
         return True
 
+    async def update_brief_json(self, record_id: str, brief_json: str) -> bool:
+        """Replace the full brief_json for an existing record."""
+        async with write_lock():
+            conn = await get_db(self._db_path)
+            await conn.execute(
+                "UPDATE ticker_briefs SET brief_json = ? WHERE id = ?",
+                (brief_json, record_id),
+            )
+            await conn.commit()
+        logger.debug("Updated brief_json for %s", record_id)
+        return True
+
     # Fetches most recent brief for a ticker, ordered by analysis_date then created_at descending.
     async def get_latest(self, ticker: str, user_id: Optional[str] = None) -> Optional[dict]:
         """Get the most recent brief for a ticker."""

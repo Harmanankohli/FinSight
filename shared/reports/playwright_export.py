@@ -20,8 +20,15 @@ async def html_to_pptx(html: str) -> BytesIO:
         browser = await pw.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1920, "height": 1080})
         await page.set_content(html, wait_until="networkidle")
+        # Wait for custom element to define, upgrade, and populate slides
         await page.wait_for_function(
-            "!document.querySelector('deck-stage')?.hasAttribute('data-fonts-pending')"
+            """() => {
+                const ds = document.querySelector('deck-stage');
+                if (!ds || !customElements.get('deck-stage')) return false;
+                if (ds.hasAttribute('data-fonts-pending')) return false;
+                return ds._slides && ds._slides.length > 0;
+            }""",
+            timeout=15000,
         )
         total = await page.evaluate("document.querySelector('deck-stage')._slides.length")
 
@@ -35,7 +42,7 @@ async def html_to_pptx(html: str) -> BytesIO:
 
         for i in range(total):
             await page.evaluate(f"document.querySelector('deck-stage').goTo({i})")
-            await page.wait_for_timeout(100)
+            await page.wait_for_timeout(150)
             section = await page.query_selector("section[data-deck-active]")
             if section:
                 screenshot = await section.screenshot(type="png")

@@ -62,6 +62,10 @@ async def send_message(agent_name: str, task: str, tool_context: ToolContext) ->
 
     # Capture parsed agent response for structured storage
     session_id = tool_context.session.id if tool_context and tool_context.session else None
+    logger.info(
+        "send_message capture: agent=%s session_id=%s has_result=%s",
+        resolved, session_id, bool(result),
+    )
     if session_id and result:
         ts, bucket = _agent_responses.get(session_id, (time.monotonic(), {}))
         try:
@@ -70,6 +74,10 @@ async def send_message(agent_name: str, task: str, tool_context: ToolContext) ->
             parsed = {"_raw_text": result[:5000]}
         bucket[resolved] = parsed
         _agent_responses[session_id] = (ts, bucket)
+        logger.info(
+            "send_message captured: session=%s agents_so_far=%s is_json=%s",
+            session_id, list(bucket.keys()), "_raw_text" not in parsed,
+        )
 
     return result
 
@@ -80,8 +88,17 @@ def pop_agent_responses(session_id: str) -> dict[str, dict]:
     stale = [k for k, (ts, _) in _agent_responses.items() if ts < cutoff]
     for k in stale:
         _agent_responses.pop(k, None)
+    logger.info(
+        "pop_agent_responses: session=%s stored_keys=%s",
+        session_id, list(_agent_responses.keys()),
+    )
     entry = _agent_responses.pop(session_id, None)
-    return entry[1] if entry else {}
+    result = entry[1] if entry else {}
+    logger.info(
+        "pop_agent_responses: session=%s found=%s agents=%s",
+        session_id, entry is not None, list(result.keys()),
+    )
+    return result
 
 
 def _synthesis_text_from_context(tool_context) -> str:
