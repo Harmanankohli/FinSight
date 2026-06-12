@@ -357,12 +357,38 @@ async def _stream(
 
     yield sse(StepStartedEvent(type=EventType.STEP_STARTED, step_name="orchestrator"))
 
+    # Per-event timeout prevents infinite hangs when the LLM is unavailable.
+    # Short timeout for LLM thinking; long timeout while tools (sub-agents) run.
+    from shared.settings import A2A_TIMEOUT
+    _LLM_TIMEOUT = 120
+    _TOOL_TIMEOUT = A2A_TIMEOUT + 30
+    _awaiting_tool_response = 0
+
     try:
-        async for event in runner.run_async(
+        event_iter = runner.run_async(
             user_id=user_id, session_id=session_id, new_message=content
-        ):
+        ).__aiter__()
+        while True:
+            timeout = _TOOL_TIMEOUT if _awaiting_tool_response > 0 else _LLM_TIMEOUT
+            try:
+                event = await asyncio.wait_for(event_iter.__anext__(), timeout=timeout)
+            except StopAsyncIteration:
+                break
+            except asyncio.TimeoutError:
+                logger.error(
+                    "Orchestrator timed out after %ds (awaiting_tools=%d, model may be unavailable)",
+                    timeout, _awaiting_tool_response,
+                )
+                yield sse(RunErrorEvent(
+                    type=EventType.RUN_ERROR,
+                    message="Orchestrator timed out — the LLM model may be unavailable. Check that the model is loaded.",
+                    code=None,
+                ))
+                break
+
             # Function calls → sub-agent delegations
             for fn_call in event.get_function_calls():
+                _awaiting_tool_response += 1
                 call_id = str(uuid.uuid4())
                 fn_id = getattr(fn_call, "id", None) or fn_call.name
                 pending_calls[call_id] = fn_call.name
@@ -408,6 +434,7 @@ async def _stream(
 
             # Function responses → sub-agent results
             for fn_resp in event.get_function_responses():
+                _awaiting_tool_response = max(0, _awaiting_tool_response - 1)
                 fn_id = getattr(fn_resp, "id", None) or fn_resp.name
                 call_id = pending_by_fn_id.get(fn_id, str(uuid.uuid4()))
                 raw = fn_resp.response
