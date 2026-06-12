@@ -6,7 +6,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { addRecentQuery } from "@/lib/recentQueries";
 
-async function downloadReport(ticker: string, format: "pptx" | "docx") {
+async function downloadReport(ticker: string, format: "html" | "pptx" | "docx" | "pdf") {
   const res = await fetch(`/api/orch/api/reports/ticker/${ticker}/latest/${format}`);
   if (!res.ok) return;
   const blob = await res.blob();
@@ -92,7 +92,7 @@ export default function ResearchPage() {
   const activeAgents = state?.active_agents ?? [];
   const anyActive = activeAgents.length > 0;
 
-  const handleDownload = async (format: "pptx" | "docx") => {
+  const handleDownload = async (format: "html" | "pptx" | "docx" | "pdf") => {
     const ticker = extractTicker(messages as { role: string; content: string | unknown }[]);
     if (!ticker) return;
     setDownloading(format);
@@ -240,15 +240,17 @@ export default function ResearchPage() {
                             <span style={{ fontSize: 12, color: "var(--text-muted)", fontFamily: "var(--font-sans, system-ui)" }}>
                               Export report:
                             </span>
-                            {(["pptx", "docx"] as const).map((fmt) => (
+                            {(["html", "pptx", "docx", "pdf"] as const).map((fmt) => (
                               <button
                                 key={fmt}
                                 onClick={() => handleDownload(fmt)}
                                 disabled={downloading !== null}
                                 style={{
                                   padding: "5px 14px", borderRadius: 6, cursor: downloading ? "not-allowed" : "pointer",
-                                  border: "1px solid var(--clay-light)", background: "white",
-                                  color: "var(--clay-deep)", fontSize: 12, fontWeight: 600,
+                                  border: fmt === "html" ? "1px solid var(--clay)" : "1px solid var(--clay-light)",
+                                  background: fmt === "html" ? "var(--clay)" : "white",
+                                  color: fmt === "html" ? "white" : "var(--clay-deep)",
+                                  fontSize: 12, fontWeight: 600,
                                   fontFamily: "var(--font-sans, system-ui)",
                                   opacity: downloading && downloading !== fmt ? 0.5 : 1,
                                 }}

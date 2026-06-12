@@ -163,6 +163,7 @@ _REPORT_CONTENT_TYPES = {
     "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "html": "text/html",
+    "pdf": "application/pdf",
 }
 
 _SAFE_FILENAME_RE = re.compile(r"[^A-Za-z0-9._-]")
@@ -176,7 +177,7 @@ async def _build_report_response(
     analysis_date: str,
     fmt: str,
 ) -> Response:
-    from shared.reports import generate_docx, generate_html, generate_pptx
+    from shared.reports import generate_docx, generate_html, generate_pdf_async, generate_pptx_async
 
     brief_data: dict = {}
     if brief_json_str:
@@ -198,8 +199,27 @@ async def _build_report_response(
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
 
-    generator = generate_pptx if fmt == "pptx" else generate_docx
-    buf = generator(
+    if fmt == "pptx":
+        buf = await generate_pptx_async(
+            brief_data, ticker, recommendation or "UNKNOWN", confidence or 0.0, analysis_date or ""
+        )
+        return Response(
+            content=buf.getvalue(),
+            media_type=_REPORT_CONTENT_TYPES[fmt],
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    if fmt == "pdf":
+        buf = await generate_pdf_async(
+            brief_data, ticker, recommendation or "UNKNOWN", confidence or 0.0, analysis_date or ""
+        )
+        return Response(
+            content=buf.getvalue(),
+            media_type=_REPORT_CONTENT_TYPES[fmt],
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    buf = generate_docx(
         brief_data, ticker, recommendation or "UNKNOWN", confidence or 0.0, analysis_date or ""
     )
 
@@ -215,7 +235,7 @@ async def report_by_id(request: Request) -> Response:
     brief_id = request.path_params["brief_id"]
     fmt = request.path_params["format"].lower()
     if fmt not in _REPORT_CONTENT_TYPES:
-        return _ERROR_ENVELOPE("VALIDATION_ERROR", "format must be pptx, docx, or html")
+        return _ERROR_ENVELOPE("VALIDATION_ERROR", "format must be pptx, docx, html, or pdf")
 
     user_id = _user_id(request)
     conn = await get_db()
@@ -241,7 +261,7 @@ async def report_latest(request: Request) -> Response:
         return sym
     fmt = request.path_params["format"].lower()
     if fmt not in _REPORT_CONTENT_TYPES:
-        return _ERROR_ENVELOPE("VALIDATION_ERROR", "format must be pptx, docx, or html")
+        return _ERROR_ENVELOPE("VALIDATION_ERROR", "format must be pptx, docx, html, or pdf")
 
     user_id = _user_id(request)
     from shared.memory import TickerMemory
