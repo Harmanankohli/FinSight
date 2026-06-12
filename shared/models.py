@@ -4,7 +4,7 @@ Each model represents data flowing between agents/stages:
   QueryContext       → orchestrator input (user request)
   RAGInsights        → RAG agent → orchestrator
   QuantMetrics       → quant agent → orchestrator
-  SentimentIntelligence → sentiment agent → orchestrator
+  MarketContext → market context agent → orchestrator
   InvestmentBrief    → orchestrator → final output (user)
 """
 
@@ -50,18 +50,16 @@ class QuantMetrics(BaseModel):
     quant_confidence: float
 
 
-# ── SentimentIntelligence: market sentiment from sentiment agent ──
-class SentimentIntelligence(BaseModel):
+# ── MarketContext: macro regime + peer context from market context agent ──
+class MarketContext(BaseModel):
     ticker: str
-    social_sentiment_score: float
-    analyst_consensus: str
-    avg_price_target: float
-    insider_signal: str
     narrative: str
     overall_signal: str
     confidence_score: float
-    key_risks: list[str]
-    key_catalysts: list[str]
+    key_headwinds: list[str] = []
+    key_tailwinds: list[str] = []
+    macro_regime: Optional[str] = None
+    relative_peer_positioning: Optional[str] = None
     peer_comparison: list[dict] = []
 
 
@@ -72,7 +70,7 @@ class InvestmentBrief(BaseModel):
     query_context: QueryContext
     rag_insights: RAGInsights
     quant_metrics: QuantMetrics
-    sentiment_intelligence: SentimentIntelligence
+    market_context: MarketContext
     final_recommendation: str
     recommendation_rationale: str
     confidence_score: float

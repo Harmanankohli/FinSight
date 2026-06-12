@@ -5,7 +5,7 @@ from shared.models import (
     QuantMetrics,
     QueryContext,
     RAGInsights,
-    SentimentIntelligence,
+    MarketContext,
 )
 
 _NOW = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
@@ -57,19 +57,15 @@ def _make_quant(**kw):
     )
 
 
-def _make_sentiment(**kw):
-    return SentimentIntelligence(
+def _make_market_context(**kw):
+    return MarketContext(
         **{
             "ticker": "AAPL",
-            "social_sentiment_score": 0.6,
-            "analyst_consensus": "bullish",
-            "avg_price_target": 200.0,
-            "insider_signal": "neutral",
             "narrative": "Strong product cycle",
             "overall_signal": "BUY",
             "confidence_score": 0.75,
-            "key_risks": ["macro"],
-            "key_catalysts": ["iPhone 17"],
+            "key_headwinds": ["macro"],
+            "key_tailwinds": ["iPhone 17"],
             **kw,
         }
     )
@@ -83,7 +79,7 @@ def _make_brief(**kw):
             "query_context": _make_query_context(),
             "rag_insights": _make_rag(),
             "quant_metrics": _make_quant(),
-            "sentiment_intelligence": _make_sentiment(),
+            "market_context": _make_market_context(),
             "final_recommendation": "BUY",
             "recommendation_rationale": "Strong fundamentals",
             "confidence_score": 0.80,
@@ -142,13 +138,13 @@ def test_quant_with_optional_fields():
     assert quant.stress_test_result["cvar_95"] == -0.03
 
 
-# ── SentimentIntelligence ─────────────────────────────────────────────────────
+# ── MarketContext ─────────────────────────────────────────────────────
 
 
-def test_sentiment_construction():
-    s = _make_sentiment()
-    assert s.overall_signal == "BUY"
-    assert "iPhone 17" in s.key_catalysts
+def test_market_context_construction():
+    mc = _make_market_context()
+    assert mc.overall_signal == "BUY"
+    assert "iPhone 17" in mc.key_tailwinds
 
 
 # ── InvestmentBrief ───────────────────────────────────────────────────────────
@@ -160,7 +156,7 @@ def test_brief_nested_construction():
     assert brief.query_context.ticker == "AAPL"
     assert brief.rag_insights.revenue_growth_yoy == 0.12
     assert brief.quant_metrics.sharpe_ratio == 1.5
-    assert brief.sentiment_intelligence.analyst_consensus == "bullish"
+    assert brief.market_context.overall_signal == "BUY"
 
 
 def test_brief_json_round_trip():

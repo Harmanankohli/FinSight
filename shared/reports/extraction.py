@@ -1336,7 +1336,7 @@ def _extract_deck_data(
         data.disclaimer = brief_data.get("disclaimer", _DEFAULT_DISCLAIMER)
 
         qm = brief_data.get("quant_metrics", {})
-        si = brief_data.get("sentiment_intelligence", {})
+        si = brief_data.get("market_context", {}) or brief_data.get("sentiment_intelligence", {})
         ri = brief_data.get("rag_insights", {})
 
         # KPI chips
@@ -1426,20 +1426,12 @@ def _extract_deck_data(
                 "moderate",
             )
         )
-        if si.get("analyst_consensus"):
+        if si.get("macro_regime"):
             data.scorecard.append(
                 (
-                    "Analyst Consensus",
-                    si["analyst_consensus"],
-                    "bullish" if "buy" in si["analyst_consensus"].lower() else "moderate",
-                )
-            )
-        if si.get("insider_signal"):
-            data.scorecard.append(
-                (
-                    "Insider Signal",
-                    si["insider_signal"],
-                    "strong" if "buy" in si["insider_signal"].lower() else "moderate",
+                    "Macro Regime",
+                    si["macro_regime"],
+                    "moderate",
                 )
             )
         data.scorecard.append(
@@ -1452,16 +1444,16 @@ def _extract_deck_data(
 
         # Risks and opportunities
         ri_risks = ri.get("key_risks", [])
-        si_risks = si.get("key_risks", [])
-        combined_risks = (ri_risks + si_risks)[:5]
+        si_headwinds = si.get("key_headwinds", [])
+        combined_risks = (ri_risks + si_headwinds)[:5]
         if combined_risks:
             data.risks = combined_risks
             data.risks_extracted = True
         else:
             data.risks = ["Market volatility", "Regulatory changes"]
-        cats = si.get("key_catalysts", [])
-        if cats[:5]:
-            data.opportunities = cats[:5]
+        tailwinds = si.get("key_tailwinds", [])
+        if tailwinds[:5]:
+            data.opportunities = tailwinds[:5]
             data.opportunities_extracted = True
         else:
             data.opportunities = ["Strong operational execution"]

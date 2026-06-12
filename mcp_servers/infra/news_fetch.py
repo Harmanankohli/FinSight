@@ -21,6 +21,8 @@ from mcp_servers.infra.rate_limiters import _NEWS_LIMITER
 
 logger = logging.getLogger(__name__)
 
+_sa = SentimentIntensityAnalyzer()
+
 # Three RSS feeds for broad financial news coverage (Yahoo, CNBC, MarketWatch).
 # All free, no API keys required, and cover the major financial news wires.
 RSS_FEEDS: dict[str, str] = {
@@ -74,7 +76,6 @@ async def fetch_ddg_news(ticker: str, company_name: str, limit: int = 10) -> lis
     except ImportError:
         return []
     try:
-        _sa = SentimentIntensityAnalyzer()
         query = f"{company_name} {ticker} stock news" if company_name else f"{ticker} stock news"
         # DDGS().news() is sync; run in executor to avoid blocking the event loop
         loop = asyncio.get_running_loop()
@@ -116,7 +117,6 @@ async def fetch_yf_news(ticker: str, client: httpx.AsyncClient, limit: int = 15)
 
     Returns a list of article dicts: {title, link, publisher, published, summary}
     """
-    _sa = SentimentIntensityAnalyzer()
     try:
         url = (
             f"https://query1.finance.yahoo.com/v1/finance/search"

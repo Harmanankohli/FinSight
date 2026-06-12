@@ -6,7 +6,7 @@ from shared.models import (
     QuantMetrics,
     QueryContext,
     RAGInsights,
-    SentimentIntelligence,
+    MarketContext,
 )
 
 _BASE_TS = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
@@ -42,17 +42,11 @@ def _make_brief(ticker="AAPL", rec="BUY", confidence=0.8, offset_hours=0):
         quant_signal=rec,
         quant_confidence=confidence,
     )
-    sentiment = SentimentIntelligence(
+    market_ctx = MarketContext(
         ticker=ticker,
-        social_sentiment_score=0.5,
-        analyst_consensus="neutral",
-        avg_price_target=150.0,
-        insider_signal="neutral",
         narrative="steady",
         overall_signal=rec,
         confidence_score=confidence,
-        key_risks=[],
-        key_catalysts=[],
     )
     return InvestmentBrief(
         ticker=ticker,
@@ -60,7 +54,7 @@ def _make_brief(ticker="AAPL", rec="BUY", confidence=0.8, offset_hours=0):
         query_context=qc,
         rag_insights=rag,
         quant_metrics=quant,
-        sentiment_intelligence=sentiment,
+        market_context=market_ctx,
         final_recommendation=rec,
         recommendation_rationale=f"{ticker} looks {rec.lower()}",
         confidence_score=confidence,
