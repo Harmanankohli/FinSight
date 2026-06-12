@@ -1183,12 +1183,18 @@ def _populate_from_agent_outputs(data: DeckData, brief_data: dict, response_text
             signal = "Overbought" if rsi > 70 else "Bullish" if rsi >= 50 else "Neutral" if rsi >= 30 else "Oversold"
             badge = "expensive" if rsi > 70 else "bullish" if rsi >= 50 else "moderate" if rsi >= 30 else "strong"
             data.scorecard.append(("Momentum", signal, badge))
-        if technicals.get("macd_signal"):
+        if technicals.get("macd_signal") is not None:
             macd = technicals["macd_signal"]
-            macd_badge = "bullish" if "bull" in macd.lower() else "expensive" if "bear" in macd.lower() else "moderate"
-            data.scorecard.append(("Technical Outlook", macd.capitalize(), macd_badge))
+            if isinstance(macd, (int, float)):
+                macd_label = "Bullish" if macd > 0 else "Bearish"
+                macd_badge = "bullish" if macd > 0 else "expensive"
+            else:
+                macd = str(macd)
+                macd_label = macd.capitalize()
+                macd_badge = "bullish" if "bull" in macd.lower() else "expensive" if "bear" in macd.lower() else "moderate"
+            data.scorecard.append(("Technical Outlook", macd_label, macd_badge))
         elif technicals.get("trend"):
-            trend = technicals["trend"]
+            trend = str(technicals["trend"])
             trend_badge = "bullish" if "bull" in trend.lower() else "expensive" if "bear" in trend.lower() else "moderate"
             data.scorecard.append(("Technical Outlook", trend.capitalize(), trend_badge))
 
@@ -1200,10 +1206,11 @@ def _populate_from_agent_outputs(data: DeckData, brief_data: dict, response_text
             for key, label in [("pe", "P/E Ratio"), ("ev_ebitda", "EV/EBITDA"), ("rev_growth", "Revenue Growth"), ("op_margin", "Operating Margin"), ("roe", "ROE")]:
                 row = {"metric": label}
                 tv = comparison.get(data.ticker, {}).get(key)
-                row["col0"] = f"{tv * 100:.1f}%" if "growth" in key or "margin" in key or "roe" in key else f"{tv:.1f}" if isinstance(tv, (int, float)) else "N/A"
+                is_pct_key = "growth" in key or "margin" in key or "roe" in key
+                row["col0"] = f"{tv * 100:.1f}%" if is_pct_key and isinstance(tv, (int, float)) else f"{tv:.1f}" if isinstance(tv, (int, float)) else "N/A"
                 for ci, pt in enumerate(peer_tickers):
                     pv = comparison.get(pt, {}).get(key)
-                    row[f"col{ci + 1}"] = f"{pv * 100:.1f}%" if "growth" in key or "margin" in key or "roe" in key else f"{pv:.1f}" if isinstance(pv, (int, float)) else "N/A"
+                    row[f"col{ci + 1}"] = f"{pv * 100:.1f}%" if is_pct_key and isinstance(pv, (int, float)) else f"{pv:.1f}" if isinstance(pv, (int, float)) else "N/A"
                 data.peers.append(row)
 
         stress = quant.get("stress_test") or {}
@@ -1213,7 +1220,7 @@ def _populate_from_agent_outputs(data: DeckData, brief_data: dict, response_text
             data.valuation_table.append(("Max Drawdown", _fmt_pct(stress["max_drawdown"], True)))
 
         if quant.get("recommendation"):
-            qrec = quant["recommendation"].upper()
+            qrec = str(quant["recommendation"]).upper()
             q_badge = "strong" if qrec == "BUY" else "bullish" if qrec == "HOLD" else "expensive"
             data.scorecard.append(("Quant Signal", qrec, q_badge))
 
@@ -1259,7 +1266,7 @@ def _populate_from_agent_outputs(data: DeckData, brief_data: dict, response_text
         if narrative:
             data.sections.append(Section("Market Narrative", narrative[:1200]))
 
-        signal = sentiment.get("overall_signal") or ""
+        signal = str(sentiment.get("overall_signal") or "")
         if signal:
             sig_badge = "bullish" if "bull" in signal.lower() or signal.upper() == "BUY" else "expensive" if "bear" in signal.lower() or signal.upper() == "SELL" else "moderate"
             data.scorecard.append(("Market Sentiment", signal.capitalize(), sig_badge))
