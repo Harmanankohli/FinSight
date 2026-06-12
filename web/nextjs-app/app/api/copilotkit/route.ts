@@ -10,14 +10,18 @@ const ORCHESTRATOR_URL =
   process.env.NEXT_PUBLIC_ORCHESTRATOR_URL || "http://localhost:8001";
 
 export const POST = async (req: NextRequest) => {
-  const userId =
+  let userId =
     req.headers.get("x-finsight-user-id") ||
     req.cookies.get("finsight_user_id")?.value ||
     "";
+  const isNewAnon = !userId;
+  if (isNewAnon) {
+    userId = `anon-${crypto.randomUUID()}`;
+  }
   const token = req.cookies.get("finsight_token")?.value || "";
 
   const headers: Record<string, string> = {};
-  if (userId) headers["X-FinSight-User-Id"] = userId;
+  headers["X-FinSight-User-Id"] = userId;
   if (token) headers["Authorization"] = `Bearer ${token}`;
 
   const agent = new HttpAgent({
@@ -37,5 +41,14 @@ export const POST = async (req: NextRequest) => {
     endpoint: "/api/copilotkit",
   });
 
-  return handleRequest(req);
+  const response = await handleRequest(req);
+
+  if (isNewAnon) {
+    response.headers.set(
+      "Set-Cookie",
+      `finsight_user_id=${userId}; Path=/; Max-Age=31536000; SameSite=Lax`
+    );
+  }
+
+  return response;
 };
