@@ -19,7 +19,25 @@ logger = logging.getLogger(__name__)
 from shared.reports.deck_model import DeckData, ExtractionCtx, ParsedTable, Section
 from shared.reports.docx_renderer import generate_docx
 from shared.reports.html_renderer import generate_html
-from shared.reports.pptx_renderer import generate_pptx
+from shared.reports.pptx_renderer import generate_pptx as _legacy_generate_pptx
+
+
+def generate_pptx(
+    brief_data: dict,
+    ticker: str,
+    recommendation: str,
+    confidence: float,
+    analysis_date: str,
+) -> BytesIO:
+    """Generate PPTX: try Playwright sync wrapper first, fall back to legacy."""
+    try:
+        from shared.reports.playwright_export import html_to_pptx_sync
+
+        html_str = generate_html(brief_data, ticker, recommendation, confidence, analysis_date)
+        return html_to_pptx_sync(html_str)
+    except Exception:
+        logger.debug("Playwright PPTX sync failed, using legacy renderer", exc_info=True)
+        return _legacy_generate_pptx(brief_data, ticker, recommendation, confidence, analysis_date)
 
 
 async def generate_pptx_async(
@@ -36,8 +54,8 @@ async def generate_pptx_async(
         html_str = generate_html(brief_data, ticker, recommendation, confidence, analysis_date)
         return await html_to_pptx(html_str)
     except Exception:
-        logger.debug("Playwright PPTX failed, using legacy renderer", exc_info=True)
-        return generate_pptx(brief_data, ticker, recommendation, confidence, analysis_date)
+        logger.debug("Playwright PPTX async failed, using legacy renderer", exc_info=True)
+        return _legacy_generate_pptx(brief_data, ticker, recommendation, confidence, analysis_date)
 
 
 async def generate_pdf_async(
@@ -47,11 +65,16 @@ async def generate_pdf_async(
     confidence: float,
     analysis_date: str,
 ) -> BytesIO:
-    """Generate PDF via Playwright print mode."""
-    from shared.reports.playwright_export import html_to_pdf
+    """Generate PDF via Playwright print mode. Falls back to HTML if Playwright fails."""
+    try:
+        from shared.reports.playwright_export import html_to_pdf
 
-    html_str = generate_html(brief_data, ticker, recommendation, confidence, analysis_date)
-    return await html_to_pdf(html_str)
+        html_str = generate_html(brief_data, ticker, recommendation, confidence, analysis_date)
+        return await html_to_pdf(html_str)
+    except Exception:
+        logger.debug("Playwright PDF failed, returning HTML as fallback", exc_info=True)
+        html_str = generate_html(brief_data, ticker, recommendation, confidence, analysis_date)
+        return BytesIO(html_str.encode("utf-8"))
 
 
 __all__ = [
