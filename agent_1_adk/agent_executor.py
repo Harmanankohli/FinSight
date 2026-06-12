@@ -17,6 +17,7 @@ from google.adk.runners import Runner
 from google.genai import types
 from langfuse import propagate_attributes
 
+from agent_1_adk.agent import pop_agent_responses
 from shared.guardrails import extract_ticker, is_off_topic
 from shared.logging_config import logged, logged_sync
 from shared.observability import get_langfuse_client
@@ -489,6 +490,20 @@ class FinSightAgentExecutor(AgentExecutor):
 
         ticker = extract_ticker(query) or "unknown"
 
+        # Capture structured agent outputs before dedup check
+        agent_outputs = pop_agent_responses(session_id)
+        extra = {}
+        for agent_name, data in agent_outputs.items():
+            name_lower = agent_name.lower()
+            if "rag" in name_lower:
+                if "context_texts" in data:
+                    data["context_texts"] = [t[:500] for t in data["context_texts"][:3]]
+                extra["rag_response"] = data
+            elif "quant" in name_lower:
+                extra["quant_response"] = data
+            elif "market" in name_lower or "sentiment" in name_lower:
+                extra["sentiment_response"] = data
+
         tm = TickerMemory()
         existing = await tm.get_latest(ticker, user_id=user_id)
         if existing:
@@ -534,6 +549,7 @@ class FinSightAgentExecutor(AgentExecutor):
             response_text=response_text,
             recommendation=recommendation,
             confidence=round(confidence, 2),
+            extra_data=extra if extra else None,
         )
 
         pt = PerformanceTracker()

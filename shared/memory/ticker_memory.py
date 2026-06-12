@@ -67,9 +67,13 @@ class TickerMemory:
         response_text: str,
         recommendation: str = "UNKNOWN",
         confidence: float = 0.5,
+        extra_data: dict | None = None,
     ) -> str:
         """Store a minimal brief when no structured InvestmentBrief is available."""
         record_id = str(uuid.uuid4())
+        brief_payload = {"response_text": response_text[:5000]}
+        if extra_data:
+            brief_payload.update(extra_data)
         async with write_lock():
             conn = await get_db(self._db_path)
             await conn.execute(
@@ -85,7 +89,7 @@ class TickerMemory:
                     query,
                     recommendation,
                     confidence,
-                    json.dumps({"response_text": response_text[:5000]}),
+                    json.dumps(brief_payload),
                     datetime.now(IST).isoformat(),
                     datetime.now(IST).date().isoformat(),
                 ),

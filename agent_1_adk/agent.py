@@ -2,6 +2,7 @@
 import asyncio
 import json
 import logging
+import time
 from datetime import datetime
 
 from google.adk.agents import LlmAgent
@@ -15,6 +16,9 @@ logger = logging.getLogger(__name__)
 from .sub_agent_client import SubAgentClient
 
 _client = SubAgentClient()
+
+# Capture raw agent responses keyed by session_id for structured storage
+_agent_responses: dict[str, tuple[float, dict[str, dict]]] = {}
 
 
 # ADK tool function: delegates tasks to sub-agents via A2A
@@ -55,7 +59,29 @@ async def send_message(agent_name: str, task: str, tool_context: ToolContext) ->
             }
         )
     result = await _client.send_message(resolved, task)
+
+    # Capture parsed agent response for structured storage
+    session_id = tool_context.session.id if tool_context and tool_context.session else None
+    if session_id and result:
+        ts, bucket = _agent_responses.get(session_id, (time.monotonic(), {}))
+        try:
+            parsed = json.loads(result)
+        except (json.JSONDecodeError, TypeError):
+            parsed = {"_raw_text": result[:5000]}
+        bucket[resolved] = parsed
+        _agent_responses[session_id] = (ts, bucket)
+
     return result
+
+
+def pop_agent_responses(session_id: str) -> dict[str, dict]:
+    """Pop and return captured agent responses for a session. Sweeps stale entries."""
+    cutoff = time.monotonic() - 300
+    stale = [k for k, (ts, _) in _agent_responses.items() if ts < cutoff]
+    for k in stale:
+        _agent_responses.pop(k, None)
+    entry = _agent_responses.pop(session_id, None)
+    return entry[1] if entry else {}
 
 
 def _synthesis_text_from_context(tool_context) -> str:
