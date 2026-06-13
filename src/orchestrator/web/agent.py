@@ -15,13 +15,15 @@ bootstrap("adk_web")
 
 from google.genai import types
 
-from orchestrator.agent import root_agent
+from orchestrator.agent import discover_background, root_agent
 from shared.runtime_eval import score_response as _eval_score_response
 from shared.settings import AGENT_SEED_URLS, EVAL_ENABLED
 
 __all__ = ["root_agent"]
 
 logger = logging.getLogger(__name__)
+
+_discovery_done = False
 
 
 async def _release_sub_agent_evals() -> None:
@@ -38,7 +40,15 @@ async def _release_sub_agent_evals() -> None:
 
 
 async def _memory_cache_callback(callback_context) -> types.Content | None:
-    """Before-agent callback: short-circuit with today's cached brief if available."""
+    """Before-agent callback: discover sub-agents on first call, then short-circuit with today's cached brief if available."""
+    global _discovery_done
+    if not _discovery_done:
+        _discovery_done = True
+        try:
+            await discover_background()
+        except Exception as e:
+            logger.warning("Agent discovery failed: %s", e)
+
     import json
     from datetime import datetime
 

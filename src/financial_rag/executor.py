@@ -47,8 +47,8 @@ class RAGAgent(BaseAgent):
             self._ingestion = DocumentIngestionPipeline(self.index)
         try:
             result = await mcp.call_tool_by_name(
-                "get_company_filings",
-                {"ticker": ticker, "form_types": "10-K,10-Q,8-K", "limit": 5},
+                "get_financial_filings",
+                {"ticker": ticker, "annual_limit": 3, "quarterly_limit": 4},
             )
             if hasattr(result, "content"):
                 for item in result.content:
@@ -60,7 +60,7 @@ class RAGAgent(BaseAgent):
                     except json.JSONDecodeError:
                         continue
                     if isinstance(data, dict):
-                        filings = data.get("filings", [])
+                        filings = data.get("annual", []) + data.get("quarterly", [])
 
                         # Filter to un-ingested filings first
                         candidates = []

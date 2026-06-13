@@ -265,9 +265,11 @@ def _push_scores(scores: dict[str, float], trace_id: str | None, agent: str) -> 
     if not scores or trace_id is None:
         return
     try:
-        from langfuse import Langfuse
+        from shared.observability import get_langfuse_client
 
-        lf = Langfuse()
+        lf = get_langfuse_client()
+        if lf is None:
+            return
         prefix = f"ragas/{agent}" if agent else "ragas"
         for name, value in scores.items():
             kwargs: dict = {

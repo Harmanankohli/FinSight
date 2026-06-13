@@ -10,13 +10,14 @@ from google.adk.agents import LlmAgent
 from google.adk.tools.tool_context import ToolContext
 from google.genai import types as genai_types
 
-from shared.settings import ADK_MODEL, IST
+from shared.settings import ADK_MODEL, IST, get_settings
 
 logger = logging.getLogger(__name__)
 
 from .sub_agent_client import SubAgentClient
 
-_client = SubAgentClient()
+_s = get_settings()
+_client = SubAgentClient(bearer_token=_s.service_auth_token or None)
 
 # Capture raw agent responses keyed by session_id for structured storage
 _agent_responses: dict[str, tuple[float, dict[str, dict]]] = {}
@@ -343,7 +344,7 @@ def _build_instruction() -> str:
     )
 
 
-# Async startup: discover sub-agents on boot, rebuild instruction once agents are known
+# Async startup: discover sub-agents on boot
 async def discover_background() -> None:
     await _client.discover()
     agent_list = _client.list_agents()
@@ -352,7 +353,10 @@ async def discover_background() -> None:
         len(agent_list),
         [a["name"] for a in agent_list],
     )
-    root_agent.instruction = _build_instruction()
+
+
+def _instruction_provider(_ctx=None) -> str:
+    return _build_instruction()
 
 
 root_agent = LlmAgent(
@@ -362,7 +366,7 @@ root_agent = LlmAgent(
         "Coordinates specialized investment agents into a comprehensive "
         "Investment Brief via A2A protocol"
     ),
-    instruction=_build_instruction(),
+    instruction=_instruction_provider,
     tools=[send_message, load_memory],
     generate_content_config=genai_types.GenerateContentConfig(
         temperature=0.0,

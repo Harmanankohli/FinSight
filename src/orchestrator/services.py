@@ -4,8 +4,13 @@
 This file is automatically loaded by ADK when `adk web` starts.
 It registers our SQLiteMemoryService under the 'finsight' URI scheme.
 
+ADK's single-agent detection rewrites agents_dir to the parent directory
+(src/orchestrator/) when src/orchestrator/web/agent.py exists, so this
+file must live here — not inside web/ — for load_services_module() to
+find it.
+
 Usage:
-    adk web --memory_service_uri finsight:// agents
+    adk web --memory_service_uri finsight:// src/orchestrator/web
 """
 
 import logging
@@ -19,7 +24,6 @@ logger = logging.getLogger(__name__)
 registry = get_service_registry()
 
 
-# Factory for the URI-based memory service registration pattern (maps `finsight://` URIs to SQLiteMemoryService)  # noqa: E501
 def finsight_memory_factory(uri: str, **kwargs) -> SQLiteMemoryService:
     """Create a SQLiteMemoryService instance."""
     logger.info("Creating SQLiteMemoryService for URI: %s", uri)
