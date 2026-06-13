@@ -52,7 +52,7 @@ Orch->>RAG: A2A "Analyze NVDA"
 
 
 activate RAG
-RAG->>MCP: get_company_filings + get_news
+RAG->>MCP: get_financial_filings + get_news
 MCP-->>RAG: Filing + news data
 RAG->>RAG: ChromaDB hybrid search
 RAG->>LLM: Synthesize

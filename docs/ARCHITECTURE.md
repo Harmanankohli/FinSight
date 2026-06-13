@@ -68,13 +68,18 @@ header used as dev convention for user identity (no verification).
 
 ## Orchestrator Architecture
 
-The orchestrator (`src/orchestrator/`) uses a single `LlmAgent` with three tools (`send_message`, `generate_report`, `load_memory`). The `save_brief` function is defined but no longer exposed as an LLM tool — briefs are auto-saved via `after_agent_callback`. Two parallel cache paths can short-circuit the LLM entirely on same-day repeat queries:
+The orchestrator (`src/orchestrator/`) uses a single `LlmAgent` with two tools (`send_message`, `load_memory`). The `save_brief` function is defined but no longer exposed as an LLM tool — briefs are auto-saved via `after_agent_callback`. Two parallel cache paths can short-circuit the LLM entirely on same-day repeat queries:
 
 ```
-Module load ? SubAgentClient.discover()
-  +-- A2ACardResolver(httpx.AsyncClient, url) per seed URL
-  +-- Returns typed AgentCard (protobuf)
-  +-- self.agents populated ? instruction updated
+Module load (standalone — src/orchestrator/main.py):
+  ? SubAgentClient.discover() in lifespan background task
+    +-- A2ACardResolver(httpx.AsyncClient, url) per seed URL
+    +-- Returns typed AgentCard (protobuf)
+    +-- self.agents populated
+
+ADK Web UI (src/orchestrator/services.py fires memory service registration):
+  ? Discovery fires inside _memory_cache_callback on first turn
+    — root_agent.instruction = _instruction_provider (callable, per-turn rebuild)
 
 A2A Request ? FinSightAgentExecutor.execute()
   ? _get_today_cached_text(ticker)  — [CACHE: return today brief if exists]

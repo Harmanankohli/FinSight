@@ -1,5 +1,34 @@
 # Changelog
 
+## v2.4 — Auth Public Endpoints, ADK Web Discovery Fix, RAG Filing Source Switch (d84a3cc–274d4b5)
+
+### Agent Discovery in ADK Web Mode (d84a3cc)
+
+- **`before_agent_callback` triggers discovery** (`src/orchestrator/web/agent.py`): When running under `adk web`, `main.py`'s lifespan handler is never used — agent discovery now fires inside `_memory_cache_callback` on the first turn. A module-level `_discovery_done` flag ensures discovery runs exactly once.
+- **`root_agent.instruction` made callable** (`src/orchestrator/agent.py`): Changed from a static string to `_instruction_provider(_ctx=None)` — a callable that invokes `_build_instruction()` on every turn. This ensures newly discovered agents are reflected in the system prompt dynamically, without requiring a process restart.
+- **`services.py` moved to `orchestrator/`** (`src/orchestrator/services.py`): ADK's `load_services_module()` rewrites `agents_dir` to the parent directory when it detects `web/agent.py` exists. The file now lives at `src/orchestrator/services.py` so ADK can find it. Added docstring explaining this constraint.
+
+### RAG Filing Ingestion: `get_financial_filings` (d84a3cc)
+
+- **MCP tool switch** (`src/financial_rag/executor.py`): `_ensure_ingested` switched from `get_company_filings` (which mixed 8-Ks with 10-K/10-Qs and drowned out annual/quarterly reports for large filers) to `get_financial_filings` with `annual_limit=3, quarterly_limit=4`. The response format changed from a flat `filings[]` to separate `annual[]` + `quarterly[]` arrays, both concatenated for the ingestion pipeline.
+
+### Auth Hardening & Public Endpoints (d84a3cc, 6110b9d, 274d4b5)
+
+- **`SERVICE_AUTH_TOKEN` wired** (`src/orchestrator/agent.py`): `SubAgentClient` now accepts a `bearer_token` parameter from `settings.service_auth_token`. When `AUTH_ENABLED=true`, orchestrator-to-sub-agent A2A requests carry the service bearer token.
+- **`runtime_eval` Langfuse client fix** (`src/shared/runtime_eval.py`): `_push_scores` switched from creating a new `Langfuse()` instance to using `get_langfuse_client()` from `shared.observability` — prevents duplicate Langfuse client creation and ensures the shared singleton is used.
+- **`/api/agents` made public** (`src/orchestrator/api_routes.py`, `src/shared/auth/middleware.py`): The endpoint no longer requires admin role, and `PUBLIC_PREFIXES` includes `/api/agents` so the Next.js operator page can fetch agent lists without auth headers.
+- **`/api/reports` made public** (`src/shared/auth/middleware.py`): Added to `PUBLIC_PREFIXES` so frontend report download fetches (which go through Next.js rewrites without auth headers) work for authenticated users.
+
+### Frontend Auth Middleware & Redirect (0bbfa0d, fcf4000, ff9664b)
+
+- **Next.js auth middleware** (`src/web/nextjs-app/middleware.ts`): Reads `finsight_session` cookie and redirects unauthenticated users to `/login?redirect=<original_path>`. Created as part of 0bbfa0d.
+- **`AuthProvider` redirect replaces middleware** (`src/web/nextjs-app/contexts/AuthContext.tsx`): Next.js 16 deprecated middleware in favor of proxy. The auth guard moved into `AuthProvider` using `useEffect` that redirects to `/login` when no user is authenticated and redirects away from `/login` when a session exists. `middleware.ts` deleted (fcf4000).
+- **Service token fallback in CopilotKit route** (`src/web/nextjs-app/app/api/copilotkit/route.ts`): When no user JWT is available (anonymous/unauthenticated users), the route handler falls back to `SERVICE_AUTH_TOKEN` in the `X-FinSight-Auth-Token` header so the orchestrator's `/a2a-agui` endpoint accepts the request.
+
+### .env.example Expansion (d84a3cc)
+
+- **All missing env vars added**: `AUTH_ENABLED`, `AUTH_SECRET_KEY`, `AUTH_TOKEN_EXPIRE_MINUTES`, `SERVICE_AUTH_TOKEN`, `REPORT_DIR`, `DB_PATH`, `SANDBOX_MODE`, `CORS_ORIGINS`, `ORCHESTRATOR_PORT`, `RAG_PORT`, `QUANT_PORT`, `MARKET_CONTEXT_PORT` — making the example a complete reference.
+
 ## v2.3 — Source Tree Restructure to `src/` Layout (ef596a7)
 
 ### Directory Layout Migration (ef596a7)

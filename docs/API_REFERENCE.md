@@ -349,7 +349,7 @@ Full bearer JWT authentication with three principal kinds:
 |---|---|---|
 | **User** | JWT from `/auth/login` (Argon2 password) | Orchestrator `/api/*`, AG-UI bridge, reports |
 | **Service** | Static `SERVICE_AUTH_TOKEN` env var | A2A `/a2a`, `/release-evals`, MCP SSE |
-| **Public** | None | `/health`, `/.well-known/*`, `/auth/login\|refresh\|logout` |
+| **Public** | None | `/health`, `/.well-known/*`, `/auth/login\|refresh\|logout`, `/api/agents`, `/api/reports` |
 
 #### Login
 

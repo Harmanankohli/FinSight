@@ -48,14 +48,14 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <tr><td>Health</td><td><code>GET /health</code> &rarr; <code>{"status":"ok","agent":"orchestrator"}</code></td></tr>
 </table>
 
-<p>The orchestrator uses a single <code>LlmAgent</code> with three tools (<code>send_message</code>, <code>generate_report</code>, <code>load_memory</code>). The <code>save_brief</code> function is still defined in <code>agent.py</code> but is no longer exposed as an LLM-callable tool &mdash; briefs are auto-saved via <code>after_agent_callback</code>. The LLM delegates tasks to sub-agents by name and synthesizes results:</p>
+<p>The orchestrator uses a single <code>LlmAgent</code> with two tools (<code>send_message</code>, <code>load_memory</code>). The <code>save_brief</code> function is still defined in <code>agent.py</code> but is no longer exposed as an LLM-callable tool &mdash; briefs are auto-saved via <code>after_agent_callback</code>. The LLM delegates tasks to sub-agents by name and synthesizes results:</p>
 <ol>
-<li><strong>Discovers agents in background</strong> via <code>SubAgentClient.discover()</code> &mdash; async <code>A2ACardResolver</code> with retries</li>
+<li><strong>Discovers agents</strong> via <code>SubAgentClient.discover()</code> &mdash; async <code>A2ACardResolver</code> with retries. In standalone mode (<code>main.py</code>), discovery runs as a lifespan background task. In ADK Web UI mode (<code>adk web</code>), discovery fires inside <code>_memory_cache_callback</code> on the first turn (the lifespan handler is never used under <code>adk web</code>). A <code>_discovery_done</code> module-level flag ensures it runs exactly once.</li>
 <li><strong>Input guardrails</strong> &mdash; Off-topic queries rejected in &lt; 100 ms via <code>_NON_INVESTMENT_RE</code>. Invalid tickers rejected in &lt; 2 s via pre-flight MCP <code>validate_ticker</code> call before any sub-agent is invoked. Uses <code>get_shared_mcp()</code> singleton &mdash; no per-request connect/disconnect overhead.</li>
 <li><strong>Semantic cache</strong> &mdash; When <code>SEMANTIC_CACHE_ENABLED=true</code>, similar queries (cosine &ge; 0.95) return cached responses without running the orchestrator. <strong>Date-scoped</strong>: <code>SemanticCache.set()</code> tags entries with today&rsquo;s <code>YYYY-MM-DD</code>; <code>SemanticCache.get()</code> uses a ChromaDB <code>where={"date": today}</code> filter matching only today&rsquo;s entries. Same query on a different day = cache miss = fresh analysis.</li>
 <li><strong>Memory cache callback (before agent)</strong> &mdash; <code>root_agent.before_agent_callback = _memory_cache_callback</code> fires before the LLM runs. Extracts the user&rsquo;s ticker, queries <code>TickerMemory.get_latest()</code>, and if today&rsquo;s brief exists with a valid <code>response_text</code>, returns it as <code>types.Content</code> &mdash; short-circuiting the LLM entirely. This is the fastest path for same-day repeat queries (~200ms vs 30&ndash;60s).</li>
 <li><strong>Memory context injection</strong> &mdash; If the cache callback misses (no today brief), extracts ticker from user input, retrieves latest recommendation from <code>TickerMemory</code>, and prepends it to the user message (~300 token budget). Tags as <code>[TODAY]</code> (fresh) or <code>[STALE]</code> (prior day) &mdash; LLM is instructed <strong>&ldquo;MUST return directly&rdquo;</strong> on <code>[TODAY]</code> rather than the previous &ldquo;MAY return&rdquo;.</li>
-<li><strong>LLM routes to agents in parallel</strong> &mdash; <code>_STATIC_PREAMBLE</code> explicitly instructs the model to emit ALL <code>send_message</code> calls in a SINGLE assistant response for parallel execution (<code>agent.py:184-189</code>). <code>_build_instruction()</code> also appends agent responsibility boundaries (<code>agent.py:253-260</code>) clarifying RAG owns ALL document/news retrieval, Market Context owns macro, Quant owns numeric analysis. Each call measured with <code>time.monotonic()</code> and emitted as a Langfuse latency span.</li>
+<li><strong>LLM routes to agents in parallel</strong> &mdash; <code>_STATIC_PREAMBLE</code> explicitly instructs the model to emit ALL <code>send_message</code> calls in a SINGLE assistant response for parallel execution (<code>agent.py:184-189</code>). <code>_build_instruction()</code> also appends agent responsibility boundaries (<code>agent.py:253-260</code>) clarifying RAG owns ALL document/news retrieval, Market Context owns macro, Quant owns numeric analysis. Each call measured with <code>time.monotonic()</code> and emitted as a Langfuse latency span. <code>root_agent.instruction</code> is a callable (<code>_instruction_provider</code>) that invokes <code>_build_instruction()</code> on every turn &mdash; newly discovered agents dynamically appear in the system prompt without a process restart.</li>
 <li><strong>Output guardrails</strong> &mdash; Responses shorter than 50 chars trigger <code>TASK_STATE_FAILED</code>. Missing BUY/HOLD/SELL signal emits a Langfuse warning with <code>missing_signal: true</code>.</li>
 <li><strong>Synthesizes results</strong> &mdash; LLM collects all outputs and produces a BUY/HOLD/SELL recommendation</li>
 <li><strong>Auto-save</strong> &mdash; After each response, persists ticker brief, portfolio holdings, and performance record (with live price snapshot via yfinance) to SQLite. Fires background task to evaluate past recommendations. Briefs are auto-saved via <code>after_agent_callback</code> &mdash; the LLM does not need to call <code>save_brief</code>. Confidence scores are extracted from response text via regex matching "Confidence Score: X", "confidence: X", and "X% confidence" formats. Agent output capture (<code>send_message</code> callback) stores parsed sub-agent responses (RAG summary, quant metrics, sentiment narrative) in session event metadata via <code>extra_data</code> on <code>store_minimal()</code>.</li>
@@ -70,17 +70,23 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <p>All A2A communication uses <code>ClientFactory</code> + <code>BaseClient</code> from the official <code>a2a-sdk</code>. Streaming events are handled correctly: intermediate SUBMITTED/WORKING events are skipped, only <code>artifact_update</code> events (data or text) and terminal <code>status_update</code> events are returned to the LLM.</p>
 
 <h3>Architecture</h3>
-<pre>Module load &rarr; SubAgentClient.discover() in background task
-  &rarr; A2ACardResolver(http, "http://localhost:8002")
-  &rarr; A2ACardResolver(http, "http://localhost:8003")
-  &rarr; A2ACardResolver(http, "http://localhost:8004")
-  &rarr; self.agents populated &rarr; instruction updated
+<pre>Module load (standalone &mdash; src/orchestrator/main.py):
+  &rarr; SubAgentClient.discover() in lifespan background task
+    +-- A2ACardResolver(http, "http://localhost:8002")
+    +-- A2ACardResolver(http, "http://localhost:8003")
+    +-- A2ACardResolver(http, "http://localhost:8004")
+    &rarr; self.agents populated &rarr; instruction updated (callable _instruction_provider)
+
+ADK Web UI (services.py at src/orchestrator/):
+  &rarr; Discovery fires inside _memory_cache_callback on first turn
+    &mdash; main.py lifespan never used under adk web
+    &mdash; root_agent.instruction is callable: builds instruction per-turn
 
 FinSightAgentExecutor:
   A2A Request &rarr; execute()
   &rarr; _build_memory_context(query) &rarr; inject [MEMORY CONTEXT] prefix
   &rarr; RUNNER.run_async(user_query)
-  &rarr; ADK LlmAgent (tools: [send_message, generate_report, load_memory])
+  &rarr; ADK LlmAgent (tools: [send_message, load_memory])
     &rarr; LLM emits ALL send_message calls in ONE assistant turn (parallel, per system prompt instruction)
     &rarr; send_message("Financial RAG Agent", "Analyze NVDA...")
     &rarr; send_message("Quant Analysis Agent", "Compute metrics for NVDA...")
@@ -106,7 +112,7 @@ Executor-level cache (A2A path &mdash; orchestrator/agent_executor.py):
   &rarr; _get_today_cached_text(ticker) &mdash; same check, returns cached text directly
   &rarr; [miss] &rarr; _build_memory_context() &rarr; RUNNER.run_async()
 
-after_agent_callback (ADK web UI path &mdash; primary path; run_adk_web.bat no longer starts orchestrator/main.py):
+after_agent_callback (ADK web UI path &mdash; primary path; run_adk_web.bat no longer starts orchestrator/main.py; services.py at src/orchestrator/services.py because ADK rewrites agents_dir to parent when it detects web/agent.py):
   &rarr; _is_analysis_turn(session.events) &mdash; was save_brief called OR was send_message invoked?
        &#9500; No  &rarr; skip persist + eval (memory recall turn, e.g. load_memory only)
        &#9492; Yes &rarr;
@@ -212,7 +218,7 @@ RAGAgent._build_response(query):
 
 RAGAgent._ensure_ingested(ticker) [background]:
   &rarr; mcp = await get_shared_mcp()
-  &rarr; MCP: get_company_filings(ticker) &rarr; filings with edgar_url + ix_url
+  &rarr; MCP: get_financial_filings(ticker, annual_limit=3, quarterly_limit=4) &rarr; {annual[], quarterly[]} with edgar_url + ix_url
   &rarr; Filter: is_filing_ingested(edgar_url) &mdash; skip already-indexed URLs
   &rarr; Parallel fetch via asyncio.gather:
     &#x251C;&#x2500;&#x2500; MCP: get_filing_content(edgar_url, ix_url) for candidate 1
@@ -392,6 +398,7 @@ MarketContextAgent._build_response(query):
 <tr><td><strong><code>SEC_USER_AGENT</code> env var</strong></td><td>Replaces hardcoded SEC user agent string in MCP server filing requests.</td></tr>
 <tr><td><strong>LLM Priority Queue</strong></td><td><code>LLMPriorityQueue</code> in <code>src/shared/llm_queue.py</code> (process-local, heap-based async semaphore). Three tiers: <code>CRITICAL</code> (quant summary, crew kickoff), <code>NORMAL</code> (warmup ping), <code>LOW</code> (RAGAS eval). Default <code>LLM_MAX_CONCURRENT=2</code>. Prevents eval starvation of production inference.</td></tr>
 <tr><td><strong>Deferred Eval Gate</strong></td><td><code>src/shared/eval_gate.py</code> &mdash; holds sub-agent eval LLM calls until the orchestrator releases them via <code>POST /release-evals</code> after synthesis completes. Prevents 3 sub-agent eval processes from competing with orchestrator synthesis on a single LM Studio instance. Includes 120s safety-net auto-release.</td></tr>
+<tr><td><strong><code>SERVICE_AUTH_TOKEN</code></strong></td><td><code>SubAgentClient</code> accepts <code>bearer_token</code> from <code>settings.service_auth_token</code>. When <code>AUTH_ENABLED=true</code>, orchestrator-to-sub-agent A2A requests carry the service bearer token.</td></tr>
 </table>
 
 <h2>Phase Map</h2>
@@ -419,6 +426,8 @@ exception message classification.</td></tr>
 <tr><td><strong>Phase 12</strong></td><td>v2.0</td><td>Contract tests (auth matrix, A2A protocol), OpenAPI spec (13 paths, 16 schemas, CI-enforced), trace filter (<code>traceFilter.ts</code>, <code>trace_with_user()</code>), shim removal (<code>src/shared/config.py</code>/<code>report_generator.py</code> deleted, ruff/mypy clean).</td></tr>
 <tr><td><strong>&mdash;</strong></td><td>v2.1</td><td>Post-Phase-3 runtime fixes (6 error resolutions), CI hardening (ruff cleanup, uv venv, slim test deps, lazy memory imports, 22 test fixes, coverage/pytest hang fixes), proxy.ts disabled.</td></tr>
 <tr><td><strong>&mdash;</strong></td><td>v2.2</td><td>Agent output capture (structured sub-agent responses stored via <code>extra_data</code> on <code>store_minimal()</code>), Playwright-based HTML&rarr;PPTX/PDF export (<code>src/shared/reports/playwright_export.py</code>), <code>SentimentIntelligence</code> &rarr; <code>MarketContext</code> model rename, ticker extraction hardening (pronouns + holdings word boundaries), stable anonymous user ID cookie, AG-UI bridge per-event timeout, 16 new agent-output extraction tests.</td></tr>
+<tr><td><strong>&mdash;</strong></td><td>v2.3</td><td>Source tree restructure to <code>src/</code> layout. Model rename + field restructure (key_risks&rarr;key_headwinds, etc.).</td></tr>
+<tr><td><strong>&mdash;</strong></td><td>v2.4</td><td>ADK Web UI discovery fix (before_agent_callback), callable instruction, services.py moved. RAG <code>get_financial_filings</code> switch. Auth public endpoints, frontend auth middleware/redirect, service token forwarding.</td></tr>
 </table>
 
 <hr>

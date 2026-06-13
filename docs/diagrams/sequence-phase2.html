@@ -41,7 +41,7 @@ Note over Orch,YF: ══════ Phase 2: Parallel A2A Dispatch ═══�
 par ⑧ All 3 agents fire simultaneously
 Orch->>RAG: A2A SendMessage("Analyze NVDA")
 activate RAG
-RAG->>MCP: get_company_filings("NVDA")
+RAG->>MCP: get_financial_filings("NVDA")
 MCP->>SEC: EDGAR lookup
 SEC-->>MCP: Filing list
 MCP->>SEC: get_filing_content()

@@ -290,7 +290,7 @@ Content-Disposition: attachment; filename="FinSight_{ticker}_{date}.{format}"  (
 <tr><th>Kind</th><th>Token</th><th>Routes</th></tr>
 <tr><td><strong>User</strong></td><td>JWT from <code>/auth/login</code> (Argon2 password)</td><td>Orchestrator <code>/api/*</code>, AG-UI bridge, reports</td></tr>
 <tr><td><strong>Service</strong></td><td>Static <code>SERVICE_AUTH_TOKEN</code> env var</td><td>A2A <code>/a2a</code>, <code>/release-evals</code>, MCP SSE</td></tr>
-<tr><td><strong>Public</strong></td><td>None</td><td><code>/health</code>, <code>/.well-known/*</code>, <code>/auth/login|refresh|logout</code></td></tr>
+<tr><td><strong>Public</strong></td><td>None</td><td><code>/health</code>, <code>/.well-known/*</code>, <code>/auth/login|refresh|logout</code>, <code>/api/agents</code>, <code>/api/reports</code></td></tr>
 </table>
 
 <h4>Login</h4>

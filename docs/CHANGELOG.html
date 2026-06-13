@@ -36,6 +36,40 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 
 <h1>Changelog</h1>
 
+<h2>v2.4 &mdash; Auth Public Endpoints, ADK Web Discovery Fix, RAG Filing Source Switch (d84a3cc&ndash;274d4b5)</h2>
+
+<h3 class="version">Agent Discovery in ADK Web Mode (d84a3cc)</h3>
+<ul>
+<li><strong><code>before_agent_callback</code> triggers discovery</strong> (<code>src/orchestrator/web/agent.py</code>): When running under <code>adk web</code>, <code>main.py</code>'s lifespan handler is never used &mdash; agent discovery now fires inside <code>_memory_cache_callback</code> on the first turn. A module-level <code>_discovery_done</code> flag ensures discovery runs exactly once.</li>
+<li><strong><code>root_agent.instruction</code> made callable</strong> (<code>src/orchestrator/agent.py</code>): Changed from a static string to <code>_instruction_provider(_ctx=None)</code> &mdash; a callable that invokes <code>_build_instruction()</code> on every turn. This ensures newly discovered agents are reflected in the system prompt dynamically, without requiring a process restart.</li>
+<li><strong><code>services.py</code> moved to <code>orchestrator/</code></strong> (<code>src/orchestrator/services.py</code>): ADK's <code>load_services_module()</code> rewrites <code>agents_dir</code> to the parent directory when it detects <code>web/agent.py</code> exists. The file now lives at <code>src/orchestrator/services.py</code> so ADK can find it. Added docstring explaining this constraint.</li>
+</ul>
+
+<h3 class="version">RAG Filing Ingestion: <code>get_financial_filings</code> (d84a3cc)</h3>
+<ul>
+<li><strong>MCP tool switch</strong> (<code>src/financial_rag/executor.py</code>): <code>_ensure_ingested</code> switched from <code>get_company_filings</code> (which mixed 8-Ks with 10-K/10-Qs and drowned out annual/quarterly reports for large filers) to <code>get_financial_filings</code> with <code>annual_limit=3, quarterly_limit=4</code>. The response format changed from a flat <code>filings[]</code> to separate <code>annual[]</code> + <code>quarterly[]</code> arrays, both concatenated for the ingestion pipeline.</li>
+</ul>
+
+<h3 class="version">Auth Hardening &amp; Public Endpoints (d84a3cc, 6110b9d, 274d4b5)</h3>
+<ul>
+<li><strong><code>SERVICE_AUTH_TOKEN</code> wired</strong> (<code>src/orchestrator/agent.py</code>): <code>SubAgentClient</code> now accepts a <code>bearer_token</code> parameter from <code>settings.service_auth_token</code>. When <code>AUTH_ENABLED=true</code>, orchestrator-to-sub-agent A2A requests carry the service bearer token.</li>
+<li><strong><code>runtime_eval</code> Langfuse client fix</strong> (<code>src/shared/runtime_eval.py</code>): <code>_push_scores</code> switched from creating a new <code>Langfuse()</code> instance to using <code>get_langfuse_client()</code> from <code>shared.observability</code> &mdash; prevents duplicate Langfuse client creation and ensures the shared singleton is used.</li>
+<li><strong><code>/api/agents</code> made public</strong> (<code>src/orchestrator/api_routes.py</code>, <code>src/shared/auth/middleware.py</code>): The endpoint no longer requires admin role, and <code>PUBLIC_PREFIXES</code> includes <code>/api/agents</code> so the Next.js operator page can fetch agent lists without auth headers.</li>
+<li><strong><code>/api/reports</code> made public</strong> (<code>src/shared/auth/middleware.py</code>): Added to <code>PUBLIC_PREFIXES</code> so frontend report download fetches (which go through Next.js rewrites without auth headers) work for authenticated users.</li>
+</ul>
+
+<h3 class="version">Frontend Auth Middleware &amp; Redirect (0bbfa0d, fcf4000, ff9664b)</h3>
+<ul>
+<li><strong>Next.js auth middleware</strong> (<code>src/web/nextjs-app/middleware.ts</code>): Reads <code>finsight_session</code> cookie and redirects unauthenticated users to <code>/login?redirect=&lt;original_path&gt;</code>. Created as part of 0bbfa0d.</li>
+<li><strong><code>AuthProvider</code> redirect replaces middleware</strong> (<code>src/web/nextjs-app/contexts/AuthContext.tsx</code>): Next.js 16 deprecated middleware in favor of proxy. The auth guard moved into <code>AuthProvider</code> using <code>useEffect</code> that redirects to <code>/login</code> when no user is authenticated and redirects away from <code>/login</code> when a session exists. <code>middleware.ts</code> deleted (fcf4000).</li>
+<li><strong>Service token fallback in CopilotKit route</strong> (<code>src/web/nextjs-app/app/api/copilotkit/route.ts</code>): When no user JWT is available (anonymous/unauthenticated users), the route handler falls back to <code>SERVICE_AUTH_TOKEN</code> in the <code>X-FinSight-Auth-Token</code> header so the orchestrator's <code>/a2a-agui</code> endpoint accepts the request.</li>
+</ul>
+
+<h3 class="version">.env.example Expansion (d84a3cc)</h3>
+<ul>
+<li><strong>All missing env vars added</strong>: <code>AUTH_ENABLED</code>, <code>AUTH_SECRET_KEY</code>, <code>AUTH_TOKEN_EXPIRE_MINUTES</code>, <code>SERVICE_AUTH_TOKEN</code>, <code>REPORT_DIR</code>, <code>DB_PATH</code>, <code>SANDBOX_MODE</code>, <code>CORS_ORIGINS</code>, <code>ORCHESTRATOR_PORT</code>, <code>RAG_PORT</code>, <code>QUANT_PORT</code>, <code>MARKET_CONTEXT_PORT</code> &mdash; making the example a complete reference.</li>
+</ul>
+
 <h2>v2.3 &mdash; Source Tree Restructure to <code>src/</code> Layout (ef596a7)</h2>
 
 <h3 class="version">Directory Layout Migration (ef596a7)</h3>

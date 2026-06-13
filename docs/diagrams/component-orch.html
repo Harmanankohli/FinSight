@@ -36,7 +36,7 @@ InputGuard("② Input Guardrails\nOff-topic regex + MCP validate_ticker\n→ rej
 SemCache("③ Semantic Cache\nChromaDB cosine > 0.95\nDate-scoped, 1h TTL")
 BriefCache("④ Today Brief Cache\nSQLite TickerMemory.get_latest()\nSame-day → 200ms")
 MemCtx("⑤ Memory Context\nInject [TODAY]/[STALE] labels\n+ portfolio holdings")
-AgentList("Agent Discovery\nSubAgentClient.discover()\n→ available agents prompt")
+AgentList("Agent Discovery\nSubAgentClient.discover()\nvia before_agent_callback\nor lifespan background task\n→ callable instruction per-turn")
 ADKEngine("⑥ ADK LlmAgent\nTools: send_message\nload_memory")
 ParallelDispatch("⑦ Parallel A2A\nsend_message(RAG, Quant, MktCtx)\nAll in one LLM turn")
 Synthesis("⑧ LLM Synthesis\nCollect 3 outputs\n→ BUY/HOLD/SELL + confidence")

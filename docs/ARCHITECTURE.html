@@ -39,7 +39,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <h1>Architecture</h1>
 
 <h2>Overview</h2>
-<p>FinSight is a multi-agent investment research system where four specialized agents communicate via the <strong>Google A2A Protocol</strong> (Agent-to-Agent). The orchestrator (ADK <code>LlmAgent</code>) discovers sub-agents at startup via <code>A2ACardResolver</code>, delegates tasks via three tools (<code>send_message</code>, <code>generate_report</code>, <code>load_memory</code>), and the LLM routes to all agents in parallel (instructed via system prompt to emit all <code>send_message</code> calls in one assistant turn). Each sub-agent processes tasks internally using its own framework and tools.</p>
+<p>FinSight is a multi-agent investment research system where four specialized agents communicate via the <strong>Google A2A Protocol</strong> (Agent-to-Agent). The orchestrator (ADK <code>LlmAgent</code>) discovers sub-agents at startup via <code>A2ACardResolver</code>, delegates tasks via two tools (<code>send_message</code>, <code>load_memory</code>), and the LLM routes to all agents in parallel (instructed via system prompt to emit all <code>send_message</code> calls in one assistant turn). Each sub-agent processes tasks internally using its own framework and tools.</p>
 
 <h2>Communication Pattern</h2>
 <pre>&#x250C;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2510;
@@ -61,28 +61,16 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 &#x2514;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2518;</pre>
 
 <h2>Orchestrator Architecture</h2>
-<p>The orchestrator (<code>src/orchestrator/</code>) uses a single <code>LlmAgent</code> with three tools (<code>send_message</code>, <code>generate_report</code>, <code>load_memory</code>). The <code>save_brief</code> function is defined but no longer exposed as an LLM tool &mdash; briefs are auto-saved via <code>after_agent_callback</code>. Two parallel cache paths can short-circuit the LLM entirely on same-day repeat queries:</p>
-<pre>Module load &rarr; SubAgentClient.discover()
-  &#x251C;&#x2500;&#x2500; A2ACardResolver(httpx.AsyncClient, url) per seed URL
-  &#x251C;&#x2500;&#x2500; Returns typed AgentCard (protobuf)
-  &#x2514;&#x2500;&#x2500; self.agents populated &rarr; instruction updated
+<p>The orchestrator (<code>src/orchestrator/</code>) uses a single <code>LlmAgent</code> with two tools (<code>send_message</code>, <code>load_memory</code>). The <code>save_brief</code> function is defined but no longer exposed as an LLM tool &mdash; briefs are auto-saved via <code>after_agent_callback</code>. Two parallel cache paths can short-circuit the LLM entirely on same-day repeat queries:</p>
+<pre>Module load (standalone &mdash; src/orchestrator/main.py):
+  &rarr; SubAgentClient.discover() in lifespan background task
+    +-- A2ACardResolver(httpx.AsyncClient, url) per seed URL
+    +-- Returns typed AgentCard (protobuf)
+    +-- self.agents populated
 
-A2A Request &rarr; FinSightAgentExecutor.execute()
-  &rarr; _get_today_cached_text(ticker)  &mdash; [CACHE: return today brief if exists]
-  &rarr; _build_memory_context(query)    &mdash; inject [MEMORY CONTEXT] with [TODAY]/[STALE] tag
-  &rarr; RUNNER.run_async(user_query)
-    &rarr; LlmAgent (no pre-fetch)
-    &rarr; before_agent_callback: _memory_cache_callback  &mdash; [CACHE: return types.Content if today brief exists]
-    &rarr; LLM emits ALL send_message calls in ONE assistant turn (parallel per system prompt instruction)
-    &rarr; SubAgentClient &rarr; A2A task to sub-agent (parallel)
-    &rarr; SubAgentClient &rarr; A2A response (text or data parts)
-    &rarr; LLM receives all results together in the next turn
-    &rarr; LLM synthesizes BUY/HOLD/SELL
-  &rarr; after_agent_callback: _persist_memory_callback
-    &rarr; add_events_to_memory()
-    &rarr; if EVAL_ENABLED: score_response()
-    &rarr; _release_sub_agent_evals() &mdash; POST /release-evals to all sub-agents (they defer evals until this signal)
-  &rarr; COMPLETED with synthesis</pre>
+ADK Web UI (src/orchestrator/services.py fires memory service registration):
+  &rarr; Discovery fires inside _memory_cache_callback on first turn
+    &mdash; root_agent.instruction = _instruction_provider (callable, per-turn rebuild)</pre>
 
 <h3>Key Design Choices</h3>
 <ul>

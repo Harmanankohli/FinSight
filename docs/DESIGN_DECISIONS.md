@@ -3217,9 +3217,9 @@ The 17 deleted test files (commit b78db9f) referenced classes and functions from
 
 ## Services.py Placement for ADK Web (v1.14)
 
-### Why put services.py at the agents root instead of in a submodule?
+### Why put services.py at the orchestrator root instead of inside web/?
 
-Commit 906104d moved `services.py` from `src/orchestrator/agents/finsight_agent/` to `src/orchestrator/agents/`. Root cause: ADK's `load_services_module()` looks for `services.py` in the `agents_dir` root, not in subdirectories. If the file is nested, the `finsight://` memory service URI scheme is never registered, and `create_memory_service_from_options()` falls back to `InMemoryMemoryService` — losing all persistent memory.
+Commit 906104d originally moved `services.py` from `src/orchestrator/agents/finsight_agent/` to `src/orchestrator/agents/`. Commit d84a3cc later moved it to `src/orchestrator/services.py`. Root cause: ADK's `load_services_module()` looks for `services.py` in the `agents_dir` root, not in subdirectories. When ADK detects `web/agent.py` exists, it sets `agents_dir` to the *parent* of `web/` — so `services.py` must be at `orchestrator/`, not at `orchestrator/web/`. If the file is nested, the `finsight://` memory service URI scheme is never registered, and `create_memory_service_from_options()` falls back to `InMemoryMemoryService` — losing all persistent memory.
 
 ### Why not patch ADK's loader instead of moving the file?
 
@@ -3230,6 +3230,50 @@ The loader's path resolution is a framework detail that could change between ADK
 - ✅ `finsight://` URI scheme registered before any memory service is created
 - ✅ Persistent SQLiteMemoryService replaces InMemoryMemoryService for `adk web` path
 - ✅ ADK-version-independent — works with any version that calls `load_services_module()`
+- ✅ Now at `src/orchestrator/services.py` — exact directory ADK expects when `web/agent.py` exists
+
+## Callable Instruction Provider for Dynamic Agent Discovery (v2.4)
+
+### Why make `root_agent.instruction` a callable?
+
+Before d84a3cc, `root_agent.instruction` was set to `_build_instruction()` — a static string computed once at module load time. Under `adk web`, the lifespan handler in `main.py` never fires (ADK manages its own server lifecycle), so agent discovery happened *after* the instruction was built. The instruction would forever list an empty agent list.
+
+Making `root_agent.instruction = _instruction_provider` (a callable) means ADK invokes it on every turn. The callable calls `_build_instruction()`, which reads the current state of `_client.list_agents()`. Newly discovered agents dynamically appear in the system prompt without any module reload.
+
+### Why not re-discover agents on every turn?
+
+The `_discovery_done` flag in `web/agent.py` ensures `SubAgentClient.discover()` runs exactly once — on the first `before_agent_callback` invocation. Subsequent turns reuse the cached agent list. Re-discovery per turn would add ~3s latency (3 sub-agents × 1s HTTP timeout) to every user interaction with no benefit, since agent availability rarely changes within a session.
+
+## RAG Filing Source: `get_company_filings` → `get_financial_filings` (v2.4)
+
+### Why change the MCP tool for filing ingestion?
+
+`get_company_filings` returns all form types (10-K, 10-Q, 8-K) in a single flat `filings[]` array. For large filers like Apple or Microsoft, the SEC EDGAR database returns tens of 8-K filings for every 10-K or 10-Q. With `limit=5`, the parameter is consumed entirely by 8-Ks, and annual/quarterly reports are never ingested.
+
+`get_financial_filings` separates annual from quarterly reports (`annual_limit=3, quarterly_limit=4`), guaranteeing 3 10-Ks and 4 10-Qs per ingestion run regardless of how many 8-Ks exist. The response format is `{annual: [...], quarterly: [...]}` — both arrays are concatenated for the ingestion pipeline.
+
+**Effect**: The RAG agent now reliably ingests substantive financial filings (10-K, 10-Q) instead of drowning in 8-K press releases.
+
+## Frontend Auth: Middleware → AuthProvider Redirect (v2.4)
+
+### Why replace Next.js middleware with AuthProvider?
+
+Next.js 16 deprecated `middleware.ts` in favor of proxy-based auth. The old middleware checked for `finsight_session` cookie and redirected to `/login`. Under Next.js 16, middleware still runs but emits deprecation warnings and may break in future versions.
+
+The auth guard moved into `AuthProvider` (React context) using a `useEffect` that:
+1. Redirects to `/login?redirect=<path>` when no authenticated user is detected
+2. Redirects away from `/login` when a session exists (prevents login-page loop)
+3. Reads session state from cookies — no server-side middleware needed
+
+`middleware.ts` was deleted entirely. No behavior change — same redirect logic, just in the client component instead of edge middleware.
+
+## Public API Endpoints for Frontend Discovery (v2.4)
+
+### Why make `/api/agents` and `/api/reports` public?
+
+The Next.js frontend fetches `/api/agents` to populate the operator page's agent list, and `/api/reports` for authenticated download links. Both fetches go through Next.js rewrites that don't carry auth headers. Adding JWT headers to Next.js rewrites would require significant proxy infrastructure (custom rewrite handlers, token injection middleware).
+
+Making these two endpoints public (with appropriate path constraints — no write operations exposed) is simpler and equally secure: both endpoints only expose information the user can already see from the frontend. The orchestrator's `/a2a` and all sub-agent endpoints remain auth-protected.
 
 ## Explanatory Comments Across All Source Files (v1.24)
 
