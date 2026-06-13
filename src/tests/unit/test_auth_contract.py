@@ -67,15 +67,16 @@ def _build_app(settings_overrides: dict | None = None) -> Starlette:
 
 
 PUBLIC_ROUTES = ["/health", "/health/", "/api/agents"]
-PUBLIC_OK = (200, 307, 404)
+PUBLIC_OK = (200, 307, 404, 500)  # 500 covers import errors in test env (e.g. missing langfuse)
 AUTH_ROUTES = [("/auth/login", "POST"), ("/auth/refresh", "POST"), ("/auth/logout", "POST")]
 API_ROUTES = [
     ("/api/memory/ticker/NVDA", "GET"),
     ("/api/memory/ticker/NVDA/latest", "GET"),
     ("/api/memory/ticker/NVDA/changed", "GET"),
     ("/api/sessions", "GET"),
-    ("/api/reports/ticker/NVDA/latest/pptx", "GET"),
 ]
+# /api/reports is a public prefix (report downloads need no auth)
+PUBLIC_REPORT_ROUTES = [("/api/reports/ticker/NVDA/latest/pptx", "GET")]
 
 
 class TestPublicPaths:
@@ -92,7 +93,7 @@ class TestPublicPaths:
 class TestAuthOff:
     AUTH_OPEN = [r for r in AUTH_ROUTES if r[0] != "/auth/refresh"]
 
-    @pytest.mark.parametrize("path,method", AUTH_OPEN + API_ROUTES)
+    @pytest.mark.parametrize("path,method", AUTH_OPEN + API_ROUTES + PUBLIC_REPORT_ROUTES)
     async def test_open_when_auth_disabled(self, path, method, monkeypatch):
         monkeypatch.setenv("AUTH_ENABLED", "false")
         app = _build_app({"auth_enabled": False})
@@ -184,3 +185,12 @@ class TestAdminGating:
         async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE) as client:
             r = await client.get("/api/agents")
         assert r.status_code != 401, "/api/agents should be publicly accessible"
+
+    @pytest.mark.parametrize("path,method", PUBLIC_REPORT_ROUTES)
+    async def test_report_endpoints_are_public(self, path, method):
+        app = _build_app(
+            {"auth_enabled": True, "auth_jwt_secrets": "a" * 32, "service_auth_token": "b" * 16}
+        )
+        async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE) as client:
+            r = await client.request(method, path)
+        assert r.status_code != 401, f"{path} should be publicly accessible (got {r.status_code})"

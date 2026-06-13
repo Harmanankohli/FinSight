@@ -83,6 +83,8 @@ class MarketContextCrew:
             max_retry_limit=1,
         )
 
+        from shared.agent_models import MarketContextOutput
+
         today = date.today().isoformat()
         task = Task(
             description=(
@@ -102,12 +104,15 @@ class MarketContextCrew:
                 "relative_peer_positioning (string), overall_signal, confidence_score (0-1), "
                 "key_tailwinds, key_headwinds."
             ),
+            output_pydantic=MarketContextOutput,
         )
 
         return Crew(agents=[agent], tasks=[task], process=Process.sequential, verbose=False)
 
     @logged()
     async def analyze(self, ticker: str, precollected_data: dict | None = None) -> dict:
+        from shared.agent_models import MarketContextOutput
+
         crew = self.build_crew(ticker, data=precollected_data)
         try:
             from shared.llm_queue import Priority, llm_queue
@@ -115,17 +120,27 @@ class MarketContextCrew:
             async with llm_queue.acquire(Priority.CRITICAL, "crewai-kickoff"):
                 loop = asyncio.get_running_loop()
                 result = await loop.run_in_executor(None, crew.kickoff)
+
+            # output_pydantic=MarketContextOutput on the Task means CrewAI parses
+            # and validates the LLM response (strips markdown code blocks automatically).
+            if hasattr(result, "pydantic") and result.pydantic is not None:
+                return result.pydantic.model_dump()
+
+            # Fallback: try raw JSON then construct a safe default
             raw = result.raw if hasattr(result, "raw") else str(result)
             try:
-                return json.loads(raw)
-            except (json.JSONDecodeError, TypeError):
-                return {"narrative": raw, "overall_signal": "neutral", "confidence_score": 0.5}
+                return MarketContextOutput.model_validate_json(raw).model_dump()
+            except Exception:
+                try:
+                    return MarketContextOutput.model_validate(json.loads(raw)).model_dump()
+                except Exception:
+                    return MarketContextOutput(
+                        narrative=raw, overall_signal="neutral", confidence_score=0.5
+                    ).model_dump()
         except Exception as e:
             logger.exception("Market context crew failed for %s", ticker)
-            return {
-                "narrative": f"Analysis failed: {e}",
-                "overall_signal": "neutral",
-                "confidence_score": 0.0,
-                "key_tailwinds": [],
-                "key_headwinds": [],
-            }
+            return MarketContextOutput(
+                narrative=f"Analysis failed: {e}",
+                overall_signal="neutral",
+                confidence_score=0.0,
+            ).model_dump()

@@ -250,24 +250,24 @@ class FinancialIndexManager:
                 collections,
                 confidence,
             )
-            return {
-                "ticker": ticker,
-                "summary": resp_text,
-                "sources": sources,
-                "relevance_scores": scores,
-                "confidence_score": confidence,
-                "context_texts": context_texts,
-            }
+            from shared.agent_models import RAGAgentOutput
+
+            return RAGAgentOutput(
+                ticker=ticker,
+                summary=resp_text,
+                sources=sources,
+                relevance_scores=scores,
+                confidence_score=confidence,
+                context_texts=context_texts,
+            ).model_dump()
         except Exception as e:
             logger.exception("RAG synthesis failed for %s", ticker)
-            return {
-                "ticker": ticker,
-                "summary": f"Error: {e}",
-                "sources": [],
-                "relevance_scores": [],
-                "confidence_score": 0.0,
-                "context_texts": [],
-            }
+            from shared.agent_models import RAGAgentOutput
+
+            return RAGAgentOutput(
+                ticker=ticker,
+                summary=f"Error: {e}",
+            ).model_dump()
 
     @logged()
     async def query_sec_filings(self, ticker: str, query_text: str) -> dict:

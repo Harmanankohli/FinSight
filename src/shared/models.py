@@ -26,42 +26,13 @@ class QueryContext(BaseModel):
     timestamp: datetime
 
 
-# ── RAGInsights: structured filing / earnings insight from RAG agent ──
-class RAGInsights(BaseModel):
-    ticker: str
-    revenue_growth_yoy: float
-    rd_spend_billions: float
-    forward_guidance: str
-    key_risks: list[str]
-    cited_documents: list[str]
-    confidence_score: float
-
-
-# ── QuantMetrics: computed financial risk/valuation from quant agent ──
-class QuantMetrics(BaseModel):
-    ticker: str
-    sharpe_ratio: float
-    annual_volatility: float
-    beta: float
-    var_95_daily: float
-    dcf_intrinsic_value: Optional[float] = None
-    stress_test_result: Optional[dict] = None
-    portfolio_correlation: dict
-    quant_signal: str
-    quant_confidence: float
-
-
-# ── MarketContext: macro regime + peer context from market context agent ──
-class MarketContext(BaseModel):
-    ticker: str
-    narrative: str
-    overall_signal: str
-    confidence_score: float
-    key_headwinds: list[str] = []
-    key_tailwinds: list[str] = []
-    macro_regime: Optional[str] = None
-    relative_peer_positioning: Optional[str] = None
-    peer_comparison: list[dict] = []
+# ── Agent output models — canonical definitions live in agent_models.py ──
+# Re-exported here for backward compatibility with existing imports.
+from shared.agent_models import (  # noqa: E402
+    MarketContextOutput as MarketContext,
+    QuantAgentOutput as QuantMetrics,
+    RAGAgentOutput as RAGInsights,
+)
 
 
 # ── InvestmentBrief: final aggregation → output to user ──
@@ -69,9 +40,9 @@ class InvestmentBrief(BaseModel):
     ticker: str
     generated_at: datetime
     query_context: QueryContext
-    rag_insights: RAGInsights
-    quant_metrics: QuantMetrics
-    market_context: MarketContext
+    rag_insights: RAGInsights  # type: ignore[valid-type]
+    quant_metrics: QuantMetrics  # type: ignore[valid-type]
+    market_context: MarketContext  # type: ignore[valid-type]
     final_recommendation: str
     recommendation_rationale: str
     confidence_score: float
