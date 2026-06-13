@@ -33,6 +33,7 @@ PUBLIC_PATHS: frozenset[str] = frozenset(
 PUBLIC_PREFIXES: tuple[str, ...] = (
     "/.well-known/",
     "/api/agents",
+    "/api/reports",
 )
 
 
