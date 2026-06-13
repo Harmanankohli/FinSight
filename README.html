@@ -1,9 +1,9 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>FinSight — Overview</title>
+<title>FinSight � Overview</title>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:1.7;color:#2c2c2c;background:#faf8f5;padding:2rem 1rem}
@@ -34,7 +34,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <body>
 <div class="container">
 <div class="header-nav">
-<a href="docs/index.html">Home</a><a href="README.html">Overview</a><a href="docs/ARCHITECTURE.html">Architecture</a><a href="docs/AGENTS.html">Agents</a><a href="docs/API_REFERENCE.html">API</a><a href="docs/MCP_SERVERS.html">MCP</a><a href="docs/SECURITY.html">Security</a><a href="docs/DESIGN_DECISIONS.html">Decisions</a><a href="docs/CHANGELOG.html">Changelog</a><a href="docs/TESTS.html">Tests</a><a href="docs/diagrams/index.html">Diagrams</a>
+<a href="docs/index.html">Home</a><a href="README.html">Overview</a><a href="docs/ARCHITECTURE.html">Architecture</a><a href="docs/AGENTS.html">Agents</a><a href="docs/API_REFERENCE.html">API</a><a href="docs/mcp_tools.html">MCP</a><a href="docs/SECURITY.html">Security</a><a href="docs/DESIGN_DECISIONS.html">Decisions</a><a href="docs/CHANGELOG.html">Changelog</a><a href="docs/TESTS.html">Tests</a><a href="docs/diagrams/index.html">Diagrams</a>
 </div>
 
 <h1>FinSight &mdash; Multi-Agent Investment Research System</h1>
@@ -47,7 +47,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <li><strong>A2A protocol</strong>: Standard-compliant agent discovery and streaming communication via JSON-RPC over HTTP</li>
 <li><strong>Multi-tier caching + LLM priority queue</strong>: TTL-based tool-result cache in the MCP server (1 min prices, 1 h financials, 5 min news, permanent filings, 24h peers, 7d scenario shocks), LangChain SQLiteCache for LLM responses, semantic cache using ChromaDB cosine similarity, and a priority semaphore (<code>CRITICAL &gt; NORMAL &gt; LOW</code>) to prevent RAGAS eval from starving production inference</li>
 <li><strong>Investment deck generation</strong>: PPTX, DOCX, and self-contained HTML reports generated from any stored brief via <code>generate_pptx()</code>, <code>generate_docx()</code>, <code>generate_html()</code> &mdash; served at <code>/api/reports/{brief_id}/{format}</code> and <code>/api/reports/ticker/{symbol}/latest/{format}</code></li>
-<li><strong>AG-UI / CopilotKit frontend</strong>: Next.js 16 + CopilotKit 1.59 streaming chat interface (<code>web/nextjs-app/</code>) via <code>POST /a2a-agui</code>; AG-UI bridge with off-topic guardrail, brief auto-save, and <code>active_agents</code> state tracking</li>
+<li><strong>AG-UI / CopilotKit frontend</strong>: Next.js 16 + CopilotKit 1.59 streaming chat interface (<code>src/web/nextjs-app/</code>) via <code>POST /a2a-agui</code>; AG-UI bridge with off-topic guardrail, brief auto-save, and <code>active_agents</code> state tracking</li>
 <li><strong>Input/output guardrails</strong>: Off-topic filter, pre-flight ticker validation, empty-response guard, and BUY/HOLD/SELL signal enforcement with auto-retry</li>
 <li><strong>Persistent memory layer</strong>: SQLite-backed session storage, cross-session memory search, ticker brief history, portfolio persistence, and recommendation tracking with live price snapshots</li>
 <li><strong>Incremental RAG ingestion</strong>: Tracks ingested filing URLs in SQLite &mdash; restarts never re-ingest already-indexed documents</li>
@@ -61,42 +61,42 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 </ul>
 
 <h2>Architecture</h2>
-<pre>┌──────────────────────────────────────────────────────────────┐
-│              ADK Web UI (port 8080)                           │
-│           Orchestrator (ADK LlmAgent)                        │
-│         Discovers agents &rarr; LLM routes via send_message       │
-│         Tools: send_message(name, task), load_memory(query)  │
-└──────────────────────┬───────────────────────────────────────┘
-                       │ A2A Protocol (JSON-RPC over HTTP, streaming)
+<pre>+--------------------------------------------------------------+
+�              ADK Web UI (port 8080)                           �
+�           Orchestrator (ADK LlmAgent)                        �
+�         Discovers agents &rarr; LLM routes via send_message       �
+�         Tools: send_message(name, task), load_memory(query)  �
++--------------------------------------------------------------+
+                       � A2A Protocol (JSON-RPC over HTTP, streaming)
                        &darr;
-┌──────────────────────────────────────────────────────────────┐
-│  Agent Pool                                                   │
-│  RAG (:8002)    Quant (:8003)    Market Context (:8004)      │
-│  (LlamaIndex)   (LangGraph)      (CrewAI)                    │
-└────────┬────────────┬────────────────┬───────────────────────┘
-         │            │                │
++--------------------------------------------------------------+
+�  Agent Pool                                                   �
+�  RAG (:8002)    Quant (:8003)    Market Context (:8004)      �
+�  (LlamaIndex)   (LangGraph)      (CrewAI)                    �
++--------------------------------------------------------------+
+         �            �                �
          &darr;            &darr;                &darr;
-┌──────────────────────────────────────────────────────────────┐
-│          Unified finsight-mcp Server (port 8010)              │
-│  ┌─────────────────┐  ┌─────────────────────────────────┐   │
-│  │ Agent Registry  │  │  Data Sources                 │   │
-│  │ find_agent()    │  │  get_prices, get_financials,  │   │
-│  │ resource://agent_cards│  │  get_options_chain,           │   │
-│  └─────────────────┘  │  get_company_filings,         │   │
-│                        │  get_financial_filings,       │   │
-│                        │  get_filing_content,          │   │
-│                        │  validate_ticker,             │   │
-│                        │  resolve_company_ticker,      │   │
-│                        │  full_text_search,            │   │
-│                        │  get_news_sentiment,          │   │
-│                        │  get_earnings_calendar,       │   │
-│                        │  get_insider_transactions,    │   │
-│                        │  get_peers,                   │   │
-│                        │  get_macro_indicators,        │   │
-│                        │  get_scenario_shocks,         │   │
-│                        │  execute_python, ...          │   │
-│                        └─────────────────────────────────┘   │
-└──────────────────────────────────────────────────────────────┘</pre>
++--------------------------------------------------------------+
+�          Unified finsight-mcp Server (port 8010)              �
+�  +-----------------+  +---------------------------------+   �
+�  � Agent Registry  �  �  Data Sources                 �   �
+�  � find_agent()    �  �  get_prices, get_financials,  �   �
+�  � resource://agent_cards�  �  get_options_chain,           �   �
+�  +-----------------+  �  get_company_filings,         �   �
+�                        �  get_financial_filings,       �   �
+�                        �  get_filing_content,          �   �
+�                        �  validate_ticker,             �   �
+�                        �  resolve_company_ticker,      �   �
+�                        �  full_text_search,            �   �
+�                        �  get_news_sentiment,          �   �
+�                        �  get_earnings_calendar,       �   �
+�                        �  get_insider_transactions,    �   �
+�                        �  get_peers,                   �   �
+�                        �  get_macro_indicators,        �   �
+�                        �  get_scenario_shocks,         �   �
+�                        �  execute_python, ...          �   �
+�                        +---------------------------------+   �
++--------------------------------------------------------------+</pre>
 
 <p>All A2A communication uses <code>A2ACardResolver</code> for standard discovery and <code>ClientFactory</code> for transport. Streaming events are handled correctly: intermediate <code>WORKING</code>/<code>SUBMITTED</code> events are skipped, only actual results (<code>artifact_update</code> data or terminal <code>COMPLETED</code> status) are returned.</p>
 
@@ -113,8 +113,8 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <tr><td>Quant</td><td>LangChain + LangGraph (state machine, MCP data) + LangChain SQLiteCache</td></tr>
 <tr><td>Market Context</td><td>CrewAI (macro regime + peer landscape synthesis)</td></tr>
 <tr><td>MCP Server</td><td>FastMCP (agent registry + data tools + TTL caching)</td></tr>
-<tr><td>Report Generator</td><td><code>shared/reports/</code> package &mdash; python-pptx (PPTX), python-docx (DOCX), Jinja2 (HTML)</td></tr>
-<tr><td>Frontend</td><td>Next.js 16 + CopilotKit 1.59 + @ag-ui/client (<code>web/nextjs-app/</code>) via <code>POST /a2a-agui</code></td></tr>
+<tr><td>Report Generator</td><td><code>src/shared/reports/</code> package &mdash; python-pptx (PPTX), python-docx (DOCX), Jinja2 (HTML)</td></tr>
+<tr><td>Frontend</td><td>Next.js 16 + CopilotKit 1.59 + @ag-ui/client (<code>src/web/nextjs-app/</code>) via <code>POST /a2a-agui</code></td></tr>
 <tr><td>Evaluation</td><td>RAGAS offline pipeline + runtime per-query eval (per-metric streaming, client caching, 180s timeout) + custom financial rubrics</td></tr>
 <tr><td>LLM</td><td>LM Studio (local, OpenAI-compatible)</td></tr>
 <tr><td>Embeddings</td><td>sentence-transformers (all-MiniLM-L6-v2, local)</td></tr>
@@ -122,7 +122,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <tr><td>Vector Store</td><td>ChromaDB (local, persisted)</td></tr>
 <tr><td>Agent Discovery</td><td><code>A2ACardResolver</code> via <code>AGENT_SEED_URLS</code></td></tr>
 <tr><td>Observability</td><td>Langfuse + LangChainInstrumentor + sub-agent latency spans</td></tr>
-<tr><td>Logging</td><td><code>shared/logging_config.py</code> &mdash; <code>@logged</code>/<code>@logged_sync</code> decorators, third-party suppression, <code>LOG_LEVEL_&lt;LIB&gt;</code> overrides</td></tr>
+<tr><td>Logging</td><td><code>src/shared/logging_config.py</code> &mdash; <code>@logged</code>/<code>@logged_sync</code> decorators, third-party suppression, <code>LOG_LEVEL_&lt;LIB&gt;</code> overrides</td></tr>
 </table>
 
 <h2>Quick Start</h2>
@@ -153,23 +153,23 @@ copy .env.example .env</pre>
 lms server start
 
 # Terminal 1: Unified MCP Server
-uv run python -m uvicorn mcp_servers.finsight_server:get_app --host 0.0.0.0 --port 8010
+uv run python -m uvicorn mcp_tools.finsight_server:get_app --host 0.0.0.0 --port 8010
 
 # Terminal 2: RAG Agent
-uv run python -m uvicorn agent_2_llamaindex.server:app --host 0.0.0.0 --port 8002
+uv run python -m uvicorn financial_rag.server:app --host 0.0.0.0 --port 8002
 
 # Terminal 3: Quant Agent
-uv run python -m uvicorn agent_3_langgraph.server:app --host 0.0.0.0 --port 8003
+uv run python -m uvicorn quant.server:app --host 0.0.0.0 --port 8003
 
 # Terminal 4: Market Context Agent
-uv run python -m uvicorn agent_4_crewai.server:app --host 0.0.0.0 --port 8004
+uv run python -m uvicorn market_context.server:app --host 0.0.0.0 --port 8004
 
 # Terminal 5: ADK Web UI
 uv run adk web --port 8080 --session_service_uri sqlite://./db/adk_sessions.db --memory_service_uri finsight:// agents</pre>
 
 <p><strong>Startup order:</strong> LM Studio &rarr; MCP Server &rarr; RAG &rarr; Quant &rarr; Market Context &rarr; ADK Web UI</p>
 
-<blockquote>The orchestrator's standalone A2A server (<code>agent_1_adk/main.py</code> on <code>:8001</code>) is no longer started by <code>run_adk_web.bat</code>. The orchestrator runs inside <code>adk web</code>. Start it manually with <code>uv run python -m agent_1_adk.main</code> if you need to expose the A2A JSON-RPC endpoint to external A2A clients.</blockquote>
+<blockquote>The orchestrator's standalone A2A server (<code>src/orchestrator/main.py</code> on <code>:8001</code>) is no longer started by <code>run_adk_web.bat</code>. The orchestrator runs inside <code>adk web</code>. Start it manually with <code>uv run python -m orchestrator.main</code> if you need to expose the A2A JSON-RPC endpoint to external A2A clients.</blockquote>
 
 <p>Open <a href="http://127.0.0.1:8080">http://127.0.0.1:8080</a> in your browser.</p>
 
@@ -198,7 +198,7 @@ uv run adk web --port 8080 --session_service_uri sqlite://./db/adk_sessions.db -
 <tr><td><a href="docs/ARCHITECTURE.html">ARCHITECTURE.html</a></td><td>System architecture, communication patterns, agent internals</td></tr>
 <tr><td><a href="docs/AGENTS.html">AGENTS.html</a></td><td>Detailed agent reference (skills, architecture, streaming flow)</td></tr>
 <tr><td><a href="docs/API_REFERENCE.html">API_REFERENCE.html</a></td><td>Complete endpoint reference &mdash; REST routes, A2A protocol, AG-UI, health checks</td></tr>
-<tr><td><a href="docs/MCP_SERVERS.html">MCP_SERVERS.html</a></td><td>MCP server tools, registry, client usage</td></tr>
+<tr><td><a href="docs/mcp_tools.html">mcp_tools.html</a></td><td>MCP server tools, registry, client usage</td></tr>
 <tr><td><a href="docs/DESIGN_DECISIONS.html">DESIGN_DECISIONS.html</a></td><td>Evolution log: why each design choice was made</td></tr>
 <tr><td><a href="docs/CHANGELOG.html">CHANGELOG.html</a></td><td>Version history</td></tr>
 <tr><td><a href="docs/TESTS.html">TESTS.html</a></td><td>Test coverage, patterns, running instructions</td></tr>

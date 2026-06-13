@@ -2,7 +2,7 @@
 name = "multi-agent-investment-system"
 version = "0.1.0"
 description = "Autonomous Investment Research & Portfolio Advisory System"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 
 dependencies = [
     # A2A Protocol
@@ -60,6 +60,8 @@ dependencies = [
     # Auth
     "pyjwt>=2.9.0",
     "argon2-cffi>=23.1.0",
+    # Vector store
+    "chromadb>=0.5.0",
     # Utils
     "python-dotenv>=1.0.0",
     "pyyaml>=6.0.0",
@@ -71,7 +73,7 @@ dependencies = [
 [project.optional-dependencies]
 test = [
     "pytest>=8.0.0",
-    "pytest-asyncio>=0.24.0",
+    "pytest-asyncio>=0.24.0,<1.0",
     "pytest-cov>=5.0.0",
     "httpx>=0.28.0",
     "pydantic>=2.9.0",
@@ -87,7 +89,7 @@ test = [
 ]
 dev = [
     "pytest>=8.0.0",
-    "pytest-asyncio>=0.24.0",
+    "pytest-asyncio>=0.24.0,<1.0",
     "pytest-cov>=5.0.0",
     "httpx>=0.28.0",
     "ruff>=0.7.0",
@@ -215,14 +217,14 @@ mcp_server = [
 ]
 
 [tool.setuptools.packages.find]
-where = ["."]
+where = ["src"]
 include = [
     "shared*",
-    "agent_1_adk*",
-    "agent_2_llamaindex*",
-    "agent_3_langgraph*",
-    "agent_4_crewai*",
-    "mcp_servers*",
+    "orchestrator*",
+    "financial_rag*",
+    "quant*",
+    "market_context*",
+    "mcp_tools*",
 ]
 
 [tool.ruff]
@@ -230,10 +232,10 @@ line-length = 100
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "W"]
+select = ["E", "F", "I", "W", "S", "B", "C4", "UP"]
 
 [tool.ruff.lint.per-file-ignores]
-"shared/**/*.py" = ["S110", "BLE001"]
+"src/shared/**/*.py" = ["S110", "BLE001"]
 
 [tool.mypy]
 python_version = "3.12"
@@ -243,21 +245,19 @@ ignore_missing_imports = true
 # Escape hatch — packages not yet mypy-clean
 [[tool.mypy.overrides]]
 module = [
-    "shared.*",
-    "agent_1_adk.*",
-    "agent_2_llamaindex.*",
-    "agent_3_langgraph.*",
-    "agent_4_crewai.*",
-    "mcp_servers.*",
-    "agents.*",
+    "orchestrator.*",
+    "financial_rag.*",
+    "quant.*",
+    "market_context.*",
+    "mcp_tools.*",
 ]
 ignore_errors = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-testpaths = ["tests"]
-pythonpath = ["."]
+testpaths = ["src/tests"]
+pythonpath = ["src"]
 markers = [
     "integration: marks tests requiring live services (deselect with -m 'not integration')",
     "external: marks tests that make real network calls",
@@ -271,8 +271,8 @@ exclude_also = [
     "def __repr__",
     "if __name__ == .__main__.:",
 ]
-fail_under = 0  # informational; WP 3.1 sets per-package thresholds
+fail_under = 70  # minimum coverage threshold
 
 [tool.coverage.paths]
-source = ["."]
+source = ["src"]
 

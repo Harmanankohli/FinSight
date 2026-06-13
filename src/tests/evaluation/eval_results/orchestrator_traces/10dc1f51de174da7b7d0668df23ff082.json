@@ -1,0 +1,6 @@
+{
+  "agent_name": "Market Context Agent",
+  "task_sent": "{\"_trace\": {\"trace_id\": \"79f406a741341d506c81d8f6b0e602de\", \"parent_span_id\": \"267d66ddc27fbaa9\"}}\n<<<TASK>>>\nAnalyze macro regime context for NVDA (NVIDIA), including yield curve, VIX, DXY, sector rotation, and competitive landscape on 2026-06-06.",
+  "response": "{\"key_tailwinds\": [], \"key_headwinds\": [], \"confidence_score\": 0.0, \"overall_signal\": \"neutral\", \"narrative\": \"Analysis failed: litellm.BadRequestError: OpenAIException - Error code: 400 - {'error': 'Model unloaded.'}\"}",
+  "latency_ms": 4406
+}

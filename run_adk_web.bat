@@ -26,23 +26,23 @@ start "LM Studio Server" cmd /k "lms server start"
 timeout /t 5 /nobreak >nul
 
 :: Terminal 1 - Unified MCP Server (:8010)
-start "FinSight MCP" cmd /k "uv run python -m uvicorn mcp_servers.finsight_server:get_app --host 0.0.0.0 --port 8010 --log-level info"
+start "FinSight MCP" cmd /k "uv run python -m uvicorn mcp_tools.finsight_server:get_app --host 0.0.0.0 --port 8010 --log-level info"
 timeout /t 3 /nobreak >nul
 
 :: Terminal 2 - RAG Agent (:8002)
-start "FinSight RAG" cmd /k "uv run python -m uvicorn agent_2_llamaindex.server:app --host 0.0.0.0 --port 8002 --log-level info"
+start "FinSight RAG" cmd /k "uv run python -m uvicorn financial_rag.server:app --host 0.0.0.0 --port 8002 --log-level info"
 timeout /t 3 /nobreak >nul
 
 :: Terminal 3 - Quant Agent (:8003)
-start "FinSight Quant" cmd /k "uv run python -m uvicorn agent_3_langgraph.server:app --host 0.0.0.0 --port 8003 --log-level info"
+start "FinSight Quant" cmd /k "uv run python -m uvicorn quant.server:app --host 0.0.0.0 --port 8003 --log-level info"
 timeout /t 3 /nobreak >nul
 
 :: Terminal 4 - Market Context Agent (:8004)
-start "FinSight Market Context" cmd /k "uv run python -m uvicorn agent_4_crewai.server:app --host 0.0.0.0 --port 8004 --log-level info"
+start "FinSight Market Context" cmd /k "uv run python -m uvicorn market_context.server:app --host 0.0.0.0 --port 8004 --log-level info"
 timeout /t 3 /nobreak >nul
 
 :: Terminal 5 - ADK Web UI (:8080)
-start "FinSight ADK Web" cmd /k "uv run adk web --port 8080 --session_service_uri sqlite://./db/adk_sessions.db --memory_service_uri finsight:// agents"
+start "FinSight ADK Web" cmd /k "uv run adk web --port 8080 --session_service_uri sqlite://./db/adk_sessions.db --memory_service_uri finsight:// src/orchestrator/web"
 
 echo.
 echo All services starting. Allow 30-40s for boot.

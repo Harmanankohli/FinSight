@@ -30,7 +30,7 @@ graph TB
 UI("ADK Web / Next.js")
 LLM("LM Studio")
 MCP("MCP Server")
-subgraph Orchestrator["Orchestrator (agent_1_adk/)"]
+subgraph Orchestrator["Orchestrator (orchestrator/)"]
 A2AEntry("① A2A / AG-UI Entry\nPOST /a2a · POST /a2a-agui\nAGUIBridge: guardrail + auto-save")
 InputGuard("② Input Guardrails\nOff-topic regex + MCP validate_ticker\n→ rejects in &lt; 2s")
 SemCache("③ Semantic Cache\nChromaDB cosine > 0.95\nDate-scoped, 1h TTL")

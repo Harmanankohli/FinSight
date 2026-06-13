@@ -16,7 +16,7 @@ The fix: capture agent outputs at the `send_message` tool level, store them alon
 
 ## Phase 1: Capture and Store Agent Outputs
 
-### 1.1 Add response capture in `agent_1_adk/agent.py`
+### 1.1 Add response capture in `orchestrator/agent.py`
 
 Add a module-level dict to store raw agent responses keyed by session, with timestamps for cleanup:
 
@@ -45,7 +45,7 @@ if session_id and result:
 
 When the response is plain text (error cases, timeouts), the `json.loads` fails and we fall back to `{"_raw_text": text}`.
 
-### 1.2 Add public accessor + cleanup in `agent_1_adk/agent.py`
+### 1.2 Add public accessor + cleanup in `orchestrator/agent.py`
 
 ```python
 def pop_agent_responses(session_id: str) -> dict[str, dict]:
@@ -60,12 +60,12 @@ def pop_agent_responses(session_id: str) -> dict[str, dict]:
     return entry[1] if entry else {}
 ```
 
-### 1.3 Modify `_store_memory()` in `agent_1_adk/agent_executor.py`
+### 1.3 Modify `_store_memory()` in `orchestrator/agent_executor.py`
 
 Import the accessor. In the first-time store path (line 529), fetch agent outputs and pass as `extra_data`:
 
 ```python
-from agent_1_adk.agent import pop_agent_responses
+from orchestrator.agent import pop_agent_responses
 
 # After ticker extraction (line 490), before the existing dedup check:
 agent_outputs = pop_agent_responses(session_id)
@@ -273,13 +273,13 @@ In `web/nextjs-app/app/research/page.tsx`:
 
 | File | Change |
 |------|--------|
-| `agent_1_adk/agent.py` | Add `_agent_responses` dict + capture in `send_message()` + `pop_agent_responses()` accessor |
-| `agent_1_adk/agent_executor.py` | Import accessor, call in `_store_memory()`, pass `extra_data` to `store_minimal()` |
+| `orchestrator/agent.py` | Add `_agent_responses` dict + capture in `send_message()` + `pop_agent_responses()` accessor |
+| `orchestrator/agent_executor.py` | Import accessor, call in `_store_memory()`, pass `extra_data` to `store_minimal()` |
 | `shared/memory/ticker_memory.py` | Add `extra_data` param to `store_minimal()` |
 | `shared/reports/extraction.py` | Add `_populate_from_agent_outputs()` + wire into `_extract_deck_data()` |
 | `shared/reports/playwright_export.py` | **New file** — async `html_to_pptx()`, `html_to_pdf()` + sync wrappers |
 | `shared/reports/__init__.py` | Add `generate_pdf`, update `generate_pptx` to use Playwright with fallback |
-| `agent_1_adk/api_routes.py` | Add `pdf` format, HTML-first flow |
+| `orchestrator/api_routes.py` | Add `pdf` format, HTML-first flow |
 | `web/nextjs-app/app/research/page.tsx` | Add HTML/PDF buttons, make HTML primary |
 | `pyproject.toml` | Add `playwright` dependency |
 

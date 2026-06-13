@@ -29,7 +29,7 @@ jobs:
           cache-dependency-glob: "pyproject.toml"
       - run: uv venv .venv
       - run: uv pip install -e ".[dev]"
-      - run: uv run mypy shared agent_1_adk
+      - run: uv run mypy src/shared src/orchestrator
 
   test:
     name: Unit tests (AUTH_ENABLED=${{ matrix.auth }})
@@ -57,7 +57,7 @@ jobs:
       - run: uv pip install --no-deps -e .
       - run: uv pip install pytest pytest-asyncio httpx pydantic pydantic-settings pyjwt starlette aiosqlite numpy python-pptx python-docx jinja2 python-dotenv argon2-cffi
       - name: Run unit tests
-        run: .venv/bin/python -m pytest tests/unit -m "not integration and not external and not openapi" -q
+        run: .venv/bin/python -m pytest src/tests/unit -m "not integration and not external and not openapi" -q
         timeout-minutes: 5
 
   frontend:
@@ -65,14 +65,14 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: web/nextjs-app
+        working-directory: src/web/nextjs-app
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: "npm"
-          cache-dependency-path: web/nextjs-app/package-lock.json
+          cache-dependency-path: src/web/nextjs-app/package-lock.json
       - run: npm ci
       - run: npm run lint
       - run: npx tsc --noEmit
@@ -89,7 +89,7 @@ jobs:
           cache-dependency-glob: "pyproject.toml"
       - run: uv venv .venv
       - run: uv pip install -e ".[dev]"
-      - run: uv run python scripts/generate_openapi.py --check
+      - run: uv run python src/scripts/generate_openapi.py --check
       - run: uv run pytest -m "not integration and not external" -m openapi
 
   docker:
@@ -100,15 +100,15 @@ jobs:
       matrix:
         service:
           - name: orchestrator
-            context: agent_1_adk
+            context: src/orchestrator
           - name: rag-agent
-            context: agent_2_llamaindex
+            context: src/financial_rag
           - name: quant-agent
-            context: agent_3_langgraph
+            context: src/quant
           - name: market-agent
-            context: agent_4_crewai
+            context: src/market_context
           - name: mcp-server
-            context: mcp_servers
+            context: src/mcp_tools
     steps:
       - uses: actions/checkout@v4
       - name: Build ${{ matrix.service.name }}

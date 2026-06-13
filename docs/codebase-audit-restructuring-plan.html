@@ -30,80 +30,22 @@
     max-width: 960px;
     margin: 0 auto;
   }
-  h1 {
-    font-size: 2rem;
-    color: var(--accent);
-    border-bottom: 3px solid var(--accent);
-    padding-bottom: 0.5rem;
-    margin-bottom: 1.5rem;
-  }
-  h2 {
-    font-size: 1.5rem;
-    color: var(--accent);
-    margin-top: 2rem;
-    margin-bottom: 0.8rem;
-    border-bottom: 1px solid var(--border);
-    padding-bottom: 0.3rem;
-  }
-  h3 {
-    font-size: 1.1rem;
-    margin-top: 1.5rem;
-    margin-bottom: 0.4rem;
-  }
+  h1 { font-size: 2rem; color: var(--accent); border-bottom: 3px solid var(--accent); padding-bottom: 0.5rem; margin-bottom: 1.5rem; }
+  h2 { font-size: 1.5rem; color: var(--accent); margin-top: 2rem; margin-bottom: 0.8rem; border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; }
+  h3 { font-size: 1.1rem; margin-top: 1.5rem; margin-bottom: 0.4rem; }
   p, li { margin-bottom: 0.4rem; }
   ul, ol { padding-left: 1.5rem; }
-  code {
-    font-family: 'Consolas', 'Monaco', monospace;
-    background: var(--code-bg);
-    padding: 0.15em 0.4em;
-    border-radius: 3px;
-    font-size: 0.9em;
-  }
-  pre {
-    background: var(--code-bg);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 1rem;
-    overflow-x: auto;
-    font-family: 'Consolas', 'Monaco', monospace;
-    font-size: 0.85em;
-    line-height: 1.5;
-    margin: 0.8rem 0;
-  }
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    margin: 1rem 0;
-  }
-  th, td {
-    border: 1px solid var(--border);
-    padding: 0.5rem 0.8rem;
-    text-align: left;
-    font-size: 0.9rem;
-  }
-  th {
-    background: var(--code-bg);
-    font-weight: bold;
-  }
-  .severity {
-    display: inline-block;
-    padding: 0.15em 0.6em;
-    border-radius: 4px;
-    font-weight: bold;
-    font-size: 0.8em;
-    font-family: sans-serif;
-  }
+  code { font-family: 'Consolas', 'Monaco', monospace; background: var(--code-bg); padding: 0.15em 0.4em; border-radius: 3px; font-size: 0.9em; }
+  pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px; padding: 1rem; overflow-x: auto; font-family: 'Consolas', 'Monaco', monospace; font-size: 0.85em; line-height: 1.5; margin: 0.8rem 0; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+  th, td { border: 1px solid var(--border); padding: 0.5rem 0.8rem; text-align: left; font-size: 0.9rem; }
+  th { background: var(--code-bg); font-weight: bold; }
+  .severity { display: inline-block; padding: 0.15em 0.6em; border-radius: 4px; font-weight: bold; font-size: 0.8em; font-family: sans-serif; }
   .p0 { background: var(--critical-bg); border: 1px solid var(--critical-border); color: #c53030; }
   .p1 { background: var(--high-bg); border: 1px solid var(--high-border); color: #975a16; }
   .p2 { background: var(--medium-bg); border: 1px solid var(--medium-border); color: #2b6cb0; }
   .p3 { background: var(--low-bg); border: 1px solid var(--low-border); color: #555; }
-  .issue {
-    border-left: 4px solid var(--border);
-    padding: 0.8rem 1rem;
-    margin: 1rem 0;
-    background: white;
-    border-radius: 0 6px 6px 0;
-  }
+  .issue { border-left: 4px solid var(--border); padding: 0.8rem 1rem; margin: 1rem 0; background: white; border-radius: 0 6px 6px 0; }
   .issue.p0 { border-left-color: var(--critical-border); }
   .issue.p1 { border-left-color: var(--high-border); }
   .issue.p2 { border-left-color: var(--medium-border); }
@@ -117,450 +59,923 @@
   .toc li { padding: 0.2rem 0; }
   .toc a { color: var(--accent); text-decoration: none; }
   .toc a:hover { text-decoration: underline; }
-  .phase-box {
-    border: 2px solid var(--accent);
-    border-radius: 8px;
-    padding: 1rem 1.2rem;
-    margin: 1rem 0;
-    background: white;
-  }
+  .phase-box { border: 2px solid var(--accent); border-radius: 8px; padding: 1rem 1.2rem; margin: 1rem 0; background: white; }
   .phase-box h3 { margin-top: 0; color: var(--accent); }
+  .new-badge { background: #e53e3e; color: white; font-size: 0.7em; padding: 0.1em 0.4em; border-radius: 3px; font-family: sans-serif; vertical-align: middle; margin-left: 0.5em; }
+  .gap-badge { background: #805ad5; color: white; font-size: 0.7em; padding: 0.1em 0.4em; border-radius: 3px; font-family: sans-serif; vertical-align: middle; margin-left: 0.5em; }
+  .edge-case { background: #e8f0fe; border: 1px solid #3182ce; border-radius: 6px; padding: 0.8rem 1rem; margin: 0.8rem 0; }
+  .edge-case h4 { margin-top: 0; color: #2b6cb0; font-size: 0.95rem; }
+  .behavior-note { background: #fefce8; border: 1px solid #e0a800; border-radius: 6px; padding: 0.6rem 1rem; margin: 0.5rem 0; font-size: 0.9rem; }
+  .checklist { list-style: none; padding-left: 0; }
+  .checklist li::before { content: "\2610 "; font-size: 1.1em; }
 </style>
 </head>
 <body>
 
 <h1>Codebase Audit &amp; Restructuring Plan</h1>
-<p><em>FinSight Multi-Agent Investment System — Comprehensive review of issues and proposed folder restructuring.</em></p>
+<p><em>FinSight Multi-Agent Investment System — Comprehensive review (61 issues) and proposed folder restructuring.</em></p>
+<p><em>Revised 2026-06-13 — audit verified against live codebase; gaps, edge cases, and behavioral constraints added.</em></p>
 
 <div class="toc">
   <h3>Contents</h3>
   <ul>
     <li><a href="#part1">Part 1: Folder Restructuring</a></li>
+    <li><a href="#part1a">Part 1A: Restructuring Edge Cases &amp; Behavioral Constraints</a></li>
     <li><a href="#part2">Part 2: Code Issues</a>
       <ul>
         <li><a href="#p0">P0 — Critical (4 issues)</a></li>
-        <li><a href="#p1">P1 — High (10 issues)</a></li>
-        <li><a href="#p2">P2 — Medium (18 issues)</a></li>
-        <li><a href="#p3">P3 — Low (15 issues)</a></li>
+        <li><a href="#p1">P1 — High (13 issues)</a></li>
+        <li><a href="#p2">P2 — Medium (20 issues)</a></li>
+        <li><a href="#p3">P3 — Low (23 issues)</a></li>
       </ul>
     </li>
     <li><a href="#part3">Part 3: Execution Plan</a></li>
   </ul>
 </div>
 
+<!-- ==================== PART 1 ==================== -->
 <h2 id="part1">Part 1: Folder Restructuring</h2>
 
 <h3>Current → New Mapping</h3>
 <table>
-  <tr><th>Current</th><th></th><th>New</th><th>Reason</th></tr>
-  <tr><td><code>agent_1_adk/</code></td><td class="arrow">→</td><td><code>orchestrator/</code></td><td>Descriptive; removes numbered prefix and framework suffix</td></tr>
-  <tr><td><code>agent_2_llamaindex/</code></td><td class="arrow">→</td><td><code>rag/</code></td><td>Role-based naming, not framework-based</td></tr>
-  <tr><td><code>agent_3_langgraph/</code></td><td class="arrow">→</td><td><code>quant/</code></td><td>Role-based naming</td></tr>
-  <tr><td><code>agent_4_crewai/</code></td><td class="arrow">→</td><td><code>market/</code></td><td>Role-based naming</td></tr>
-  <tr><td><code>agents/</code></td><td class="arrow">→</td><td><strong>Merged into <code>orchestrator/</code></strong></td><td>Eliminates dual ADK entry point confusion</td></tr>
-  <tr><td><code>mcp_servers/</code></td><td class="arrow">→</td><td><code>tools/</code></td><td>Shorter, clearer purpose</td></tr>
-  <tr><td><code>shared/</code></td><td></td><td><code>shared/</code></td><td>No change</td></tr>
-  <tr><td><code>web/</code></td><td></td><td><code>web/</code></td><td>No change</td></tr>
+  <tr><th>Current</th><th></th><th>New</th><th>Canonical Name (from code)</th></tr>
+  <tr><td><code>src/orchestrator/</code></td><td class="arrow">→</td><td><code>src/orchestrator/</code></td><td>ADK name: <code>"orchestrator"</code>, A2A card: "Investment Orchestrator"</td></tr>
+  <tr><td><code>src/financial_rag/</code></td><td class="arrow">→</td><td><code>financial-rag/</code></td><td>Bootstrap key: <code>"rag"</code>, A2A card: "Financial RAG Agent"</td></tr>
+  <tr><td><code>src/quant/</code></td><td class="arrow">→</td><td><code>src/quant/</code></td><td>Bootstrap key: <code>"quant"</code>, A2A card: "Quant Analysis Agent"</td></tr>
+  <tr><td><code>src/market_context/</code></td><td class="arrow">→</td><td><code>market-context/</code></td><td>Bootstrap key: <code>"market_context"</code>, A2A card: "Market Context Agent"</td></tr>
+  <tr><td><code>src/orchestrator/web/</code></td><td class="arrow">→</td><td><strong>Merged into <code>src/orchestrator/</code></strong></td><td>Not a separate agent — callback layer for ADK web mode</td></tr>
+  <tr><td><code>src/mcp_tools/</code></td><td class="arrow">→</td><td><code>mcp/</code></td><td>Service: <code>"finsight-mcp"</code></td></tr>
+  <tr><td><code>src/shared/</code></td><td></td><td><code>src/shared/</code></td><td>No change</td></tr>
+  <tr><td><code>src/web/</code></td><td></td><td><code>src/web/</code></td><td>No change</td></tr>
 </table>
+
+<div class="behavior-note">
+  <strong>Hyphen vs underscore:</strong> Python package names cannot contain hyphens. The new directories <code>financial-rag/</code> and <code>market-context/</code> must either be (a) renamed to <code>src/financial_rag/</code> and <code>src/market_context/</code>, or (b) kept as hyphens but every Python import must use the underscore form. Since <code>pyproject.toml [tool.setuptools.packages.find]</code> discovers packages by directory name, and Python <code>import</code> needs underscores, the simplest path is to <strong>use underscores in directory names</strong>: <code>src/financial_rag/</code>, <code>src/market_context/</code>. The Docker Compose service names (cosmetic) can keep hyphens.
+</div>
 
 <h3>New Top-Level Structure</h3>
 <pre>
 multi-agent-investment-system/
-├── orchestrator/          # Google ADK orchestrator (port 8001)
+├── orchestrator/             # "Investment Orchestrator" (Google ADK, port 8001)
 │   ├── __init__.py
-│   ├── agent.py
-│   ├── agent_executor.py
-│   ├── agui_bridge.py
+│   ├── agent.py              # root_agent, name="orchestrator"
+│   ├── agent_executor.py     # FinSightAgentExecutor
+│   ├── agui_bridge.py        # AG-UI SSE streaming
 │   ├── agui_endpoint.py
-│   ├── api_fastapi.py
-│   ├── api_routes.py
-│   ├── auth_routes.py
-│   ├── main.py
-│   ├── sub_agent_client.py
+│   ├── api_fastapi.py        # FastAPI app, title="FinSight API"
+│   ├── api_routes.py         # /api/memory/*, /api/sessions/*, /reports/*
+│   ├── auth_routes.py        # /auth/login, /auth/refresh, /auth/logout
+│   ├── main.py               # bootstrap("orchestrator"), Starlette app
+│   ├── sub_agent_client.py   # A2A discovery + routing
 │   ├── Dockerfile
-│   └── web/               # Merged from agents/finsight_agent/
+│   └── web/                  # Merged from agents/finsight_agent/ (ADK web callbacks)
 │       ├── __init__.py
-│       └── agent.py
-├── rag/                   # LlamaIndex RAG agent (port 8002)
-│   ├── __init__.py
-│   ├── document_ingestion.py
-│   ├── executor.py
-│   ├── hybrid_search.py
-│   ├── index_manager.py
-│   ├── server.py
+│       └── agent.py          # Re-exports root_agent with added callbacks
+├── financial_rag/            # "Financial RAG Agent" (LlamaIndex + ChromaDB, port 8002)
+│   ├── __init__.py           # NOTE: missing today — must be created
+│   ├── document_ingestion.py # SEC filings, news ingestion
+│   ├── executor.py           # RAGAgent class
+│   ├── hybrid_search.py      # Hybrid vector + BM25 + reranker
+│   ├── index_manager.py      # FinancialIndexManager (ChromaDB)
+│   ├── server.py             # bootstrap("rag"), AgentCard
 │   └── Dockerfile
-├── quant/                 # LangGraph quant agent (port 8003)
-│   ├── __init__.py
-│   ├── executor.py
-│   ├── graph.py
-│   ├── nodes/
-│   ├── server.py
-│   ├── state.py
+├── quant/                    # "Quant Analysis Agent" (LangGraph, port 8003)
+│   ├── __init__.py           # NOTE: missing today — must be created
+│   ├── executor.py           # QuantAgent class
+│   ├── graph.py              # LangGraph state machine
+│   ├── nodes/                # compute_metrics, dcf, peer_comparison, etc.
+│   │   ├── __init__.py
+│   │   ├── calculations.py
+│   │   ├── data_fetch.py
+│   │   ├── dcf.py
+│   │   ├── monte_carlo.py
+│   │   ├── portfolio.py
+│   │   ├── summary.py
+│   │   └── technical.py
+│   ├── server.py             # bootstrap("quant"), AgentCard
+│   ├── state.py              # TypedDict state + reducers
 │   └── Dockerfile
-├── market/                # CrewAI market context agent (port 8004)
-│   ├── __init__.py
-│   ├── crew.py
-│   ├── executor.py
-│   ├── mcp_tools.py
-│   ├── server.py
+├── market_context/           # "Market Context Agent" (CrewAI, port 8004)
+│   ├── __init__.py           # NOTE: missing today — must be created
+│   ├── crew.py               # MarketContextCrew, CrewAI agent definitions
+│   ├── executor.py           # MarketContextAgent class
+│   ├── mcp_tools.py          # DynamicMCPTool (MCP → CrewAI bridge)
+│   ├── server.py             # bootstrap("market_context"), AgentCard
 │   └── Dockerfile
-├── tools/                 # MCP data tools server (port 8010)
+├── mcp/                      # "finsight-mcp" MCP data tools server (port 8010)
 │   ├── __init__.py
-│   ├── finsight_server.py
+│   ├── finsight_server.py     # FastMCP app, double-checked locking
 │   ├── _app.py
-│   ├── infra/
-│   ├── tools/
+│   ├── infra/                 # Rate limiters, caching, etc.
+│   │   ├── __init__.py
+│   │   ├── embed.py
+│   │   ├── news_fetch.py
+│   │   └── rate_limiters.py
+│   ├── tools/                 # edgar.py, market_data.py, sentiment.py, etc.
+│   │   ├── __init__.py
+│   │   ├── agent_registry.py
+│   │   ├── edgar.py
+│   │   ├── market_data.py
+│   │   ├── sandbox.py
+│   │   ├── sentiment.py
+│   │   └── ticker.py
 │   └── Dockerfile
-├── shared/                # Shared infrastructure (unchanged)
-├── web/                   # Next.js frontend (unchanged)
-├── db/                    # Database files (unchanged)
-├── scripts/               # Utilities (unchanged)
-├── tests/                 # Tests (unchanged)
-├── deploy/                # Deployment configs (unchanged)
-├── docs/                  # Documentation (unchanged)
+├── shared/                   # Shared infrastructure (unchanged)
+│   ├── auth/                 # JWT tokens, middleware, password hashing
+│   ├── memory/               # SQLite store, user_store, portfolio_store, etc.
+│   ├── reports/              # HTML/PPTX/DOCX renderers, extraction
+│   ├── agent_server.py       # A2A server builder
+│   ├── base_agent.py         # BaseAgent ABC
+│   ├── bootstrap.py          # Process bootstrap (env, logging, langfuse)
+│   ├── settings.py           # Pydantic Settings (singleton)
+│   └── ...                   # 20+ other modules (see shared/ listing)
+├── web/                      # Next.js frontend (unchanged)
+├── db/                       # SQLite + ChromaDB data files
+├── scripts/                  # Utility scripts (create_user, generate_openapi, export_brief_fixtures)
+├── tests/                    # Unit, integration, characterization, regression, security tests
+├── deploy/                   # Caddyfile, deployment configs
+├── docs/                     # Documentation (HTML + MD + openapi.json)
+├── agent_cards/              # A2A agent card JSON files (4 files)
 ├── pyproject.toml
 ├── docker-compose.yml
-└── Makefile
+├── Makefile
+├── run_ui.bat                # AG-UI mode launcher
+├── run_adk_web.bat           # ADK web mode launcher
+├── stop_servers.bat          # Kill by port (8001-8010, 8080)
+├── stop_ui.bat               # Kill by port (3000, 8001-8010)
+├── .env.example
+├── .dockerignore
+└── .github/workflows/ci.yml
 </pre>
 
 <h3>Merging agents/ into orchestrator/</h3>
-<p>The <code>agents/finsight_agent/</code> directory is an alternative ADK web entry point that duplicates callbacks from <code>agent_1_adk/</code>.</p>
+<p><code>src/orchestrator/web/finsight_agent/</code> is NOT a separate agent. It's a callback extension module that adds <code>before_agent_callback</code> and <code>after_agent_callback</code> to the orchestrator's <code>root_agent</code> for memory persistence and eval — used only in <code>adk web</code> mode.</p>
 <ol>
-  <li>Move <code>agents/finsight_agent/agent.py</code> → <code>orchestrator/web/agent.py</code></li>
-  <li>Move <code>agents/finsight_agent/__init__.py</code> → <code>orchestrator/web/__init__.py</code></li>
-  <li>Move <code>agents/finsight_agent/.adk/</code> → <code>orchestrator/web/.adk/</code></li>
-  <li>Move <code>agents/services.py</code> → <code>orchestrator/web/services.py</code> (or into <code>shared/</code>)</li>
-  <li>Delete <code>agents/</code> directory entirely</li>
+  <li>Move <code>src/orchestrator/web/finsight_agent/agent.py</code> → <code>src/orchestrator/web/agent.py</code></li>
+  <li>Move <code>src/orchestrator/web/finsight_agent/__init__.py</code> → <code>src/orchestrator/web/__init__.py</code></li>
+  <li>Move <code>src/orchestrator/web/services.py</code> → <code>src/orchestrator/web/services.py</code></li>
+  <li>Delete <code>src/orchestrator/web/</code> directory entirely (including <code>src/orchestrator/web/.adk/</code> and <code>src/orchestrator/web/finsight_agent/.adk/</code>)</li>
+</ol>
+<div class="behavior-note">
+  <strong>ADK web discovery:</strong> The <code>run_adk_web.bat</code> command runs <code>adk web ... agents</code> where <code>agents</code> is the directory ADK scans for agent modules. After restructuring, this must change to <code>adk web ... orchestrator/web</code> (or whatever directory contains the re-exported <code>root_agent</code>). The <code>.adk/</code> directories under <code>src/orchestrator/web/</code> are ADK-generated session state (gitignored) — they do NOT need to be migrated, just deleted.
+</div>
+
+<h3>Docker Compose Service Name Mapping</h3>
+<table>
+  <tr><th>Current Service</th><th>New Service</th><th>Port</th></tr>
+  <tr><td><code>agent-adk</code></td><td><code>orchestrator</code></td><td>8001</td></tr>
+  <tr><td><code>agent-llamaindex</code></td><td><code>financial-rag</code></td><td>8002</td></tr>
+  <tr><td><code>agent-langgraph</code></td><td><code>quant</code></td><td>8003</td></tr>
+  <tr><td><code>agent-crewai</code></td><td><code>market-context</code></td><td>8004</td></tr>
+  <tr><td><code>finsight-mcp</code></td><td><code>mcp</code></td><td>8010</td></tr>
+</table>
+<div class="behavior-note">
+  <strong>Docker Compose hostnames:</strong> Service names in docker-compose are also the DNS hostnames. The <code>environment</code> block on the orchestrator service references <code>agent-llamaindex</code>, <code>agent-langgraph</code>, <code>agent-crewai</code>, <code>finsight-mcp</code> as hostnames. These must change to the new service names (<code>financial-rag</code>, <code>quant</code>, <code>market-context</code>, <code>mcp</code>) in the environment variables and <code>depends_on</code> keys.
+</div>
+
+<!-- ==================== PART 1A ==================== -->
+<h2 id="part1a">Part 1A: Restructuring Edge Cases &amp; Behavioral Constraints <span class="gap-badge">GAPS</span></h2>
+<p>The following items were missing from the original plan. Every rename/move has side effects beyond "update imports." This section enumerates them exhaustively so an implementing agent does not break the system.</p>
+
+<h3>1. Complete Import Rename Inventory</h3>
+<p>Every <code>from &lt;old_package&gt;</code> and <code>import &lt;old_package&gt;</code> must be rewritten. Here is the full list of affected files (verified via grep):</p>
+<div class="behavior-note">
+  <strong>Internal import styles:</strong> <code>src/financial_rag/</code>, <code>src/quant/</code>, and <code>src/market_context/</code> use <em>only</em> relative imports (<code>from .executor import</code>) internally — they survive rename with zero internal changes. <code>src/orchestrator/</code> has 4 files with absolute self-references that must be updated. <code>src/mcp_tools/</code> uses <em>only</em> absolute imports (~20 across 11 files) — all must be updated.
+</div>
+
+<table>
+  <tr><th>Old Import Pattern</th><th>New Import Pattern</th><th>Files Affected</th></tr>
+  <tr>
+    <td><code>from orchestrator.*</code></td>
+    <td><code>from orchestrator.*</code></td>
+    <td>
+      <code>src/orchestrator/agent_executor.py</code> (self-ref),
+      <code>src/orchestrator/agui_bridge.py</code> (self-ref),
+      <code>src/orchestrator/api_fastapi.py</code> (docstring),
+      <code>src/orchestrator/api_routes.py</code> (self-ref),
+      <code>src/orchestrator/web/agent.py</code>,
+      <code>src/scripts/generate_openapi.py</code>,
+      <code>src/tests/characterization/test_api_contracts.py</code>,
+      <code>src/tests/unit/test_auth_contract.py</code>,
+      <code>src/tests/unit/test_auth_routes.py</code>,
+      <code>src/tests/unit/test_openapi_spec.py</code>,
+      <code>src/tests/unit/memory/test_save_brief_persists_synthesis.py</code>
+    </td>
+  </tr>
+  <tr>
+    <td><code>from quant.*</code></td>
+    <td><code>from quant.*</code></td>
+    <td>
+      <code>src/tests/characterization/test_quant_nodes_io.py</code>,
+      <code>src/tests/unit/test_quant_graph_nodes.py</code>
+    </td>
+  </tr>
+  <tr>
+    <td><code>from mcp_tools.*</code> / <code>import mcp_tools.*</code></td>
+    <td><code>from mcp.*</code> / <code>import mcp.*</code></td>
+    <td>
+      <code>mcp/finsight_server.py</code> (self-refs x2),
+      <code>mcp/tools/__init__.py</code>,
+      <code>mcp/tools/agent_registry.py</code> (x2),
+      <code>mcp/tools/edgar.py</code> (x2),
+      <code>mcp/tools/market_data.py</code> (x2),
+      <code>mcp/tools/sandbox.py</code>,
+      <code>mcp/tools/sentiment.py</code> (x4),
+      <code>mcp/tools/ticker.py</code> (x2),
+      <code>mcp/infra/news_fetch.py</code>,
+      <code>src/tests/characterization/test_mcp_tool_shapes.py</code> (x12)
+    </td>
+  </tr>
+</table>
+
+<div class="edge-case">
+  <h4>String-based module references (sys.modules stubs &amp; unittest.mock.patch targets)</h4>
+  <p>These are NOT caught by simple import-grep. They use old package names as <strong>string literals</strong> — a find-replace on <code>from orchestrator</code> will miss them:</p>
+  <ul>
+    <li><code>src/tests/characterization/conftest.py:84-85</code> — <code>sys.modules["orchestrator.agent"]</code> → <code>sys.modules["orchestrator.agent"]</code></li>
+    <li><code>src/tests/unit/memory/test_save_brief_persists_synthesis.py:22</code> — <code>"orchestrator.sub_agent_client"</code> sys.modules stub → <code>"orchestrator.sub_agent_client"</code></li>
+    <li><code>src/tests/unit/memory/test_save_brief_persists_synthesis.py:98,138</code> — <code>patch("orchestrator.agent.asyncio.create_task")</code> → <code>patch("orchestrator.agent.asyncio.create_task")</code></li>
+    <li><code>src/tests/characterization/test_mcp_tool_shapes.py:71</code> — <code>patch("mcp_tools.finsight_server._model_embed",...)</code> → new package name</li>
+  </ul>
+  <p><strong>Action:</strong> After updating all <code>from/import</code> statements, also grep for old package names as <em>string literals</em>: <code>rg '"orchestrator|"mcp_tools|"quant' --type py</code></p>
+</div>
+
+<div class="edge-case">
+  <h4>Name collision risk: <code>mcp/</code> vs <code>mcp</code> PyPI package</h4>
+  <p>The project depends on <code>mcp>=1.0.0</code> (the MCP SDK). Renaming <code>src/mcp_tools/</code> to <code>mcp/</code> creates a local package <code>mcp</code> that shadows the installed <code>mcp</code> library. Every <code>from mcp import ClientSession</code> in <code>src/shared/mcp_client.py</code> will break.</p>
+  <p><strong>Fix:</strong> Use <code>src/mcp_tools/</code> or <code>finsight_mcp/</code> as the directory name instead of <code>mcp/</code>. Or keep <code>src/mcp_tools/</code> unchanged.</p>
+</div>
+
+<h3>2. Missing __init__.py Files</h3>
+<p>The following directories currently lack <code>__init__.py</code> files and will need empty ones created for Python package discovery:</p>
+<ul>
+  <li><code>src/financial_rag/</code> (no <code>__init__.py</code> today) → <code>src/financial_rag/__init__.py</code></li>
+  <li><code>src/quant/</code> (no <code>__init__.py</code> today) → <code>src/quant/__init__.py</code></li>
+  <li><code>src/market_context/</code> (no <code>__init__.py</code> today) → <code>src/market_context/__init__.py</code></li>
+</ul>
+<p>Without these, <code>pyproject.toml</code>'s <code>[tool.setuptools.packages.find]</code> won't discover the packages, and Docker <code>pip install -e ".[rag]"</code> etc. will fail to make them importable.</p>
+
+<h3>3. Files Missing from Plan's Restructuring Scope</h3>
+
+<h4>3a. <code>pyproject.toml</code> — 6 sections need updating</h4>
+<ol>
+  <li><code>[tool.setuptools.packages.find].include</code> — rename all 5 entries (<code>orchestrator*</code> → <code>orchestrator*</code>, etc.)</li>
+  <li><code>[[tool.mypy.overrides]].module</code> — rename all 6 module glob patterns</li>
+  <li><code>[tool.ruff.lint.per-file-ignores]</code> — currently only targets <code>src/shared/**</code>, no change needed</li>
+  <li><code>[tool.coverage.report]</code> and <code>[tool.coverage.paths]</code> — no explicit package refs, but verify</li>
+  <li><code>[project.optional-dependencies]</code> — extra group names (<code>orchestrator</code>, <code>rag</code>, <code>quant</code>, <code>market</code>, <code>mcp_server</code>) are fine as-is (they're pip extra names, not Python package names)</li>
+  <li>Rebuild <code>egg-info</code> — <code>multi_agent_investment_system.egg-info/top_level.txt</code> caches old package names. Run <code>uv pip install -e .</code> after rename to regenerate.</li>
 </ol>
 
+<h4>3b. <code>Makefile</code> — 3 targets reference <code>orchestrator</code></h4>
+<pre>
+type:    mypy shared orchestrator          → mypy shared orchestrator
+test:    --cov=orchestrator                → --cov=orchestrator
+test-auth: --cov=orchestrator.auth_routes  → --cov=orchestrator.auth_routes
+           --cov=orchestrator.api_routes   → --cov=orchestrator.api_routes
+</pre>
+
+<h4>3c. <code>.github/workflows/ci.yml</code> — 7 references</h4>
+<ul>
+  <li>Line 32: <code>uv run mypy shared orchestrator</code> → <code>uv run mypy shared orchestrator</code></li>
+  <li>Lines 103-111: Docker build matrix <code>context</code> values — all 5 must change to new directory names</li>
+  <li>Docker build matrix <code>name</code> values should match new service names</li>
+</ul>
+
+<h4>3d. Dockerfiles — CMD and COPY paths (all 5)</h4>
+<table>
+  <tr><th>Dockerfile</th><th>Changes Needed</th></tr>
+  <tr><td><code>src/orchestrator/Dockerfile</code></td><td><code>COPY orchestrator/</code> → <code>COPY orchestrator/</code>; <code>CMD ["python", "-m", "orchestrator.main"]</code> → <code>CMD ["python", "-m", "orchestrator.main"]</code></td></tr>
+  <tr><td><code>src/financial_rag/Dockerfile</code></td><td><code>COPY financial_rag/</code> → <code>COPY financial_rag/</code>; <code>CMD uvicorn financial_rag.server:app</code> → <code>CMD uvicorn financial_rag.server:app</code></td></tr>
+  <tr><td><code>src/quant/Dockerfile</code></td><td><code>COPY quant/</code> → <code>COPY quant/</code>; <code>CMD uvicorn quant.server:app</code> → <code>CMD uvicorn quant.server:app</code></td></tr>
+  <tr><td><code>src/market_context/Dockerfile</code></td><td><code>COPY market_context/</code> → <code>COPY market_context/</code>; <code>CMD uvicorn market_context.server:app</code> → <code>CMD uvicorn market_context.server:app</code></td></tr>
+  <tr><td><code>mcp/Dockerfile</code></td><td><code>COPY mcp_tools/</code> → <code>COPY mcp/</code>; <code>CMD uvicorn mcp_tools.finsight_server:get_app</code> → <code>CMD uvicorn mcp.finsight_server:get_app</code> (or new name if <code>mcp/</code> renamed to avoid collision)</td></tr>
+</table>
+
+<h4>3e. Batch files — 4 files with module paths</h4>
+<table>
+  <tr><th>File</th><th>Lines to Change</th></tr>
+  <tr><td><code>run_ui.bat</code></td><td>Line 28: <code>mcp_tools.finsight_server</code>; Line 32: <code>financial_rag.server</code>; Line 36: <code>quant.server</code>; Line 40: <code>market_context.server</code>; Line 45: <code>orchestrator.main</code></td></tr>
+  <tr><td><code>run_adk_web.bat</code></td><td>Lines 29, 33, 37, 41: same as above; Line 45: <code>adk web ... agents</code> → <code>adk web ... orchestrator/web</code></td></tr>
+  <tr><td><code>stop_servers.bat</code></td><td>No module refs, only port numbers — no changes needed</td></tr>
+  <tr><td><code>stop_ui.bat</code></td><td>No module refs — no changes needed</td></tr>
+</table>
+
+<h4>3f. <code>docker-compose.yml</code> — environment variables use Docker hostnames</h4>
+<p>Lines 9-12 in <code>agent-adk</code> service set environment variables like <code>AGENT_LLAMAINDEX_URL=http://agent-llamaindex:8002</code>. These Docker DNS names must be updated to the new service names. <strong>Also update <code>depends_on</code> keys and <code>dockerfile</code> paths.</strong></p>
+<pre>
+# Old → New environment variables:
+AGENT_LLAMAINDEX_URL=http://agent-llamaindex:8002  → http://financial-rag:8002
+AGENT_LANGGRAPH_URL=http://agent-langgraph:8003    → http://quant:8003
+AGENT_CREWAI_URL=http://agent-crewai:8004          → http://market-context:8004
+MCP_SERVER_URL=http://finsight-mcp:8010/sse        → http://mcp:8010/sse
+</pre>
+
+<h4>3g. <code>src/shared/logging_config.py</code> — comments reference old dirs</h4>
+<p>Lines 17-21 have comments mapping service names to old directory names. Cosmetic but should be updated to avoid confusion.</p>
+
+<h4>3h. Documentation — 12 files with old directory references</h4>
+<p>The <code>docs/</code> directory contains extensive references to old directory names across all documentation files:</p>
+<ul>
+  <li><code>docs/AGENTS.md</code> + <code>docs/AGENTS.html</code> — 20+ references</li>
+  <li><code>docs/ARCHITECTURE.md</code> + <code>docs/ARCHITECTURE.html</code> — 40+ references</li>
+  <li><code>docs/mcp_tools.md</code> + <code>docs/mcp_tools.html</code> — references in paths</li>
+  <li><code>docs/API_REFERENCE.md</code> / <code>.html</code>, <code>docs/TESTS.md</code> / <code>.html</code></li>
+  <li><code>docs/SECURITY.md</code> / <code>.html</code>, <code>docs/DESIGN_DECISIONS.md</code> / <code>.html</code></li>
+  <li><code>docs/openapi.json</code> — generated, will be regenerated by <code>src/scripts/generate_openapi.py</code></li>
+  <li><code>README.md</code> + <code>README.html</code> — startup commands reference old module paths</li>
+  <li><code>AGENTS.md</code> + <code>AGENTS.html</code> (top-level, gitignored copies)</li>
+  <li><code>ppt-docx fix plan.md</code> — old plan file with orchestrator references</li>
+</ul>
+<p><strong>Action:</strong> Batch find-replace across all <code>.md</code>, <code>.html</code>, <code>.json</code> files in <code>docs/</code> and root.</p>
+
+<h4>3i. <code>src/scripts/</code> — all 3 scripts may need import updates</h4>
+<ul>
+  <li><code>src/scripts/generate_openapi.py:15</code> — <code>from orchestrator.api_fastapi import spec</code> → <code>from orchestrator.api_fastapi import spec</code></li>
+  <li><code>src/scripts/create_user.py:38</code> — calls <code>bootstrap("create_user")</code>, no old package refs</li>
+  <li><code>src/scripts/export_brief_fixtures.py</code> — may reference old table names (see issue #41)</li>
+</ul>
+
+<h4>3j. <code>src/orchestrator/web/finsight_agent/agent.py</code> — sys.path manipulation</h4>
+<p>Lines 12-14 do <code>sys.path.insert(0, project_root)</code>. After merging into <code>src/orchestrator/web/agent.py</code>, this sys.path hack must be removed (the package is installed via pyproject.toml). Also, the import <code>from orchestrator.agent import root_agent</code> on line 23 must become a relative import <code>from orchestrator.agent import root_agent</code> (or <code>from ..agent import root_agent</code>).</p>
+
+<h4>3k. <code>src/orchestrator/web/services.py</code> — memory service registration</h4>
+<p>This file registers the <code>finsight://</code> URI scheme for ADK's memory service registry. After move to <code>src/orchestrator/web/services.py</code>:</p>
+<ul>
+  <li>Remove the <code>sys.path</code> manipulation (lines 14-17)</li>
+  <li>The file is auto-loaded by ADK — verify ADK's discovery mechanism still finds it at the new location</li>
+  <li>The <code>run_adk_web.bat</code> <code>--memory_service_uri finsight://</code> flag relies on this registration</li>
+</ul>
+
+<h4>3l. <code>.dockerignore</code> — no old directory refs, but verify</h4>
+<p>Currently uses glob patterns (<code>**/__pycache__/</code>, etc.) — no hardcoded directory names. No changes needed.</p>
+
+<h4>3m. <code>.claude/settings.local.json</code> — tool permission references <span class="gap-badge">GAP</span></h4>
+<p>Lines contain hardcoded paths in allowed Bash/PowerShell commands:</p>
+<ul>
+  <li>Line with <code>py_compile shared/rate_limiter.py mcp_tools/finsight_server.py</code> — references <code>mcp_tools</code></li>
+  <li>Line with <code>py_compile mcp_tools/finsight_server.py</code> — references <code>mcp_tools</code></li>
+  <li>Line with <code>py_compile ... orchestrator\\agui_bridge.py</code> — references <code>orchestrator</code></li>
+</ul>
+<p>These are Claude Code permission entries. They won't break the build but will be stale. Update or the implementing agent can skip (they only affect Claude Code tool permissions, not the application).</p>
+
+<h4>3n. <code>docs/CHANGELOG.md</code> / <code>docs/CHANGELOG.html</code> — historical references <span class="gap-badge">GAP</span></h4>
+<p>The changelog contains version history with old directory names. These are <strong>historical records</strong> — do NOT rename them within changelog entries. Instead, add a note at the top of the changelog documenting the rename (e.g., "v2.0: Directories renamed: orchestrator → orchestrator, ...").</p>
+
+<h4>3o. <code>.mimocode/plans/</code> — plan files reference old names <span class="gap-badge">GAP</span></h4>
+<p>Two plan files under <code>.mimocode/plans/</code> contain references to old directory names. These are historical documents and should NOT be updated — they document past decisions at the time they were made.</p>
+
+<h3>4. Behavioral Constraints — Do Not Change</h3>
+<div class="behavior-note">
+  <strong>These must remain identical after restructuring:</strong>
+  <ul>
+    <li>Bootstrap keys: <code>"orchestrator"</code>, <code>"rag"</code>, <code>"quant"</code>, <code>"market_context"</code>, <code>"mcp"</code>, <code>"adk_web"</code> — used by <code>src/shared/bootstrap.py</code> and <code>src/shared/logging_config.py</code> for log file names and Langfuse service tagging</li>
+    <li>A2A Agent Card names: "Investment Orchestrator", "Financial RAG Agent", "Quant Analysis Agent", "Market Context Agent" — exposed externally and may be referenced by clients</li>
+    <li>Port assignments: 8001, 8002, 8003, 8004, 8010 — hardcoded in healthchecks, env vars, and the frontend</li>
+    <li>AGENT_SEED_URLS env var format: <code>http://localhost:8002,http://localhost:8003,http://localhost:8004</code> — used by <code>sub_agent_client.py</code> and <code>src/orchestrator/web/finsight_agent/agent.py</code></li>
+    <li>ADK agent name: <code>root_agent.name = "orchestrator"</code> — used by ADK Runner internally</li>
+    <li>SQLite DB paths: <code>db/adk_sessions.db</code>, <code>db/finsight_memory.db</code> — persisted data</li>
+    <li>MCP tool function names: <code>get_prices</code>, <code>get_financials</code>, etc. — exposed over the wire</li>
+    <li>The OpenAPI spec at <code>docs/openapi.json</code> is generated — regenerate after rename, don't manually edit</li>
+  </ul>
+</div>
+
+<!-- ==================== PART 2 ==================== -->
 <h2 id="part2">Part 2: Code Issues</h2>
 
+<!-- P0 -->
 <h3 id="p0"><span class="severity p0">P0</span> Critical — Fix Immediately</h3>
 
 <div class="issue p0">
   <h3>1. DCF Terminal Value Formula Bug</h3>
-  <p class="file">agent_3_langgraph/nodes/dcf.py:130</p>
-  <p><strong>Issue:</strong> Terminal value uses <code>growth_rate ** 5</code> for compounding, but the FCF projection loop (lines 121–128) already tapers growth toward <code>terminal_growth</code>. This double-counts high growth, inflating intrinsic value for growth stocks.</p>
-  <p class="fix"><strong>Fix:</strong> Use the year-5 projected FCF from the loop: <code>terminal_value = (projected_fcf_year5 * (1 + terminal_growth)) / (wacc - terminal_growth)</code></p>
+  <p class="file">quant/nodes/dcf.py:130</p>
+  <p><strong>Issue:</strong> Terminal value (line 130) uses <code>latest_fcf * (1 + growth_rate) ** 5</code> — compounding the <em>initial</em> high growth rate for all 5 years. But the FCF projection loop (lines 121–128) already tapers <code>yr_growth</code> toward <code>terminal_growth</code> in years 3-5. The terminal value should use the <em>tapered</em> year-5 FCF, not straight-line high-growth compounding. This double-counts high growth and inflates intrinsic value for growth stocks.</p>
+  <p class="fix"><strong>Fix:</strong> Track the year-5 projected FCF from the loop and use it: <code>terminal_value = (projected_fcf_year5 * (1 + terminal_growth)) / (wacc - terminal_growth)</code>. Specifically, accumulate <code>projected_fcf</code> across loop iterations and use the final value (year=5) rather than recomputing with <code>(1 + growth_rate) ** 5</code>.</p>
+  <div class="behavior-note"><strong>Behavioral constraint:</strong> This changes DCF output values. Verify by comparing before/after for a known growth stock (e.g., NVDA) and a mature stock (e.g., KO). The mature stock's output should change minimally. Update any golden test fixtures in <code>src/tests/characterization/test_quant_nodes_io.py</code> (dcf_valuation_node test at line ~169).</div>
 </div>
 
 <div class="issue p0">
   <h3>2. Access Token Cookie Without HttpOnly — XSS Vulnerability</h3>
   <p class="file">web/nextjs-app/lib/auth.ts:18–19</p>
-  <p><strong>Issue:</strong> <code>setTokenCookie</code> sets <code>document.cookie</code> without <code>HttpOnly</code>. The access token is readable by JavaScript, vulnerable to XSS exfiltration.</p>
-  <p class="fix"><strong>Fix:</strong> Remove client-side access token cookie. Use only in-memory React state. If cookie needed for SSR, set <code>HttpOnly</code> and <code>Secure</code> flags server-side.</p>
+  <p><strong>Issue:</strong> <code>setTokenCookie</code> sets <code>document.cookie</code> without <code>HttpOnly</code>. Access token readable by JavaScript, vulnerable to XSS exfiltration.</p>
+  <p class="fix"><strong>Fix:</strong> Remove client-side cookie. Use only in-memory React state. If cookie needed for SSR, set <code>HttpOnly</code> and <code>Secure</code> flags server-side.</p>
 </div>
 
 <div class="issue p0">
   <h3>3. Fallback Password Hasher Stores Plaintext</h3>
   <p class="file">shared/memory/user_store.py:23–33</p>
-  <p><strong>Issue:</strong> When <code>argon2</code> is not installed, <code>_FallbackHasher</code> stores <code>plain:{password}</code>. Dangerous if deployed without argon2.</p>
-  <p class="fix"><strong>Fix:</strong> Make argon2 a hard dependency (add to pyproject.toml). Remove the fallback hasher entirely.</p>
+  <p><strong>Issue:</strong> <code>_FallbackHasher</code> stores <code>plain:{password}</code> when argon2 not installed. Dangerous if deployed without argon2.</p>
+  <p class="fix"><strong>Fix:</strong> Make argon2 a hard dependency. Remove the fallback hasher entirely.</p>
+  <div class="behavior-note"><strong>Note:</strong> <code>argon2-cffi</code> is already in main dependencies (pyproject.toml line 62). The fallback is dead code in normal installs but remains a risk if someone installs without the dependency. Verify CI installs it (<code>ci.yml</code> line 58 installs <code>argon2-cffi</code> explicitly).</div>
 </div>
 
 <div class="issue p0">
   <h3>4. mypy Strict Mode Disabled for All Modules</h3>
   <p class="file">pyproject.toml:244–254</p>
-  <p><strong>Issue:</strong> <code>strict = true</code> is set but <code>ignore_errors = true</code> is applied to ALL production modules. mypy is effectively off.</p>
-  <p class="fix"><strong>Fix:</strong> Remove <code>ignore_errors</code> overrides. Fix type errors incrementally, starting with <code>shared/</code> then agents one at a time.</p>
+  <p><strong>Issue:</strong> <code>strict = true</code> set but <code>ignore_errors = true</code> applied to ALL production modules. mypy is effectively off.</p>
+  <p class="fix"><strong>Fix:</strong> Remove <code>ignore_errors</code> overrides. Fix type errors incrementally.</p>
 </div>
 
+<!-- P1 -->
 <h3 id="p1"><span class="severity p1">P1</span> High — Fix Soon</h3>
 
 <div class="issue p1">
-  <h3>5. CrewAI asyncio.run() Inside Async Context</h3>
-  <p class="file">agent_4_crewai/mcp_tools.py:55–61</p>
-  <p><strong>Issue:</strong> <code>asyncio.run(self._mcp.call_by_name(...))</code> creates a new event loop inside an already-running async context. Raises <code>RuntimeError</code> under certain conditions.</p>
-  <p class="fix"><strong>Fix:</strong> Use <code>nest_asyncio.apply()</code> as workaround, or restructure CrewAI tools to receive a synchronous MCP client.</p>
+  <h3>5. Portfolio Store Uses session_id as user_id <span class="new-badge">NEW</span></h3>
+  <p class="file">shared/memory/portfolio_store.py:57–58, 75–76, 83–85</p>
+  <p><strong>Issue:</strong> <code>upsert_from_context</code> queries/inserts <code>user_profiles</code> using <code>ctx.session_id</code> as <code>user_id</code>. Each session creates a separate portfolio profile — a user analyzing the same stock across two sessions gets disconnected portfolios.</p>
+  <p class="fix"><strong>Fix:</strong> Use <code>ctx.user_id</code> (authenticated user ID) instead of <code>ctx.session_id</code>.</p>
+  <div class="behavior-note"><strong>Behavioral constraint:</strong> When <code>AUTH_ENABLED=false</code>, there is no authenticated user_id. Ensure fallback to session_id when auth is disabled (preserve anonymous user behavior). Existing portfolio data keyed by session_id will become orphaned — consider a migration or accept data loss for pre-auth profiles.</div>
 </div>
 
 <div class="issue p1">
-  <h3>6. CrewAI crew.kickoff() Blocks Event Loop</h3>
-  <p class="file">agent_4_crewai/crew.py:114–115</p>
-  <p><strong>Issue:</strong> Synchronous blocking <code>kickoff()</code> called inside <code>async def analyze()</code>, starving other coroutines while running.</p>
-  <p class="fix"><strong>Fix:</strong> Wrap in <code>loop.run_in_executor(None, crew.kickoff)</code> to avoid blocking.</p>
+  <h3>6. Sessions List Allows user_id from Query Params (Auth Bypass) <span class="new-badge">NEW</span></h3>
+  <p class="file">orchestrator/api_routes.py:131</p>
+  <p><strong>Issue:</strong> <code>user_id = _user_id(request) or request.query_params.get("user_id")</code> — when auth is enabled and <code>_user_id</code> returns <code>None</code>, the fallback reads <code>user_id</code> from query params. An unauthenticated user could pass <code>?user_id=admin</code> and see that user's sessions.</p>
+  <p class="fix"><strong>Fix:</strong> Only fall back to query params when auth is disabled. When auth is enabled, reject requests where <code>_user_id</code> returns <code>None</code>.</p>
 </div>
 
 <div class="issue p1">
-  <h3>7. HuggingFace Download Blocks Event Loop</h3>
-  <p class="file">agent_2_llamaindex/index_manager.py:127–141</p>
-  <p><strong>Issue:</strong> ~130MB synchronous download during <code>__init__</code> at server startup. Stalls for minutes.</p>
-  <p class="fix"><strong>Fix:</strong> Move into <code>run_in_executor</code> or lazy-load on first query.</p>
+  <h3>7. Report Authorization Bypass for user_id=None <span class="new-badge">NEW</span></h3>
+  <p class="file">orchestrator/api_routes.py:233–254</p>
+  <p><strong>Issue:</strong> <code>report_by_id()</code> SQL: <code>WHERE id = ? AND (user_id = ? OR ? IS NULL)</code>. When <code>_user_id(request)</code> returns <code>None</code>, the <code>IS NULL</code> clause is always True — any user can access any report.</p>
+  <p class="fix"><strong>Fix:</strong> When auth is enabled, reject requests where <code>_user_id</code> returns <code>None</code>.</p>
 </div>
 
 <div class="issue p1">
-  <h3>8. Reranker Blocks Event Loop</h3>
-  <p class="file">agent_2_llamaindex/hybrid_search.py:100–108</p>
-  <p><strong>Issue:</strong> Synchronous CPU-bound <code>CrossEncoder.predict</code> (neural inference) called inside <code>async def</code>. Blocks the event loop for hundreds of milliseconds.</p>
+  <h3>8. CrewAI asyncio.run() Inside Async Context</h3>
+  <p class="file">market_context/mcp_tools.py:55–61</p>
+  <p><strong>Issue:</strong> <code>asyncio.run(self._mcp.call_by_name(...))</code> creates new event loop inside running async context. Raises <code>RuntimeError</code>.</p>
+  <p class="fix"><strong>Fix:</strong> Use <code>nest_asyncio</code> or restructure to synchronous MCP client.</p>
+</div>
+
+<div class="issue p1">
+  <h3>9. CrewAI crew.kickoff() Blocks Event Loop</h3>
+  <p class="file">market_context/crew.py:114–115</p>
+  <p><strong>Issue:</strong> Sync blocking <code>kickoff()</code> in <code>async def analyze()</code> starves other coroutines.</p>
+  <p class="fix"><strong>Fix:</strong> Wrap in <code>loop.run_in_executor(None, crew.kickoff)</code>.</p>
+</div>
+
+<div class="issue p1">
+  <h3>10. HuggingFace Download Blocks Event Loop</h3>
+  <p class="file">financial_rag/index_manager.py:135 (in <code>__init__</code>)</p>
+  <p><strong>Issue:</strong> <code>HuggingFaceEmbedding(model_name=...)</code> on line 135 triggers a sync download of ~130MB on first run, blocking the event loop during <code>FinancialIndexManager.__init__()</code>.</p>
+  <p class="fix"><strong>Fix:</strong> Move to <code>run_in_executor</code> or lazy-load on first query.</p>
+  <div class="behavior-note"><strong>Note:</strong> The RAG server already has a prewarm path (<code>_do_prewarm()</code> in <code>server.py</code>) that runs in a thread executor. The <code>__init__</code> itself is called synchronously within prewarm. <code>HF_HUB_OFFLINE=1</code> is set by default in bootstrap — the download only happens if models aren't cached locally. Prewarm mitigates this at startup, but any code path that constructs <code>FinancialIndexManager()</code> outside prewarm will still block.</div>
+</div>
+
+<div class="issue p1">
+  <h3>11. Reranker Blocks Event Loop</h3>
+  <p class="file">financial_rag/hybrid_search.py:105 (in <code>async def rerank()</code>, line 100)</p>
+  <p><strong>Issue:</strong> Synchronous CPU-bound <code>self.reranker.predict(pairs)</code> at line 105 inside <code>async def rerank()</code>. Blocks event loop during inference.</p>
   <p class="fix"><strong>Fix:</strong> Wrap in <code>await loop.run_in_executor(None, self.reranker.predict, pairs)</code>.</p>
 </div>
 
 <div class="issue p1">
-  <h3>9. 63 Bare except Exception: Blocks Swallowing Errors</h3>
-  <p class="file">Throughout codebase — notable: shared/memory/store.py, agent_1_adk/agent_executor.py, agents/finsight_agent/agent.py</p>
-  <p><strong>Issue:</strong> Broad exception catches without <code>exc_info=True</code> or specific types lose failure context. Migration errors logged at <code>debug</code> level only.</p>
-  <p class="fix"><strong>Fix:</strong> Add <code>exc_info=True</code> to all catches. Narrow exception types where possible. Use <code>logger.exception()</code> instead of <code>logger.debug()</code> for failures that matter.</p>
+  <h3>12. ~164 Broad <code>except Exception</code> Blocks Swallowing Errors</h3>
+  <p class="file">Throughout codebase (~164 occurrences across ~49 files)</p>
+  <p><strong>Issue:</strong> Broad catches without <code>exc_info=True</code> lose failure context. Migration errors logged at debug level. Many catches swallow exceptions entirely or log without traceback.</p>
+  <p class="fix"><strong>Fix:</strong> Add <code>exc_info=True</code> or use <code>logger.exception()</code>. Narrow exception types where the expected error is known (e.g., <code>sqlite3.OperationalError</code> for schema migrations, <code>httpx.HTTPError</code> for network calls). Leave intentional swallows (e.g., bootstrap fallbacks) with a comment explaining why.</p>
 </div>
 
 <div class="issue p1">
-  <h3>10. Hardcoded api_key="lm-studio" Bypassing Settings</h3>
+  <h3>13. Hardcoded api_key="lm-studio" Bypassing Settings</h3>
   <p class="file">shared/runtime_eval.py:181</p>
-  <p><strong>Issue:</strong> Hardcoded API key instead of using <code>LLM_API_KEY</code> from settings.</p>
-  <p class="fix"><strong>Fix:</strong> Use <code>LLM_API_KEY</code> constant from settings.</p>
+  <p class="fix"><strong>Fix:</strong> Use <code>LLM_API_KEY</code> from settings.</p>
 </div>
 
 <div class="issue p1">
-  <h3>11. Session-ID Fallback Mixes Concurrent Responses</h3>
-  <p class="file">agent_1_adk/agent.py:100–108</p>
-  <p><strong>Issue:</strong> When exact session_id match fails, falls back to "most recent entry." Under concurrent load, can serve wrong user's data.</p>
-  <p class="fix"><strong>Fix:</strong> Key entries by <code>(session_id, request_id)</code>. Require exact match. Log error on fallback.</p>
+  <h3>14. Session-ID Fallback Mixes Concurrent Responses</h3>
+  <p class="file">orchestrator/agent.py:100–108</p>
+  <p><strong>Issue:</strong> Falls back to "most recent entry" on mismatch. Serves wrong user's data under load.</p>
+  <p class="fix"><strong>Fix:</strong> Key by <code>(session_id, request_id)</code>. Require exact match.</p>
 </div>
 
 <div class="issue p1">
-  <h3>12. Redis: No Auth, No Health Check, No Persistence</h3>
+  <h3>15. Redis: No Auth, No Health Check, No Persistence</h3>
   <p class="file">docker-compose.yml:110–113</p>
-  <p><strong>Issue:</strong> Redis exposed on port 6379 with no password, no health check, no volume.</p>
-  <p class="fix"><strong>Fix:</strong> Add <code>requirepass</code>, <code>healthcheck</code>, <code>volumes</code>, and <code>depends_on</code> to services that need Redis.</p>
+  <p class="fix"><strong>Fix:</strong> Add <code>requirepass</code>, <code>healthcheck</code>, <code>volumes</code>.</p>
 </div>
 
 <div class="issue p1">
-  <h3>13. chromadb Missing from Main Dependencies</h3>
+  <h3>16. chromadb Missing from Main Dependencies</h3>
   <p class="file">pyproject.toml:7–69</p>
-  <p><strong>Issue:</strong> Only in optional extras. <code>pip install .</code> without extras causes runtime import errors.</p>
-  <p class="fix"><strong>Fix:</strong> Add to main dependencies or document extras as mandatory.</p>
+  <p class="fix"><strong>Fix:</strong> Add to main deps or document extras as mandatory.</p>
+  <div class="behavior-note"><strong>Note:</strong> <code>chromadb</code> is present in the <code>[orchestrator]</code> and <code>[rag]</code> optional groups (lines 126, 139), but NOT in the main <code>[project.dependencies]</code>. Running <code>pip install .</code> without extras will fail if any code path imports chromadb.</div>
 </div>
 
 <div class="issue p1">
-  <h3>14. Access Token Cookie Missing Secure Flag</h3>
+  <h3>17. Access Token Cookie Missing Secure Flag</h3>
   <p class="file">web/nextjs-app/lib/auth.ts:19</p>
-  <p><strong>Issue:</strong> Cookie sent over HTTP, exposing token to network interception.</p>
-  <p class="fix"><strong>Fix:</strong> Add <code>; Secure</code> flag in production.</p>
+  <p class="fix"><strong>Fix:</strong> Add <code>; Secure</code> in production.</p>
 </div>
 
+<!-- P2 -->
 <h3 id="p2"><span class="severity p2">P2</span> Medium — Address When Able</h3>
 
 <div class="issue p2">
-  <h3>15. Memory Leaks from In-Memory Dicts</h3>
-  <p class="file">agent_1_adk/agent.py:21, agent_1_adk/auth_routes.py:40, mcp_servers/tools/edgar.py:55–71</p>
-  <p><strong>Issue:</strong> <code>_agent_responses</code> accumulates entries (only cleaned on pop), <code>_login_buckets</code> never pruned, <code>_edgar</code> httpx client never closed.</p>
-  <p class="fix"><strong>Fix:</strong> Add periodic background cleanup tasks. Use LRU caches with max size. Add shutdown hooks.</p>
+  <h3>18. Memory Leaks from In-Memory Dicts</h3>
+  <p class="file">orchestrator/agent.py:21, orchestrator/auth_routes.py:40</p>
+  <p><strong>Issue:</strong> <code>_agent_responses</code> (line 21) accumulates response data per session with only a 5-minute TTL in <code>pop_agent_responses()</code> — entries are only cleaned when popped, not on a schedule. <code>_login_buckets</code> (line 40) grows unbounded per username+IP combination with no pruning. Both are process-lifetime dicts.</p>
+  <p class="fix"><strong>Fix:</strong> Add periodic background cleanup or use LRU caches with max size. For <code>_login_buckets</code>, prune entries older than the bucket window on each access.</p>
+  <div class="behavior-note"><strong>Clarification:</strong> The original plan listed <code>mcp/tools/edgar.py:55-71</code> (<code>_edgar</code> httpx client) as a leak. This is NOT a leak — it uses a properly managed double-checked-lock lazy-init pattern (one client per process, created on first use). No fix needed for edgar.</div>
 </div>
 
 <div class="issue p2">
-  <h3>16. Race Conditions</h3>
-  <p class="file">agent_1_adk/agent.py:70–76, agent_2_llamaindex/index_manager.py:143–158, agent_3_langgraph/nodes/state.py:9–15</p>
-  <p><strong>Issue:</strong> Concurrent session writes overwrite each other, index creation not thread-safe, <code>_merge_dict</code> shallow merge loses data.</p>
-  <p class="fix"><strong>Fix:</strong> Per-session locks or <code>(session_id, request_id)</code> keying. <code>asyncio.Lock</code> per collection. Deep merge.</p>
+  <h3>19. Race Conditions</h3>
+  <p class="file">orchestrator/agent.py:70–76, financial_rag/index_manager.py:143–158</p>
+  <p><strong>Issue:</strong> <code>_agent_responses[session_id]</code> (lines 70-76) is read, modified, and written back without atomicity — concurrent requests for the same session can overwrite each other's data. <code>_get_or_create_index()</code> (lines 143-158) has a TOCTOU race on the <code>if collection_name in self._indexes</code> check — two coroutines could both see the name missing and both create the index.</p>
+  <p class="fix"><strong>Fix:</strong> Per-session locks for <code>_agent_responses</code>. <code>asyncio.Lock</code> per collection name in <code>_get_or_create_index()</code>.</p>
+  <div class="behavior-note"><strong>Clarification:</strong> The original plan listed <code>src/quant/state.py:9-15</code> as having race conditions. Those are pure reducer functions (<code>_merge_dict</code>, <code>_last_nonnull</code>) used by LangGraph's Annotated channel system — they're called by the framework's internal merge logic, not by user code. Not a race condition.</div>
 </div>
 
 <div class="issue p2">
-  <h3>17. Code Duplication Across 3 Orchestrator Paths</h3>
+  <h3>20. Code Duplication Across 3 Orchestrator Paths</h3>
   <p class="file">agent_executor.py, agui_bridge.py, agents/finsight_agent/agent.py</p>
-  <p><strong>Issue:</strong> <code>_build_memory_context</code>, <code>_auto_save_brief</code>, regex patterns duplicated with subtle differences.</p>
-  <p class="fix"><strong>Fix:</strong> Extract into shared helpers in <code>shared/</code>.</p>
+  <p class="fix"><strong>Fix:</strong> Extract into shared helpers in <code>src/shared/</code>.</p>
 </div>
 
 <div class="issue p2">
-  <h3>18. No Rate Limiting on Public API Endpoints</h3>
-  <p class="file">agent_1_adk/api_routes.py</p>
-  <p><strong>Issue:</strong> Only login has lockout. <code>/api/memory/*</code>, <code>/api/sessions/*</code>, report downloads are unprotected.</p>
-  <p class="fix"><strong>Fix:</strong> Add <code>TokenBucket</code> or sliding-window rate limiting to all public endpoints.</p>
+  <h3>21. No Rate Limiting on Public API Endpoints</h3>
+  <p class="file">orchestrator/api_routes.py</p>
+  <p class="fix"><strong>Fix:</strong> Add <code>TokenBucket</code> to all public endpoints.</p>
 </div>
 
 <div class="issue p2">
-  <h3>19. No Graceful MCP Shutdown</h3>
+  <h3>22. No Graceful MCP Shutdown</h3>
   <p class="file">shared/mcp_client.py:395–408</p>
-  <p><strong>Issue:</strong> <code>disconnect_all()</code> only called via <code>atexit</code>. Starlette has no shutdown hook.</p>
-  <p class="fix"><strong>Fix:</strong> Use Starlette <code>lifespan</code> context manager.</p>
+  <p class="fix"><strong>Fix:</strong> Use Starlette <code>lifespan</code> to call <code>disconnect_all()</code>.</p>
 </div>
 
 <div class="issue p2">
-  <h3>20. _ALLOWED_ORIGINS Hardcoded to Localhost</h3>
-  <p class="file">agent_1_adk/main.py:104–107</p>
+  <h3>23. _ALLOWED_ORIGINS Hardcoded to Localhost</h3>
+  <p class="file">orchestrator/main.py:104–107</p>
   <p class="fix"><strong>Fix:</strong> Make configurable via <code>settings.cors_origins</code>.</p>
 </div>
 
 <div class="issue p2">
-  <h3>21. Module-Level asyncio.get_running_loop() Side Effect</h3>
-  <p class="file">agent_1_adk/agent.py:368–372</p>
-  <p><strong>Issue:</strong> Runs at import time. Fragile under pytest, creates/destroys event loops.</p>
+  <h3>24. Module-Level asyncio.get_running_loop() Side Effect</h3>
+  <p class="file">orchestrator/agent.py:368–372</p>
   <p class="fix"><strong>Fix:</strong> Move to Starlette <code>lifespan</code> startup hook.</p>
 </div>
 
 <div class="issue p2">
-  <h3>22. Stream Generator Not Cleaned on Client Disconnect</h3>
-  <p class="file">agent_1_adk/agui_bridge.py:255–509</p>
-  <p><strong>Issue:</strong> ADK runner iterator never explicitly closed on <code>CancelledError</code>. Leaks internal state.</p>
-  <p class="fix"><strong>Fix:</strong> Wrap in <code>try/finally</code> calling <code>await event_iter.aclose()</code>.</p>
+  <h3>25. Stream Generator Not Cleaned on Client Disconnect</h3>
+  <p class="file">orchestrator/agui_bridge.py:255–509</p>
+  <p class="fix"><strong>Fix:</strong> Wrap in <code>try/finally</code> with <code>await event_iter.aclose()</code>.</p>
 </div>
 
 <div class="issue p2">
-  <h3>23. format_output_node May Execute Twice Per Step</h3>
-  <p class="file">agent_3_langgraph/nodes/summary.py:148–326</p>
-  <p><strong>Issue:</strong> Fan-in triggers duplicate LLM calls. Only one result persists, but both consume tokens.</p>
-  <p class="fix"><strong>Fix:</strong> Use LangGraph <code>Send</code> API to ensure single invocation.</p>
+  <h3>26. format_output_node May Execute Twice Per Step (Mitigated)</h3>
+  <p class="file">quant/nodes/summary.py:148–326, quant/graph.py:102–116, quant/state.py:68–90</p>
+  <p><strong>Issue:</strong> <code>format_output_node</code> has 5 incoming edges (graph.py:112-116). When <code>peer_comparison</code> and <code>analyst_positioning</code> both complete in the same LangGraph step (both stem from <code>fetch_fundamentals</code>), <code>format_output_node</code> can trigger twice.</p>
+  <p><strong>Current mitigation:</strong> The diamond-dependency is already documented (graph.py:102-107) and mitigated via Annotated reducers in state.py (lines 68-90). All keys written by <code>format_output_node</code> use <code>_merge_dict</code>, <code>_last_str</code>, or <code>_merge_stress_test</code> reducers that handle concurrent writes gracefully.</p>
+  <p class="fix"><strong>Fix (optional improvement):</strong> Use LangGraph <code>Send</code> API to guarantee single execution, or accept the current reducer-based mitigation as sufficient. The reducer approach works but wastes compute on the duplicate run.</p>
 </div>
 
 <div class="issue p2">
-  <h3>24. Dead Code: _persist_to_memory</h3>
-  <p class="file">agent_1_adk/agent_executor.py:616–636</p>
-  <p class="fix"><strong>Fix:</strong> Remove unused method.</p>
+  <h3>27. Dead Code: _persist_to_memory</h3>
+  <p class="file">orchestrator/agent_executor.py:616–636</p>
+  <p class="fix"><strong>Fix:</strong> Remove.</p>
 </div>
 
 <div class="issue p2">
-  <h3>25. Double @logged_sync Decorator</h3>
-  <p class="file">agent_3_langgraph/nodes/calculations.py:203–204</p>
-  <p class="fix"><strong>Fix:</strong> Remove one decorator.</p>
+  <h3>28. Double @logged_sync Decorator</h3>
+  <p class="file">quant/nodes/calculations.py:203–204</p>
+  <p class="fix"><strong>Fix:</strong> Remove one.</p>
 </div>
 
 <div class="issue p2">
-  <h3>26. Typo: _extract_context_contexts</h3>
-  <p class="file">agent_4_crewai/executor.py:226</p>
-  <p class="fix"><strong>Fix:</strong> Rename to <code>_extract_contexts</code>.</p>
+  <h3>29. Confusing Name: _extract_context_contexts</h3>
+  <p class="file">market_context/executor.py:226 (called at line 111)</p>
+  <p><strong>Issue:</strong> The function name <code>_extract_context_contexts</code> looks like a typo but is intentional — it extracts multiple context strings from a data dict. However, the name is confusing and reads as a stuttered duplicate.</p>
+  <p class="fix"><strong>Fix:</strong> Rename to <code>_extract_retrieved_contexts</code> (matching its purpose: building the <code>_retrieved_contexts</code> list used for RAGAS eval). Update the single call site at line 111.</p>
 </div>
 
 <div class="issue p2">
-  <h3>27. Dockerfiles Don't Pin Python Version</h3>
+  <h3>30. Dockerfiles Don't Pin Python Version</h3>
   <p class="file">All 5 Dockerfiles</p>
-  <p class="fix"><strong>Fix:</strong> Pin to specific digest: <code>FROM python:3.12.4-slim@sha256:...</code></p>
+  <p class="fix"><strong>Fix:</strong> Pin to digest.</p>
 </div>
 
 <div class="issue p2">
-  <h3>28. A2A_TIMEOUT Inconsistent (600 vs 300 vs 680)</h3>
-  <p class="file">.env, .env.example, shared/settings.py</p>
-  <p class="fix"><strong>Fix:</strong> Reconcile to single documented value.</p>
+  <h3>31. A2A_TIMEOUT Inconsistent (300 in .env.example vs 680 in settings.py)</h3>
+  <p class="file">.env.example:23, shared/settings.py:63</p>
+  <p><strong>Issue:</strong> <code>.env.example</code> sets <code>A2A_TIMEOUT=300.0</code> (line 23), but <code>src/shared/settings.py</code> defaults to <code>a2a_timeout: float = 680.0</code> (line 63). Users who don't copy <code>.env.example</code> get 680s; those who do get 300s. Per-agent overrides (<code>A2A_TIMEOUT_RAG=600.0</code>, etc.) are defined in both places but with different base values.</p>
+  <p class="fix"><strong>Fix:</strong> Align <code>settings.py</code> default to match <code>.env.example</code> (or vice versa). Recommend 300s base with per-agent 600s overrides for RAG/quant/market_context.</p>
 </div>
 
 <div class="issue p2">
-  <h3>29. _warm_index_manager Globals Unused by Actual Agent</h3>
-  <p class="file">agent_2_llamaindex/server.py:61–62, 104–111</p>
-  <p class="fix"><strong>Fix:</strong> Pass warmed instances to RAGAgent or remove prewarm variables.</p>
+  <h3>32. _warm_index_manager Globals Unused</h3>
+  <p class="file">financial_rag/server.py:61–62, 104–111</p>
+  <p class="fix"><strong>Fix:</strong> Pass warmed instances or remove.</p>
 </div>
 
 <div class="issue p2">
-  <h3>30. File Handles Not Closed with `with`</h3>
+  <h3>33. File Handles Not Closed with `with`</h3>
   <p class="file">agents/finsight_agent/agent.py:54–57, 310–373</p>
   <p class="fix"><strong>Fix:</strong> Use <code>with open(...)</code> or <code>logging</code>.</p>
+  <div class="behavior-note"><strong>Post-restructure path:</strong> <code>src/orchestrator/web/agent.py</code></div>
 </div>
 
 <div class="issue p2">
-  <h3>31. MCP Macro Fetches 15 Tickers Sequentially</h3>
-  <p class="file">mcp_servers/tools/market_data.py:173–213</p>
-  <p class="fix"><strong>Fix:</strong> Use <code>asyncio.gather</code> with rate limiter semaphore.</p>
+  <h3>34. MCP Macro Fetches 15 Tickers Sequentially</h3>
+  <p class="file">mcp/tools/market_data.py:173–213</p>
+  <p class="fix"><strong>Fix:</strong> Use <code>asyncio.gather</code> with rate limiter.</p>
 </div>
 
 <div class="issue p2">
-  <h3>32. conftest.py Uses os._exit() Bypassing Pytest</h3>
+  <h3>35. conftest.py Uses os._exit() Bypassing Pytest</h3>
   <p class="file">tests/conftest.py:19–25</p>
   <p class="fix"><strong>Fix:</strong> Use <code>threading.Event</code> or daemon threads.</p>
+  <div class="behavior-note"><strong>Root cause:</strong> Leaked aiosqlite connections. The comment explains why (CI hang). Any fix must also solve the underlying leak or accept the force-exit as intentional.</div>
 </div>
 
+<div class="issue p2">
+  <h3>36. Next.js Rewrite Proxies May Strip Auth Headers <span class="new-badge">NEW</span></h3>
+  <p class="file">web/nextjs-app/next.config.ts:10–25</p>
+  <p><strong>Issue:</strong> Next.js <code>rewrites()</code> proxy <code>/reports/:path*</code>, <code>/auth/:path*</code>, and <code>/api/orch/:path*</code> to the orchestrator. The downstream orchestrator enforces auth on its endpoints — <code>_authenticated_report()</code> (main.py:132-160) calls <code>require(request, kinds=("user", "service"))</code>. However, Next.js rewrites forward the original request including headers by default. The risk is that <strong>browser requests via the proxy may not include the <code>Authorization</code> header</strong> if the frontend relies on cookies instead of bearer tokens. This is a client-side concern more than a proxy-stripping issue.</p>
+  <p class="fix"><strong>Fix:</strong> Verify the frontend sends the <code>Authorization</code> header (or that cookies flow through) for report downloads and API calls. If using cookie-based auth, ensure cookies are set with correct <code>path</code> and <code>domain</code> to survive the rewrite.</p>
+</div>
+
+<div class="issue p2">
+  <h3>37. JWT Uses Symmetric HS256 with Shared Secret <span class="new-badge">NEW</span></h3>
+  <p class="file">shared/auth/tokens.py:41–52</p>
+  <p><strong>Issue:</strong> All tokens (user + service) signed with same HS256 key. If any service is compromised, it can forge user tokens.</p>
+  <p class="fix"><strong>Fix:</strong> Consider RS256 or separate signing keys per token type.</p>
+</div>
+
+<div class="issue p2">
+  <h3>38. SCHEMA_VERSION = 3 but Migrations Go to v5 <span class="new-badge">NEW</span></h3>
+  <p class="file">shared/memory/store.py:26, 161–202</p>
+  <p><strong>Issue:</strong> <code>SCHEMA_VERSION = 3</code> but migrations exist for v3→v4 and v4→v5. Should be <code>5</code>.</p>
+  <p class="fix"><strong>Fix:</strong> Set <code>SCHEMA_VERSION = 5</code>.</p>
+  <div class="behavior-note"><strong>Verified safe:</strong> The constant is written to the <code>schema_version</code> table at initial setup (line 155-156: <code>INSERT OR REPLACE INTO schema_version (version) VALUES (?)</code>). All migrations (v1→v2, v2→v3, v3→v4, v4→v5) run unconditionally as idempotent operations (<code>ALTER TABLE ... ADD COLUMN</code> wrapped in try/except, <code>CREATE TABLE IF NOT EXISTS</code>). Setting to 5 is safe — the constant is informational, not used to gate migration execution.</div>
+</div>
+
+<!-- P3 -->
 <h3 id="p3"><span class="severity p3">P3</span> Low — Clean Up When Convenient</h3>
 
 <table>
   <tr><th>#</th><th>Issue</th><th>File</th><th>Fix</th></tr>
-  <tr><td>33</td><td><code>any</code> should be <code>Any</code></td><td>shared/base_agent.py:29</td><td>Change to <code>Any</code></td></tr>
-  <tr><td>34</td><td><code>sys.path</code> manipulation</td><td>agents/services.py</td><td>Remove; ensure package is installed</td></tr>
-  <tr><td>35</td><td>Wrong table name in SQL</td><td>scripts/export_brief_fixtures.py</td><td><code>sessions</code> → <code>ticker_briefs</code></td></tr>
-  <tr><td>36</td><td>Python version mismatch</td><td>pyproject.toml</td><td>Align <code>requires-python</code> to <code>&gt;=3.12</code></td></tr>
-  <tr><td>37</td><td>Missing <code>__init__.py</code></td><td>tests/regression/, tests/evaluation/</td><td>Add empty <code>__init__.py</code></td></tr>
-  <tr><td>38</td><td>Caddyfile undefined port 8080</td><td>deploy/Caddyfile.example</td><td>Fix to match docker-compose ports</td></tr>
-  <tr><td>39</td><td><code>fail_under = 0</code> (no-op)</td><td>pyproject.toml:274</td><td>Set to 70</td></tr>
-  <tr><td>40</td><td>Missing env var defaults</td><td>.env.example</td><td>Add <code>AUTH_ENABLED</code>, <code>EVAL_TRACE_ENABLED</code></td></tr>
-  <tr><td>41</td><td>Ruff missing rule sets</td><td>pyproject.toml:233</td><td>Add <code>S</code>, <code>B</code>, <code>C4</code>, <code>UP</code></td></tr>
-  <tr><td>42</td><td>No request ID middleware</td><td>—</td><td>Add correlation ID middleware</td></tr>
-  <tr><td>43</td><td>Health endpoints shallow</td><td>—</td><td>Check downstream deps (SQLite, MCP, Redis)</td></tr>
-  <tr><td>44</td><td>No circuit breaker for MCP</td><td>shared/mcp_client.py</td><td>Add circuit breaker pattern</td></tr>
-  <tr><td>45</td><td>Shared UID 1001 across containers</td><td>All Dockerfiles</td><td>Use dynamic UID or named group</td></tr>
-  <tr><td>46</td><td>pytest-asyncio range too loose</td><td>pyproject.toml:74</td><td>Pin <code>&gt;=0.24.0,&lt;1.0</code></td></tr>
-  <tr><td>47</td><td>useEffect without cleanup</td><td>web/nextjs-app/contexts/AuthContext.tsx:28–58</td><td>Add <code>AbortController</code> or <code>isMounted</code></td></tr>
+  <tr><td>39</td><td><code>any</code> should be <code>Any</code></td><td>shared/base_agent.py:29</td><td>Change to <code>Any</code></td></tr>
+  <tr><td>40</td><td><code>sys.path</code> manipulation</td><td>agents/services.py</td><td>Remove; ensure package installed</td></tr>
+  <tr><td>41</td><td>Wrong table name in SQL</td><td>scripts/export_brief_fixtures.py</td><td><code>sessions</code> → <code>ticker_briefs</code></td></tr>
+  <tr><td>42</td><td>Python version mismatch</td><td>pyproject.toml</td><td>Align to <code>&gt;=3.12</code> (currently <code>&gt;=3.11</code>, ruff targets <code>py312</code>, mypy targets <code>3.12</code>)</td></tr>
+  <tr><td>43</td><td>Missing <code>__init__.py</code></td><td>tests/regression/, tests/evaluation/</td><td>Add empty files</td></tr>
+  <tr><td>44</td><td>Caddyfile port mismatch</td><td>deploy/Caddyfile.example</td><td>Lines 18, 22: proxy to <code>localhost:8080</code> but orchestrator runs on <code>8001</code>. Fix to <code>8001</code>. (Port 8080 is ADK web, which is only for dev mode.)</td></tr>
+  <tr><td>45</td><td><code>fail_under = 0</code> (no-op)</td><td>pyproject.toml:274</td><td>Set to 70</td></tr>
+  <tr><td>46</td><td>Missing env var defaults</td><td>.env.example</td><td>Add <code>AUTH_ENABLED</code>, <code>EVAL_TRACE_ENABLED</code> (already present as <code>EVAL_TRACE_ENABLED=false</code>; check <code>AUTH_ENABLED</code> is commented out on line 36 with guidance)</td></tr>
+  <tr><td>47</td><td>Ruff missing rule sets</td><td>pyproject.toml:233</td><td>Add <code>S</code>, <code>B</code>, <code>C4</code>, <code>UP</code></td></tr>
+  <tr><td>48</td><td>No request ID middleware</td><td>—</td><td>Add correlation ID</td></tr>
+  <tr><td>49</td><td>Health endpoints shallow</td><td>—</td><td>Check downstream deps</td></tr>
+  <tr><td>50</td><td>No circuit breaker for MCP</td><td>shared/mcp_client.py</td><td>Add circuit breaker</td></tr>
+  <tr><td>51</td><td>Shared UID 1001 across containers</td><td>All Dockerfiles</td><td>Use dynamic UID</td></tr>
+  <tr><td>52</td><td>pytest-asyncio range too loose</td><td>pyproject.toml:74</td><td>Pin <code>&gt;=0.24.0,&lt;1.0</code></td></tr>
+  <tr><td>53</td><td>useEffect without cleanup</td><td>AuthContext.tsx:28–58</td><td>Add <code>AbortController</code></td></tr>
+  <tr><td>54</td><td>Performance tracker blocks event loop <span class="new-badge">NEW</span></td><td>shared/memory/performance_tracker.py:90</td><td>Use <code>run_in_executor</code></td></tr>
+  <tr><td>55</td><td>Potential division by zero in tracker <span class="new-badge">NEW</span></td><td>shared/memory/performance_tracker.py:95</td><td>Guard <code>price_at_rec == 0</code></td></tr>
+  <tr><td>56</td><td>copilotkit cookie missing HttpOnly/Secure <span class="new-badge">NEW</span></td><td>web/nextjs-app/app/api/copilotkit/route.ts:49</td><td>Add flags</td></tr>
+  <tr><td>57</td><td>Info leakage: <code>str(exc)</code> in API 500 response <span class="new-badge">NEW</span></td><td>orchestrator/api_routes.py:298</td><td><code>_ERROR_ENVELOPE("INTERNAL", str(exc), status=500)</code> exposes internal error messages (e.g., import paths, SQL errors) to the client. Return a generic "Internal server error" message instead; log the full exception server-side.</td></tr>
+  <tr><td>58</td><td>Refresh token <code>secure</code> flag is environment-gated <span class="new-badge">NEW</span></td><td>orchestrator/auth_routes.py:135</td><td><code>secure=s.env == "production"</code> — this is correct behavior (Secure flag prevents cookie transmission over HTTP in dev). The concern is defense-in-depth: if <code>ENV</code> is misconfigured in production, tokens transmit unencrypted. Consider defaulting to <code>Secure=True</code> and requiring explicit <code>ENV=development</code> opt-out.</td></tr>
+  <tr><td>59</td><td>ensure_schema_v4 called on every read <span class="new-badge">NEW</span></td><td>shared/memory/user_store.py:86,106</td><td>Call once at bootstrap</td></tr>
+  <tr><td>60</td><td>Traces API leaks Langfuse error messages <span class="new-badge">NEW</span></td><td>web/nextjs-app/app/api/traces/route.ts:59</td><td>Return generic error</td></tr>
+  <tr><td>61</td><td>MarketContextAgent._collect_data_parallel() missing sector/industry <span class="gap-badge">GAP</span></td><td>market_context/executor.py</td><td>The <code>_collect_data_parallel()</code> method returns a data dict that's passed to <code>MarketContextCrew.analyze()</code>. The downstream crew accesses <code>data.get("sector", "")</code> and <code>data.get("industry", "")</code>, but these keys are never populated by <code>_collect_data_parallel()</code>. No crash (graceful <code>.get()</code> fallback), but sector/industry context is always empty. Fix: extract sector and industry from the <code>get_financials</code> response and include in the returned data dict.</td></tr>
 </table>
 
+<!-- ==================== PART 3 ==================== -->
 <h2 id="part3">Part 3: Execution Plan</h2>
 
+<p><strong>Guiding principles for the implementing agent:</strong></p>
+<ul>
+  <li>After each phase, run the full verification suite before proceeding</li>
+  <li>Commit after each phase (not after each step)</li>
+  <li>Never change bootstrap keys, port numbers, A2A agent card names, or MCP tool function names</li>
+  <li>All file paths in issues use <strong>new directory names</strong> (post-restructure)</li>
+  <li>Use <code>uv</code> for all Python operations (not <code>pip</code>)</li>
+</ul>
+
 <div class="phase-box">
-  <h3>Phase 1: Restructure Folders</h3>
+  <h3>Phase 1: Restructure Folders (no behavior changes)</h3>
+  <p><strong>Goal:</strong> Rename directories and update all references. Zero functional changes.</p>
   <ol>
-    <li>Create new directories: <code>orchestrator/</code>, <code>rag/</code>, <code>quant/</code>, <code>market/</code>, <code>tools/</code></li>
-    <li>Move files from old → new directories</li>
-    <li>Merge <code>agents/finsight_agent/</code> into <code>orchestrator/web/</code></li>
-    <li>Delete old directories</li>
-    <li>Update all imports across codebase</li>
-    <li>Update config files (<code>pyproject.toml</code>, <code>docker-compose.yml</code>, <code>Makefile</code>, Dockerfiles, <code>.env.example</code>)</li>
-    <li>Update scripts (<code>run_ui.bat</code>, <code>run_adk_web.bat</code>, <code>stop_servers.bat</code>)</li>
+    <li><strong>Decide naming:</strong> Resolve hyphen-vs-underscore for package dirs. Recommendation: <code>src/financial_rag/</code>, <code>src/market_context/</code> (underscores for Python importability). Docker Compose service names can keep hyphens.</li>
+    <li><strong>Resolve <code>mcp/</code> collision:</strong> Choose <code>src/mcp_tools/</code> or <code>finsight_mcp/</code> to avoid shadowing the <code>mcp</code> PyPI package. Update all references accordingly.</li>
+    <li><strong>Create new directories</strong> with <code>__init__.py</code> files: <code>src/orchestrator/</code>, <code>src/financial_rag/</code>, <code>src/quant/</code>, <code>src/market_context/</code>, <code>src/mcp_tools/</code> (or chosen name)</li>
+    <li><strong>Move files</strong> from old → new directories (preserve git history with <code>git mv</code>)</li>
+    <li><strong>Merge <code>src/orchestrator/web/</code></strong>:
+      <ul>
+        <li>Create <code>src/orchestrator/web/</code> with <code>__init__.py</code></li>
+        <li>Move <code>src/orchestrator/web/finsight_agent/agent.py</code> → <code>src/orchestrator/web/agent.py</code></li>
+        <li>Move <code>src/orchestrator/web/finsight_agent/__init__.py</code> → <code>src/orchestrator/web/__init__.py</code></li>
+        <li>Move <code>src/orchestrator/web/services.py</code> → <code>src/orchestrator/web/services.py</code></li>
+        <li>Remove <code>sys.path</code> manipulation from both moved files</li>
+        <li>Delete <code>src/orchestrator/web/</code> entirely (including <code>.adk/</code> dirs — gitignored, no data loss)</li>
+      </ul>
+    </li>
+    <li><strong>Update all Python imports</strong> (see Part 1A §1 for complete inventory):
+      <ul>
+        <li>Self-references within each package (use relative imports where appropriate)</li>
+        <li>Cross-package references (tests, scripts)</li>
+        <li>The import in <code>src/orchestrator/web/agent.py</code>: <code>from orchestrator.agent import root_agent</code> → <code>from orchestrator.agent import root_agent</code></li>
+      </ul>
+    </li>
+    <li><strong>Update <code>pyproject.toml</code></strong>:
+      <ul>
+        <li><code>[tool.setuptools.packages.find].include</code> — all 5 entries</li>
+        <li><code>[[tool.mypy.overrides]].module</code> — all 6 module patterns (include new package + <code>agents.*</code> removal)</li>
+      </ul>
+    </li>
+    <li><strong>Update <code>Makefile</code></strong>: <code>type</code>, <code>test</code>, <code>test-auth</code> targets</li>
+    <li><strong>Update all 5 Dockerfiles</strong>: <code>COPY</code> paths, <code>CMD</code> module paths</li>
+    <li><strong>Update <code>docker-compose.yml</code></strong>: service names, <code>dockerfile</code> paths, <code>environment</code> hostnames, <code>depends_on</code> keys</li>
+    <li><strong>Update batch files</strong>: <code>run_ui.bat</code> (5 module paths), <code>run_adk_web.bat</code> (5 module paths + <code>adk web</code> directory arg)</li>
+    <li><strong>Update <code>.github/workflows/ci.yml</code></strong>: mypy target, docker build matrix (context + name)</li>
+    <li><strong>Update documentation</strong>: batch find-replace across all <code>docs/*.md</code>, <code>docs/*.html</code>, <code>README.md</code>, <code>README.html</code></li>
+    <li><strong>Regenerate</strong>: Run <code>uv pip install -e ".[dev]"</code> to rebuild egg-info, then <code>python scripts/generate_openapi.py</code> to regenerate <code>docs/openapi.json</code></li>
   </ol>
+  <h4>Verification</h4>
+  <ul class="checklist">
+    <li><code>uv pip install -e ".[dev]"</code> succeeds</li>
+    <li><code>make lint</code> passes</li>
+    <li><code>make type</code> passes</li>
+    <li><code>make test</code> passes</li>
+    <li><code>python -c "from orchestrator.main import app"</code> succeeds</li>
+    <li><code>python -c "from financial_rag.server import app"</code> succeeds</li>
+    <li><code>python -c "from quant.server import app"</code> succeeds</li>
+    <li><code>python -c "from market_context.server import app"</code> succeeds</li>
+    <li><code>python -c "from mcp_tools.finsight_server import get_app"</code> succeeds (or chosen package name)</li>
+    <li><code>docker compose build</code> succeeds (if Docker available)</li>
+    <li><code>python scripts/generate_openapi.py --check</code> passes</li>
+    <li>Grep for old names in code: <code>rg "orchestrator|financial_rag|quant|market_context|mcp_tools" --type py --type toml --type yml</code> returns zero results (docs excluded)</li>
+    <li>Grep for old names in string literals (sys.modules, mock.patch): <code>rg '"orchestrator|"quant|"mcp_tools' --type py</code> returns zero results</li>
+  </ul>
 </div>
 
 <div class="phase-box">
-  <h3>Phase 2: Critical Bug Fixes</h3>
+  <h3>Phase 2: Critical + Auth Fixes (P0 + auth-related P1)</h3>
+  <p><strong>Goal:</strong> Fix security vulnerabilities and the DCF correctness bug.</p>
   <ol>
-    <li>Fix DCF terminal value formula (#1)</li>
-    <li>Fix access token cookie (#2, #14)</li>
-    <li>Remove plaintext password fallback (#3)</li>
-    <li>Fix hardcoded API key (#10)</li>
+    <li>Fix DCF terminal value formula (#1) — update test golden values in <code>src/tests/characterization/test_quant_nodes_io.py</code></li>
+    <li>Fix access token cookie (#2, #17) — remove client-side <code>document.cookie</code> for access token; use in-memory React state</li>
+    <li>Remove plaintext password fallback (#3) — delete <code>_FallbackHasher</code> class, make <code>import argon2</code> a hard import (no try/except)</li>
+    <li>Fix hardcoded API key (#13) — use <code>get_settings().llm_api_key</code></li>
+    <li>Fix portfolio_store session_id→user_id (#5) — add fallback to session_id when <code>AUTH_ENABLED=false</code></li>
+    <li>Fix sessions_list auth bypass (#6) — when <code>AUTH_ENABLED=true</code>, reject if <code>_user_id()</code> returns None</li>
+    <li>Fix report authorization bypass (#7) — same pattern as #6</li>
   </ol>
+  <h4>Verification</h4>
+  <ul class="checklist">
+    <li><code>make test</code> passes (with <code>AUTH_ENABLED=false</code> and <code>AUTH_ENABLED=true</code>)</li>
+    <li>DCF output for a growth stock (e.g., NVDA) no longer double-counts growth</li>
+    <li>Manually verify: <code>document.cookie</code> does not contain access token in browser</li>
+    <li>Manually verify: unauthenticated <code>GET /api/sessions?user_id=admin</code> returns 401 when auth enabled</li>
+  </ul>
 </div>
 
 <div class="phase-box">
-  <h3>Phase 3: High-Severity Fixes</h3>
+  <h3>Phase 3: Async/Blocking Fixes (P1 async issues)</h3>
+  <p><strong>Goal:</strong> Prevent event loop stalls. All fixes must preserve the same external behavior.</p>
   <ol>
-    <li>Fix CrewAI async issues (#5, #6)</li>
-    <li>Fix HuggingFace sync download (#7)</li>
-    <li>Fix reranker blocking (#8)</li>
-    <li>Add <code>exc_info=True</code> to exception handlers (#9)</li>
-    <li>Fix session-ID race (#11)</li>
-    <li>Fix Redis config (#12)</li>
-    <li>Add chromadb to deps (#13)</li>
+    <li>Fix CrewAI async issues (#8, #9) — use <code>loop.run_in_executor</code> for <code>crew.kickoff()</code>; use <code>asyncio.get_event_loop().run_until_complete()</code> or <code>nest_asyncio</code> for MCP calls in sync context</li>
+    <li>Fix HuggingFace sync download (#10) — verify prewarm covers it; if not, wrap in executor</li>
+    <li>Fix reranker blocking (#11) — <code>await loop.run_in_executor(None, self.reranker.predict, pairs)</code></li>
+    <li>Move import-time side effects to lifespan (#24) — move <code>asyncio.get_running_loop()</code> call from module level to a Starlette lifespan hook</li>
   </ol>
+  <h4>Verification</h4>
+  <ul class="checklist">
+    <li><code>make test</code> passes</li>
+    <li>Start each agent server and verify health endpoint responds within 5s (no startup hang)</li>
+    <li>Send a query to market-context agent — verify no <code>RuntimeError: This event loop is already running</code></li>
+  </ul>
 </div>
 
 <div class="phase-box">
-  <h3>Phase 4: Medium-Severity Fixes</h3>
+  <h3>Phase 4: Reliability Fixes (P1 remaining + P2 reliability)</h3>
+  <p><strong>Goal:</strong> Fix data integrity, resource leaks, and error handling.</p>
   <ol>
-    <li>Add periodic cleanup for in-memory dicts (#15)</li>
-    <li>Fix race conditions (#16)</li>
-    <li>Extract duplicated code to shared helpers (#17)</li>
-    <li>Add rate limiting (#18)</li>
-    <li>Add graceful MCP shutdown (#19)</li>
-    <li>Make CORS configurable (#20)</li>
-    <li>Move import-time side effects to lifespan (#21)</li>
-    <li>Clean up dead code (#24, #26, #29)</li>
-    <li>Fix decorator issues (#25)</li>
+    <li>Add <code>exc_info=True</code> to exception handlers (#12) — audit all <code>except Exception</code> blocks, narrow types where obvious</li>
+    <li>Fix session-ID race (#14) — key <code>_agent_responses</code> by <code>(session_id, request_id)</code></li>
+    <li>Fix memory leaks (#18) — add TTL-based cleanup to <code>_agent_responses</code>, <code>_login_buckets</code>; add httpx client close hook for edgar</li>
+    <li>Fix race conditions (#19) — add per-session locks, asyncio.Lock per ChromaDB collection</li>
+    <li>Extract duplicated code (#20) — shared helper for memory persistence across executor/bridge/web callback paths</li>
+    <li>Add rate limiting (#21) — reuse <code>src/shared/rate_limiter.py</code>'s <code>TokenBucket</code> on public endpoints</li>
+    <li>Add graceful MCP shutdown (#22) — Starlette lifespan to call <code>disconnect_all()</code></li>
+    <li>Make CORS configurable (#23) — add <code>cors_origins</code> to <code>Settings</code>, read in <code>main.py</code></li>
+    <li>Clean up dead code (#27 <code>_persist_to_memory</code>, #32 unused globals) and rename confusing function (#29 <code>_extract_context_contexts</code> → <code>_extract_retrieved_contexts</code>)</li>
+    <li>Fix decorator issues (#28) — remove duplicate <code>@logged_sync</code></li>
   </ol>
+  <h4>Verification</h4>
+  <ul class="checklist">
+    <li><code>make test</code> passes</li>
+    <li>Grep confirms no remaining <code>except Exception:</code> without <code>exc_info</code> (allowlist for intentional cases)</li>
+    <li><code>_persist_to_memory</code> is gone from codebase</li>
+  </ul>
 </div>
 
 <div class="phase-box">
-  <h3>Phase 5: Config &amp; Infra</h3>
+  <h3>Phase 5: Config &amp; Infra (P1/P2 config + P3 config)</h3>
+  <p><strong>Goal:</strong> Fix dependency, Docker, and config issues.</p>
   <ol>
-    <li>Pin Docker Python versions (#27)</li>
-    <li>Reconcile A2A_TIMEOUT (#28)</li>
-    <li>Fix Python version mismatch (#36)</li>
-    <li>Add <code>__init__.py</code> to test dirs (#37)</li>
-    <li>Fix Caddyfile ports (#38)</li>
-    <li>Set coverage threshold (#39)</li>
+    <li>Fix Redis config (#15) — add <code>requirepass</code>, <code>healthcheck</code>, <code>volumes</code> to docker-compose</li>
+    <li>Add chromadb to deps (#16) — add <code>chromadb</code> to main <code>[project.dependencies]</code></li>
+    <li>Pin Docker Python versions (#30) — change <code>FROM python:3.12-slim</code> to pinned digest in all 5 Dockerfiles</li>
+    <li>Reconcile A2A_TIMEOUT (#31) — verify <code>settings.py</code> default matches <code>.env.example</code></li>
+    <li>Fix Python version mismatch (#42) — set <code>requires-python = "&gt;=3.12"</code> in pyproject.toml</li>
+    <li>Fix SCHEMA_VERSION (#38) — set to <code>5</code> after verifying migration logic</li>
+    <li>Set coverage threshold (#45) — set <code>fail_under = 70</code></li>
+    <li>Fix Caddyfile port (#44) — change <code>localhost:8080</code> → <code>localhost:8001</code></li>
+    <li>Fix missing <code>__init__.py</code> in test dirs (#43)</li>
+    <li>Pin pytest-asyncio (#52)</li>
   </ol>
+  <h4>Verification</h4>
+  <ul class="checklist">
+    <li><code>make test</code> passes</li>
+    <li><code>docker compose build</code> succeeds</li>
+    <li><code>docker compose up</code> — all services start, Redis requires password</li>
+  </ul>
 </div>
 
 <div class="phase-box">
-  <h3>Phase 6: Enable mypy (#4)</h3>
+  <h3>Phase 6: Enable mypy + Linting (P0 #4 + P3 linting)</h3>
+  <p><strong>Goal:</strong> Incremental type safety. This phase will likely produce many type errors — fix in order of dependency.</p>
   <ol>
-    <li>Remove <code>ignore_errors</code> overrides from <code>pyproject.toml</code></li>
-    <li>Fix type errors in <code>shared/</code> first</li>
-    <li>Fix agent packages one at a time</li>
-    <li>Expand ruff rule set (#41)</li>
+    <li>Remove <code>ignore_errors</code> overrides (#4) — start with <code>shared.*</code> only; re-add overrides for agent packages temporarily</li>
+    <li>Fix type errors in <code>src/shared/</code> — most impactful since all agents depend on it</li>
+    <li>Fix type errors in <code>src/orchestrator/</code> — already partially type-checked via CI</li>
+    <li>Expand ruff rule set (#47) — add <code>S</code> (security), <code>B</code> (bugbear), <code>C4</code> (comprehensions), <code>UP</code> (pyupgrade)</li>
+    <li>Fix <code>any</code> → <code>Any</code> (#39)</li>
+  </ol>
+  <h4>Verification</h4>
+  <ul class="checklist">
+    <li><code>make lint</code> passes with expanded rules</li>
+    <li><code>make type</code> passes with <code>ignore_errors</code> removed for at least <code>shared.*</code> and <code>orchestrator.*</code></li>
+    <li><code>make test</code> still passes</li>
+  </ul>
+</div>
+
+<div class="phase-box">
+  <h3>Phase 7: Frontend &amp; Remaining P3 Cleanups</h3>
+  <p><strong>Goal:</strong> Fix frontend issues and remaining low-priority items.</p>
+  <ol>
+    <li>Fix Next.js rewrite proxy auth (#36) — forward <code>Authorization</code> header in <code>next.config.ts</code> rewrites</li>
+    <li>Fix copilotkit cookie flags (#56)</li>
+    <li>Fix traces API error leakage (#60)</li>
+    <li>Fix API 500 info leakage (#57)</li>
+    <li>Fix refresh token Secure flag (#58)</li>
+    <li>Add <code>AbortController</code> to AuthContext useEffect (#53)</li>
+    <li>Fix ensure_schema_v4 called on every read (#59)</li>
+    <li>Fix performance_tracker blocking (#54) and division by zero (#55)</li>
+    <li>Fix MarketContextAgent undefined vars (#61)</li>
+    <li>Fix export_brief_fixtures SQL (#41)</li>
   </ol>
 </div>
 
-<h2>Verification</h2>
-<p>After each phase:</p>
+<h2>Verification — After Every Phase</h2>
 <ol>
   <li><code>make lint</code> — ruff passes</li>
   <li><code>make type</code> — mypy passes</li>
-  <li><code>make test</code> — pytest passes</li>
-  <li>Manual: start each agent server, verify health endpoints</li>
-  <li>Manual: verify DCF output changes appropriately for growth stocks</li>
-  <li>Docker: <code>docker-compose build &amp;&amp; docker-compose up</code> — all services start and connect</li>
+  <li><code>make test</code> — pytest passes (run with both <code>AUTH_ENABLED=false</code> and <code>AUTH_ENABLED=true</code>)</li>
+  <li>Manual: start each agent server (<code>uv run python -m &lt;package&gt;.server</code>), verify <code>/health</code> returns 200</li>
+  <li>Docker: <code>docker compose build &amp;&amp; docker compose up</code> — all services start and connect</li>
+  <li>Characterization tests: <code>pytest tests/characterization/</code> — all golden outputs still match (except when intentionally changed, e.g., DCF fix)</li>
 </ol>
+
+<h2>Appendix: Files Inventory</h2>
+<p>Complete list of files that reference old directory names and need updating during Phase 1. Use this as a checklist.</p>
+<table>
+  <tr><th>Category</th><th>File</th><th>Old Refs</th><th>Notes</th></tr>
+  <tr><td>Python source</td><td><code>src/orchestrator/agent_executor.py</code></td><td><code>orchestrator</code> (1 import)</td><td>Absolute self-ref: <code>from orchestrator.agent import pop_agent_responses</code></td></tr>
+  <tr><td>Python source</td><td><code>src/orchestrator/agui_bridge.py</code></td><td><code>orchestrator</code> (1 import)</td><td>Absolute self-ref: <code>from orchestrator.agent import pop_agent_responses</code></td></tr>
+  <tr><td>Python source</td><td><code>src/orchestrator/api_fastapi.py</code></td><td><code>orchestrator</code> (1 docstring)</td><td>Not an import — reference in docstring/comment</td></tr>
+  <tr><td>Python source</td><td><code>src/orchestrator/api_routes.py</code></td><td><code>orchestrator</code> (2 imports)</td><td>Lines 293, 307: <code>from orchestrator.agent import _client</code></td></tr>
+  <tr><td>Python source</td><td><code>src/orchestrator/web/agent.py</code></td><td><code>orchestrator</code> (1 import)</td><td>After merge: <code>from orchestrator.agent import root_agent</code></td></tr>
+  <tr><td>Python source</td><td>11 files in <code>mcp/</code> package</td><td><code>mcp_tools</code> (~20 imports)</td><td>Internal cross-refs: <code>_app</code>, <code>infra.*</code>, <code>tools.*</code></td></tr>
+  <tr><td>Python tests</td><td><code>src/tests/unit/test_auth_contract.py</code></td><td><code>orchestrator</code> (2 imports)</td><td>Lines 53, 56</td></tr>
+  <tr><td>Python tests</td><td><code>src/tests/unit/test_auth_routes.py</code></td><td><code>orchestrator</code> (1 import)</td><td>Line 41</td></tr>
+  <tr><td>Python tests</td><td><code>src/tests/unit/test_openapi_spec.py</code></td><td><code>orchestrator</code> (1 import)</td><td>Line 69</td></tr>
+  <tr><td>Python tests</td><td><code>src/tests/unit/memory/test_save_brief_persists_synthesis.py</code></td><td><code>orchestrator</code> (5 refs)</td><td>Lines 22, 79, 98, 122, 138: includes <code>sys.modules["orchestrator.sub_agent_client"]</code> stub (line 22) and <code>patch("orchestrator.agent.asyncio.create_task")</code> mock targets (lines 98, 138) — these are string-based references that must match the new package name exactly.</td></tr>
+  <tr><td>Python tests</td><td><code>src/tests/characterization/conftest.py</code></td><td><code>orchestrator</code> (2 refs)</td><td>Lines 84-85: <code>sys.modules["orchestrator.agent"]</code> stub — NOT a normal import, this is a module registry key that test infra uses to prevent real ADK loading. Must change to <code>"orchestrator.agent"</code>.</td></tr>
+  <tr><td>Python tests</td><td><code>src/tests/characterization/test_api_contracts.py</code></td><td><code>orchestrator</code> (2 refs)</td><td>Line 65 (import) + line 66 (comment)</td></tr>
+  <tr><td>Python tests</td><td><code>src/tests/characterization/test_quant_nodes_io.py</code></td><td><code>quant</code> (7 imports)</td><td>Lines 67-193</td></tr>
+  <tr><td>Python tests</td><td><code>src/tests/unit/test_quant_graph_nodes.py</code></td><td><code>quant</code> (1 import)</td><td>Line 16</td></tr>
+  <tr><td>Python tests</td><td><code>src/tests/characterization/test_mcp_tool_shapes.py</code></td><td><code>mcp_tools</code> (13 imports)</td><td>Lines 81-229</td></tr>
+  <tr><td>Scripts</td><td><code>src/scripts/generate_openapi.py</code></td><td><code>orchestrator</code> (1 import)</td><td>Line 15</td></tr>
+  <tr><td>Config</td><td><code>pyproject.toml</code></td><td>All 5 old names</td><td>2 sections: setuptools.packages.find + mypy.overrides</td></tr>
+  <tr><td>Config</td><td><code>Makefile</code></td><td><code>orchestrator</code></td><td>3 targets: type, test, test-auth</td></tr>
+  <tr><td>CI</td><td><code>.github/workflows/ci.yml</code></td><td>All 5 old names</td><td>7 lines: mypy target + docker build matrix</td></tr>
+  <tr><td>Docker</td><td>5 Dockerfiles</td><td>Each has own old name</td><td>COPY + CMD paths</td></tr>
+  <tr><td>Docker</td><td><code>docker-compose.yml</code></td><td>All 5 old names</td><td>Service names + dockerfile paths + env hostnames + depends_on</td></tr>
+  <tr><td>Batch</td><td><code>run_ui.bat</code></td><td>All 5 old names</td><td>5 module paths (lines 28, 32, 36, 40, 45)</td></tr>
+  <tr><td>Batch</td><td><code>run_adk_web.bat</code></td><td>All 5 old names + <code>agents</code></td><td>5 module paths + <code>adk web ... agents</code> dir arg (line 45)</td></tr>
+  <tr><td>Docs</td><td>12+ files in <code>docs/</code></td><td>All old names</td><td>100+ references. Batch find-replace. Skip CHANGELOG history.</td></tr>
+  <tr><td>Docs</td><td><code>README.md</code>, <code>README.html</code></td><td>All old names</td><td>Module paths in code blocks</td></tr>
+  <tr><td>Comments</td><td><code>src/shared/logging_config.py</code></td><td>All old names</td><td>Lines 17-21: comments only</td></tr>
+  <tr><td>Comments</td><td><code>src/shared/runtime_eval.py</code></td><td><code>quant</code></td><td>Line 708: comment <code># Keys match _SIGNAL_WEIGHTS in quant/nodes.py</code></td></tr>
+  <tr><td>Comments</td><td><code>src/tests/unit/test_auth_routes.py</code></td><td><code>orchestrator</code></td><td>Line 1: module docstring <code>"""Tests for orchestrator/auth_routes.py...</code></td></tr>
+  <tr><td>Tooling</td><td><code>.claude/settings.local.json</code></td><td><code>mcp_tools</code>, <code>orchestrator</code></td><td>Permission entries — cosmetic, won't break build</td></tr>
+  <tr><td>Historical</td><td><code>.mimocode/plans/</code> (2 files)</td><td>All old names</td><td>DO NOT update — historical plan docs</td></tr>
+  <tr><td>Historical</td><td><code>ppt-docx fix plan.md</code></td><td><code>orchestrator</code></td><td>Old plan — can delete or leave as-is</td></tr>
+</table>
 
 </body>
 </html>

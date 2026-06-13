@@ -1,9 +1,9 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>FinSight — MCP Servers</title>
+<title>FinSight � MCP Servers</title>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:1.7;color:#2c2c2c;background:#faf8f5;padding:2rem 1rem}
@@ -39,20 +39,20 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <h1>MCP Server</h1>
 <p>MCP server hosting both agent registry and data tools. Split from a single monolithic file (2095 lines) into per-tool modules (v1.41):</p>
 
-<pre>mcp_servers/
-  ├── _app.py                # 78-line composition root with get_app() factory
-  ├── finsight_server.py     # re-exports get_app() for backward compat
-  ├── tools/
-  │   ├── agent_registry.py  # find_agent(), resource://agent_cards/*
-  │   ├── market_data.py     # get_prices(), get_financials(), get_options_chain()
-  │   ├── edgar.py           # SEC EDGAR tools (filings, content, search)
-  │   ├── ticker.py          # validate_ticker(), resolve_company_ticker()
-  │   ├── sentiment.py       # news, sentiment indicators, earnings history
-  │   └── sandbox.py         # execute_python() with AST gate + container mode
-  └── infra/
-      ├── rate_limiters.py   # TokenBucket rate limiter
-      ├── embed.py           # sentence-transformers lazy loader
-      └── news_fetch.py      # RSS feed fetchers (Yahoo, CNBC, MarketWatch, DDG fallback)</pre>
+<pre>mcp_tools/
+  +-- _app.py                # 78-line composition root with get_app() factory
+  +-- finsight_server.py     # re-exports get_app() for backward compat
+  +-- tools/
+  �   +-- agent_registry.py  # find_agent(), resource://agent_cards/*
+  �   +-- market_data.py     # get_prices(), get_financials(), get_options_chain()
+  �   +-- edgar.py           # SEC EDGAR tools (filings, content, search)
+  �   +-- ticker.py          # validate_ticker(), resolve_company_ticker()
+  �   +-- sentiment.py       # news, sentiment indicators, earnings history
+  �   +-- sandbox.py         # execute_python() with AST gate + container mode
+  +-- infra/
+      +-- rate_limiters.py   # TokenBucket rate limiter
+      +-- embed.py           # sentence-transformers lazy loader
+      +-- news_fetch.py      # RSS feed fetchers (Yahoo, CNBC, MarketWatch, DDG fallback)</pre>
 
 <h2>Overview</h2>
 
@@ -64,7 +64,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <p>No API keys required (SEC uses public API, news uses RSS feeds). Windows-compatible &mdash; <code>import resource</code> guarded by platform check.</p>
 
 <h2>Running</h2>
-<pre>python -m uvicorn mcp_servers.finsight_server:get_app --host 0.0.0.0 --port 8010</pre>
+<pre>python -m uvicorn mcp_tools.finsight_server:get_app --host 0.0.0.0 --port 8010</pre>
 <p>Health check: <code>GET http://localhost:8010/health</code> &rarr; <code>{"status":"ok","agent":"mcp"}</code></p>
 
 <h2>TTL Caching</h2>
@@ -113,7 +113,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <tr><td><code>validate_ticker</code></td><td><code>ticker</code></td><td>Validates ticker against SEC database (cached CIK map)</td></tr>
 <tr><td><code>resolve_company_ticker</code></td><td><code>text</code></td><td>Natural language company name to ticker (SEC reverse index + Yahoo fallback)</td></tr>
 </table>
-<p><strong>Note</strong>: Requires valid <code>User-Agent</code> header. Set via <code>SEC_USER_AGENT</code> env var in <code>.env</code> (format: <code>Your Name (your-email@example.com)</code>) &mdash; see <code>shared/settings.py</code>. The RAG agent uses <code>get_filing_content</code> to fetch and index actual SEC filing content.</p>
+<p><strong>Note</strong>: Requires valid <code>User-Agent</code> header. Set via <code>SEC_USER_AGENT</code> env var in <code>.env</code> (format: <code>Your Name (your-email@example.com)</code>) &mdash; see <code>src/shared/settings.py</code>. The RAG agent uses <code>get_filing_content</code> to fetch and index actual SEC filing content.</p>
 
 <h3>Financial News Tools</h3>
 <p>RSS feeds: Yahoo Finance, CNBC, MarketWatch, Seeking Alpha. VADER sentiment scoring.</p>

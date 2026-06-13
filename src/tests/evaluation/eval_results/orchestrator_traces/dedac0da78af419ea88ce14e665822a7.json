@@ -1,0 +1,6 @@
+{
+  "agent_name": "Sentiment Intelligence Agent",
+  "task_sent": "{\"_trace\": {\"trace_id\": \"d83b7d300719c24e7758cd302a89e985\", \"parent_span_id\": \"daa070c29bf83ec4\"}}\n<<<TASK>>>\nAnalyze MSFT (Microsoft) sentiment from financial news, analyst ratings, insider trading activity, and market narratives as of 2026-05-27.",
+  "response": "Sentiment analysis failed: name 'get_shared_mcp' is not defined",
+  "latency_ms": 2453
+}

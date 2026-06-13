@@ -3,7 +3,7 @@
 MCP server hosting both agent registry and data tools. Split from a single monolithic file (2095 lines) into per-tool modules (v1.41):
 
 ```
-mcp_servers/
+mcp_tools/
   ├── _app.py                # 78-line composition root with get_app() factory
   ├── finsight_server.py     # re-exports get_app() for backward compat
   ├── tools/
@@ -30,7 +30,7 @@ No API keys required (SEC uses public API, news uses RSS feeds). Windows-compati
 ## Running
 
 ```bash
-python -m uvicorn mcp_servers.finsight_server:get_app --host 0.0.0.0 --port 8010
+python -m uvicorn mcp_tools.finsight_server:get_app --host 0.0.0.0 --port 8010
 ```
 
 Health check: `GET http://localhost:8010/health` → `{"status":"ok","agent":"mcp"}`
@@ -87,7 +87,7 @@ Public API — no key required.
 | `validate_ticker` | `ticker` | Validates ticker against SEC database (cached CIK map) |
 | `resolve_company_ticker` | `text` | Natural language company name to ticker (SEC reverse index + Yahoo fallback) |
 
-**Note**: Requires valid `User-Agent` header. Set via `SEC_USER_AGENT` env var in `.env` (format: `Your Name (your-email@example.com)`) — see `shared/settings.py`. The RAG agent uses `get_filing_content` to fetch and index actual SEC filing content.
+**Note**: Requires valid `User-Agent` header. Set via `SEC_USER_AGENT` env var in `.env` (format: `Your Name (your-email@example.com)`) — see `src/shared/settings.py`. The RAG agent uses `get_filing_content` to fetch and index actual SEC filing content.
 
 ### Financial News Tools
 

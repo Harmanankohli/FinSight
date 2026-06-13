@@ -38,7 +38,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 
 <h1>Test Coverage</h1>
 
-<p><strong>~235 test functions (~300 parametrized cases) across 27 test files + offline evaluation driver. v1.39 added DOCX/HTML/PPTX regression tests. Phase 0 added 45 characterization tests (4 files). Phase 3 added auth contract tests (3 files). Phase R added corpus regression harness (1 file).</strong></p>
+<p><strong>~251 test functions (~317 parametrized cases) across 28 test files + offline evaluation driver. v1.39 added DOCX/HTML/PPTX regression tests. Phase 0 added 45 characterization tests (4 files). Phase 3 added auth contract tests (3 files). Phase R added corpus regression harness (1 file). v2.2 added agent output extraction tests (1 file).</strong></p>
 
 <h2>Running Tests</h2>
 <pre><code>pytest                          # all unit tests
@@ -52,7 +52,7 @@ pytest -m "not integration"     # unit tests only (default)
 pytest -m "not external"        # exclude tests that need external services</code></pre>
 
 <h2>Test Layout</h2>
-<pre><code>tests/
+<pre><code>src/tests/
 &crarr; conftest.py                          # env isolation, memory_db fixture, os._exit hook
 &crarr; evaluation/                          # offline RAGAS eval (standalone, not pytest)
 &crarr;   &crarr; golden_set.jsonl               # 5 golden examples (NVDA, AAPL)
@@ -91,6 +91,8 @@ pytest -m "not external"        # exclude tests that need external services</cod
 &crarr;   &crarr; test_rate_limiter.py             # 4 &mdash; burst, refill
 &crarr;   &crarr; test_trace_context.py            # 8 &mdash; inject/extract
 &crarr;   &crarr; test_settings.py                 # Phase 1: pydantic-settings validation
+&crarr;   &crarr; test_deck_data_extraction.py     # 38 &mdash; Phase R: extraction pipeline edge cases
+&crarr;   &crarr; test_agent_outputs_extraction.py # 16 &mdash; v2.2: agent output capture + extraction routing
 &crarr;   &crarr; test_auth_tokens.py              # 132 &mdash; Phase 2: JWT gen, validation, rotation
 &crarr;   &crarr; test_auth_middleware.py          # 189 &mdash; Phase 2: middleware chain, routing
 &crarr;   &crarr; test_auth_routes.py              # 145 &mdash; Phase 2: login/refresh/logout, lockout
@@ -154,7 +156,7 @@ pytest -m "not external"        # exclude tests that need external services</cod
 </table>
 
 <h2>Regression Tests</h2>
-<p>20 tests across 3 files in <code>tests/regression/</code>. Run without service dependencies &mdash; all generators operate offline against synthetic brief data:</p>
+<p>20 tests across 3 files in <code>src/tests/regression/</code>. Run without service dependencies &mdash; all generators operate offline against synthetic brief data:</p>
 <ul>
 <li><code>test_docx_regression.py</code> (5): Confirms DOCX generator is unaffected by Phase 1 data-layer changes. Verifies yfinance resolution, table parsing, and KPI priority selection produce valid <code>.docx</code> output.</li>
 <li><code>test_pptx_regression.py</code> (7): Valid output, empty brief, unknown ticker (PLTR), non-standard recommendation, unicode, markdown tables, very long summary.</li>
@@ -169,7 +171,7 @@ pytest -m "not external"        # exclude tests that need external services</cod
 </ul>
 
 <h2>Offline Evaluation</h2>
-<p><code>tests/evaluation/</code> provides a standalone RAGAS evaluation harness (not pytest):</p>
+<p><code>src/tests/evaluation/</code> provides a standalone RAGAS evaluation harness (not pytest):</p>
 <ul>
 <li><code>golden_set.jsonl</code>: 5 golden examples (NVDA, AAPL) with query, expected context, and expected agent goals.</li>
 <li><code>run_offline_eval.py</code>: Loads golden set, runs RAGAS <code>ContextRecall</code>, <code>ContextEntityRecall</code>, <code>AgentGoalAccuracy</code> against captured or live responses.</li>

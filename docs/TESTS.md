@@ -1,6 +1,6 @@
 # Test Coverage
 
-**~235 test functions (~300 parametrized cases) across 27 test files + offline evaluation driver. v1.39 added DOCX/HTML/PPTX regression tests. Phase 0 added 45 characterization tests (4 files). Phase 3 added auth contract tests (3 files). Phase R added corpus regression harness (1 file).**
+**~251 test functions (~317 parametrized cases) across 28 test files + offline evaluation driver. v1.39 added DOCX/HTML/PPTX regression tests. Phase 0 added 45 characterization tests (4 files). Phase 3 added auth contract tests (3 files). Phase R added corpus regression harness (1 file). v2.2 added agent output extraction tests (1 file).**
 
 ## Running Tests
 
@@ -56,6 +56,7 @@ tests/
     ├── test_trace_context.py            #   8 - inject/extract
     ├── test_settings.py                 #   Phase 1: pydantic-settings validation
     ├── test_deck_data_extraction.py     #  38 - Phase R: extraction pipeline edge cases
+    ├── test_agent_outputs_extraction.py #  16 - v2.2: agent output capture + extraction routing
     ├── test_auth_tokens.py              # 132 - Phase 2: JWT gen, validation, rotation
     ├── test_auth_middleware.py          # 189 - Phase 2: middleware chain, routing
     ├── test_auth_routes.py              # 145 - Phase 2: login/refresh/logout, lockout
@@ -69,7 +70,7 @@ tests/
         ├── test_ticker_memory.py        #   7 - store/get_latest, flip detection
         └── test_save_brief_persists_synthesis.py  # 2 - synthesis wins, rationale fallback
 
-**Total: ~300 parametrized test cases across 27 test files.**
+**Total: ~317 parametrized test cases across 28 test files.**
 ```
 
 ## Key Patterns

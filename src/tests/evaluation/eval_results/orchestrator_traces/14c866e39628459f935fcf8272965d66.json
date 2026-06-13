@@ -1,0 +1,6 @@
+{
+  "agent_name": "Financial RAG Agent",
+  "task_sent": "{\"_trace\": {\"trace_id\": \"79f406a741341d506c81d8f6b0e602de\", \"parent_span_id\": \"fd13613737d2482a\"}}\n<<<TASK>>>\nAnalyze NVDA (NVIDIA) SEC filings for recent financial performance on 2026-06-06.",
+  "response": "{\"relevance_scores\": [], \"ticker\": \"NVDA\", \"confidence_score\": 0.0, \"summary\": \"Error: Error code: 400 - {'error': 'Model unloaded.'}\", \"sources\": [], \"context_texts\": []}",
+  "latency_ms": 4516
+}

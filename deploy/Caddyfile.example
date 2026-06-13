@@ -15,11 +15,11 @@ example.com {
     }
 
     handle_path /auth/* {
-        reverse_proxy localhost:8080
+        reverse_proxy localhost:8001
     }
 
     handle_path /api/orch/* {
-        reverse_proxy localhost:8080
+        reverse_proxy localhost:8001
     }
 
     handle_path /research/* {

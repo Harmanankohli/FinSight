@@ -34,7 +34,7 @@ The v1.23 same-day cache relied on the LLM honoring `[TODAY]` tags in the inject
 
 The callback checks for a valid `response_text` in the cached brief (populated by the `update_response_text` overwrite, see below). If only a recommendation exists without analysis text, it falls through to let the LLM run.
 
-**Why two cache paths (callback + executor-level)?** The `before_agent_callback` only fires when the orchestrator runs through ADK's built-in runner (`adk web` path). A2A requests hitting `agent_1_adk/main.py` directly bypass ADK callbacks, so the executor-level `_get_today_cached_text()` provides the same short-circuit for that path.
+**Why two cache paths (callback + executor-level)?** The `before_agent_callback` only fires when the orchestrator runs through ADK's built-in runner (`adk web` path). A2A requests hitting `src/orchestrator/main.py` directly bypass ADK callbacks, so the executor-level `_get_today_cached_text()` provides the same short-circuit for that path.
 
 ### Why the full synthesis is stored directly in `save_brief` instead of a post-turn overwrite?
 
@@ -188,7 +188,7 @@ Evaluation results are only useful if they're tracked over time. Pushing scores 
 
 **Why `max_retries=5` instead of the previous `max_retries=1`?** LM Studio periodically unloads idle models from GPU memory. When a RAGAS metric call arrives after an idle period, LM Studio reloads the model — the first request times out, succeeding on retry. With `max_retries=1`, the single retry was sometimes insufficient for model reload (~2-5s). Increasing to 5 gives the SDK enough budget to absorb reload latency at the httpx layer rather than failing instructor's structured-output calls. The `instructor.from_openai(max_retries=1)` override was removed so instructor calls inherit the client's retry count. Separate `asyncio.TimeoutError` handling prevents timeouts from appearing as bare colons in logs.
 
-**Why `sys.stdout.reconfigure(encoding='utf-8')`?** RAGAS internal log messages (from `ragas/llms/base.py`) contain Unicode characters like curly quotes (`\u2010`, `\u2011`) when formatting LLM responses. On Windows with cp1252 console encoding, these characters trigger `UnicodeEncodeError`, producing noisy "--- Logging error ---" tracebacks. Setting UTF-8 at import time in `shared/bootstrap.py` (moved from `shared/config.py` in v1.41) prevents this for both stdout and stderr.
+**Why `sys.stdout.reconfigure(encoding='utf-8')`?** RAGAS internal log messages (from `ragas/llms/base.py`) contain Unicode characters like curly quotes (`\u2010`, `\u2011`) when formatting LLM responses. On Windows with cp1252 console encoding, these characters trigger `UnicodeEncodeError`, producing noisy "--- Logging error ---" tracebacks. Setting UTF-8 at import time in `src/shared/bootstrap.py` (moved from `src/shared/config.py` in v1.41) prevents this for both stdout and stderr.
 
 **Why `_push_scores` skips when trace_id is None?** With placeholder Langfuse API keys (`pk-lf-...`), `langfuse.create_score()` with no `trace_id` sends an API request missing the required trace identifier. The Langfuse cloud API rejects these with "Bad request" errors. Since eval tasks may run outside any active trace context, the early return when `trace_id is None` avoids pointless API failures.
 
@@ -202,7 +202,7 @@ Sidecar RAGAS evaluation adds 5–180 seconds of background LLM work per query (
 
 ### Why move the orchestrator eval into `after_agent_callback`?
 
-When `adk web` is the entry point, the orchestrator goes through ADK's built-in runner — `FinSightAgentExecutor.execute()` is never called. The eval call originally placed in `agent_executor.py` only fired when an A2A client hit `agent_1_adk/main.py` directly. Once `run_adk_web.bat` stopped starting the standalone orchestrator A2A server (it's redundant with `adk web`), evals stopped firing entirely.
+When `adk web` is the entry point, the orchestrator goes through ADK's built-in runner — `FinSightAgentExecutor.execute()` is never called. The eval call originally placed in `agent_executor.py` only fired when an A2A client hit `src/orchestrator/main.py` directly. Once `run_adk_web.bat` stopped starting the standalone orchestrator A2A server (it's redundant with `adk web`), evals stopped firing entirely.
 
 `after_agent_callback` is the only ADK extension point guaranteed to fire on every agent turn regardless of runner. Wiring eval scheduling into the existing `_persist_memory_callback` keeps both side-effects in one place: callback → check turn type → persist memory → fire eval. The trace_id is read from the active Langfuse span at callback time, so traces from `adk web` are still linked.
 
@@ -220,7 +220,7 @@ The previous `ragas/{metric}` naming flattened all four agents into one dimensio
 
 The earlier shape of `runtime_eval.py` included an `if __name__ == "__main__":` block with `_invoke_agent()` that spun up its own `Runner` + `InMemorySessionService` to invoke the orchestrator for a fixed set of test cases. This duplicated exactly what `FinSightAgentExecutor` and `after_agent_callback` already do for live traffic — running the agent, collecting events, extracting the response. The live executor *already has the response in hand* when it fires the sidecar eval; a second runner adds nothing except a second source of truth that can drift from the first.
 
-Removed: `_invoke_agent()`, `_run_batch_eval()`, `_BATCH_EVAL_CASES`, and the `__main__` block. Batch evaluation with ground-truth references (which is a genuinely different concern — it needs reference tool calls and reference answers) still lives in `tests/evaluation/run_orchestrator_eval.py`.
+Removed: `_invoke_agent()`, `_run_batch_eval()`, `_BATCH_EVAL_CASES`, and the `__main__` block. Batch evaluation with ground-truth references (which is a genuinely different concern — it needs reference tool calls and reference answers) still lives in `src/tests/evaluation/run_orchestrator_eval.py`.
 
 ## Google ADK 2.x Upgrade
 
@@ -235,11 +235,11 @@ All 2.0 breaking changes were checked against the codebase before upgrading:
 | 2.0 breaking change | Affects FinSight? |
 |---|---|
 | Event schema adds `node_info` + `output` fields | No — `SQLiteMemoryService._event_to_dict` only reads `author` and `content.parts`, doesn't validate full schema |
-| `BaseAgent` extends `BaseNode`; no more `_run_async_impl` overrides | No — we use `LlmAgent` directly; `shared/base_agent.py` is a separate Pydantic class, not ADK's `BaseAgent` |
-| No manual `enqueue_event()` on ADK events | No — `enqueue_event()` calls in `shared/generic_executor.py` are on A2A's `EventQueue`, not ADK |
-| No broad `try/except BaseException` | No — the three matches are in `shared/mcp_client.py` and `shared/runtime_eval.py`, both outside the ADK execution path |
+| `BaseAgent` extends `BaseNode`; no more `_run_async_impl` overrides | No — we use `LlmAgent` directly; `src/shared/base_agent.py` is a separate Pydantic class, not ADK's `BaseAgent` |
+| No manual `enqueue_event()` on ADK events | No — `enqueue_event()` calls in `src/shared/generic_executor.py` are on A2A's `EventQueue`, not ADK |
+| No broad `try/except BaseException` | No — the three matches are in `src/shared/mcp_client.py` and `src/shared/runtime_eval.py`, both outside the ADK execution path |
 
-Smoke-tested at upgrade time: all imports from `google.adk.agents`, `google.adk.tools`, `google.adk.runners`, `google.adk.sessions`, `google.adk.events`, `google.adk.memory`, `google.adk.cli.service_registry` resolve. `SQLiteMemoryService` still satisfies the 2.x `BaseMemoryService` interface (signatures match). `agent_1_adk.agent.root_agent` loads and registers all four tools. `after_agent_callback` still fires.
+Smoke-tested at upgrade time: all imports from `google.adk.agents`, `google.adk.tools`, `google.adk.runners`, `google.adk.sessions`, `google.adk.events`, `google.adk.memory`, `google.adk.cli.service_registry` resolve. `SQLiteMemoryService` still satisfies the 2.x `BaseMemoryService` interface (signatures match). `orchestrator.agent.root_agent` loads and registers all four tools. `after_agent_callback` still fires.
 
 ### Why pin `>=2.0,<3.0` instead of an exact version?
 
@@ -494,11 +494,11 @@ The unified finsight MCP server (`finsight_server.py`) hosts agent registry + da
 
 ### Problem
 
-Configuration was scattered across `shared/config.py` with module-level `os.environ.get()` calls and `try/except ImportError` fallbacks. No type validation — a typo in `.env` silently defaulted. `os.environ["HF_HUB_OFFLINE"] = "1"` at `shared/config.py` import time produced side effects just by importing the config module.
+Configuration was scattered across `src/shared/config.py` with module-level `os.environ.get()` calls and `try/except ImportError` fallbacks. No type validation — a typo in `.env` silently defaulted. `os.environ["HF_HUB_OFFLINE"] = "1"` at `src/shared/config.py` import time produced side effects just by importing the config module.
 
 ### Solution
 
-`shared/settings.py` uses pydantic-settings `BaseSettings`:
+`src/shared/settings.py` uses pydantic-settings `BaseSettings`:
 
 ```python
 class Settings(BaseSettings):
@@ -511,9 +511,9 @@ class Settings(BaseSettings):
 
 **Singleton lazy-load**: `get_settings()` caches after first call — no import-time side effects.
 
-**Process-level side-effects** moved to `shared/bootstrap.py`: sets event loop policy, `HF_HUB_OFFLINE`, stdout encoding. Called once per process entry point.
+**Process-level side-effects** moved to `src/shared/bootstrap.py`: sets event loop policy, `HF_HUB_OFFLINE`, stdout encoding. Called once per process entry point.
 
-**Why not just fix `shared/config.py`?** The file had grown to ~184 lines of module-level code with hard-to-track import order dependencies. A fresh `pydantic-settings` class was fewer lines, self-documenting, and eliminated all import-time side-effect bugs.
+**Why not just fix `src/shared/config.py`?** The file had grown to ~184 lines of module-level code with hard-to-track import order dependencies. A fresh `pydantic-settings` class was fewer lines, self-documenting, and eliminated all import-time side-effect bugs.
 
 ## Why Split the Monolithic Modules (v1.41)
 
@@ -523,7 +523,7 @@ Monolithic `finsight_server.py` had all 18 MCP tools + agent registry + rate lim
 
 ### Report Generator (1638 lines → 5 files)
 
-Same pattern: extraction pipeline, PPTX renderer, DOCX renderer, HTML renderer, and deck model each became their own file. The `shared/report_generator.py` shim (re-exporting public API) remained until v2.0 for backward compatibility, then was removed.
+Same pattern: extraction pipeline, PPTX renderer, DOCX renderer, HTML renderer, and deck model each became their own file. The `src/shared/report_generator.py` shim (re-exporting public API) remained until v2.0 for backward compatibility, then was removed.
 
 ### LangGraph Nodes (1286 lines → 7 files)
 
@@ -533,7 +533,7 @@ Same pattern: extraction pipeline, PPTX renderer, DOCX renderer, HTML renderer, 
 
 ### Problem
 
-The extraction pipeline in `shared/reports/extraction.py` treated all markdown tables identically — it extracted data from tables but had no understanding of *what kind* of table it was parsing. A valuation table and a peer comparison table were both processed the same way, producing schema-ambiguous output.
+The extraction pipeline in `src/shared/reports/extraction.py` treated all markdown tables identically — it extracted data from tables but had no understanding of *what kind* of table it was parsing. A valuation table and a peer comparison table were both processed the same way, producing schema-ambiguous output.
 
 ### Solution
 
@@ -567,7 +567,7 @@ The rate-limited lockout uses IP per-username to prevent brute-force attacks. Bu
 
 ## Why Disable proxy.ts Middleware (v2.1)
 
-The `proxy.ts` middleware in `web/nextjs-app/proxy.ts` redirected unauthorized requests to the CopilotKit Cloud login page. Even with `AUTH_ENABLED=false`, the middleware intercepted requests and forced a login redirect — breaking the local development flow where users expect to bypass authentication entirely.
+The `proxy.ts` middleware in `src/web/nextjs-app/proxy.ts` redirected unauthorized requests to the CopilotKit Cloud login page. Even with `AUTH_ENABLED=false`, the middleware intercepted requests and forced a login redirect — breaking the local development flow where users expect to bypass authentication entirely.
 
 **Fix**: Renamed to `proxy.ts.disabled`. The middleware is git-history preserved but not loaded by Next.js. When auth is re-enabled for production, rename back and verify the redirect condition checks `AUTH_ENABLED` before redirecting.
 
@@ -650,7 +650,7 @@ The RAG agent fetches SEC filings via MCP on first query (`_ensure_ingested`). W
 
 ### Problem
 
-`extract_ticker()` in `shared/ticker_utils.py` fetched the full SEC company_tickers.json (~4MB) on every call to validate candidates. This meant:
+`extract_ticker()` in `src/shared/ticker_utils.py` fetched the full SEC company_tickers.json (~4MB) on every call to validate candidates. This meant:
 1. Every agent query triggered a network call to SEC.gov just to extract a ticker
 2. `RAGAgent.stream()` had a broken `await self._connect()` call (method didn't exist)
 3. Validation logic was duplicated inline across three agent executors with subtle differences
@@ -691,7 +691,7 @@ The RAG agent fetches SEC filings via MCP on first query (`_ensure_ingested`). W
 
 **Problem**: The MCP call + JSON-parsing logic of `_validate_ticker()` and `_resolve_ticker()` was copy-pasted verbatim (~108 LOC) across all three sub-agent executors. A bug fix or protocol change had to be applied in three places with no guarantee of consistency.
 
-**Solution**: Extracted `validate_ticker_via_mcp(mcp, ticker)` and `resolve_ticker_via_mcp(mcp, query, exclude_ticker)` into `shared/ticker_utils.py`. Each agent's `_validate_ticker` / `_resolve_ticker` methods are now ~7-line wrappers that handle their own connection logic, then delegate the actual MCP call to the shared functions.
+**Solution**: Extracted `validate_ticker_via_mcp(mcp, ticker)` and `resolve_ticker_via_mcp(mcp, query, exclude_ticker)` into `src/shared/ticker_utils.py`. Each agent's `_validate_ticker` / `_resolve_ticker` methods are now ~7-line wrappers that handle their own connection logic, then delegate the actual MCP call to the shared functions.
 
 **Why keep the wrapper methods instead of calling shared functions directly from `stream()`?** Each agent connects to MCP differently — RAG agent uses lazy connect with `_ensure_mcp_connected()`, Quant uses `_ensure_connected()` (reused by `analyze()`), Sentiment uses `_connect()`. Keeping thin wrapper methods preserves per-agent connection semantics and leaves `stream()` unchanged.
 
@@ -737,7 +737,7 @@ The original RSS pipeline had three issues:
 
 **Problem**: Each agent parsed MCP tool responses differently (checking for `.content`, `.text`, dict vs list, etc.), leading to fragile error handling.
 
-**Solution**: Added `parse_mcp_result(result)` utility in `shared/mcp_client.py` that handles various MCP response formats consistently — returns parsed dict/list/string or `{"error": "..."}` on failure.
+**Solution**: Added `parse_mcp_result(result)` utility in `src/shared/mcp_client.py` that handles various MCP response formats consistently — returns parsed dict/list/string or `{"error": "..."}` on failure.
 
 ## DCF Skipped from High Volatility Routing
 
@@ -789,7 +789,7 @@ Validation rejected "SEC", but the fallback `_resolve_ticker()` passed the full 
 
 ### Solution
 
-**Step 1 — Financial stop-word blocklist**: Added `_FINANCIAL_STOP_WORDS` in `shared/ticker_utils.py` — a curated set of 30+ financial acronyms that are never valid stock tickers. Applied to both pattern 4 (3-5 letter) and pattern 5 (2 letter) regex results.
+**Step 1 — Financial stop-word blocklist**: Added `_FINANCIAL_STOP_WORDS` in `src/shared/ticker_utils.py` — a curated set of 30+ financial acronyms that are never valid stock tickers. Applied to both pattern 4 (3-5 letter) and pattern 5 (2 letter) regex results.
 
 ```python
 _FINANCIAL_STOP_WORDS = frozenset({
@@ -827,7 +827,7 @@ The `QuantAgent.stream()` method extracted the target ticker from the query but 
 
 ### Solution
 
-**Step 1 — `extract_holdings()` in `shared/ticker_utils.py`**: Four regex patterns covering natural language phrasing:
+**Step 1 — `extract_holdings()` in `src/shared/ticker_utils.py`**: Four regex patterns covering natural language phrasing:
 
 ```python
 _HOLDINGS_PATTERNS = [
@@ -882,7 +882,7 @@ All five server entry points used `logging.basicConfig(level=logging.INFO)` eith
 
 ### Solution
 
-`shared/logging_config.py` provides a single `setup_file_logging(service_name)` function that:
+`src/shared/logging_config.py` provides a single `setup_file_logging(service_name)` function that:
 - Attaches a `RotatingFileHandler` (10 MB, 5 backups) → `logs/<service>.log`
 - Attaches a `StreamHandler` (stderr) if none is present yet
 - Creates the `logs/` directory if absent
@@ -940,7 +940,7 @@ HuggingFace `sentence-transformers` and `transformers` make network calls to `hu
 
 ### Solution
 
-`shared/bootstrap.py` sets `os.environ["HF_HUB_OFFLINE"] = "1"` before any HuggingFace code is imported or executed (moved from `shared/config.py` in v1.41). This tells the `huggingface_hub` library to skip all network calls — it assumes models are already cached locally from a prior online run.
+`src/shared/bootstrap.py` sets `os.environ["HF_HUB_OFFLINE"] = "1"` before any HuggingFace code is imported or executed (moved from `src/shared/config.py` in v1.41). This tells the `huggingface_hub` library to skip all network calls — it assumes models are already cached locally from a prior online run.
 
 **Why at the top of `config.py` instead of in `.env`?** HuggingFace libraries read `HF_HUB_OFFLINE` at import time via `os.environ.get()`. If `.env` is loaded later (e.g. after the `config` import chain), the embedding model import happens before the env var is set. Setting it via `os.environ.setdefault()` at module level guarantees it's in place before any HuggingFace code runs.
 
@@ -1145,7 +1145,7 @@ The cost of the library (version pinning, audit, CI caching) outweighs the benef
 
 Log aggregators operate in UTC internally. Local timestamps (IST, EST, etc.) require timezone-aware parsing at query time, which is fragile across DST changes and deployment regions. UTC ISO-8601 is unambiguous, sortable, and natively supported by every log system. The `ts` field in each JSON line is the exact moment the log was emitted, independent of the server's timezone.
 
-The existing `IST` convention in `shared/settings.py` is for *business logic* timestamps (analysis_date, created_at) where users think in local time. Log timestamps are for *operations* — UTC is the standard.
+The existing `IST` convention in `src/shared/settings.py` is for *business logic* timestamps (analysis_date, created_at) where users think in local time. Log timestamps are for *operations* — UTC is the standard.
 
 ### Why make the StreamHandler idempotency check more specific?
 
@@ -1345,7 +1345,7 @@ Additionally, the retry backoff logic (`2^attempt` exponential) was already fast
 
 ### Why lazy instrumentation instead of module-level `*Instrumentor().instrument()`?
 
-Module-level `*Instrumentor().instrument()` fires at import time. If a pytest test does `from agent_2_llamaindex.server import app`, it triggers `LlamaIndexInstrumentor().instrument()` which starts OTel span processors, exporter threads, and may try to connect to the OTLP endpoint — even though no tracing is needed. This breaks test isolation and causes non-deterministic failures when import order changes.
+Module-level `*Instrumentor().instrument()` fires at import time. If a pytest test does `from financial_rag.server import app`, it triggers `LlamaIndexInstrumentor().instrument()` which starts OTel span processors, exporter threads, and may try to connect to the OTLP endpoint — even though no tracing is needed. This breaks test isolation and causes non-deterministic failures when import order changes.
 
 Moving instrumentation into `init_instrumentation()` with deferred imports means:
 - Test code can import any module without side effects
@@ -1411,7 +1411,7 @@ Each MCP server (finsight-mcp) runs as a separate process. The ContextVar doesn'
 
 ### Why shared functions instead of inheriting from a base class?
 
-Inheritance would require the executors to share a common base class — which they don't (ADK's `AgentExecutor`, LlamaIndex's `BaseAgent`, LangGraph's `BaseAgent`, CrewAI's `BaseAgent`). A mixin would need to be slotted into four different class hierarchies. Shared functions in `shared/ticker_utils.py` are language-level composition — no inheritance, no mixins, just `await validate_ticker(ticker)` anywhere it's needed.
+Inheritance would require the executors to share a common base class — which they don't (ADK's `AgentExecutor`, LlamaIndex's `BaseAgent`, LangGraph's `BaseAgent`, CrewAI's `BaseAgent`). A mixin would need to be slotted into four different class hierarchies. Shared functions in `src/shared/ticker_utils.py` are language-level composition — no inheritance, no mixins, just `await validate_ticker(ticker)` anywhere it's needed.
 
 The functions are pure wrappers around `validate_ticker_via_mcp()` and `resolve_ticker_via_mcp()` (which already existed in `ticker_utils.py`), adding only the MCP lifecycle management via `get_shared_mcp()`.
 
@@ -1568,7 +1568,7 @@ The original DCF model assumed a fixed 8% WACC for all tickers. For a high-beta 
 
 ### How is WACC now computed?
 
-Three-step process in `dcf_valuation_node()` (`agent_3_langgraph/nodes.py:737`):
+Three-step process in `dcf_valuation_node()` (`src/quant/nodes.py:737`):
 
 1. **Cost of equity (CAPM)**: `risk_free (4.3%) + beta × equity_premium (5.5%)`. Beta is taken from the computed metrics (yfinance 60-month), fallback to 1.0 if unavailable.
 
@@ -1643,9 +1643,9 @@ The parallel fan-out graph had a subtle topology bug. `fetch_fundamentals` fed i
 
 Three-part fix:
 
-**1. Remove diamond dependency** (`agent_3_langgraph/graph.py:39`): Deleted `builder.add_edge("fetch_fundamentals", "format_output")`. Fundamentals data flows through `peer_comparison` and `analyst_positioning` into shared state — `format_output` reads it from state, not from a direct edge. `format_output` now has exactly 5 clean predecessors and runs exactly once per invocation.
+**1. Remove diamond dependency** (`src/quant/graph.py:39`): Deleted `builder.add_edge("fetch_fundamentals", "format_output")`. Fundamentals data flows through `peer_comparison` and `analyst_positioning` into shared state — `format_output` reads it from state, not from a direct edge. `format_output` now has exactly 5 clean predecessors and runs exactly once per invocation.
 
-**2. Add Annotated reducers for concurrent writes** (`agent_3_langgraph/state.py:6-22`): Three state keys are written by multiple nodes in the same step, so they needed reducers even without the diamond:
+**2. Add Annotated reducers for concurrent writes** (`src/quant/state.py:6-22`): Three state keys are written by multiple nodes in the same step, so they needed reducers even without the diamond:
 - `metrics` → `_merge_dict` (merges dicts from `compute_metrics` and `format_output`, second wins on key collision)
 - `stress_test_result` → `_last_nonnull` (last non-null value wins — `stress_test_node` writes real data, `format_output`'s initial write is `None`)
 - `dcf_error` → `_last_nonnull`
@@ -1653,7 +1653,7 @@ Three-part fix:
 - `recommendation` → `_last_str` (idempotent — both runs produce same BUY/HOLD/SELL)
 - `monte_carlo` → `_last_nonnull`
 
-**3. Remove passthrough keys from format_output** (`agent_3_langgraph/nodes.py`): `format_output_node` was returning copies of state keys (`positioning`, `dcf_valuation`, `correlation_matrix`, `fundamentals`, `technicals`, `peer_comparison`, `options_signals`, `insider_signals`) that other nodes already wrote. Even with reducers, writing every key from `format_output` is wasteful and confusing — the node should only emit what it computes: `recommendation`, `reasoning`, `metrics` (with signals/confidence), and `stress_test_result`. Full state from `ainvoke()` still carries every key via the owning nodes.
+**3. Remove passthrough keys from format_output** (`src/quant/nodes.py`): `format_output_node` was returning copies of state keys (`positioning`, `dcf_valuation`, `correlation_matrix`, `fundamentals`, `technicals`, `peer_comparison`, `options_signals`, `insider_signals`) that other nodes already wrote. Even with reducers, writing every key from `format_output` is wasteful and confusing — the node should only emit what it computes: `recommendation`, `reasoning`, `metrics` (with signals/confidence), and `stress_test_result`. Full state from `ainvoke()` still carries every key via the owning nodes.
 
 ### Why not use LangGraph's built-in fan-in handling?
 
@@ -1682,7 +1682,7 @@ The original RAG agent fetched SEC filings first (`_ensure_ingested`), then quer
 
 ### Solution
 
-`query()` in `agent_2_llamaindex/executor.py:162` now fires both ingestions as `asyncio.create_task()` without awaiting:
+`query()` in `src/financial_rag/executor.py:162` now fires both ingestions as `asyncio.create_task()` without awaiting:
 ```python
 asyncio.create_task(self._ensure_ingested(ticker))
 asyncio.create_task(self._ensure_news_ingested(ticker))
@@ -1750,7 +1750,7 @@ Two options existed for parallel agent dispatch:
 - **Option A (system prompt)**: Instruct the LLM in `_STATIC_PREAMBLE` to emit all `send_message` calls in a single assistant turn. Qwen3-30B-A3B natively supports multiple tool calls in one response — the instruction simply unlocks existing capability.
 - **Option B (deterministic extraction)**: A Python-side shim that extracts tickers from user input and fires all sub-agent A2A calls simultaneously, bypassing the LLM for routing. ~5h implementation, adds ticker-extraction false-negative risk.
 
-Option A was chosen (implemented in `agent_1_adk/agent.py:184-189`). It's zero new code, zero added latency, and has a documented escape hatch (Option B) if a future model swap breaks parallel tool calling. The `_STATIC_PREAMBLE` is KV prefix cached — adding the instruction has no inference cost.
+Option A was chosen (implemented in `src/orchestrator/agent.py:184-189`). It's zero new code, zero added latency, and has a documented escape hatch (Option B) if a future model swap breaks parallel tool calling. The `_STATIC_PREAMBLE` is KV prefix cached — adding the instruction has no inference cost.
 
 ### Why add agent responsibility boundaries separately?
 
@@ -1772,7 +1772,7 @@ The old step 5 said "After all agents respond" without specifying whether result
 
 ### Why switch from sequential to parallel filing fetches?
 
-The original `_ensure_ingested()` in `agent_2_llamaindex/executor.py` fetched filing content in a sequential loop: for each filing, call `get_filing_content`, parse, append. For a ticker with 5 new filings, this summed the per-filing latencies (~3-5s each = ~15-25s total). The revised two-phase pattern (`executor.py:74-107`):
+The original `_ensure_ingested()` in `src/financial_rag/executor.py` fetched filing content in a sequential loop: for each filing, call `get_filing_content`, parse, append. For a ticker with 5 new filings, this summed the per-filing latencies (~3-5s each = ~15-25s total). The revised two-phase pattern (`executor.py:74-107`):
 1. **Filter phase**: Iterate filings to find un-ingested candidates (fast, no network)
 2. **Fetch phase**: `asyncio.gather(*[_fetch_one(f) for f in candidates])` — all filing downloads run concurrently
 
@@ -1780,7 +1780,7 @@ Filing downloads for a 5-filing ingest now complete in ~max(per-filing latency) 
 
 ### Why truncate server-side at 25k instead of client-side at 20k?
 
-The old code truncated `content[:20000]` in the RAG agent after receiving the full response from MCP. A 10-K filing response (~80-150k chars) was fully transmitted over the loopback before being truncated. Moving the truncation to `get_filing_content` in `mcp_servers/finsight_server.py:842` (`result["content"] = result.get("content", "")[:25000]`) cuts the bandwidth to <25k per filing — the RAG agent never receives the full text. The limit was also raised from 20k to 25k (MCP server overhead is negligible, more content is better for retrieval).
+The old code truncated `content[:20000]` in the RAG agent after receiving the full response from MCP. A 10-K filing response (~80-150k chars) was fully transmitted over the loopback before being truncated. Moving the truncation to `get_filing_content` in `src/mcp_tools/finsight_server.py:842` (`result["content"] = result.get("content", "")[:25000]`) cuts the bandwidth to <25k per filing — the RAG agent never receives the full text. The limit was also raised from 20k to 25k (MCP server overhead is negligible, more content is better for retrieval).
 
 ### Why not parallelize filing fetches in Phase 1?
 
@@ -1798,9 +1798,9 @@ Phase 1 added the RAG news ingestion and multi-collection architecture. Parallel
 
 ### Why refactor `get_news_sentiment` into impl + wrapper?
 
-The original `get_news_sentiment` used manual `_cache_news.get(key)` / `_cache_news.set(key, result)` pattern. When two concurrent callers (e.g., RAG agent + dashboard) requested the same uncached ticker simultaneously, both would miss the cache, both would fetch RSS feeds, and both would set the cache — wasting one RSS round-trip (~1-2s). The `TTLCache.get_or_fetch()` method (`shared/ttl_cache.py:25`) was already designed for this: it uses an internal `asyncio.Event` per key so the second caller awaits the first's result instead of duplicating work.
+The original `get_news_sentiment` used manual `_cache_news.get(key)` / `_cache_news.set(key, result)` pattern. When two concurrent callers (e.g., RAG agent + dashboard) requested the same uncached ticker simultaneously, both would miss the cache, both would fetch RSS feeds, and both would set the cache — wasting one RSS round-trip (~1-2s). The `TTLCache.get_or_fetch()` method (`src/shared/ttl_cache.py:25`) was already designed for this: it uses an internal `asyncio.Event` per key so the second caller awaits the first's result instead of duplicating work.
 
-The refactor (`mcp_servers/finsight_server.py:1406-1551`):
+The refactor (`src/mcp_tools/finsight_server.py:1406-1551`):
 1. Extracted all fetch logic into `_get_news_sentiment_impl(ticker, limit)` — pure data fetching, no caching concern
 2. The outer `get_news_sentiment` tool now just calls `_cache_news.get_or_fetch(cache_key, lambda: _get_news_sentiment_impl(...))`
 
@@ -1861,7 +1861,7 @@ Rebrand "Sentiment Intelligence Agent" → "Market Context Agent" and repurpose 
 
 1. **New MCP tool `get_macro_indicators()`** (`finsight_server.py:305`): Fetches Treasury yields (10Y/2Y), VIX, DXY, sector ETF performance — all cached 15 min. No ticker argument (macro is global).
 
-2. **New `shared/peer_sets.py`**: 33 hand-curated peer sets across 10+ sectors. Shared with Quant's `peer_comparison_node` (§8.5.5 in the plan). The resolver returns up to 5 peers, excluding the ticker itself.
+2. **New `src/shared/peer_sets.py`**: 33 hand-curated peer sets across 10+ sectors. Shared with Quant's `peer_comparison_node` (§8.5.5 in the plan). The resolver returns up to 5 peers, excluding the ticker itself.
 
 3. **`_collect_data_parallel` rewritten** (`executor.py:39-86`): 3-step pipeline — macro + primary financials → resolve peers → parallel peer financials + prices. Drops `get_news_sentiment` and `get_company_filings` entirely.
 
@@ -1908,7 +1908,7 @@ With the yfinance Industry/Sector approach, the static peer_sets.py became redun
 
 ### Why keep peer_sets.py at all?
 
-`shared/peer_sets.py` now serves as: (1) the sector→ETF mapping for `get_scenario_shocks` (via `_SECTOR_ETF`), (2) documentation of expected peer groupings, (3) a reference for the yfinance Industry/Sector slug mapping. It's no longer called at runtime for peer discovery.
+`src/shared/peer_sets.py` now serves as: (1) the sector→ETF mapping for `get_scenario_shocks` (via `_SECTOR_ETF`), (2) documentation of expected peer groupings, (3) a reference for the yfinance Industry/Sector slug mapping. It's no longer called at runtime for peer discovery.
 
 ### Key properties
 
@@ -1935,7 +1935,7 @@ Two bugs silently degraded Market Context agent output after the peer refactor:
 
 2. **Restore sector/industry extraction** (`executor.py`): Re-added `info = primary_fin.get("info", {}); sector = info.get("sector", ""); industry = info.get("industry", "")` before the `get_peers` call. The return dict now gets populated values.
 
-3. **Expand peer sets** (`shared/peer_sets.py`): Added ~30 new entries covering missing industries (Discount Stores, Grocery Stores, Consumer Defensive/Cyclical sectors). Fixed em-dash vs hyphen mismatch — `_PEER_SETS` used "Software—Infrastructure" (U+2014) but yfinance returns "Software - Infrastructure" (hyphen+spaces). Added `_norm()` normalization function that collapses all dash variants to a single hyphen, with `_NORM_MAP` for O(1) fuzzy lookup.
+3. **Expand peer sets** (`src/shared/peer_sets.py`): Added ~30 new entries covering missing industries (Discount Stores, Grocery Stores, Consumer Defensive/Cyclical sectors). Fixed em-dash vs hyphen mismatch — `_PEER_SETS` used "Software—Infrastructure" (U+2014) but yfinance returns "Software - Infrastructure" (hyphen+spaces). Added `_norm()` normalization function that collapses all dash variants to a single hyphen, with `_NORM_MAP` for O(1) fuzzy lookup.
 
 ### Why wasn't this caught by testing?
 
@@ -2024,7 +2024,7 @@ The plan's original `normalize_weights = {k: v / sum_present for k, v in _SIGNAL
 ### Key properties
 
 - ✅ Deterministic — no LLM calls for signal computation
-- ✅ Same peer resolver (`shared/peer_sets.py`) as Market Context Agent
+- ✅ Same peer resolver (`src/shared/peer_sets.py`) as Market Context Agent
 - ✅ Normalized signals (-1 to +1) for uniform voting
 - ✅ 8-group coverage across fundamental, technical, behavioral, and macro dimensions
 - ✅ Confidence formula accounts for signal sparsity
@@ -2041,7 +2041,7 @@ When a ticker has zero options volume (no open positions, illiquid, or the optio
 
 The original `insider_signals_node` used `get_company_filings` filtered for Form 4 documents, then matched keywords (`"P"`/`"A"` for buys, `"D"`/`"S"` for sells) on filing descriptions. Many Form 4 filings have empty or inconsistent description fields — the XML content contains the actual transaction data, but the MCP tool only returns the filing metadata, not the parsed XML.
 
-**Phase 5 fix** (`mcp_servers/finsight_server.py`, `nodes.py:1022`): New `get_insider_transactions(ticker, days=90)` MCP tool using `yf.Ticker.insider_transactions` — returns structured buy/sell data with share counts and dollar values, not Form 4 keyword heuristics. The tool classifies each transaction row by its `Transaction` column ("Sale", "Buy", "Option Exercise") with buy/sell/other labels, then computes `summary` with `total`, `buys`, `sells`, `direction`, `net_shares`, `net_value`.
+**Phase 5 fix** (`src/mcp_tools/finsight_server.py`, `nodes.py:1022`): New `get_insider_transactions(ticker, days=90)` MCP tool using `yf.Ticker.insider_transactions` — returns structured buy/sell data with share counts and dollar values, not Form 4 keyword heuristics. The tool classifies each transaction row by its `Transaction` column ("Sale", "Buy", "Option Exercise") with buy/sell/other labels, then computes `summary` with `total`, `buys`, `sells`, `direction`, `net_shares`, `net_value`.
 
 The node now reads `summary.buys`, `summary.sells`, `summary.direction` directly from the structured response. This is faster (no SEC EDGAR parsing), more reliable (structured yfinance data feed), and more informative (includes net share/value amounts). The MCP abstraction ensures `_yfinance_limiter` rate-limiting is applied and the result can be cached for any consumer.
 
@@ -2053,13 +2053,13 @@ The original graph only ran `_run_monte_carlo` on the high-volatility path (stre
 
 ### Peer Comparison — Why remove the peer_sets.py fallback?
 
-The v1.33 `peer_comparison_node` had a fallback chain: `get_peers` MCP → `shared/peer_sets.py` → empty. In v1.34 (Phase 5), the fallback was removed because the MCP tool now uses yfinance `Industry`/`Sector` classes instead of the Yahoo Finance HTTP recommendations API — it's more reliable, covers any ticker that yfinance knows about, and doesn't suffer from rate-limit issues that plagued the HTTP-based approach. The `shared/peer_sets.py` static map is inherently incomplete (80+ entries but still misses many sectors) and a silent fallback to a potentially wrong peer set is worse than a clean "Peer discovery unavailable" note.
+The v1.33 `peer_comparison_node` had a fallback chain: `get_peers` MCP → `src/shared/peer_sets.py` → empty. In v1.34 (Phase 5), the fallback was removed because the MCP tool now uses yfinance `Industry`/`Sector` classes instead of the Yahoo Finance HTTP recommendations API — it's more reliable, covers any ticker that yfinance knows about, and doesn't suffer from rate-limit issues that plagued the HTTP-based approach. The `src/shared/peer_sets.py` static map is inherently incomplete (80+ entries but still misses many sectors) and a silent fallback to a potentially wrong peer set is worse than a clean "Peer discovery unavailable" note.
 
 **Fix** (`nodes.py:881`): Removed the `peer_sets.py` fallback call. When `get_peers` returns `[]`, the node returns a clean message: `"Peer discovery unavailable for {ticker} — get_peers returned no results. Restart MCP server if recently deployed."` This gives operators a clear signal that something is wrong with the MCP server, rather than silently falling back to potentially stale static data.
 
 ### Schema Validator — Why fix key paths?
 
-`score_quant_deterministic()` (`shared/runtime_eval.py:614`) is a zero-LLM schema validator that runs on every Quant response. It had three bugs:
+`score_quant_deterministic()` (`src/shared/runtime_eval.py:614`) is a zero-LLM schema validator that runs on every Quant response. It had three bugs:
 1. Wrong access path: `result["signal_scores"]` → correct `result["metrics"]["signal_scores"]`
 2. Shortened group names: `"dcf"` in old signal score dict keys → `"dcf_value"` (actual key in `_SIGNAL_WEIGHTS`)
 3. `conf` path: same deep-nesting fix
@@ -2078,11 +2078,11 @@ These made the validator always return `False` for well-formed responses — it 
 
 ### Problem
 
-MCP tool results are cached in-process via `TTLCache` (`shared/ttl_cache.py:25`). In a multi-process deployment (e.g. Docker with 3 agent containers each calling the same MCP tools), each process maintains its own cache — the first request to each process pays the full yfinance/RSS fetch cost. A shared cache eliminates this redundancy.
+MCP tool results are cached in-process via `TTLCache` (`src/shared/ttl_cache.py:25`). In a multi-process deployment (e.g. Docker with 3 agent containers each calling the same MCP tools), each process maintains its own cache — the first request to each process pays the full yfinance/RSS fetch cost. A shared cache eliminates this redundancy.
 
 ### Solution
 
-`shared/redis_cache.py` implements a two-level cache:
+`src/shared/redis_cache.py` implements a two-level cache:
 
 - **L1**: In-process `TTLCache` (fast, no network). Hit → return immediately.
 - **L2**: Redis write-through. L1 miss → read from Redis → populate L1. Every L1 `set()` propagates to Redis.
@@ -2120,7 +2120,7 @@ Each RAG/Quant/Sentiment response fires 2-5 RAGAS LLM metric calls against the s
 
 ### Solution
 
-Four hardening layers in `shared/runtime_eval.py`:
+Four hardening layers in `src/shared/runtime_eval.py`:
 
 1. **Circuit breaker** (`_CIRCUIT_MAX_FAILURES=5`): After 5 consecutive metric failures, all eval is skipped for 5 min. Per-metric `_last_failure` tracking for granular reset.
 
@@ -2149,7 +2149,7 @@ Each addresses a distinct failure mode. The circuit breaker handles sustained fa
 
 ### Problem
 
-The semantic cache (`shared/semantic_cache.py`) stores responses keyed by query text. A user asking "Analyze NVDA" on Tuesday would hit the cache from Monday's analysis — missing overnight news, price moves, or macro shifts. The cache was too effective: it served stale content across trading days.
+The semantic cache (`src/shared/semantic_cache.py`) stores responses keyed by query text. A user asking "Analyze NVDA" on Tuesday would hit the cache from Monday's analysis — missing overnight news, price moves, or macro shifts. The cache was too effective: it served stale content across trading days.
 
 ### Solution
 
@@ -2194,7 +2194,7 @@ The first RAG query after server start paid a ~3-5s cold-start tax: loading the 
 
 ### Solution
 
-`_do_prewarm()` at `agent_2_llamaindex/server.py` runs once on Starlette startup via `asyncio.to_thread`:
+`_do_prewarm()` at `src/financial_rag/server.py` runs once on Starlette startup via `asyncio.to_thread`:
 
 ```python
 async def _do_prewarm():
@@ -2239,7 +2239,7 @@ The stress test node originally used hardcoded S&P 500 crash percentages in `_SE
 
 ### Solution
 
-**MCP tool `get_scenario_shocks(sector)`** (`mcp_servers/finsight_server.py`): Computes historical crash returns from live price data using sector-specific ETFs resolved via `_SECTOR_ETF` mapping:
+**MCP tool `get_scenario_shocks(sector)`** (`src/mcp_tools/finsight_server.py`): Computes historical crash returns from live price data using sector-specific ETFs resolved via `_SECTOR_ETF` mapping:
 
 | Sector | ETF | Scenario Windows |
 |---|---|---|
@@ -2291,7 +2291,7 @@ The original `_score_fundamental_value()` and `_score_fundamental_quality()` use
 
 ### Solution
 
-**`_relative_score(value, median, higher_is_better)`** (`agent_3_langgraph/nodes.py`): Scores a metric relative to its sector median ratio. Returns in [-1, 1]:
+**`_relative_score(value, median, higher_is_better)`** (`src/quant/nodes.py`): Scores a metric relative to its sector median ratio. Returns in [-1, 1]:
 
 ```
 For higher_is_better (ROE, margin):
@@ -2341,17 +2341,17 @@ Debt-to-equity varies enormously by sector — utilities and banks carry high le
 
 The original `get_peers` tool used Yahoo Finance's `/v6/finance/recommendationsBySymbol` HTTP endpoint ("People also watch"). This HTTP API had several problems: (1) required explicit `User-Agent` headers that changed periodically, (2) occasionally returned empty or stale recommendations for mid-cap and international tickers, (3) returned "recommended" tickers that were not always true industry peers (Yahoo's algorithm optimizes for user engagement, not fundamental similarity).
 
-**New approach** (`mcp_servers/finsight_server.py`): Uses yfinance's built-in `Industry(slug).top_companies` and `Sector(slug).top_companies` methods. These return market-cap-weighted DataFrames of companies in the same industry/sector classification. The mapping is deterministic — same ticker always returns the same peers (modulo yfinance data updates).
+**New approach** (`src/mcp_tools/finsight_server.py`): Uses yfinance's built-in `Industry(slug).top_companies` and `Sector(slug).top_companies` methods. These return market-cap-weighted DataFrames of companies in the same industry/sector classification. The mapping is deterministic — same ticker always returns the same peers (modulo yfinance data updates).
 
 `_industry_to_slug(name)` converts yfinance industry/sector strings (e.g. "Semiconductor Equipment & Materials") to URL slugs (`semiconductor-equipment-materials`) for the yfinance API. Falls through from industry to sector when the industry slug returns no data.
 
 ### Why remove the curated peer_sets.py fallback from the quant agent?
 
-The original Phase 3 fallback chain was: MCP `get_peers` → `shared/peer_sets.py` → empty list. In Phase 5, the curated fallback was removed from `peer_comparison_node` because both agents now call the same MCP tool, and the `peer_sets.py` static map is inherently incomplete (only covers ~80 industry/sector strings). The MCP tool using yfinance Industry/Sector classes is more comprehensive (covers any ticker that yfinance knows about) and doesn't need a static fallback. MCP server cold-start or rate-limit failures produce a clean "Peer discovery unavailable" note instead of silently falling back to a potentially wrong static peer set.
+The original Phase 3 fallback chain was: MCP `get_peers` → `src/shared/peer_sets.py` → empty list. In Phase 5, the curated fallback was removed from `peer_comparison_node` because both agents now call the same MCP tool, and the `peer_sets.py` static map is inherently incomplete (only covers ~80 industry/sector strings). The MCP tool using yfinance Industry/Sector classes is more comprehensive (covers any ticker that yfinance knows about) and doesn't need a static fallback. MCP server cold-start or rate-limit failures produce a clean "Peer discovery unavailable" note instead of silently falling back to a potentially wrong static peer set.
 
 ### Why keep peer_sets.py at all?
 
-`shared/peer_sets.py` is still used by the `_SECTOR_ETF` mapping in `get_scenario_shocks` (which maps sector strings to ETFs) and serves as documentation of expected peer groupings. It's no longer referenced by `peer_comparison_node` or `MarketContextAgent` for runtime peer discovery.
+`src/shared/peer_sets.py` is still used by the `_SECTOR_ETF` mapping in `get_scenario_shocks` (which maps sector strings to ETFs) and serves as documentation of expected peer groupings. It's no longer referenced by `peer_comparison_node` or `MarketContextAgent` for runtime peer discovery.
 
 ### Key properties
 
@@ -2367,7 +2367,7 @@ The original Phase 3 fallback chain was: MCP `get_peers` → `shared/peer_sets.p
 
 The original `insider_signals_node` called `get_company_filings(ticker, form_types="4", limit=15)` and keyword-matched filing descriptions for buy/sell signals. This was unreliable: (1) Form 4 filing titles are inconsistent — some say "Statement of changes in beneficial ownership of securities" (uninformative), others say "Sale - 10000 shares" (informative); (2) the filing description field in the SEC EDGAR response is truncated or empty for many filings; (3) keyword matching on "purchase" vs "sale" misses nuanced transactions like option exercises, grants, and gifts.
 
-**New `get_insider_transactions` MCP tool** (`mcp_servers/finsight_server.py`): Uses yfinance `Ticker.insider_transactions` which returns a structured DataFrame directly from Yahoo Finance's insider data feed. Each row has: `Insider`, `Position` (CEO/CFO/COO), `Transaction` ("Sale", "Buy", "Option Exercise"), `Shares`, `Value`, `Start Date`. The tool:
+**New `get_insider_transactions` MCP tool** (`src/mcp_tools/finsight_server.py`): Uses yfinance `Ticker.insider_transactions` which returns a structured DataFrame directly from Yahoo Finance's insider data feed. Each row has: `Insider`, `Position` (CEO/CFO/COO), `Transaction` ("Sale", "Buy", "Option Exercise"), `Shares`, `Value`, `Start Date`. The tool:
 1. Fetches the DataFrame
 2. Filters to the lookback window (default 90 days)
 3. Classifies each row as buy, sell, or other based on the `Transaction` column
@@ -2435,7 +2435,7 @@ The root issue: A2A only reports terminal events (COMPLETED/FAILED). The RAG age
 
 **Two-part fix** using A2A streaming's intermediate states:
 
-1. **RAG agent emits `TASK_STATE_WORKING` SSE events** (`agent_2_llamaindex/executor.py:19-34`): Before entering ingestion, the RAG agent yields a `ServerTaskUpdateEvent` with `status: TASK_STATE_WORKING` and a message like `"Ingesting SEC filings and news for [ticker]..."`. This keeps the A2A channel open and tells the orchestrator "not done yet, but making progress."
+1. **RAG agent emits `TASK_STATE_WORKING` SSE events** (`src/financial_rag/executor.py:19-34`): Before entering ingestion, the RAG agent yields a `ServerTaskUpdateEvent` with `status: TASK_STATE_WORKING` and a message like `"Ingesting SEC filings and news for [ticker]..."`. This keeps the A2A channel open and tells the orchestrator "not done yet, but making progress."
 
 2. **Orchestrator processes WORKING events** (`SubAgentClient` via `a2a-sdk`): The `BaseClient`'s streaming event handler skips non-terminal events by default. Changed to accumulate WORKING events — when the streaming loop gets a `status_update` with `TASK_STATE_WORKING`, it updates a `_status_msg` on the client and continues listening. Once the terminal event arrives, the accumulated working messages are prepended to the result text, so the orchestrator LLM sees both the progress message and the final analysis.
 
@@ -2474,7 +2474,7 @@ SSE is simpler, unidirectional, and sufficient for streaming LLM responses. WebS
 
 ### Why camelCase aliases in the SSE helper?
 
-CopilotKit's Zod schemas expect camelCase keys (`messageId`, `toolCallId`, `runId`). ADK's AG-UI types generate snake_case by default. The `by_alias=True` dump in `shared/agui_sse.py:sse()` lets us define camelCase aliases on the Pydantic models once and have all serialization use the CopilotKit-compatible form automatically.
+CopilotKit's Zod schemas expect camelCase keys (`messageId`, `toolCallId`, `runId`). ADK's AG-UI types generate snake_case by default. The `by_alias=True` dump in `src/shared/agui_sse.py:sse()` lets us define camelCase aliases on the Pydantic models once and have all serialization use the CopilotKit-compatible form automatically.
 
 ### Why strip null values from SSE frames?
 
@@ -2804,7 +2804,7 @@ Quantitative RSI values (0-100) are meaningful to traders but abstract in a narr
 
 ### Why Jinja2 instead of f-strings or Mako?
 
-HTML templates grow beyond what string formatting handles safely. Jinja2 provides autoescaping (XSS prevention), template inheritance (base layout + content blocks), and `FileSystemLoader` (templates live in `shared/templates/` separate from code). The environment is lazy-loaded — first call to `generate_html()` creates it once via `_get_jinja_env()` — so the import cost is paid exactly once per process lifetime.
+HTML templates grow beyond what string formatting handles safely. Jinja2 provides autoescaping (XSS prevention), template inheritance (base layout + content blocks), and `FileSystemLoader` (templates live in `src/shared/templates/` separate from code). The environment is lazy-loaded — first call to `generate_html()` creates it once via `_get_jinja_env()` — so the import cost is paid exactly once per process lifetime.
 
 ### Why a web component for slide rendering?
 
@@ -2812,7 +2812,7 @@ HTML templates grow beyond what string formatting handles safely. Jinja2 provide
 
 ### Key properties
 
-- ✅ Jinja2 with `FileSystemLoader` — templates in `shared/templates/`, not inline strings
+- ✅ Jinja2 with `FileSystemLoader` — templates in `src/shared/templates/`, not inline strings
 - ✅ Lazy-loaded environment — single creation per process
 - ✅ Autoescaping on by default — XSS protection for ticker/company names in reports
 - ✅ `deck-stage.js` web component — keyboard-navigable slides, zero dependencies
@@ -2858,3 +2858,105 @@ The executive summary has three sections: Price Target, Thesis Statement, Invest
 - ✅ Adding a new section = one list append in `_extract_deck_data()`
 - ✅ PPTX: 3 text boxes on one slide; DOCX: 3 paragraphs; HTML: 3 `<div>` blocks
 - ✅ No format-specific section ordering logic
+
+## Agent Output Capture for Structured Brief Storage (v2.2)
+
+### Why capture sub-agent responses at the `send_message` level?
+
+The extraction pipeline (`src/shared/reports/extraction.py`) previously parsed all report data from the LLM's synthesis prose — regex-extracting metrics, scorecards, and peer comparisons from natural language. This was fragile: the LLM might format "Sharpe ratio of 1.45" as "Sharpe: 1.45", "Sharpe ratio = 1.45", or "the Sharpe ratio stands at 1.45". Each variant needed a separate regex.
+
+Capturing the structured data at the `send_message` tool level — where the sub-agent's response arrives as a parsed dict — gives the extraction pipeline direct access to the raw metrics without regex guessing. The `extra_data` parameter on `store_minimal()` persists these structured responses alongside the synthesis text in the brief record.
+
+### Why `extra_data` on `store_minimal()` instead of a separate table?
+
+Adding a column to `ticker_briefs` would require a schema migration and alter the existing data model. An `extra_data` JSON column is a minimal change: it stores any additional context the orchestrator wants to preserve, without constraining the schema. Future features can add new keys to `extra_data` without database migrations.
+
+### Key properties
+
+- ✅ Structured data available for extraction without regex parsing
+- ✅ Falls back to prose extraction when `extra_data` is unavailable (backward compatible)
+- ✅ `extra_data` is schema-free — future features add keys without migrations
+- ✅ `_populate_from_agent_outputs()` routes structured data to the correct DeckData fields
+
+## Playwright-Based Report Export (v2.2)
+
+### Why Playwright for HTML → PPTX/PDF instead of python-pptx alone?
+
+python-pptx builds slides programmatically — each shape, text box, and chart is positioned via code. This produces correct PPTX files but requires maintaining a parallel rendering engine alongside the HTML template. When the HTML template changes (new slide layout, CSS update), the python-pptx renderer must be updated manually to match.
+
+Playwright renders the HTML template in a headless Chromium browser and screenshots each slide. The PPTX output is a pixel-perfect representation of the HTML template — no manual synchronization needed. The trade-off is a Playwright dependency (~300MB Chromium download) and slightly larger PPTX files (raster images vs vector shapes).
+
+### Why try Playwright first with python-pptx fallback?
+
+Playwright may not be installed in all environments (CI, Docker without Chromium, Windows without Playwright deps). The `generate_pptx()` function tries Playwright first — if it raises `ImportError` or returns empty bytes, it falls back to the python-pptx generator. This gives best-quality output when Playwright is available and functional output everywhere else.
+
+### Why `asyncio.new_event_loop()` on Windows?
+
+Playwright's async API uses `asyncio.subprocess` internally, which requires the ProactorEventLoop on Windows. But FinSight's main event loop uses `WindowsSelectorEventLoopPolicy` (set in `src/shared/bootstrap.py`) to avoid `ConnectionResetError` noise from A2A connections. Creating a temporary event loop with the default Proactor policy for Playwright avoids the incompatibility without changing the main loop policy.
+
+### Key properties
+
+- ✅ HTML → PPTX via screenshots — no manual python-pptx slide synchronization
+- ✅ HTML → PDF via print-mode — native PDF from browser rendering
+- ✅ Graceful fallback — works without Playwright installed
+- ✅ Windows-compatible — temporary ProactorEventLoop for Playwright subprocess
+
+## Ticker Extraction — Pronouns in Stop Words (v2.2)
+
+### Why add English pronouns to `_FINANCIAL_STOP_WORDS`?
+
+The pronoun "I" (single uppercase letter) matched pattern 5 (`\b([A-Z]{1,2})\b`) and was extracted as a ticker. Briefs were stored under ticker "I" instead of the actual target (e.g., NVDA). The user query "I want to invest in NVDA" extracted "I" first because it appeared before "NVDA" in the text.
+
+Adding common 1-2 letter English words (I, AM, AN, IF, IT, IS, IN, AT, ON, TO, NO, SO, OR, etc.) to `_FINANCIAL_STOP_WORDS` prevents these false positives. Explicit patterns like `$I` or `(I)` still work — the stop-word filter only applies to bare-word matches.
+
+### Key properties
+
+- ✅ "I" no longer extracted as a ticker — briefs stored under correct symbol
+- ✅ Explicit patterns (`$I`, `(I)`) still work for rare cases
+- ✅ Covers all common 1-2 letter English words, not just "I"
+
+## Ticker Extraction — Holdings False Positives (v2.2)
+
+### Why tighten `_HOLDINGS_PATTERNS` with word boundaries?
+
+Pattern 4 (`(?:currently\s+)?(?:own|hold|have)\s*:?\s*...`) was too broad. The word "have" followed by any 1-5 letter word matched as a holding: "everything" → "EVERY", "ERSHI" from "have ERSHI". The pattern lacked `\b` word boundaries, so partial-word matches occurred.
+
+Adding `\b` boundaries and requiring "I" or "we" subject on the broadest pattern prevents false-positive phantom tickers. Extracted holdings are also filtered against stop words and noise words as a final defense.
+
+### Key properties
+
+- ✅ Word boundaries prevent partial-word false positives
+- ✅ Subject requirement ("I" or "we") on broadest pattern reduces noise
+- ✅ Stop-word filtering catches remaining edge cases
+
+## Stable Anonymous User ID (v2.2)
+
+### Why generate a cookie-based anonymous ID?
+
+The frontend previously sent no `X-FinSight-User-Id` header, so the backend generated a new `anon-{uuid}` on every request. Cache lookups (`_get_today_cached_text`, `_build_memory_context`) filter by `user_id` — with a different UUID each time, they always missed, and agents re-ran on every question even for the same stock in the same session.
+
+A stable anonymous ID set as a `finsight_user_id` cookie (1-year TTL) ensures subsequent requests send the same ID. Cache lookups now find existing briefs, and the same-day cache path short-circuits the LLM for repeat queries.
+
+### Key properties
+
+- ✅ Same-day cache works for anonymous users — no more redundant agent runs
+- ✅ 1-year cookie TTL — persists across browser sessions
+- ✅ No server-side state — the cookie is the single source of user identity
+
+## AG-UI Bridge Per-Event Timeout (v2.2)
+
+### Why add a dynamic timeout to `runner.run_async()`?
+
+When the LLM model is removed from LM Studio (e.g., user switches models or shuts down the server), `runner.run_async()` hangs indefinitely waiting for an LLM response. The frontend shows "processing" while sub-agents correctly timeout and show errors. The user has no indication that the orchestrator is stuck.
+
+A dynamic per-event timeout distinguishes between two phases:
+- **LLM response phase** (120s): The initial call or final synthesis. 120s covers the slowest local model inference.
+- **Tool/sub-agent phase** (`A2A_TIMEOUT+30s`): Sub-agent calls already have their own timeouts. The extra 30s margin accounts for orchestration overhead.
+
+If the timeout fires, a `RunError` event is sent to the frontend with a clear message about model unavailability.
+
+### Key properties
+
+- ✅ No indefinite hangs — frontend gets an error instead of infinite "processing"
+- ✅ Phase-aware timeout — different limits for LLM vs sub-agent execution
+- ✅ Clear error message — user knows the model is unavailable

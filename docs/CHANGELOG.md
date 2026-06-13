@@ -1,5 +1,53 @@
 # Changelog
 
+## v2.2 — Agent Output Capture, Playwright Export, Ticker Hardening
+
+### Agent Output Capture for Structured Brief Storage (db6472e, e505b33)
+
+- **Sub-agent response capture** (`agent_1_adk/agent.py`): `send_message` tool callback now captures parsed sub-agent responses (RAG summary, quant metrics, sentiment narrative) and stores them in session event metadata via an `extra_data` parameter on `store_minimal()`. This enables downstream extraction from structured agent outputs instead of parsing prose.
+- **Extraction pipeline wired to agent outputs** (`shared/reports/extraction.py`): New `_populate_from_agent_outputs()` extracts quant KPIs, financials, valuation, scorecard, peer comparison, RAG summary/sources, and sentiment risks/opportunities from structured agent data. Falls back to prose extraction when agent outputs are unavailable.
+- **`TickerMemory.store_minimal()` extended** (`shared/memory/ticker_memory.py`): Accepts optional `extra_data` dict stored as JSON in the brief record. Used by the orchestrator to persist structured agent responses alongside the synthesis text.
+
+### Playwright-Based Report Export (7d52cbf)
+
+- **`shared/reports/playwright_export.py` (new, 77 lines)**: Async Playwright-based export from HTML to PPTX (screenshot-based via `html_to_pptx`) and PDF (print-mode via `html_to_pdf`). Uses deck-stage's built-in APIs for slide rendering. Falls back to HTML download when Playwright is unavailable.
+- **`shared/reports/__init__.py`**: New `generate_pptx_async()` and `generate_pdf_async()` functions wire Playwright export with legacy fallback. `generate_pptx()` now tries Playwright first (screenshot-based PPTX) before falling back to python-pptx.
+- **`agent_1_adk/api_routes.py`**: PDF format added to report endpoints. Routes support `format=pptx|docx|html|pdf`.
+- **`pyproject.toml`**: Added `playwright>=1.40.0` dependency.
+- **Frontend download buttons** (`web/nextjs-app/app/research/page.tsx`): 4 download buttons (PPTX, DOCX, HTML, PDF) with HTML as primary.
+
+### Agent Output Extraction Tests (f493288)
+
+- **`tests/unit/test_agent_outputs_extraction.py` (new, 409 lines)**: 16 tests covering `_populate_from_agent_outputs` (quant KPIs/financials/valuation/scorecard/peers, RAG summary/sources, sentiment risks/opportunities, string/empty edge cases) and `_extract_deck_data` routing (agent path, prose fallback, partial agents). End-to-end PPTX+HTML generation from structured agent data.
+
+### Model Rename: SentimentIntelligence → MarketContext (da2688e)
+
+- **`shared/models.py`**: `SentimentIntelligence` renamed to `MarketContext` with restructured fields: `key_risks`/`catalysts` → `key_headwinds`/`key_tailwinds`, added `macro_regime` and `relative_peer_positioning` fields.
+- **`shared/reports/extraction.py`**: Updated all references to use the new `MarketContext` model and field names.
+
+### Ticker Extraction Hardening (70a4b81, 3779574)
+
+- **English pronouns added to stop words** (`shared/ticker_utils.py`): Common 1-2 letter English words (I, AM, AN, IF, IT, IS, IN, AT, etc.) added to `_FINANCIAL_STOP_WORDS`. Prevents the pronoun "I" from being extracted as a ticker symbol.
+- **Holdings extraction tightened** (`shared/ticker_utils.py`): Added `\b` word boundaries to all `_HOLDINGS_PATTERNS` regexes so partial-word prefixes (e.g. "everything" → "EVERY") are not captured. Pattern 4 now requires "I" or "we" subject. Extracted holdings filtered against stop words and noise words.
+
+### Anonymous User ID Persistence (b0b1d4c)
+
+- **Stable anonymous user ID** (`web/nextjs-app/app/api/copilotkit/route.ts`): Next.js API route generates a stable `anon-{uuid}` on first visit and sets it as a `finsight_user_id` cookie (1-year TTL). Subsequent requests send the same ID via `X-FinSight-User-Id` header, so `_get_today_cached_text` and `_build_memory_context` find existing briefs instead of creating new anonymous users on every request.
+
+### AG-UI Bridge Per-Event Timeout (7e104ea)
+
+- **Dynamic per-event timeout** (`agent_1_adk/agui_bridge.py`): When the LLM is unavailable (model removed from LM Studio), `runner.run_async()` now times out after 120s for LLM response or `A2A_TIMEOUT+30s` for tool/sub-agent execution. Sends a `RunError` event to the frontend with a clear message about model unavailability instead of hanging indefinitely.
+
+### Extraction Pipeline Fixes (5fb9543, 3241ce5, a17bf96, a26f9b7, 34e95c9, e5b253f)
+
+- **Numeric MACD handling** (`shared/reports/extraction.py`): `_enrich_from_markdown()` now handles MACD values that are numeric (float/int) instead of only string format.
+- **Playwright ProactorEventLoop fix** (`shared/reports/playwright_export.py`): Uses `asyncio.new_event_loop()` on Windows to avoid ProactorEventLoop incompatibility with Playwright's subprocess management.
+- **HTML section extraction**: `_parse_markdown_sections()` handles edge cases in section boundary detection for nested heading levels.
+- **Narrative JSON parsing**: `_extract_deck_data()` gracefully handles sentiment narrative fields that arrive as JSON strings instead of dicts.
+- **Agent output capture in AG-UI bridge** (`agent_1_adk/agui_bridge.py`): Bridge path now captures sub-agent responses for structured brief storage, matching the A2A executor path.
+- **Today-cache bypass for bridge**: AG-UI bridge path correctly bypasses today-cache when the user explicitly requests a fresh analysis.
+- **Silent Playwright fallbacks logged**: When Playwright export fails, the fallback to python-pptx/HTML is logged at INFO level instead of silently degrading.
+
 ## v2.1 — Post-Phase-3 CI Hardening & Runtime Fixes
 
 ### Runtime Error Resolutions (9264985)

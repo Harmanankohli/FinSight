@@ -1,27 +1,27 @@
 services:
-  agent-adk:
+  orchestrator:
     build:
       context: .
-      dockerfile: agent_1_adk/Dockerfile
+      dockerfile: src/orchestrator/Dockerfile
     ports: ["8001:8001"]
     env_file: .env
     environment:
-      - AGENT_LLAMAINDEX_URL=http://agent-llamaindex:8002
-      - AGENT_LANGGRAPH_URL=http://agent-langgraph:8003
-      - AGENT_CREWAI_URL=http://agent-crewai:8004
-      - MCP_SERVER_URL=http://finsight-mcp:8010/sse
+      - AGENT_LLAMAINDEX_URL=http://financial-rag:8002
+      - AGENT_LANGGRAPH_URL=http://quant:8003
+      - AGENT_CREWAI_URL=http://market-context:8004
+      - MCP_SERVER_URL=http://mcp:8010/sse
       - SEMANTIC_CACHE_ENABLED=false
       - FINSIGHT_DB_PATH=/data/finsight_memory.db
     volumes:
       - finsight_memory:/data
     depends_on:
-      agent-llamaindex:
+      financial-rag:
         condition: service_healthy
-      agent-langgraph:
+      quant:
         condition: service_healthy
-      agent-crewai:
+      market-context:
         condition: service_healthy
-      finsight-mcp:
+      mcp:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
@@ -31,19 +31,19 @@ services:
       start_period: 15s
     restart: unless-stopped
 
-  agent-llamaindex:
+  financial-rag:
     build:
       context: .
-      dockerfile: agent_2_llamaindex/Dockerfile
+      dockerfile: src/financial_rag/Dockerfile
     ports: ["8002:8002"]
     env_file: .env
     environment:
       - CHROMA_DIR=/data/chroma
-      - MCP_SERVER_URL=http://finsight-mcp:8010/sse
+      - MCP_SERVER_URL=http://mcp:8010/sse
     volumes:
       - chroma_data:/data/chroma
     depends_on:
-      finsight-mcp:
+      mcp:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')"]
@@ -53,16 +53,16 @@ services:
       start_period: 30s
     restart: unless-stopped
 
-  agent-langgraph:
+  quant:
     build:
       context: .
-      dockerfile: agent_3_langgraph/Dockerfile
+      dockerfile: src/quant/Dockerfile
     ports: ["8003:8003"]
     env_file: .env
     environment:
-      - MCP_SERVER_URL=http://finsight-mcp:8010/sse
+      - MCP_SERVER_URL=http://mcp:8010/sse
     depends_on:
-      finsight-mcp:
+      mcp:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/health')"]
@@ -72,16 +72,16 @@ services:
       start_period: 15s
     restart: unless-stopped
 
-  agent-crewai:
+  market-context:
     build:
       context: .
-      dockerfile: agent_4_crewai/Dockerfile
+      dockerfile: src/market_context/Dockerfile
     ports: ["8004:8004"]
     env_file: .env
     environment:
-      - MCP_SERVER_URL=http://finsight-mcp:8010/sse
+      - MCP_SERVER_URL=http://mcp:8010/sse
     depends_on:
-      finsight-mcp:
+      mcp:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8004/health')"]
@@ -91,10 +91,10 @@ services:
       start_period: 15s
     restart: unless-stopped
 
-  finsight-mcp:
+  mcp:
     build:
       context: .
-      dockerfile: mcp_servers/Dockerfile
+      dockerfile: src/mcp_tools/Dockerfile
     ports: ["8010:8010"]
     env_file: .env
     environment:
@@ -109,9 +109,18 @@ services:
 
   redis:
     image: redis:7-alpine
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:-finsight_dev}"]
     ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-finsight_dev}", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    volumes:
+      - redis_data:/data
     restart: unless-stopped
 
 volumes:
   chroma_data:
   finsight_memory:
+  redis_data:

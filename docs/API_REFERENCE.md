@@ -211,8 +211,8 @@ GET /api/reports/{brief_id}/{format}
 
 | Endpoint | Parameters | Returns |
 |---|---|---|
-| `/api/reports/ticker/{symbol}/latest/{format}` | `format`: `pptx`, `docx`, or `html` | Binary file download or HTML string |
-| `/api/reports/{brief_id}/{format}` | `format`: `pptx`, `docx`, or `html` | Binary file download or HTML string for specified brief |
+| `/api/reports/ticker/{symbol}/latest/{format}` | `format`: `pptx`, `docx`, `html`, or `pdf` | Binary file download or HTML string |
+| `/api/reports/{brief_id}/{format}` | `format`: `pptx`, `docx`, `html`, or `pdf` | Binary file download or HTML string for specified brief |
 
 **Response headers**:
 
@@ -220,10 +220,11 @@ GET /api/reports/{brief_id}/{format}
 Content-Type: application/vnd.openxmlformats-officedocument.presentationml.presentation (PPTX)
               application/vnd.openxmlformats-officedocument.wordprocessingml.document (DOCX)
               text/html (HTML)
-Content-Disposition: attachment; filename="FinSight_{ticker}_{date}.{format}" (PPTX/DOCX)
+              application/pdf (PDF)
+Content-Disposition: attachment; filename="FinSight_{ticker}_{date}.{format}" (PPTX/DOCX/PDF)
 ```
 
-**Report format endpoints** are served via `generate_pptx()`, `generate_docx()`, and `generate_html()` in the `shared/reports/` package (split from `shared/report_generator.py` in v1.41; the monolithic shim was removed in v2.0). The HTML format uses a Jinja2 template (`shared/templates/investment_deck.html`) with an embedded `deck-stage.js` web component for slide navigation. All three formats share a common `_extract_deck_data()` extraction pipeline in `shared/reports/extraction.py`.
+**Report format endpoints** are served via `generate_pptx()`, `generate_docx()`, `generate_html()`, and `generate_pdf_async()` in the `src/shared/reports/` package (split from `src/shared/report_generator.py` in v1.41; the monolithic shim was removed in v2.0). PPTX generation now tries Playwright first (screenshot-based) before falling back to python-pptx. The HTML format uses a Jinja2 template (`src/shared/templates/investment_deck.html`) with an embedded `deck-stage.js` web component for slide navigation. All formats share a common `_extract_deck_data()` extraction pipeline in `src/shared/reports/extraction.py`, which can also consume structured agent outputs via `_populate_from_agent_outputs()`.
 
 ---
 
@@ -428,4 +429,4 @@ The MCP server applies internal rate limits to upstream data sources:
 | yfinance | 4 req/s | 8 | Prices, financials, options, earnings |
 | RSS feeds | 2 req/s | 4 | News sentiment, Yahoo fallback |
 
-These limits are applied per-process via `TokenBucket` in `shared/rate_limiter.py` and are not exposed to API consumers.
+These limits are applied per-process via `TokenBucket` in `src/shared/rate_limiter.py` and are not exposed to API consumers.
