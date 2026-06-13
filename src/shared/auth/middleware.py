@@ -30,12 +30,17 @@ PUBLIC_PATHS: frozenset[str] = frozenset(
     }
 )
 
+PUBLIC_PREFIXES: tuple[str, ...] = (
+    "/.well-known/",
+    "/api/agents",
+)
+
 
 def _is_public(path: str) -> bool:
     cleaned = path.rstrip("/")
     if cleaned in PUBLIC_PATHS:
         return True
-    if cleaned.startswith("/.well-known/"):
+    if any(cleaned.startswith(p) for p in PUBLIC_PREFIXES):
         return True
     return False
 

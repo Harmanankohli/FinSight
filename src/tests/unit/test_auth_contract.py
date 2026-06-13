@@ -66,7 +66,7 @@ def _build_app(settings_overrides: dict | None = None) -> Starlette:
     return Starlette(routes=routes, middleware=mw)
 
 
-PUBLIC_ROUTES = ["/health", "/health/"]
+PUBLIC_ROUTES = ["/health", "/health/", "/api/agents"]
 PUBLIC_OK = (200, 307, 404)
 AUTH_ROUTES = [("/auth/login", "POST"), ("/auth/refresh", "POST"), ("/auth/logout", "POST")]
 API_ROUTES = [
@@ -74,7 +74,6 @@ API_ROUTES = [
     ("/api/memory/ticker/NVDA/latest", "GET"),
     ("/api/memory/ticker/NVDA/changed", "GET"),
     ("/api/sessions", "GET"),
-    ("/api/agents", "GET"),
     ("/api/reports/ticker/NVDA/latest/pptx", "GET"),
 ]
 
@@ -178,20 +177,10 @@ class TestAdminGating:
 
         return issue_user_token(self._normal_id)
 
-    async def test_user_cannot_list_agents_when_auth_on(self):
+    async def test_agents_endpoint_is_public(self):
         app = _build_app(
             {"auth_enabled": True, "auth_jwt_secrets": "a" * 32, "service_auth_token": "b" * 16}
         )
-        token = self._user_token()
         async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE) as client:
-            r = await client.get("/api/agents", headers={"Authorization": f"Bearer {token}"})
-        assert r.status_code == 403
-
-    async def test_admin_can_list_agents(self):
-        app = _build_app(
-            {"auth_enabled": True, "auth_jwt_secrets": "a" * 32, "service_auth_token": "b" * 16}
-        )
-        token = self._admin_token()
-        async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE) as client:
-            r = await client.get("/api/agents", headers={"Authorization": f"Bearer {token}"})
-        assert r.status_code in (200, 404, 500)
+            r = await client.get("/api/agents")
+        assert r.status_code != 401, "/api/agents should be publicly accessible"

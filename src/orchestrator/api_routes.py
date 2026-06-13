@@ -312,9 +312,6 @@ async def report_latest(request: Request) -> Response:
 
 async def agents_list(request: Request) -> JSONResponse:
     """List discovered sub-agents with names, descriptions, and skills."""
-    denied = _require_admin(request)
-    if denied:
-        return denied
     try:
         from orchestrator.agent import _client
 
