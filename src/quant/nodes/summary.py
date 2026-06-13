@@ -329,6 +329,14 @@ async def format_output_node(state: QuantAnalysisState) -> dict:
 @logged()
 async def llm_summary_node(state: QuantAnalysisState) -> dict:
     """Produces a 3-4 sentence investor summary covering all signal groups."""
+    # The 5-way fan-in at format_output causes LangGraph to fire format_output
+    # (and consequently this node) multiple times as predecessors complete in
+    # different supersteps.  Skip the LLM call until all branches have written
+    # their data: correlation_matrix (longest compute path, initial={}) and
+    # peer_comparison (slowest MCP path, initial=None).
+    if not state.get("correlation_matrix") or state.get("peer_comparison") is None:
+        return {}
+
     from langchain_openai import ChatOpenAI
 
     metrics = state.get("metrics", {})

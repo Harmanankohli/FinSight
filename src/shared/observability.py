@@ -115,12 +115,11 @@ def init_instrumentation(agent_type: str) -> None:
         from opentelemetry.instrumentation.starlette import StarletteInstrumentor
 
         StarletteInstrumentor().instrument()
-        try:
-            from openinference.instrumentation.langchain import LangChainInstrumentor
-
-            LangChainInstrumentor().instrument()
-        except ImportError:
-            pass
+        # LangChainInstrumentor is intentionally NOT used here.  The quant
+        # executor already passes a Langfuse CallbackHandler into LangGraph's
+        # ainvoke(config={"callbacks": [handler]}), which produces properly-
+        # nested spans under the parent trace.  Enabling LangChainInstrumentor
+        # alongside the callback duplicates every LangGraph node span.
     elif agent_type in ("market_context", "sentiment"):
         from opentelemetry.instrumentation.starlette import StarletteInstrumentor
 
