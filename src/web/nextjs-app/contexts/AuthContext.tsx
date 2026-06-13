@@ -33,6 +33,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (refreshed) {
         setUser(refreshed.user);
         setAccessToken(refreshed.access_token);
+        document.cookie = `finsight_session=1; path=/; max-age=${refreshed.expires_in}; SameSite=Lax`;
         if (window.location.pathname === "/login") {
           const sp = new URLSearchParams(window.location.search);
           window.location.href = sp.get("redirect") || "/research";
@@ -48,12 +49,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const data = await loginAPI(username, password);
     setUser(data.user);
     setAccessToken(data.access_token);
+    document.cookie = `finsight_session=1; path=/; max-age=${data.expires_in}; SameSite=Lax`;
   }, []);
 
   const logout = useCallback(async () => {
     await logoutAPI();
     setUser(null);
     setAccessToken(null);
+    document.cookie = "finsight_session=; path=/; max-age=0";
     router.push("/login");
   }, [router]);
 
