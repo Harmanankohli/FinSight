@@ -121,19 +121,30 @@ class MarketContextCrew:
                 loop = asyncio.get_running_loop()
                 result = await loop.run_in_executor(None, crew.kickoff)
 
-            # output_pydantic=MarketContextOutput on the Task means CrewAI parses
-            # and validates the LLM response (strips markdown code blocks automatically).
+            logger.info(
+                "CrewAI result attrs: pydantic=%s, raw_type=%s, raw_preview=%.300s",
+                type(getattr(result, "pydantic", None)),
+                type(getattr(result, "raw", None)),
+                str(getattr(result, "raw", ""))[:300],
+            )
+
             if hasattr(result, "pydantic") and result.pydantic is not None:
+                logger.info("Using pydantic path — signal=%s", result.pydantic.overall_signal)
                 return result.pydantic.model_dump()
 
-            # Fallback: try raw JSON then construct a safe default
             raw = result.raw if hasattr(result, "raw") else str(result)
             try:
-                return MarketContextOutput.model_validate_json(raw).model_dump()
-            except Exception:
+                parsed = MarketContextOutput.model_validate_json(raw)
+                logger.info("Parsed raw JSON — signal=%s", parsed.overall_signal)
+                return parsed.model_dump()
+            except Exception as e1:
+                logger.warning("model_validate_json failed: %s", e1)
                 try:
-                    return MarketContextOutput.model_validate(json.loads(raw)).model_dump()
-                except Exception:
+                    parsed = MarketContextOutput.model_validate(json.loads(raw))
+                    logger.info("Parsed json.loads — signal=%s", parsed.overall_signal)
+                    return parsed.model_dump()
+                except Exception as e2:
+                    logger.warning("json.loads fallback failed: %s", e2)
                     return MarketContextOutput(
                         narrative=raw, overall_signal="neutral", confidence_score=0.5
                     ).model_dump()

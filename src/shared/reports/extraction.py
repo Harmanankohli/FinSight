@@ -121,6 +121,17 @@ def fit_text(text: str, w_in: float, h_in: float, start_size: int = 20) -> tuple
     return text[:budget] + "..", size
 
 
+def _truncate_at_sentence(text: str, limit: int) -> str:
+    """Truncate text at the last sentence boundary before *limit* characters."""
+    if len(text) <= limit:
+        return text
+    truncated = text[:limit]
+    last_end = max(truncated.rfind(". "), truncated.rfind(".\n"), truncated.rfind(".)"))
+    if last_end > limit * 0.4:
+        return truncated[: last_end + 1]
+    return truncated.rstrip() + "…"
+
+
 def _strip_markdown(text: str) -> str:
     """Remove markdown syntax, keeping plain readable text."""
     text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
@@ -1484,7 +1495,7 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
     # ── RAG ────────────────────────────────────────────────────────────────────
     if rag:
         if rag.summary:
-            data.executive_summary = _strip_markdown(rag.summary[:1200])
+            data.executive_summary = _truncate_at_sentence(_strip_markdown(rag.summary), 1200)
         if rag.sources:
             source_text = "\n".join(
                 f"- {s}" if isinstance(s, str) else f"- {s.get('title', s.get('url', ''))}"
@@ -1520,7 +1531,7 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
 
         # Narrative — already clean text (CrewAI output_pydantic strips code blocks)
         if sentiment.narrative:
-            data.sections.append(Section("Market Narrative", _strip_markdown(sentiment.narrative[:1200])))
+            data.sections.append(Section("Market Narrative", _truncate_at_sentence(_strip_markdown(sentiment.narrative), 1200)))
 
         if sentiment.overall_signal:
             sig = sentiment.overall_signal
@@ -1531,13 +1542,13 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
     if not data.executive_summary:
         parts = []
         if quant and quant.reasoning:
-            parts.append(quant.reasoning[:400])
+            parts.append(_truncate_at_sentence(quant.reasoning, 400))
         if rag and rag.summary:
-            parts.append(rag.summary[:400])
+            parts.append(_truncate_at_sentence(rag.summary, 400))
         if sentiment and sentiment.narrative:
-            parts.append(sentiment.narrative[:400])
+            parts.append(_truncate_at_sentence(sentiment.narrative, 400))
         if parts:
-            data.executive_summary = _strip_markdown(" ".join(parts)[:1200])
+            data.executive_summary = _truncate_at_sentence(_strip_markdown(" ".join(parts)), 1200)
 
     # ── Final recommendation scorecard entry ───────────────────────────────────
     rec = data.recommendation

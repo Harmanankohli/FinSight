@@ -50,6 +50,21 @@ from shared.guardrails import is_off_topic
 logger = logging.getLogger(__name__)
 
 
+async def _release_sub_agent_evals() -> None:
+    """POST /release-evals to each sub-agent so they fire deferred evals."""
+    import httpx
+
+    from shared.settings import AGENT_SEED_URLS
+
+    urls = [u.strip().rstrip("/") for u in AGENT_SEED_URLS.split(",") if u.strip()]
+    async with httpx.AsyncClient(timeout=5) as client:
+        for base in urls:
+            try:
+                await client.post(f"{base}/release-evals")
+            except Exception:
+                logger.debug("release-evals failed for %s (non-fatal)", base)
+
+
 _AGENT_DISPLAY_NAMES = {
     "financial rag agent": "Financial RAG Agent",
     "rag": "Financial RAG Agent",
@@ -495,9 +510,25 @@ async def _stream(
         yield sse(StepFinishedEvent(type=EventType.STEP_FINISHED, step_name="orchestrator"))
 
         if had_send_message and synthesis_parts:
+            response_text = "".join(synthesis_parts)
             asyncio.create_task(
-                _auto_save_brief(user_text, "".join(synthesis_parts), session_id, user_id)
+                _auto_save_brief(user_text, response_text, session_id, user_id)
             )
+
+            from shared.settings import EVAL_ENABLED
+
+            if EVAL_ENABLED and response_text:
+                from shared.runtime_eval import score_response as _eval_score
+
+                trace_id = None
+                try:
+                    from shared.observability import get_langfuse_client
+                    trace_id = get_langfuse_client().get_current_trace_id()
+                except Exception:
+                    pass
+                asyncio.create_task(_eval_score(user_text, response_text, trace_id))
+                asyncio.create_task(_release_sub_agent_evals())
+                logger.info("Orchestrator eval scheduled (trace=%s)", trace_id)
 
     except asyncio.CancelledError:
         logger.info("Bridge stream cancelled run_id=%s", run_id)
