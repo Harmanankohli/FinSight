@@ -36,7 +36,7 @@ RSS("RSS News Feeds\nYahoo, CNBC, MarketWatch")
 end
 DDG("DuckDuckGo News\nFallback search source")
 LLM("LM Studio\nLocal LLM\nPort 1234")
-LF("Langfuse\nObservability & Tracing")
+LF("Langfuse\nObservability &amp; Tracing")
 User -- "① Types investment query" --> System
 System -- "② LLM inference (OpenAI API)" --> LLM
 System -- "③ SEC filings (REST)" --> SEC
@@ -44,7 +44,7 @@ System -- "④ Market data (REST)" --> YF
 System -- "⑤ News headlines (RSS)" --> RSS
 RSS -. "↷ Fallback ①" .-> YF
 YF -. "↷ Fallback ②" .-> DDG
-System -- "⑥ Telemetry & eval scores" --> LF
+System -- "⑥ Telemetry &amp; eval scores" --> LF
 System -- "⑦ Returns BUY/HOLD/SELL + brief" --> User
 style User fill:#d4e6f1,stroke:#2980b9,stroke-width:2px,color:#1a1a1a
 style System fill:#d5f5e3,stroke:#27ae60,stroke-width:2px,color:#1a1a1a

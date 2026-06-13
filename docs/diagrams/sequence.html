@@ -39,9 +39,10 @@ participant MCP as MCP Server
 Note over User,MCP: ═══ Phase 1: Input Processing (&lt; 5s) ═══
 
 User->>UI: ① "Should I invest in NVIDIA?"
-UI->>Orch: ② POST /a2a-agui
+UI->>Orch: ② POST /a2a-agui + X-FinSight-User-Id
 activate Orch
 Orch->>Orch: ③ Guardrails + Cache + Memory ctx
+Note over Orch: Per-event timeout: 120s LLM wait<br/>A2A_TIMEOUT+30s tool wait
 Orch->>LLM: ④ Decide dispatch
 LLM-->>Orch: ⑤ send_message to all 3
 Note over Orch,MCP: ═══ Phase 2: Agent Dispatch (15-45s) ═══

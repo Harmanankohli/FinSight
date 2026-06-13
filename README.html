@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>FinSight — Overview</title>
+<title>FinSight &mdash; Overview</title>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:1.7;color:#2c2c2c;background:#faf8f5;padding:2rem 1rem}
@@ -34,7 +34,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <body>
 <div class="container">
 <div class="header-nav">
-<a href="docs/index.html">Home</a><a href="README.html">Overview</a><a href="docs/ARCHITECTURE.html">Architecture</a><a href="docs/AGENTS.html">Agents</a><a href="docs/API_REFERENCE.html">API</a><a href="docs/mcp_tools.html">MCP</a><a href="docs/SECURITY.html">Security</a><a href="docs/DESIGN_DECISIONS.html">Decisions</a><a href="docs/CHANGELOG.html">Changelog</a><a href="docs/TESTS.html">Tests</a><a href="docs/diagrams/index.html">Diagrams</a>
+<a href="docs/index.html">Home</a><a href="README.html">Overview</a><a href="docs/ARCHITECTURE.html">Architecture</a><a href="docs/AGENTS.html">Agents</a><a href="docs/API_REFERENCE.html">API</a><a href="docs/MCP_SERVERS.html">MCP</a><a href="docs/SECURITY.html">Security</a><a href="docs/DESIGN_DECISIONS.html">Decisions</a><a href="docs/CHANGELOG.html">Changelog</a><a href="docs/TESTS.html">Tests</a><a href="docs/diagrams/index.html">Diagrams</a>
 </div>
 
 <h1>FinSight &mdash; Multi-Agent Investment Research System</h1>
@@ -62,40 +62,40 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 
 <h2>Architecture</h2>
 <pre>+--------------------------------------------------------------+
-¦              ADK Web UI (port 8080)                           ¦
-¦           Orchestrator (ADK LlmAgent)                        ¦
-¦         Discovers agents &rarr; LLM routes via send_message       ¦
-¦         Tools: send_message(name, task), load_memory(query)  ¦
+â”‚              ADK Web UI (port 8080)                           â”‚
+â”‚           Orchestrator (ADK LlmAgent)                        â”‚
+â”‚         Discovers agents &rarr; LLM routes via send_message       â”‚
+â”‚         Tools: send_message(name, task), load_memory(query)  â”‚
 +--------------------------------------------------------------+
-                       ¦ A2A Protocol (JSON-RPC over HTTP, streaming)
+                       â”‚ A2A Protocol (JSON-RPC over HTTP, streaming)
                        &darr;
 +--------------------------------------------------------------+
-¦  Agent Pool                                                   ¦
-¦  RAG (:8002)    Quant (:8003)    Market Context (:8004)      ¦
-¦  (LlamaIndex)   (LangGraph)      (CrewAI)                    ¦
+â”‚  Agent Pool                                                   â”‚
+â”‚  RAG (:8002)    Quant (:8003)    Market Context (:8004)      â”‚
+â”‚  (LlamaIndex)   (LangGraph)      (CrewAI)                    â”‚
 +--------------------------------------------------------------+
-         ¦            ¦                ¦
+         â”‚            â”‚                â”‚
          &darr;            &darr;                &darr;
 +--------------------------------------------------------------+
-¦          Unified finsight-mcp Server (port 8010)              ¦
-¦  +-----------------+  +---------------------------------+   ¦
-¦  ¦ Agent Registry  ¦  ¦  Data Sources                 ¦   ¦
-¦  ¦ find_agent()    ¦  ¦  get_prices, get_financials,  ¦   ¦
-¦  ¦ resource://agent_cards¦  ¦  get_options_chain,           ¦   ¦
-¦  +-----------------+  ¦  get_company_filings,         ¦   ¦
-¦                        ¦  get_financial_filings,       ¦   ¦
-¦                        ¦  get_filing_content,          ¦   ¦
-¦                        ¦  validate_ticker,             ¦   ¦
-¦                        ¦  resolve_company_ticker,      ¦   ¦
-¦                        ¦  full_text_search,            ¦   ¦
-¦                        ¦  get_news_sentiment,          ¦   ¦
-¦                        ¦  get_earnings_calendar,       ¦   ¦
-¦                        ¦  get_insider_transactions,    ¦   ¦
-¦                        ¦  get_peers,                   ¦   ¦
-¦                        ¦  get_macro_indicators,        ¦   ¦
-¦                        ¦  get_scenario_shocks,         ¦   ¦
-¦                        ¦  execute_python, ...          ¦   ¦
-¦                        +---------------------------------+   ¦
+â”‚          Unified finsight-mcp Server (port 8010)              â”‚
+â”‚  +-----------------+  +---------------------------------+   â”‚
+â”‚  â”‚ Agent Registry  â”‚  â”‚  Data Sources                 â”‚   â”‚
+â”‚  â”‚ find_agent()    â”‚  â”‚  get_prices, get_financials,  â”‚   â”‚
+â”‚  â”‚ resource://agent_cardsâ”‚  â”‚  get_options_chain,           â”‚   â”‚
+â”‚  +-----------------+  â”‚  get_company_filings,         â”‚   â”‚
+â”‚                        â”‚  get_financial_filings,       â”‚   â”‚
+â”‚                        â”‚  get_filing_content,          â”‚   â”‚
+â”‚                        â”‚  validate_ticker,             â”‚   â”‚
+â”‚                        â”‚  resolve_company_ticker,      â”‚   â”‚
+â”‚                        â”‚  full_text_search,            â”‚   â”‚
+â”‚                        â”‚  get_news_sentiment,          â”‚   â”‚
+â”‚                        â”‚  get_earnings_calendar,       â”‚   â”‚
+â”‚                        â”‚  get_insider_transactions,    â”‚   â”‚
+â”‚                        â”‚  get_peers,                   â”‚   â”‚
+â”‚                        â”‚  get_macro_indicators,        â”‚   â”‚
+â”‚                        â”‚  get_scenario_shocks,         â”‚   â”‚
+â”‚                        â”‚  execute_python, ...          â”‚   â”‚
+â”‚                        +---------------------------------+   â”‚
 +--------------------------------------------------------------+</pre>
 
 <p>All A2A communication uses <code>A2ACardResolver</code> for standard discovery and <code>ClientFactory</code> for transport. Streaming events are handled correctly: intermediate <code>WORKING</code>/<code>SUBMITTED</code> events are skipped, only actual results (<code>artifact_update</code> data or terminal <code>COMPLETED</code> status) are returned.</p>
@@ -198,7 +198,7 @@ uv run adk web --port 8080 --session_service_uri sqlite://./db/adk_sessions.db -
 <tr><td><a href="docs/ARCHITECTURE.html">ARCHITECTURE.html</a></td><td>System architecture, communication patterns, agent internals</td></tr>
 <tr><td><a href="docs/AGENTS.html">AGENTS.html</a></td><td>Detailed agent reference (skills, architecture, streaming flow)</td></tr>
 <tr><td><a href="docs/API_REFERENCE.html">API_REFERENCE.html</a></td><td>Complete endpoint reference &mdash; REST routes, A2A protocol, AG-UI, health checks</td></tr>
-<tr><td><a href="docs/mcp_tools.html">mcp_tools.html</a></td><td>MCP server tools, registry, client usage</td></tr>
+<tr><td><a href="docs/MCP_SERVERS.html">MCP_SERVERS.html</a></td><td>MCP server tools, registry, client usage</td></tr>
 <tr><td><a href="docs/DESIGN_DECISIONS.html">DESIGN_DECISIONS.html</a></td><td>Evolution log: why each design choice was made</td></tr>
 <tr><td><a href="docs/CHANGELOG.html">CHANGELOG.html</a></td><td>Version history</td></tr>
 <tr><td><a href="docs/TESTS.html">TESTS.html</a></td><td>Test coverage, patterns, running instructions</td></tr>

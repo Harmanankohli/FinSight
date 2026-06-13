@@ -119,7 +119,35 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 </ul>
 <p>Fixing them would require a full rewrite against the current codebase &mdash; essentially writing new tests from scratch while also removing all the old ones. Deleting the stale fixtures was the honest option rather than maintaining dead test code that would confuse future readers.</p>
 
-<p><strong>Update (v1.26/v1.27)</strong>: ~148 tests now covering models, quant graph nodes, ticker utilities, TTL cache, rate limiter, trace context, memory store, and the security sandbox (60 AST-gate tests). See <a href="TESTS.html">TESTS.html</a> for details.</p>
+<h2>Testing Strategy &mdash; Core Primitives &amp; AST-Gate Sandbox</h2>
+
+<h3>Why test shared infrastructure before agent logic?</h3>
+<p>The four agents (orchestrator, RAG, quant, market context) depend on shared infrastructure: settings, MCP client, ticker utilities, TTL cache, rate limiter, memory store, task store, trace context, log sanitizer, timing decorator. Testing agents directly requires spinning up LLM instances, databases, and MCP servers &mdash; fragile, slow, and expensive. Testing the shared primitives catches the bugs that affect all agents, with no LLM calls required.</p>
+
+<h3>Solution</h3>
+<p><strong>88 unit tests covering 10 shared modules</strong> &mdash; models, quant graph nodes (stateless computation), ticker utilities, TTL cache, rate limiter, trace context, memory store, task store, log sanitizer, timing decorator. These tests run without PyTorch, ChromaDB, or any agent framework &mdash; just pytest + pydantic + httpx.</p>
+<p><strong>60 AST-gate tests for the security sandbox</strong> &mdash; an additional layer beyond the core unit tests. The sandbox (<code>src/shared/sandbox/</code>) validates that user-provided AST trees do not contain dangerous constructs (exec, eval, imports, file I/O). The 60 AST-gate tests enumerate:</p>
+<ul>
+<li>Every blocked AST node type (<code>Import</code>, <code>Call</code> to <code>exec</code>/<code>eval</code>, <code>Attribute</code> access on <code>__builtins__</code>, etc.)</li>
+<li>Every allowed construct (variable assignment, arithmetic, function calls to whitelisted APIs)</li>
+<li>Boundary cases (nested dangerous constructs, Unicode obfuscation attempts, attribute access chains)</li>
+</ul>
+<p>The AST-gate tests are deterministic &mdash; no asyncio, no I/O, no network. They are the fastest tests in the suite (~2ms each) and the most security-critical.</p>
+
+<h3>Why deduplicate tests across the two categories?</h3>
+<p>The AST-gate tests are separate from the 88 core tests because they test a security boundary, not a business logic path. A regression in the AST gate is a security incident &mdash; it deserves its own test category with clear failure messaging. The 88 core tests cover everything else.</p>
+
+<h3>Why no integration tests for sub-agent A2A flows?</h3>
+<p>Integration tests that spin up all 4 agents + MCP server + orchestrator would take 30-60s per test and require LM Studio running with specific models. These exist as manual smoke tests (<code>smoke_test_a2a.py</code>, <code>test_full_pipeline.py</code>) but are not part of CI. The contract tests (see v2.0 section) cover A2A protocol compliance in-process without agent processes.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; 88 unit tests &mdash; shared infrastructure, no LLM required, runs in CI in ~15s</li>
+<li>&check; 60 AST-gate tests &mdash; deterministic, ~2ms each, security boundary tested explicitly</li>
+<li>&check; Zero agent framework imports in test dependencies &mdash; slim CI install possible</li>
+<li>&check; Integration tests exist as manual scripts, not CI gates</li>
+<li>&check; Contract tests cover A2A protocol compliance in-process</li>
+</ul>
 
 <h2>Same-Day Memory Cache &amp; analysis_date Column</h2>
 
@@ -247,7 +275,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <tr><td>Orchestrator</td><td><strong>Google ADK</strong></td><td>A2A protocol built-in, agent card generation, session management</td></tr>
 <tr><td>RAG</td><td><strong>LlamaIndex</strong></td><td>Best document indexing/retrieval &mdash; hybrid search, multi-index routing</td></tr>
 <tr><td>Quant</td><td><strong>LangGraph</strong></td><td>Conditional state machine maps naturally to graph-based architecture</td></tr>
-<tr><td>Sentiment</td><td><strong>CrewAI</strong></td><td>Multi-agent role-playing (analysis + synthesis) is what CrewAI was designed for</td></tr>
+<tr><td>Market Context (n&eacute;e Sentiment)</td><td><strong>CrewAI</strong></td><td>Multi-agent role-playing (analysis + synthesis) is what CrewAI was designed for; rebranded from Sentiment in v1.31 when data lanes were split from RAG</td></tr>
 </table>
 
 <h2>A2A Communication</h2>
@@ -382,6 +410,26 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <p><strong>Problem</strong>: The SDK's <code>AgentCard</code> is a protobuf message with no <code>url</code> field. Construction like <code>AgentCard(url="http://...")</code> raises <code>ValueError</code>.</p>
 <p><strong>Fix</strong>: Set <code>supported_interfaces=[AgentInterface(protocol_binding="JSONRPC", url=...)]</code> instead.</p>
 
+<h3>16. AgentCard Security Scheme &mdash; Protobuf Map API</h3>
+<p><strong>Problem</strong>: The A2A SDK's protobuf <code>AgentCard</code> has a <code>security</code> field typed as <code>map&lt;string, SecurityScheme&gt;</code> (protobuf map). Direct assignment like <code>agent_card.security = {&quot;my_scheme&quot;: ApiKeyScheme(...)}</code> fails because protobuf map fields do not support standard Python dict assignment &mdash; they use <code>get_or_create</code> or direct item assignment via <code>field[key] = value</code>.</p>
+<p><strong>Fix</strong>: Use <code>agent_card.security[&quot;my_scheme&quot;].CopyFrom(api_scheme)</code> instead of dict assignment. The protobuf map type is a <code>MessageMapContainer</code> with a <code>CopyFrom</code> API, not a <code>dict</code>.</p>
+<p><strong>Lesson</strong>: Protobuf map fields look like Python dicts but are not. Always check the protobuf generated type before assigning &mdash; <code>type(agent_card.security)</code> reveals <code>MessageMapContainer</code>, not <code>dict</code>.</p>
+
+<h3>17. LangGraph Node Names Colliding with State Keys</h3>
+<p><strong>Problem</strong>: LangGraph state keys and node names share a single namespace. Naming a node <code>peer_comparison</code> collides with the state key <code>peer_comparison</code> &mdash; the graph raises <code>ValueError: Duplicate key 'peer_comparison'</code> at compile time.</p>
+<p><strong>Fix</strong>: Node names must be unique across BOTH state keys and node names. Renamed nodes to use verb-based names: <code>fetch_peer_comparison</code> (node) keeps <code>peer_comparison</code> (state key).</p>
+<p><strong>Lesson</strong>: LangGraph&rsquo;s namespace is flat &mdash; state keys, nodes, and conditional edges all share one namespace. Prefix node names with <code>fetch_</code> / <code>compute_</code> / <code>format_</code> to avoid collisions.</p>
+
+<h3>18. CrewAI Instrumentor Crash on 0.95</h3>
+<p><strong>Problem</strong>: <code>crewai</code> version 0.95 restructured its internal module layout. The OpenInference instrumentation auto-detected the old module path and crashed on import with <code>ModuleNotFoundError: No module named 'crewai.instrumentation'</code>.</p>
+<p><strong>Fix</strong>: Upper-bound <code>crewai&lt;0.95</code> in <code>pyproject.toml</code> until the OpenInference instrumentation is updated. The version pin is temporary &mdash; when OpenInference releases a new version supporting crewai 0.95+, the bound can be removed.</p>
+<p><strong>Lesson</strong>: Auto-instrumentation libraries (OpenInference, Langfuse) probe module internals that change between minor versions. Version-pin the instrumented library until the instrumentation tooling catches up.</p>
+
+<h3>19. LANGFUSE_BASE_URL Resolution &mdash; <code>AliasChoices</code> in Pydantic</h3>
+<p><strong>Problem</strong>: <code>LANGFUSE_BASE_URL</code> was read via <code>os.environ.get(&quot;LANGFUSE_BASE_URL&quot;)</code> in multiple files. When the env var was set but the Pydantic settings model had a different priority (e.g., <code>.env</code> file overrides env var), the raw <code>os.environ</code> read got a different value than the settings model.</p>
+<p><strong>Fix</strong>: Remove all raw <code>os.environ</code> reads for Langfuse config. Use Pydantic&rsquo;s <code>AliasChoices([&quot;LANGFUSE_BASE_URL&quot;, &quot;langfuse_base_url&quot;])</code> on a single <code>LangfuseSettings</code> model so both env var names resolve through the same priority chain. All consumers read from <code>get_settings().langfuse.base_url</code>.</p>
+<p><strong>Lesson</strong>: Raw <code>os.environ</code> reads bypass Pydantic&rsquo;s resolution priority (env var &gt; .env &gt; default). Always use the settings model &mdash; mixed <code>os.environ</code> + Pydantic creates silent divergence.</p>
+
 <h2>Timeout Strategy</h2>
 <p>The default <code>create_client()</code> creates an httpx client with default timeouts (~5s). Sub-agent analyses routinely exceed this.</p>
 <p><strong>Fix</strong>: Pass a pre-configured <code>httpx.AsyncClient(timeout=httpx.Timeout(300))</code> via <code>ClientConfig(httpx_client=http)</code>.</p>
@@ -499,6 +547,65 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 </ol>
 <p><strong>Why characterization tests before unit tests?</strong> Characterization tests document current behaviour &mdash; they pass on the existing codebase without fixing anything. This creates a safety net for refactoring: if you change the extraction pipeline and 4 golden tests break, you know exactly what you changed.</p>
 
+<h2>CI Dependency Strategy &mdash; Slim Test Dependencies &amp; uv Caching</h2>
+
+<h3>Why separate test dependencies from production?</h3>
+<p>The full dependency install (<code>pip install -e .</code> without <code>--no-deps</code>) pulls 293 packages including PyTorch (2.8 GB), CUDA libraries, all four agent frameworks (ADK, LlamaIndex, LangChain/LangGraph, CrewAI), and ChromaDB + sentence-transformers. A CI job that installs all of these spends 5-10 minutes on pip install alone, most of which is downloading binaries for frameworks the tests do not use.</p>
+
+<h3>Solution</h3>
+<p><strong>Slim test install</strong> (<code>--no-deps -e .</code>): The CI test job installs only ~15 packages &mdash; pytest, pydantic, httpx, and the project itself. No PyTorch, no CUDA, no agent frameworks. Tests are scoped to <code>tests/unit/</code> which exercises shared infrastructure (settings, ticker utils, cache, rate limiter, memory store, task store, trace context, log sanitizer, timing decorator).</p>
+<p><strong>Lazy imports</strong> (<code>src/shared/memory/__init__.py</code>): The memory module&rsquo;s public API uses <code>__getattr__</code> that imports heavy dependencies only when the specific class is accessed. <code>from shared.memory import TickerMemory</code> does not import ChromaDB or sentence-transformers until <code>TickerMemory</code> is instantiated. This prevents import-time side-effects in modules that only reference the type.</p>
+<p><strong><code>pytest.importorskip</code> guards</strong>: Test files that need <code>langgraph</code>, <code>crewai</code>, or <code>google.adk</code> use <code>pytest.importorskip(&quot;module_name&quot;)</code> at the top. If the framework is not installed, those tests are skipped with a clear message instead of failing.</p>
+<p><strong>uv cache</strong>: All Python CI jobs share the uv cache via <code>actions/cache</code> with a hash of <code>pyproject.toml</code>. Since the slim test deps are stable (few changes), cache hit rate is &gt;90%, reducing install time to ~3s.</p>
+
+<h3>Why not use pytest markers (<code>@pytest.mark.slow</code>) instead?</h3>
+<p>Markers rely on developers remembering to flag tests correctly and users remembering to pass <code>-m &quot;not slow&quot;</code>. The slim install approach enforces the boundary at the package level &mdash; if a test file imports <code>langgraph</code>, it simply cannot run in the slim job. This is a structural guarantee rather than a convention.</p>
+
+<h3>Why argon2-cffi in slim deps?</h3>
+<p><code>argon2-cffi</code> is needed by <code>shared.auth</code> which is tested in the unit tests. It is a lightweight C FFI binding (~5MB) &mdash; negligible cost for the slim install. Without it, auth-related tests would need <code>pytest.importorskip(&quot;argon2&quot;)</code>, and the auth module is a core shared primitive, not an agent-specific framework.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; Slim install: 15 packages vs 293 &mdash; CI install time drops from 5-10 min to ~30s</li>
+<li>&check; Lazy imports prevent import-time side effects in shared modules</li>
+<li>&check; <code>pytest.importorskip</code> &mdash; structural guarantee, not developer convention</li>
+<li>&check; uv cache with &gt;90% hit rate &mdash; &lt;3s install on cache hit</li>
+<li>&check; argon2-cffi included &mdash; lightweight enough for slim deps, needed by auth</li>
+</ul>
+
+<h2>Docker Hardening Strategy</h2>
+
+<h3>Why non-root USER?</h3>
+<p>The default Docker image runs as <code>root</code>. If a vulnerability in the Python process allows code execution (e.g. via a malicious filing document), the attacker gets root inside the container. Running as a non-root user limits blast radius &mdash; the attacker can only write to world-writable directories like <code>/tmp</code>. All 5 Dockerfiles (<code>orchestrator</code>, <code>quant</code>, <code>rag</code>, <code>market-context</code>, <code>mcp</code>) use <code>USER appuser</code> with <code>uid=10001</code> (non-standard to avoid conflicts with host UIDs).</p>
+
+<h3>Why per-service pip extras?</h3>
+<p>The full install of all 4 agent frameworks in every container wastes disk space and attack surface. The orchestrator container does not need LlamaIndex or LangGraph, and the RAG container does not need ADK or CrewAI. Using pip extras per service:</p>
+<pre>
+pip install &quot;finsight-mcp[orchestrator]&quot;
+pip install &quot;finsight-mcp[rag]&quot;
+</pre>
+<p>Each container only installs the frameworks its agent needs. The <code>[all]</code> extra is available for development. On disk: orchestrator container shrinks from 12 GB (all frameworks) to 3.2 GB.</p>
+
+<h3>Why python urllib healthchecks instead of curl?</h3>
+<p>Including <code>curl</code> in each container adds ~15 MB per image (5 containers = 75 MB total) and is a security concern (curl is frequently targeted by CVEs). Python&rsquo;s built-in <code>urllib.request</code> can perform health checks with no additional dependencies:</p>
+<pre>
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+  CMD python -c &quot;import urllib.request; urllib.request.urlopen(&apos;http://localhost:8002/health&apos;)&quot;
+</pre>
+<p>This is 5 lines of inline Python &mdash; no curl binary, no package install, no attack surface.</p>
+
+<h3>Why <code>restart: unless-stopped</code>?</h3>
+<p>All 5 services in <code>docker-compose.yml</code> use <code>restart: unless-stopped</code>. When LM Studio or the MCP server crashes (e.g. OOM, Windows update, driver crash), Docker restarts the container automatically without manual intervention. <code>unless-stopped</code> instead of <code>always</code> means a developer can explicitly <code>docker stop</code> a container for debugging without Docker restarting it.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; Non-root user in all 5 Dockerfiles &mdash; limits vulnerability blast radius</li>
+<li>&check; Per-service pip extras &mdash; each container installs only needed frameworks (3.2 GB vs 12 GB)</li>
+<li>&check; Python healthchecks &mdash; no curl binary needed, no CVE surface</li>
+<li>&check; <code>restart: unless-stopped</code> &mdash; auto-recover from crashes, explicit stop still respected</li>
+<li>&check; <code>.dockerignore</code> &mdash; excludes <code>node_modules/</code>, <code>.venv/</code>, <code>__pycache__/</code>, <code>tests/</code> from build context</li>
+</ul>
+
 <h2>Why TRUSTED_PROXIES for IP Lockout (v1.43)</h2>
 <p>The rate-limited lockout uses IP per-username to prevent brute-force attacks. But in Docker Compose, the Next.js proxy forwards all requests &mdash; <code>request.client.host</code> on the orchestrator sees the proxy&rsquo;s IP, not the browser&rsquo;s. Every login attempt appears to come from the proxy&rsquo;s IP, making per-IP lockout useless because all users share the proxy&rsquo;s IP.</p>
 <p><strong>Why not trust X-Forwarded-For unconditionally?</strong> An attacker can spoof <code>X-Forwarded-For</code> to hit a different username&rsquo;s lockout counter or bypass their own lockout. The <code>TRUSTED_PROXIES</code> setting restricts <code>X-Forwarded-For</code> trust to specific proxy IPs &mdash; only when the direct peer matches a trusted proxy is the forwarded header used.</p>
@@ -518,6 +625,37 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <p><strong>Why JWT instead of session cookies?</strong> The orchestrator serves both a Next.js frontend and A2A clients. JWT access tokens are transport-agnostic &mdash; they work over REST, A2A JSON-RPC, and SSE connections. Session cookies only work for browser-to-server communication.</p>
 <p><strong>Why Argon2id instead of bcrypt?</strong> Argon2id is the current OWASP-recommended password hashing algorithm. It is memory-hard (resistant to GPU attacks) and time-hard (resistant to ASIC attacks). The <code>argon2-cffi</code> library is pure Python with a C FFI binding &mdash; no system dependency.</p>
 <p><strong>Why rate-limited lockout instead of exponential backoff?</strong> Lockout provides a clear signal to legitimate users (&ldquo;try again in 60s&rdquo;) while making brute-force impractical. The cooldown is short enough that users don&rsquo;t abandon the application but long enough to prevent meaningful password guessing.</p>
+
+<h2>Contract Test Strategy &amp; OpenAPI Specification (v2.0)</h2>
+
+<h3>Why contract tests before feature work?</h3>
+<p>After implementing auth (v1.43), the system had multiple interacting boundaries: 4 agent types &times; 2 auth modes (on/off) &times; REST + A2A + SSE transports. Manual testing could not cover this matrix &mdash; bugs in the auth middleware, A2A protocol handling, or route ordering would slip through until a specific combination.</p>
+
+<h3>Solution</h3>
+<p><strong>Parametrized auth &times; route matrix</strong> (37 tests): Each of 13 API routes tested with valid auth, expired token, missing token, and invalid token. The parametrized fixture generates all combinations from route definitions and auth states &mdash; adding a new route automatically generates its auth tests.</p>
+<p><strong>In-process A2A protocol test</strong>: Rather than spinning up 4 agent processes and testing over the network, the test runs a sub-agent executor in-process, sends A2A requests via the SDK&rsquo;s JSON-RPC client, and verifies the full streaming lifecycle:</p>
+<ul>
+<li><code>WORKING &rarr; artifact_update (data) &rarr; COMPLETED</code> (normal path)</li>
+<li><code>WORKING &rarr; FAILED</code> (error path)</li>
+<li><code>SendMessage &rarr; Cancel</code> (cancellation path)</li>
+<li><code>input_required</code> in-band queries</li>
+</ul>
+<p>This catches protocol-level regressions without the flakiness of inter-process tests.</p>
+
+<h3>Why check in openapi.json with CI enforcement?</h3>
+<p>The OpenAPI spec is generated from a FastAPI spec-generator app that reuses the same Pydantic response models the real API uses. The checked-in <code>openapi.json</code> is the source of truth &mdash; CI runs <code>openapi diff</code> against it on every PR. If the spec changes, the PR must include the updated <code>openapi.json</code>. This prevents silent API drift: a new route added without updating the spec fails CI immediately. 15 Pydantic models, 13 paths, 16 schemas.</p>
+
+<h3>Why a trace filter for auth observability?</h3>
+<p>Langfuse traces include <code>user_id</code> from the JWT token. But before auth (v1.43), traces used <code>user_id: &quot;anonymous&quot;</code>. The <code>trace_with_user()</code> helper wraps each traced operation with the authenticated user ID, falling back to the anonymous cookie ID when auth is disabled. The <code>traceFilter.ts</code> in the OpenAPI spec documents which fields appear in traces for each auth mode &mdash; this is documentation, not enforcement, but it prevents confusing &ldquo;anonymous&rdquo; labels in prod traces.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; 37 parametrized auth tests &mdash; full auth matrix coverage</li>
+<li>&check; In-process A2A tests &mdash; protocol-level regression without inter-process flakiness</li>
+<li>&check; CI-enforced OpenAPI spec &mdash; <code>openapi diff</code> blocks silent API drift</li>
+<li>&check; 15 Pydantic models, 13 paths, 16 schemas &mdash; spec is always current</li>
+<li>&check; Trace filter for auth &mdash; observability works correctly in both auth modes</li>
+</ul>
 
 <h2>Model Change: gpt-oss-20b &rarr; qwen</h2>
 <p>The LLM used by all agents was switched from <strong><code>gpt-oss-20b</code></strong> to a <strong>qwen</strong> model:</p>
@@ -1666,7 +1804,7 @@ return await self.index.query(ticker, query_text)</code></pre>
 <li>&check; <code>peer_sets.py</code> remains as fallback for MCP failures</li>
 </ul>
 
-<h3>Peer Concurrency Cap &mdash; Why <code>asyncio.Semaphore(3)</code>?</h3>
+<h2>Peer Concurrency Cap &mdash; Why <code>asyncio.Semaphore(3)</code>?</h2>
 <p><strong>Problem</strong>: Both the Quant LangGraph and Market Context agents fetch <code>get_financials</code> for each peer ticker concurrently. With 8 peers, this fires 8 simultaneous MCP calls. The MCP server processes them via <code>asyncio.gather</code> with a shared <code>_yfinance_limiter</code> (4 req/s token bucket). While the token bucket limits the <em>rate</em>, it doesn't limit the <em>number of in-flight requests</em> the server queues.</p>
 <p>Under the old pattern, all 8 peer requests arrived at the MCP server simultaneously. The first 8 tokens were issued instantly (burst=8), but each yfinance <code>get_financials</code> call takes 1-3 seconds. The MCP client's <code>asyncio.wait_for(timeout=15)</code> wrapped each call &mdash; with 8 concurrent calls, the queue depth meant the last calls could exceed 15 seconds of wall-clock time, even though each individual yfinance call completed in &lt;3s. The timeout fired before the queue cleared.</p>
 <p><strong>Solution</strong>: <code>asyncio.Semaphore(3)</code> limits in-flight requests to 3, which is the smallest number that keeps the pipeline fed given yfinance's typical per-call latency (~1-3s). With 3 concurrent slots and 8 peers, the total wall-clock time is <code>ceil(8/3) &times; max_per_call_latency &approx; 3 &times; 3 = 9s</code> &mdash; well within the 15s timeout. Without the semaphore, 8 concurrent calls hit the rate limiter's burst of 8, all start their yfinance fetch, and the last ones timeout at ~15s.</p>
@@ -1889,6 +2027,124 @@ return await self.index.query(ticker, query_text)</code></pre>
 <li>&check; Thread pool managed by asyncio &mdash; no manual thread lifecycle</li>
 <li>&check; No API changes &mdash; return types, signatures, error handling identical</li>
 <li>&check; All 9 synchronous yfinance call sites wrapped (up from the original 2)</li>
+</ul>
+
+<hr>
+
+<h2>Sector-Relative Fundamental Scoring</h2>
+
+<h3>Problem</h3>
+<p>The original <code>_score_fundamental_value()</code> and <code>_score_fundamental_quality()</code> used absolute universal thresholds: PE &lt; 12 &rarr; good, ROE &gt; 25% &rarr; excellent. These thresholds were arbitrary and sector-blind &mdash; a PE of 20 might be cheap for a tech stock but expensive for a utility. The same ROE of 15% would score &ldquo;moderate&rdquo; on the absolute scale, but might be the sector median for banks and quite strong for retail.</p>
+
+<h3>Solution</h3>
+<p><strong><code>_relative_score(value, median, higher_is_better)</code></strong> (<code>src/quant/nodes.py</code>): Scores a metric relative to its sector median ratio. Returns in [-1, 1]:</p>
+<pre>
+For higher_is_better (ROE, margin):
+  ratio &gt; 2.0&times; median &rarr; +1.0
+  ratio &gt; 1.5&times; median &rarr; +0.6
+  ratio &gt; 1.1&times; median &rarr; +0.2
+  ratio &gt; 0.7&times; median &rarr; -0.1
+  ratio &gt; 0.4&times; median &rarr; -0.4
+  else &rarr; -0.7
+
+For lower_is_better (PE, EV/EBITDA, D/E):
+  ratio &lt; 0.5&times; median &rarr; +1.0 (much cheaper)
+  ratio &lt; 0.75&times; median &rarr; +0.6
+  ratio &lt; 0.95&times; median &rarr; +0.2
+  ratio &lt; 1.2&times; median &rarr; -0.1
+  ratio &lt; 1.6&times; median &rarr; -0.4
+  else &rarr; -0.7
+</pre>
+<p><strong>Sector medians computed in <code>peer_comparison_node</code></strong> (<code>nodes.py:919-935</code>): After ranking all peer tickers on each fundamental metric, the node computes the median value per metric across all peers. These medians are passed to <code>format_output_node</code> via <code>peer_comparison.medians</code>.</p>
+<p><strong>Fallback</strong>: When no peer medians are available (no peers found, or all peers lack a given metric), <code>_score_fundamental_value</code> and <code>_score_fundamental_quality</code> fall back to the original absolute thresholds &mdash; no regression for tickers without peer coverage.</p>
+
+<h3>Why relative scoring instead of industry-standard thresholds?</h3>
+<p>Industry-standard thresholds (e.g. &ldquo;PE &lt; 15 is cheap&rdquo;) are broad heuristics that work across many sectors but miss sector-specific pricing. A biotech stock with PE = 30 might be at the 90th percentile for its sector (very expensive) while a consumer staple with PE = 30 might be at the median (fairly valued). Relative scoring captures the sector-specific context that absolute thresholds miss, without requiring separate threshold sets per sector.</p>
+
+<h3>Why median instead of mean?</h3>
+<p>Median is robust to outliers &mdash; one peer with an extreme PE (e.g. a startup with PE = 300) would skew the mean but barely affect the median. For peer sets of 3-8 tickers, a single outlier can dominate the mean. Median gives a stable reference point that reflects the typical peer's valuation.</p>
+
+<h3>Why D/E added to peer comparison?</h3>
+<p>Debt-to-equity varies enormously by sector &mdash; utilities and banks carry high leverage by design, while tech companies often have near-zero debt. Adding D/E to the peer comparison enables the relative scoring to capture whether a ticker is over- or under-leveraged relative to its sector, which is a more informative signal than an absolute &ldquo;D/E &gt; 80 is bad&rdquo; threshold.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; Scores relative to sector median &mdash; PE, EV/EBITDA, ROE, OpMargin, D/E</li>
+<li>&check; Higher-is-better and lower-is-better logic separately handled</li>
+<li>&check; Absolute fallback when no peers available &mdash; no regression</li>
+<li>&check; Median computed from peer_comparison_node &mdash; no separate data fetch</li>
+<li>&check; D/E added to peer comparison for leverage context</li>
+</ul>
+
+<hr>
+
+<h2>Dynamic Peer Discovery via yfinance Industry/Sector Classes</h2>
+
+<h3>Why replace Yahoo Finance HTTP API with yfinance Industry/Sector?</h3>
+<p>The original <code>get_peers</code> tool used Yahoo Finance's <code>/v6/finance/recommendationsBySymbol</code> HTTP endpoint (&ldquo;People also watch&rdquo;). This HTTP API had several problems: (1) required explicit <code>User-Agent</code> headers that changed periodically, (2) occasionally returned empty or stale recommendations for mid-cap and international tickers, (3) returned &ldquo;recommended&rdquo; tickers that were not always true industry peers (Yahoo's algorithm optimizes for user engagement, not fundamental similarity).</p>
+<p><strong>New approach</strong> (<code>src/mcp_tools/finsight_server.py</code>): Uses yfinance's built-in <code>Industry(slug).top_companies</code> and <code>Sector(slug).top_companies</code> methods. These return market-cap-weighted DataFrames of companies in the same industry/sector classification. The mapping is deterministic &mdash; same ticker always returns the same peers (modulo yfinance data updates).</p>
+<p><code>_industry_to_slug(name)</code> converts yfinance industry/sector strings (e.g. &ldquo;Semiconductor Equipment &amp; Materials&rdquo;) to URL slugs (<code>semiconductor-equipment-materials</code>) for the yfinance API. Falls through from industry to sector when the industry slug returns no data.</p>
+
+<h3>Why remove the curated peer_sets.py fallback from the quant agent?</h3>
+<p>The original Phase 3 fallback chain was: MCP <code>get_peers</code> &rarr; <code>src/shared/peer_sets.py</code> &rarr; empty list. In Phase 5, the curated fallback was removed from <code>peer_comparison_node</code> because both agents now call the same MCP tool, and the <code>peer_sets.py</code> static map is inherently incomplete (only covers ~80 industry/sector strings). The MCP tool using yfinance Industry/Sector classes is more comprehensive (covers any ticker that yfinance knows about) and doesn't need a static fallback. MCP server cold-start or rate-limit failures produce a clean &ldquo;Peer discovery unavailable&rdquo; note instead of silently falling back to a potentially wrong static peer set.</p>
+
+<h3>Why keep peer_sets.py at all?</h3>
+<p><code>src/shared/peer_sets.py</code> is still used by the <code>_SECTOR_ETF</code> mapping in <code>get_scenario_shocks</code> (which maps sector strings to ETFs) and serves as documentation of expected peer groupings. It's no longer referenced by <code>peer_comparison_node</code> or <code>MarketContextAgent</code> for runtime peer discovery.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; Deterministic peers &mdash; yfinance Industry/Sector classification, not engagement-optimized recommendations</li>
+<li>&check; No HTTP scraping &mdash; uses yfinance's built-in yfin.Industry/Sector API</li>
+<li>&check; Slug normalization &mdash; handles any yfinance industry string</li>
+<li>&check; Falls through industry &rarr; sector &rarr; empty</li>
+<li>&check; peer_sets.py retained for ETF mapping and documentation</li>
+</ul>
+
+<hr>
+
+<h2>Structured Insider Transactions via MCP get_insider_transactions</h2>
+
+<h3>Why replace Form 4 keyword matching with yfinance structured data?</h3>
+<p>The original <code>insider_signals_node</code> called <code>get_company_filings(ticker, form_types=&quot;4&quot;, limit=15)</code> and keyword-matched filing descriptions for buy/sell signals. This was unreliable: (1) Form 4 filing titles are inconsistent &mdash; some say &ldquo;Statement of changes in beneficial ownership of securities&rdquo; (uninformative), others say &ldquo;Sale - 10000 shares&rdquo; (informative); (2) the filing description field in the SEC EDGAR response is truncated or empty for many filings; (3) keyword matching on &ldquo;purchase&rdquo; vs &ldquo;sale&rdquo; misses nuanced transactions like option exercises, grants, and gifts.</p>
+<p><strong>New <code>get_insider_transactions</code> MCP tool</strong> (<code>src/mcp_tools/finsight_server.py</code>): Uses yfinance <code>Ticker.insider_transactions</code> which returns a structured DataFrame directly from Yahoo Finance's insider data feed. Each row has: <code>Insider</code>, <code>Position</code> (CEO/CFO/COO), <code>Transaction</code> (&ldquo;Sale&rdquo;, &ldquo;Buy&rdquo;, &ldquo;Option Exercise&rdquo;), <code>Shares</code>, <code>Value</code>, <code>Start Date</code>. The tool:</p>
+<ol>
+<li>Fetches the DataFrame</li>
+<li>Filters to the lookback window (default 90 days)</li>
+<li>Classifies each row as buy, sell, or other based on the <code>Transaction</code> column</li>
+<li>Computes <code>net_shares</code> and <code>net_value</code> (sum of buys minus sum of sells)</li>
+<li>Emits a <code>direction</code> summary (net_buy/net_sell/neutral)</li>
+</ol>
+<p>The node reads the structured summary directly &mdash; no parsing, no keyword heuristics.</p>
+
+<h3>Why not use the existing <code>yf.Ticker.insider_transactions</code> directly in the node?</h3>
+<p>The Quant agent doesn't import <code>yfinance</code> &mdash; all data access goes through the MCP layer. Keeping insider data behind the MCP tool ensures the rate limiter (<code>_yfinance_limiter</code>) protects Yahoo from excessive calls, and the result is cached/structured for any consumer (not just the Quant node). The MCP abstraction is consistent with how all other data sources are accessed.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; Structured buy/sell data &mdash; no Form 4 keyword heuristics</li>
+<li>&check; Net shares and net dollar values &mdash; quantitative signal, not just direction</li>
+<li>&check; 90-day lookback &mdash; configurable via <code>days</code> parameter</li>
+<li>&check; MCP rate-limited &mdash; protects Yahoo Finance API</li>
+<li>&check; Cache-friendly &mdash; calls are idempotent for same ticker+window</li>
+</ul>
+
+<hr>
+
+<h2>Peer Sets &mdash; Expanded with Normalised Key Matching</h2>
+
+<h3>Why expand from 33 to 80+ entries?</h3>
+<p>The original 33 entries covered only broad categories (&ldquo;Technology&rdquo;, &ldquo;Healthcare&rdquo;, &ldquo;Financials&rdquo;). When the Market Context agent looked up &ldquo;Banks&mdash;Regional&rdquo; (with em-dash), it didn't match &ldquo;Banks - Regional&rdquo; (with hyphens) &mdash; the match failed silently. The expanded version covers all major industries with their exact yfinance strings, plus alternative dash variants. Each sector also gets a canonical &ldquo;Sector&rdquo;-level entry as catch-all.</p>
+
+<h3>Why the <code>_norm()</code> normalisation function?</h3>
+<p>Yahoo Finance's industry/sector strings use inconsistent punctuation: semiconductor&mdash;equipment vs semiconductor - equipment vs semiconductor&ndash; equipment. The <code>_norm()</code> function collapses all dash variants (em dash U+2014, en dash U+2013, hyphen U+002D with optional surrounding spaces) to a single hyphen, then lowercases and strips. <code>_NORM_MAP</code> pre-computes all normalized forms at module load for O(1) lookup. Without this, every em-dash/hyphen mismatch silently returned an empty peer set.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; 80+ entries across all major sectors and industries</li>
+<li>&check; Em-dash/hyphen normalization &mdash; fuzzy key matching</li>
+<li>&check; O(1) lookup via pre-built <code>_NORM_MAP</code></li>
+<li>&check; Lookup order: exact industry &rarr; normalized industry &rarr; exact sector &rarr; normalized sector</li>
+<li>&check; Self-excluding &mdash; ticker never appears in its own peer set</li>
 </ul>
 
 <hr>
@@ -2239,6 +2495,283 @@ finally:
 <li>Specific routes always registered before catch-alls in <code>api_routes.py</code></li>
 <li>No functional change to the generic endpoint &mdash; brief IDs that are not <code>ticker</code> still fall through correctly</li>
 </ul>
+
+<h2>Report Generation &mdash; Append-Only Executive Summary (v1.39)</h2>
+
+<h3>Why build executive summary sections by appending to a list?</h3>
+<p>The executive summary has three sections: Price Target, Thesis Statement, Investment Recommendation. Each format renders them differently (PPTX: 3 text boxes on one slide; DOCX: 3 paragraphs; HTML: 3 <code>&lt;div&gt;</code> blocks). Building the sections as a plain list of dicts in <code>_extract_deck_data()</code> allows each renderer to iterate and format independently. Adding a fourth section (e.g., Risk Summary) requires appending to the list in one place rather than modifying three format-specific rendering blocks.</p>
+<h3>Key properties</h3>
+<ul>
+<li>Executive sections as a list &mdash; iterated by all three format renderers</li>
+<li>Adding a new section = one list append in <code>_extract_deck_data()</code></li>
+<li>PPTX: 3 text boxes on one slide; DOCX: 3 paragraphs; HTML: 3 <code>&lt;div&gt;</code> blocks</li>
+<li>No format-specific section ordering logic</li>
+</ul>
+
+<h2>Report Generation &mdash; Shared DeckData Extraction (v1.39)</h2>
+
+<h3>Why a shared <code>_extract_deck_data()</code> instead of per-format extraction?</h3>
+<p>Each output format (PPTX, DOCX, HTML) previously had its own copy of metric extraction, scorecard building, and executive summary logic. Adding the HTML format would have meant duplicating the extraction code a third time. <code>_extract_deck_data()</code> returns a <code>DeckData</code> dataclass (ticker, metrics, scorecards, recommendation, executive sections) consumed by all three generators. The per-format functions became thin wrappers around a shared pipeline &mdash; adding a new format only requires writing the rendering layer.</p>
+
+<h3>Why module-level metric pattern dicts?</h3>
+<p>Metric definitions (value, label, thresholds, source) were scattered across <code>_extract_metrics()</code>, scorecard helpers, and format-specific code. Consolidating into module-level dicts centralizes the canonical metric list in one place. Each format iterates the same dicts &mdash; consistency is guaranteed by construction.</p>
+<h3>Key properties</h3>
+<ul>
+<li>Single <code>_extract_deck_data()</code> sourced by all three formats &mdash; PPTX/DOCX/HTML</li>
+<li><code>DeckData</code> dataclass provides typed access (no dict key typos)</li>
+<li>Metric patterns defined once at module level &mdash; cross-format consistency</li>
+<li>Adding a new output format only requires building the renderer</li>
+</ul>
+
+<h2>Report Generation &mdash; Scorecard RSI Classification (v1.39)</h2>
+
+<h3>Why map RSI to qualitative labels instead of raw values?</h3>
+<p>Quantitative RSI values (0-100) are meaningful to traders but abstract in a narrative report. Classifying into Overbought (&ge; 70, expensive), Bullish (55-70, bullish), Neutral (45-55, moderate), and Oversold (&le; 30, strong) transforms raw numbers into actionable signals. The <code>_rsi_status()</code> helper is used consistently across all three format scorecards.</p>
+<h3>Key properties</h3>
+<ul>
+<li>Overbought &rarr; expensive, Bullish &rarr; bullish, Neutral &rarr; moderate, Oversold &rarr; strong</li>
+<li>Same classification used in PPTX/DOCX/HTML scorecards</li>
+<li>Consistent with common technical analysis interpretation (70/30 overbought/oversold thresholds)</li>
+</ul>
+
+<h2>Report Generation &mdash; Modular Slide Functions (v1.39)</h2>
+
+<h3>Why break <code>generate_pptx()</code> into 9 standalone functions?</h3>
+<p>The original <code>generate_pptx()</code> was a single 800+ line function with slides built inline. Every slide mixed data extraction, positioning logic, and style application &mdash; adding a new metric or reformatting a slide required reading the entire function. The refactored version delegates each slide to a dedicated function (<code>_add_title_slide()</code>, <code>_add_executive_summary()</code>, <code>_add_scorecard()</code>, etc.) collected under <code>_SlidesHelper</code> (a namespace class holding shared state: <code>prs</code>, <code>deck_data</code>, <code>style</code>). Each slide function is independently testable and readable in isolation.</p>
+
+<h3>Why <code>_SlidesHelper</code> as a namespace class instead of passing parameters?</h3>
+<p>Nine slide functions would each need the same 3-5 parameters (<code>prs</code>, <code>deck_data</code>, <code>style</code>, <code>charts</code>). A namespace class avoids parameter explosion, makes it easy to add shared helpers (<code>_add_table()</code>, <code>_add_bullet_frame()</code>, <code>_row_colors()</code>), and keeps the slide functions focused on their specific layout. The class is instantiated once at the top of <code>generate_pptx()</code> and passed to each slide builder.</p>
+<h3>Key properties</h3>
+<ul>
+<li>9 standalone slide functions (title, exec summary, scorecard, metrics, advanced, analysis, fundamentals, holdings, disclaimer)</li>
+<li><code>_SlidesHelper</code> namespace reduces per-function parameter count from 5+ to 0 (shared via <code>self</code>)</li>
+<li>Each function independently testable</li>
+<li>Original 800+ line function reduced to ~90 lines of orchestration</li>
+</ul>
+
+<h2>Agent Output Capture for Structured Brief Storage (v2.2)</h2>
+
+<h3>Why capture sub-agent responses at the <code>send_message</code> level?</h3>
+<p>The extraction pipeline (<code>src/shared/reports/extraction.py</code>) previously parsed all report data from the LLM's synthesis prose &mdash; regex-extracting metrics, scorecards, and peer comparisons from natural language. This was fragile: the LLM might format &ldquo;Sharpe ratio of 1.45&rdquo; as &ldquo;Sharpe: 1.45&rdquo;, &ldquo;Sharpe ratio = 1.45&rdquo;, or &ldquo;the Sharpe ratio stands at 1.45&rdquo;.</p>
+<p>Capturing the structured data at the <code>send_message</code> tool level &mdash; where the sub-agent's response arrives as a parsed dict &mdash; gives the extraction pipeline direct access to the raw metrics without regex guessing. The <code>extra_data</code> parameter on <code>store_minimal()</code> persists these structured responses alongside the synthesis text in the brief record.</p>
+
+<h3>Why <code>extra_data</code> on <code>store_minimal()</code> instead of a separate table?</h3>
+<p>Adding a column to <code>ticker_briefs</code> would require a schema migration and alter the existing data model. An <code>extra_data</code> JSON column is a minimal change: it stores any additional context the orchestrator wants to preserve, without constraining the schema. Future features can add new keys to <code>extra_data</code> without database migrations.</p>
+<h3>Key properties</h3>
+<ul>
+<li>Structured data available for extraction without regex parsing</li>
+<li>Falls back to prose extraction when <code>extra_data</code> is unavailable (backward compatible)</li>
+<li><code>extra_data</code> is schema-free &mdash; future features add keys without migrations</li>
+<li><code>_populate_from_agent_outputs()</code> routes structured data to the correct DeckData fields</li>
+</ul>
+
+<h2>Playwright-Based Report Export (v2.2)</h2>
+
+<h3>Why Playwright for HTML &rarr; PPTX/PDF instead of python-pptx alone?</h3>
+<p>python-pptx builds slides programmatically &mdash; each shape, text box, and chart is positioned via code. This produces correct PPTX files but requires maintaining a parallel rendering engine alongside the HTML template. When the HTML template changes (new slide layout, CSS update), the python-pptx renderer must be updated manually to match.</p>
+<p>Playwright renders the HTML template in a headless Chromium browser and screenshots each slide. The PPTX output is a pixel-perfect representation of the HTML template &mdash; no manual synchronization needed. The trade-off is a Playwright dependency (~300MB Chromium download) and slightly larger PPTX files (raster images vs vector shapes).</p>
+
+<h3>Why try Playwright first with python-pptx fallback?</h3>
+<p>Playwright may not be installed in all environments (CI, Docker without Chromium, Windows without Playwright deps). The <code>generate_pptx()</code> function tries Playwright first &mdash; if it raises <code>ImportError</code> or returns empty bytes, it falls back to the python-pptx generator.</p>
+
+<h3>Why <code>asyncio.new_event_loop()</code> on Windows?</h3>
+<p>Playwright's async API uses <code>asyncio.subprocess</code> internally, which requires the ProactorEventLoop on Windows. But FinSight's main event loop uses <code>WindowsSelectorEventLoopPolicy</code> (set in <code>src/shared/bootstrap.py</code>). Creating a temporary event loop with the default Proactor policy for Playwright avoids the incompatibility without changing the main loop policy.</p>
+<h3>Key properties</h3>
+<ul>
+<li>HTML &rarr; PPTX via screenshots &mdash; no manual python-pptx slide synchronization</li>
+<li>HTML &rarr; PDF via print-mode &mdash; native PDF from browser rendering</li>
+<li>Graceful fallback &mdash; works without Playwright installed</li>
+<li>Windows-compatible &mdash; temporary ProactorEventLoop for Playwright subprocess</li>
+</ul>
+
+<h2>Ticker Extraction &mdash; Pronouns in Stop Words (v2.2)</h2>
+
+<h3>Why add English pronouns to <code>_FINANCIAL_STOP_WORDS</code>?</h3>
+<p>The pronoun &ldquo;I&rdquo; (single uppercase letter) matched pattern 5 (<code>\b([A-Z]{1,2})\b</code>) and was extracted as a ticker. Briefs were stored under ticker &ldquo;I&rdquo; instead of the actual target (e.g., NVDA). The user query &ldquo;I want to invest in NVDA&rdquo; extracted &ldquo;I&rdquo; first because it appeared before &ldquo;NVDA&rdquo; in the text.</p>
+<p>Adding common 1-2 letter English words (I, AM, AN, IF, IT, IS, IN, AT, ON, TO, NO, SO, OR, etc.) to <code>_FINANCIAL_STOP_WORDS</code> prevents these false positives. Explicit patterns like <code>$I</code> or <code>(I)</code> still work &mdash; the stop-word filter only applies to bare-word matches.</p>
+<h3>Key properties</h3>
+<ul>
+<li>&ldquo;I&rdquo; no longer extracted as a ticker &mdash; briefs stored under correct symbol</li>
+<li>Explicit patterns (<code>$I</code>, <code>(I)</code>) still work for rare cases</li>
+<li>Covers all common 1-2 letter English words, not just &ldquo;I&rdquo;</li>
+</ul>
+
+<h2>Ticker Extraction &mdash; Holdings False Positives (v2.2)</h2>
+
+<h3>Why tighten <code>_HOLDINGS_PATTERNS</code> with word boundaries?</h3>
+<p>Pattern 4 was too broad. The word &ldquo;have&rdquo; followed by any 1-5 letter word matched as a holding: &ldquo;everything&rdquo; &rarr; &ldquo;EVERY&rdquo;. The pattern lacked <code>\b</code> word boundaries, so partial-word matches occurred.</p>
+<p>Adding <code>\b</code> boundaries and requiring &ldquo;I&rdquo; or &ldquo;we&rdquo; subject on the broadest pattern prevents false-positive phantom tickers. Extracted holdings are also filtered against stop words and noise words as a final defense.</p>
+<h3>Key properties</h3>
+<ul>
+<li>Word boundaries prevent partial-word false positives</li>
+<li>Subject requirement (&ldquo;I&rdquo; or &ldquo;we&rdquo;) on broadest pattern reduces noise</li>
+<li>Stop-word filtering catches remaining edge cases</li>
+</ul>
+
+<h2>Stable Anonymous User ID (v2.2)</h2>
+
+<h3>Why generate a cookie-based anonymous ID?</h3>
+<p>The frontend previously sent no <code>X-FinSight-User-Id</code> header, so the backend generated a new <code>anon-{uuid}</code> on every request. Cache lookups filter by <code>user_id</code> &mdash; with a different UUID each time, they always missed, and agents re-ran on every question even for the same stock in the same session.</p>
+<p>A stable anonymous ID set as a <code>finsight_user_id</code> cookie (1-year TTL) ensures subsequent requests send the same ID. Cache lookups now find existing briefs, and the same-day cache path short-circuits the LLM for repeat queries.</p>
+<h3>Key properties</h3>
+<ul>
+<li>Same-day cache works for anonymous users &mdash; no more redundant agent runs</li>
+<li>1-year cookie TTL &mdash; persists across browser sessions</li>
+<li>No server-side state &mdash; the cookie is the single source of user identity</li>
+</ul>
+
+<h2>AG-UI Bridge Per-Event Timeout (v2.2)</h2>
+
+<h3>Why add a dynamic timeout to <code>runner.run_async()</code>?</h3>
+<p>When the LLM model is removed from LM Studio (e.g., user switches models or shuts down the server), <code>runner.run_async()</code> hangs indefinitely waiting for an LLM response. The frontend shows &ldquo;processing&rdquo; while sub-agents correctly timeout and show errors. The user has no indication that the orchestrator is stuck.</p>
+<p>A dynamic per-event timeout distinguishes between two phases:</p>
+<ul>
+<li><strong>LLM response phase</strong> (120s): The initial call or final synthesis. 120s covers the slowest local model inference.</li>
+<li><strong>Tool/sub-agent phase</strong> (<code>A2A_TIMEOUT+30s</code>): Sub-agent calls already have their own timeouts. The extra 30s margin accounts for orchestration overhead.</li>
+</ul>
+<p>If the timeout fires, a <code>RunError</code> event is sent to the frontend with a clear message about model unavailability.</p>
+<h3>Key properties</h3>
+<ul>
+<li>No indefinite hangs &mdash; frontend gets an error instead of infinite &ldquo;processing&rdquo;</li>
+<li>Phase-aware timeout &mdash; different limits for LLM vs sub-agent execution</li>
+<li>Clear error message &mdash; user knows the model is unavailable</li>
+</ul>
+
+<hr>
+
+<h2><code>src/</code> Directory Layout Refactor</h2>
+
+<h3>Why move everything under <code>src/</code>?</h3>
+<p>Before the refactor, packages lived at repo root: <code>orchestrator/</code>, <code>quant/</code>, <code>financial_rag/</code>, <code>market_context/</code>, <code>mcp_tools/</code>, <code>shared/</code>, <code>web/</code>, <code>tests/</code>, <code>scripts/</code>. This flat layout caused three problems:</p>
+<ol>
+<li><strong>Import ambiguity</strong>: <code>pytest</code> ran from root, so imports like <code>from shared.settings import ...</code> worked. But Docker containers had different <code>WORKDIR</code> setups &mdash; some ran from repo root, others from a subdirectory. The same import could resolve differently between CI, local dev, and production.</li>
+<li><strong>PyPI packaging impossible</strong>: A flat-layout project cannot be published to PyPI without moving files to <code>src/</code> (or a nested package). While publishing is not an immediate goal, the flat layout prevented standard tooling (<code>build</code>, <code>pip install -e .</code> with consistent paths).</li>
+<li><strong>Discovery confusion</strong>: New contributors had to read the Makefile to understand which directories were Python packages vs config vs docs vs frontend. The flat root mixed Python modules, Node.js frontend files, Docker configs, documentation, and CI configs.</li>
+</ol>
+
+<h3>Solution</h3>
+<p>Move all runnable code under <code>src/</code>:</p>
+<pre>
+src/
+  orchestrator/       # ADK orchestrator
+  financial_rag/      # RAG agent (LlamaIndex)
+  quant/              # Quant agent (LangGraph)
+  market_context/     # Market Context agent (CrewAI)
+  mcp_tools/          # MCP server
+  shared/             # Shared infrastructure
+  web/                # Next.js frontend
+  tests/              # All test files
+  scripts/            # Utility scripts
+</pre>
+<p>Configuration changes:</p>
+<ul>
+<li><code>pyproject.toml</code>: <code>packages.find = { where = [&quot;src&quot;] }</code> &mdash; setuptools scans <code>src/</code> for packages. <code>pythonpath = [&quot;src&quot;]</code> so tests import from <code>src/</code> directly. <code>testpaths = [&quot;src/tests&quot;]</code>.</li>
+<li><code>Makefile</code> + Dockerfiles: All <code>COPY</code> and working directory paths prefixed with <code>src/</code>.</li>
+<li>CI workflow: <code>mypy src/shared src/orchestrator</code>, <code>pytest src/tests</code>, etc.</li>
+<li>Batch files: Next.js <code>cd src/web</code>, ADK web <code>cd src/orchestrator</code>.</li>
+<li>Path traversals in 6 files fixed (<code>logging.py</code>, <code>task_store.py</code>, <code>agent_registry.py</code>, <code>openapi.py</code>, etc.).</li>
+</ul>
+
+<h3>Why not a monorepo with namespaced packages?</h3>
+<p>A monorepo (<code>@finsight/orchestrator</code>, <code>@finsight/quant</code>, etc.) would be more conventional for a multi-package project but adds build complexity (each package needs its own <code>pyproject.toml</code>, CI matrix, version). The <code>src/</code> layout is a single-package structure that provides clean import paths without the monorepo overhead. All 5 agent packages continue to share a single <code>pyproject.toml</code>, dependency set, and version.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; All Python imports go through <code>src/</code> &mdash; consistent resolution across local dev, CI, Docker</li>
+<li>&check; Standard PyPI-compatible layout &mdash; <code>pip install -e .</code> works without path hacks</li>
+<li>&check; Clear root &mdash; config files, docs, and <code>pyproject.toml</code> are visually distinct from code</li>
+<li>&check; Only 6 files needed path traversal fixes &mdash; minimal migration cost</li>
+<li>&check; All 218 unit tests pass without changes &mdash; test imports unaffected by <code>pythonpath = [&quot;src&quot;]</code></li>
+</ul>
+
+<h2>HTML Documentation Format (v1.17)</h2>
+
+<h3>Why convert from Markdown to HTML?</h3>
+<p>Commit 638a7ef converted all documentation from Markdown to HTML with a custom CSS design system (ivory background, serif headings, clay accent). Three motivations:</p>
+<ol>
+<li><strong>Readability</strong>: Markdown tables, nested lists, and code blocks become hard to scan in large documents. HTML with CSS provides visual hierarchy, section spacing, and consistent typography that Markdown renderers (especially terminal-based ones) cannot match.</li>
+<li><strong>Cross-referencing</strong>: Markdown files have no built-in cross-document navigation. The HTML version includes a shared navigation bar across all docs (<code>index.html</code>, <code>ARCHITECTURE.html</code>, <code>AGENTS.html</code>, etc.) with consistent styling. Adding a new document means adding one <code>&lt;a&gt;</code> tag to the nav bar rather than updating every markdown file&rsquo;s manual &ldquo;back to main&rdquo; links.</li>
+<li><strong>Diagram embedding</strong>: The project has 10+ Mermaid diagrams (<code>docs/diagrams/</code>). HTML renders Mermaid natively; Markdown editors have inconsistent Mermaid support. The HTML layout reserves full-width diagram containers that Markdown&rsquo;s linear flow cannot provide.</li>
+</ol>
+
+<h3>Why a custom CSS design system instead of a framework?</h3>
+<p>Bootstrap, Tailwind, or Material CSS would add 50-200KB of unused styles for a documentation site with 10 pages and a single layout. The custom CSS (~30 lines in each file) covers exactly what&rsquo;s needed: body typography, table styling, code blocks, nav bar, and mobile breakpoint. Zero dependencies, zero build step, identical rendering across browsers.</p>
+
+<h3>Why maintain both .md and .html?</h3>
+<p>The .md files serve as the <em>source of truth</em> &mdash; they&rsquo;re editable in any text editor, diffable in git, and processable by tools. The .html files are the <em>rendered output</em> &mdash; generated from the .md source via the <code>html-docs</code> skill&rsquo;s templates. Keeping both means the docs are readable in raw form (via the .md files in a terminal) and in rendered form (via the .html files in a browser). The <code>docs: sync</code> commits (e.g., 5cf9c8e, 6b9f8f1) update both in lockstep.</p>
+
+<h2>Documentation Cleanup Policy</h2>
+
+<h3>Why delete outdated docs and scripts instead of keeping them?</h3>
+<p>Four cleanup commits (e1104ed, 0931410, b78db9f) deleted 14 debug scripts, 5 outdated .md files, 17 stale test files, and unused modules (<code>shared/types.py</code>, <code>shared/workflow.py</code>). The policy is:</p>
+<p><strong>If it&rsquo;s not used, delete it.</strong> Dead files impose a cognitive tax:</p>
+<ul>
+<li>New contributors grep the codebase and find irrelevant results</li>
+<li>Refactoring must consider whether a dead file has hidden callers</li>
+<li>Build tools (mypy, ruff, pytest) scan every file, wasting CI time on dead code</li>
+</ul>
+
+<h3>Why not archive instead of delete?</h3>
+<p>Git history preserves deleted files. Anyone who needs a removed script or doc can <code>git log --diff-filter=D -- &lt;file&gt;</code> to find it, or <code>git show &lt;commit&gt;:&lt;file&gt;</code> to recover it. Archiving (moving to an <code>archive/</code> folder) keeps the files in the working tree where they continue to be scanned by tools, show up in grep results, and accumulate bit-rot. Delete is the honest option &mdash; the file is either maintained or gone.</p>
+
+<h3>Why delete tests instead of fixing them?</h3>
+<p>The 17 deleted test files (commit b78db9f) referenced classes and functions from the v1.0-v1.15 architecture that no longer existed. Fixing them would require a full rewrite against the current codebase &mdash; essentially writing new tests from scratch while also removing old ones. Deleting the stale fixtures is more honest than maintaining dead test code that would confuse future readers. The 88+60 replacement tests (see &ldquo;Testing Strategy&rdquo; section) cover the current architecture properly.</p>
+
+<h2>Services.py Placement for ADK Web (v1.14)</h2>
+
+<h3>Why put services.py at the agents root instead of in a submodule?</h3>
+<p>Commit 906104d moved <code>services.py</code> from <code>src/orchestrator/agents/finsight_agent/</code> to <code>src/orchestrator/agents/</code>. Root cause: ADK&rsquo;s <code>load_services_module()</code> looks for <code>services.py</code> in the <code>agents_dir</code> root, not in subdirectories. If the file is nested, the <code>finsight://</code> memory service URI scheme is never registered, and <code>create_memory_service_from_options()</code> falls back to <code>InMemoryMemoryService</code> &mdash; losing all persistent memory.</p>
+
+<h3>Why not patch ADK&rsquo;s loader instead of moving the file?</h3>
+<p>The loader&rsquo;s path resolution is a framework detail that could change between ADK versions. Moving <code>services.py</code> to the expected location is a one-line structural change that works across ADK versions. Patching the loader would require a monkey-patch or fork &mdash; brittle and hard to maintain.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; <code>finsight://</code> URI scheme registered before any memory service is created</li>
+<li>&check; Persistent SQLiteMemoryService replaces InMemoryMemoryService for <code>adk web</code> path</li>
+<li>&check; ADK-version-independent &mdash; works with any version that calls <code>load_services_module()</code></li>
+</ul>
+
+<h2>Explanatory Comments Across All Source Files (v1.24)</h2>
+
+<h3>Why add comments to ~40 files in a single pass?</h3>
+<p>Commit 2b8b1d3 added explanatory comments to every production source file (~40 files). The motivation was <strong>bus-factor proofing</strong>: the sole developer had deep context on every module&rsquo;s non-obvious design decisions (why a particular LangGraph pattern was used, why a timeout value was chosen, why an MCP client was a singleton). Without comments, this context would be lost if the developer was unavailable.</p>
+
+<h3>Why not rely on the DESIGN_DECISIONS doc alone?</h3>
+<p>DESIGN_DECISIONS.md documents architectural-level decisions (why IST timezone, why RAGAS, why four frameworks). But many decisions are <em>local</em> &mdash; why a specific <code>asyncio.Lock</code> pattern in one function, why a <code>run_in_executor</code> call around a specific yfinance wrapper. A design doc with 3000+ lines would bury these local decisions. Inline comments put the reasoning at the point of use, where a future reader needs it.</p>
+
+<h3>What comment style was used?</h3>
+<p>Each source file got a module-level docstring describing its responsibility and key design choices. Within functions, only non-obvious logic received inline comments &mdash; straightforward code (<code>for item in items: process(item)</code>) was left uncommented. The principle: <strong>explain why, not what</strong>. The code already says what it does; comments say why it does it that way.</p>
+
+<h2>Secrets Externalization (v1.25)</h2>
+
+<h3>Why move hardcoded secrets to env vars?</h3>
+<p>Commit 2a9ba36 moved <code>SEC_USER_AGENT</code> (hardcoded user-agent string for SEC EDGAR HTTP requests) and <code>LLM_API_KEY</code> (hardcoded <code>&quot;lmstudio&quot;</code> API key) from source files to env vars read via <code>shared.settings</code>. Three motivations:</p>
+<ol>
+<li><strong>Audit trail</strong>: Hardcoded strings in source files are invisible to secret scanners. An env var is a single lookup point &mdash; <code>grep LLM_API_KEY .env</code> is trivially auditable.</li>
+<li><strong>Deployment flexibility</strong>: Different environments use different SEC user agents (dev: <code>&quot;FinSight/1.0&quot;</code>, staging: <code>&quot;FinSight/1.0-staging&quot;</code>, prod: <code>&quot;FinSight/1.0-prod&quot;</code>). An env var changes the agent without a code deploy.</li>
+<li><strong>Consistency</strong>: <code>LLM_API_KEY</code> was already consumed from settings in most files, but some files still hardcoded <code>api_key=&quot;lmstudio&quot;</code> directly. Centralizing all key reads through <code>settings.llm_api_key</code> ensures one source of truth.</li>
+</ol>
+
+<h3>Why default values still in code?</h3>
+<p><code>LLM_API_KEY</code> defaults to <code>&quot;lmstudio&quot;</code> in <code>settings.py</code> because LM Studio doesn&rsquo;t validate the API key &mdash; it accepts any non-empty string. <code>SEC_USER_AGENT</code> defaults to <code>&quot;FinSight/1.0&quot;</code> with <code>contact@finsight.example.com</code> as the email. Both defaults work out of the box for local development while being overridable for production. The defaults are clearly documented in <code>.env.example</code>.</p>
+
+<h2>Model Evolution Timeline</h2>
+
+<h3>Why document the full timeline?</h3>
+<p>The model selection history is scattered across multiple non-chronological sections (&ldquo;Model Selection (Ollama Era)&rdquo;, &ldquo;Migration from Ollama to LM Studio&rdquo;, &ldquo;Model Change: gpt-oss-20b &rarr; qwen&rdquo;, &ldquo;Model Change: qwen3-30b-A3B &rarr; Ministral-3-14b&rdquo;). A consolidated timeline shows the reasoning at each step and prevents repeating failed experiments:</p>
+<table>
+<tr><th>Date</th><th>Model</th><th>Provider</th><th>Outcome</th><th>Reason for Change</th></tr>
+<tr><td>v0.1</td><td><code>qwen3.5:0.8b</code></td><td>Ollama</td><td>Tested, too small</td><td>Replaced by ministral-3:3b</td></tr>
+<tr><td>v0.2</td><td><code>ministral-3:3b</code></td><td>Ollama</td><td>Tested, unreliable tool calling</td><td>Replaced by llama3.2</td></tr>
+<tr><td>v0.3</td><td><code>llama3.2</code> (3B)</td><td>Ollama</td><td>&cross; Tool calling unreliable</td><td>Failed via both ollama/openai providers</td></tr>
+<tr><td>v0.4</td><td><code>qwen2.5:7b</code></td><td>Ollama (LiteLLM)</td><td>&check; Reliable tool calling, ~4.7GB, 20-40s/call</td><td>Worked but Ollama inference too slow</td></tr>
+<tr><td>v1.0</td><td><code>gpt-oss-20b</code></td><td>LM Studio</td><td>&check; Good quality, 40-60s/call</td><td>Better inference speed than Ollama</td></tr>
+<tr><td>v1.17</td><td><code>qwen3-30b-a3b-2507</code></td><td>LM Studio</td><td>&check; 5-10x faster (5-10s/call), parallel function calling</td><td>Major latency improvement, maintained quality</td></tr>
+<tr><td>v1.36</td><td><code>ministral-3-14b-reasoning</code></td><td>LM Studio</td><td>&#9888;&#65039; Faster (3-5s/call) but unreliable save_brief</td><td>Per-developer .env override, not code default</td></tr>
+<tr><td>v1.36+</td><td><code>qwen3-30b-a3b-2507</code> (default)</td><td>LM Studio</td><td>&check; Most tested, reliable tool calling</td><td>Code default; local overrides via .env</td></tr>
+</table>
+<p><strong>Key takeaway</strong>: The project tried 7+ model/provider combinations. Each switch was driven by a specific failure mode (speed, tool-calling reliability, parallel function support). The current combination (LM Studio + qwen3-30b-a3b as default, configurable via .env) gives the best balance of speed and reliability.</p>
 
 <hr>
 <p style="font-size:.85rem;color:#888"><a href="index.html">Back to docs hub</a></p>

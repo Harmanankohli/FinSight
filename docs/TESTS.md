@@ -1,14 +1,14 @@
 # Test Coverage
 
-**~251 test functions (~317 parametrized cases) across 28 test files + offline evaluation driver. v1.39 added DOCX/HTML/PPTX regression tests. Phase 0 added 45 characterization tests (4 files). Phase 3 added auth contract tests (3 files). Phase R added corpus regression harness (1 file). v2.2 added agent output extraction tests (1 file).**
+**~251 test functions (~317 parametrized cases) across 28 test files + offline evaluation driver. v1.39 added DOCX/HTML/PPTX regression tests. Phase 0 added 45 characterization tests (4 files). Phase 3 added auth contract tests (3 files). Phase R added corpus regression harness (1 file). v2.2 added agent output extraction tests (1 file). All tests now live under `src/tests/`.**
 
 ## Running Tests
 
 ```bash
 pytest                          # all unit tests
 pytest -v                       # verbose
-pytest tests/unit/              # unit tests only
-pytest tests/characterization/  # characterization tests only
+pytest src/tests/unit/              # unit tests only
+pytest src/tests/characterization/  # characterization tests only
 pytest -m auth                  # auth-related tests (Phase 3)
 pytest -m openapi               # OpenAPI spec tests
 pytest -m integration           # integration/smoke tests (requires running services)
@@ -19,7 +19,7 @@ pytest -m "not external"        # exclude tests that need external services
 ## Test Layout
 
 ```
-tests/
+src/tests/
 ├── conftest.py                          # env isolation, memory_db fixture, os._exit hook
 ├── evaluation/                          # offline RAGAS eval (standalone, not pytest)
 │   ├── golden_set.jsonl                 #   5 golden examples (NVDA, AAPL)
@@ -97,7 +97,7 @@ These verify the MCP server (port 8010) and agent card endpoints (ports 8002-800
 ### Running
 
 ```bash
-pytest tests/regression/ -v
+pytest src/tests/regression/ -v
 ```
 
 ### DOCX (`test_docx_regression.py`)

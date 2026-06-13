@@ -27,6 +27,7 @@
 %%{init: {'theme': 'base', 'themeVariables': {'background': '#ffffff', 'primaryColor': '#d4e6f1', 'primaryTextColor': '#1a1a1a', 'primaryBorderColor': '#2980b9', 'lineColor': '#8b6f4e', 'secondaryColor': '#d5f5e3', 'tertiaryColor': '#fadbd8', 'clusterBkg': '#faf8f5', 'clusterBorder': '#d5c4a1', 'fontSize': '12px'}}}%%
 graph LR
 UserRaw("User Input\nNatural language query")
+UserID("Anon User ID Resolution\nCookie → X-FinSight-User-Id\nStable UUID for cache affinity")
 TickExtract("Ticker Extraction\nregex + MCP resolve")
 InputGuard["Input Guardrails\nOff-topic + validate_ticker\n(&lt; 2s)"]
 Cache["Caches\nSemantic (ChromaDB)\n+ Today Brief (SQLite)"]
@@ -44,7 +45,8 @@ MemStore("Memory Persist\nTickerMemory\n+ Portfolio + Perf")
 CacheWrite("Cache Write\nChromaDB upsert")
 EvalFire("Background Eval\nRAGAS + /release-evals")
 Output("Final Output\nSSE stream + brief")
-UserRaw --> TickExtract
+UserRaw --> UserID
+UserID --> TickExtract
 TickExtract --> InputGuard
 InputGuard --> Cache
 Cache --> MemCtx
@@ -60,6 +62,7 @@ MemStore --> CacheWrite
 CacheWrite --> EvalFire
 EvalFire --> Output
 style UserRaw fill:#fadbd8,stroke:#c0392b,color:#1a1a1a
+style UserID fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
 style TickExtract fill:#f9e79f,stroke:#f39c12,color:#1a1a1a
 style InputGuard fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
 style Cache fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a

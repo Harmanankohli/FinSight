@@ -36,47 +36,87 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 
 <h1>Changelog</h1>
 
-<h2>v1.40 &mdash; Report Extraction Hardening, Logging Overhaul, Agent Instruction Fixes</h2>
+<h2>v2.3 &mdash; Source Tree Restructure to <code>src/</code> Layout (ef596a7)</h2>
 
-<h3 class="version">Report Generator &mdash; Extraction Hardening (cf285b8)</h3>
+<h3 class="version">Directory Layout Migration (ef596a7)</h3>
 <ul>
-<li><strong>Section parser handles <code>###</code>/<code>####</code> headers</strong>: <code>_parse_markdown_sections()</code> regex updated from <code>\n##\s+</code> to <code>\n#{2,6}\s+</code>. LLM output frequently uses deeper heading levels; the old parser silently merged all sub-section content into a single block.</li>
-<li><strong>Executive summary augmented from Rationale</strong>: If a "Rationale" section exists in the brief, its content is appended to the executive summary (up to 1200 chars, up from 800). Adds the analyst&rsquo;s stated reasoning alongside the metric-driven summary sentences.</li>
-<li><strong>Bear Case target extraction</strong>: New pattern captures &ldquo;bear case: $X&rdquo; and appends it to the valuation table as &ldquo;Bear Case Target&rdquo;.</li>
-<li><strong>Bare ticker peer extraction</strong>: When no <code>CompanyName (TICKER)</code> format is found, a fallback scans for bare tickers in peer context (&ldquo;peers like DLTR&rdquo;, &ldquo;from COST&rdquo;, &ldquo;vs. AAPL&rdquo;) to populate <code>peer_names</code>.</li>
-<li><strong>Risk/opportunity from inline bold blocks</strong>: <code>_enrich_from_markdown()</code> now extracts risks from <code>**Bearish Signals:**</code> and <code>**Headwinds:**</code> blocks, and opportunities from <code>**Bullish Signals:**</code> and <code>**Tailwinds:**</code> blocks — as a fallback when no dedicated section header matches.</li>
-<li><strong>Upside pattern additions</strong>: Patterns now match <code>expected return = X%</code> and <code>analyst upside: X%</code> in addition to the existing colon-separated forms.</li>
-<li><strong>Structured peer comparison from agents</strong>: Quant agent Monte Carlo output (p10/p50/p90) populates scenario cards when available. Structured peer rows are built from both the Quant agent&rsquo;s <code>peer_comparison</code> dict and the Sentiment agent&rsquo;s <code>peer_comparison</code> list, using <code>col0</code>&ndash;<code>col2</code> column keys.</li>
+<li><strong>All Python packages, web frontend, tests, and scripts moved under <code>src/</code></strong>: <code>agent_1_adk/</code> &rarr; <code>src/orchestrator/</code>, <code>agent_3_langgraph/</code> &rarr; <code>src/quant/</code>, <code>agent_4_crewai/</code> &rarr; <code>src/market_context/</code>, <code>mcp_servers/</code> &rarr; <code>src/mcp_tools/</code>, <code>shared/</code> &rarr; <code>src/shared/</code>, <code>web/</code> &rarr; <code>src/web/</code>, <code>tests/</code> &rarr; <code>src/tests/</code>, <code>scripts/</code> &rarr; <code>src/scripts/</code></li>
+<li><strong>All configuration updated</strong>: <code>pyproject.toml</code> (packages.find where=[&quot;src&quot;]), Makefile, docker-compose.yml + 5 Dockerfiles, CI workflow, batch files</li>
+<li><strong>Path traversal fixes</strong> in 6 files (logging, store, agent_registry, openapi, etc.)</li>
+<li><strong>13 documentation files</strong> updated with new <code>src/</code> paths</li>
+<li><strong>218 unit tests passing</strong>, all 5 package imports verified</li>
 </ul>
 
-<h3 class="version">Agent &mdash; <code>load_memory</code> Wrapper + Strengthened Instructions (cf285b8)</h3>
+<h3 class="version">SentimentIntelligence &rarr; MarketContext Model Rename (da2688e)</h3>
 <ul>
-<li><strong>Custom <code>load_memory</code> wrapper</strong> (<code>agent_1_adk/agent.py</code>): Replaces the ADK built-in <code>load_memory</code> tool with a custom async wrapper that calls <code>tool_context.search_memory()</code> and returns a plain <code>str</code>. The ADK tool previously returned a <code>LoadMemoryResponse</code> Pydantic model, which the AG-UI bridge&rsquo;s <code>json.dumps()</code> call could not serialize. The wrapper extracts text parts from memory events and joins them with <code>\n---\n</code>.</li>
-<li><strong>Strengthened system prompt</strong>: <code>send_message</code> is now explicitly the <em>first</em> action for any stock analysis request — the LLM is instructed to emit ALL <code>send_message</code> calls in one assistant turn before calling any other tool. <code>load_memory</code> is restricted to queries where the user explicitly asks about past recommendations; calling it on a new stock query is forbidden.</li>
-<li><strong>Tools list</strong>: <code>generate_report</code> removed from the LLM-visible tool list. The tool is still callable via the API; it is no longer offered to the LLM to avoid it being called prematurely before analysis completes.</li>
+<li><strong><code>src/shared/models.py</code></strong>: <code>SentimentIntelligence</code> renamed to <code>MarketContext</code> with restructured fields: <code>key_risks</code>/<code>catalysts</code> &rarr; <code>key_headwinds</code>/<code>key_tailwinds</code>, added <code>macro_regime</code> and <code>relative_peer_positioning</code></li>
+<li><strong><code>src/shared/reports/extraction.py</code></strong>: Updated all references to new model and field names</li>
+<li>All references to &ldquo;Sentiment agent&rdquo; replaced with &ldquo;Market Context agent&rdquo; across codebase and docs</li>
 </ul>
 
-<h3 class="version">Shared &mdash; Circular Import Fix (cf285b8)</h3>
+<h2>v2.2 &mdash; Agent Output Capture, Playwright Export, Ticker Hardening</h2>
+
+<h3 class="version">Agent Output Capture for Structured Brief Storage (db6472e, e505b33)</h3>
 <ul>
-<li><strong><code>shared/trace_context.py</code></strong>: Removed unused <code>from shared.logging_config import ...</code> import that caused a circular import chain: <code>logging_config</code> &rarr; <code>trace_context</code> &rarr; <code>logging_config</code>. Any module importing <code>trace_context</code> at startup could deadlock the import system.</li>
-<li><strong><code>ui_sample/</code> removed</strong>: Deprecated sample HTML pages replaced by the Next.js frontend (<code>web/nextjs-app/</code>). Static HTML prototypes no longer maintained.</li>
+<li><strong>Sub-agent response capture</strong> (<code>agent_1_adk/agent.py</code>): <code>send_message</code> tool callback now captures parsed sub-agent responses (RAG summary, quant metrics, sentiment narrative) and stores them in session event metadata via an <code>extra_data</code> parameter on <code>store_minimal()</code>. This enables downstream extraction from structured agent outputs instead of parsing prose.</li>
+<li><strong>Extraction pipeline wired to agent outputs</strong> (<code>shared/reports/extraction.py</code>): New <code>_populate_from_agent_outputs()</code> extracts quant KPIs, financials, valuation, scorecard, peer comparison, RAG summary/sources, and sentiment risks/opportunities from structured agent data. Falls back to prose extraction when agent outputs are unavailable.</li>
+<li><strong><code>TickerMemory.store_minimal()</code> extended</strong> (<code>shared/memory/ticker_memory.py</code>): Accepts optional <code>extra_data</code> dict stored as JSON in the brief record. Used by the orchestrator to persist structured agent responses alongside the synthesis text.</li>
 </ul>
 
-<h3 class="version">Logging Overhaul &mdash; Coverage, Operational Statements, Noise Suppression (8df085b)</h3>
+<h3 class="version">Playwright-Based Report Export (7d52cbf)</h3>
 <ul>
-<li><strong>11 silent <code>except</code> blocks fixed</strong>: Bare <code>except: pass</code> and <code>except Exception: return None</code> blocks across sandbox, report_generator, memory/store, ticker_memory, performance_tracker, api_routes, and trace_context replaced with <code>logger.warning(..., exc_info=True)</code>. Errors that were previously swallowed silently now appear in log files.</li>
-<li><strong>Logger boilerplate added to 7 files</strong>: <code>shared/rate_limiter.py</code>, <code>shared/ttl_cache.py</code>, <code>shared/agui_sse.py</code>, <code>shared/base_agent.py</code>, <code>shared/memory/portfolio_store.py</code>, <code>agents/services.py</code>, and memory module files previously had no <code>logger</code> at all. All now use <code>logging.getLogger(__name__)</code>.</li>
-<li><strong>Operational log statements</strong>: Cache hit/miss/eviction in <code>ttl_cache.py</code>; sandbox entry/exit in <code>code_sandbox.py</code>; DB open/close/migrate/prune in <code>memory/store.py</code>; brief store/update in <code>ticker_memory.py</code>; portfolio upsert in <code>portfolio_store.py</code>; recommendation record in <code>performance_tracker.py</code>; report generation with byte counts in <code>api_routes.py</code>.</li>
-<li><strong>Noisy third-party loggers suppressed</strong>: <code>httpx</code>, <code>chromadb</code>, <code>langfuse</code>, <code>hpack</code>, <code>urllib3</code>, <code>asyncio</code> set to <code>WARNING</code> by default inside <code>setup_file_logging()</code>. Each is overridable via <code>LOG_LEVEL_&lt;LIB&gt;</code> env var (e.g. <code>LOG_LEVEL_HTTPX=DEBUG</code>).</li>
-<li><strong><code>@logged</code> on <code>GenericAgentExecutor.execute()</code></strong>: The A2A executor entry point now emits structured <code>Enter</code>/<code>Exit</code>/<code>Fail</code> log lines with <code>latency_ms</code> for every sub-agent request.</li>
-<li><strong>Hardcoded logger name fixed</strong> (<code>tests/evaluation/run_offline_eval.py</code>): <code>logging.getLogger("finsight_eval")</code> changed to <code>logging.getLogger(__name__)</code>.</li>
-<li><strong>39 stale log files deleted</strong> from <code>logs/</code>. Canonical log names: <code>orchestrator.log</code>, <code>rag_agent.log</code>, <code>quant.log</code>, <code>market_context.log</code>, <code>mcp.log</code>.</li>
+<li><strong><code>shared/reports/playwright_export.py</code> (new, 77 lines)</strong>: Async Playwright-based export from HTML to PPTX (screenshot-based via <code>html_to_pptx</code>) and PDF (print-mode via <code>html_to_pdf</code>). Uses deck-stage's built-in APIs for slide rendering. Falls back to HTML download when Playwright is unavailable.</li>
+<li><strong><code>shared/reports/__init__.py</code></strong>: New <code>generate_pptx_async()</code> and <code>generate_pdf_async()</code> functions wire Playwright export with legacy fallback. <code>generate_pptx()</code> now tries Playwright first (screenshot-based PPTX) before falling back to python-pptx.</li>
+<li><strong><code>agent_1_adk/api_routes.py</code></strong>: PDF format added to report endpoints. Routes support <code>format=pptx|docx|html|pdf</code>.</li>
+<li><strong><code>pyproject.toml</code></strong>: Added <code>playwright&gt;=1.40.0</code> dependency.</li>
+<li><strong>Frontend download buttons</strong> (<code>web/nextjs-app/app/research/page.tsx</code>): 4 download buttons (PPTX, DOCX, HTML, PDF) with HTML as primary.</li>
 </ul>
 
-<h3 class="version">Diagram Fixes (ae5ca9c)</h3>
+<h3 class="version">Agent Output Extraction Tests (f493288)</h3>
 <ul>
-<li><strong>Mermaid syntax</strong> (<code>docs/diagrams/component-orch.html</code>): Fixed invalid node label syntax that caused the Mermaid parser to fail silently and render a blank diagram.</li>
-<li><strong>Zoom/drag</strong> (<code>docs/diagrams/shared.js</code>): Fixed pointer event handling so pan and zoom interactions work correctly on all diagram pages.</li>
+<li><strong><code>tests/unit/test_agent_outputs_extraction.py</code> (new, 409 lines)</strong>: 16 tests covering <code>_populate_from_agent_outputs</code> (quant KPIs/financials/valuation/scorecard/peers, RAG summary/sources, sentiment risks/opportunities, string/empty edge cases) and <code>_extract_deck_data</code> routing (agent path, prose fallback, partial agents). End-to-end PPTX+HTML generation from structured agent data.</li>
+</ul>
+
+<h3 class="version">Model Rename: SentimentIntelligence &rarr; MarketContext (da2688e)</h3>
+<ul>
+<li><strong><code>shared/models.py</code></strong>: <code>SentimentIntelligence</code> renamed to <code>MarketContext</code> with restructured fields: <code>key_risks</code>/<code>catalysts</code> &rarr; <code>key_headwinds</code>/<code>key_tailwinds</code>, added <code>macro_regime</code> and <code>relative_peer_positioning</code> fields.</li>
+<li><strong><code>shared/reports/extraction.py</code></strong>: Updated all references to use the new <code>MarketContext</code> model and field names.</li>
+</ul>
+
+<h3 class="version">Ticker Extraction Hardening (70a4b81, 3779574)</h3>
+<ul>
+<li><strong>English pronouns added to stop words</strong> (<code>shared/ticker_utils.py</code>): Common 1-2 letter English words (I, AM, AN, IF, IT, IS, IN, AT, etc.) added to <code>_FINANCIAL_STOP_WORDS</code>. Prevents the pronoun &ldquo;I&rdquo; from being extracted as a ticker symbol.</li>
+<li><strong>Holdings extraction tightened</strong> (<code>shared/ticker_utils.py</code>): Added <code>\b</code> word boundaries to all <code>_HOLDINGS_PATTERNS</code> regexes so partial-word prefixes (e.g. &ldquo;everything&rdquo; &rarr; &ldquo;EVERY&rdquo;) are not captured. Pattern 4 now requires &ldquo;I&rdquo; or &ldquo;we&rdquo; subject. Extracted holdings filtered against stop words and noise words.</li>
+</ul>
+
+<h3 class="version">Anonymous User ID Persistence (b0b1d4c)</h3>
+<ul>
+<li><strong>Stable anonymous user ID</strong> (<code>web/nextjs-app/app/api/copilotkit/route.ts</code>): Next.js API route generates a stable <code>anon-{uuid}</code> on first visit and sets it as a <code>finsight_user_id</code> cookie (1-year TTL). Subsequent requests send the same ID via <code>X-FinSight-User-Id</code> header, so <code>_get_today_cached_text</code> and <code>_build_memory_context</code> find existing briefs instead of creating new anonymous users on every request.</li>
+</ul>
+
+<h3 class="version">AG-UI Bridge Per-Event Timeout (7e104ea)</h3>
+<ul>
+<li><strong>Dynamic per-event timeout</strong> (<code>agent_1_adk/agui_bridge.py</code>): When the LLM is unavailable (model removed from LM Studio), <code>runner.run_async()</code> now times out after 120s for LLM response or <code>A2A_TIMEOUT+30s</code> for tool/sub-agent execution. Sends a <code>RunError</code> event to the frontend with a clear message about model unavailability instead of hanging indefinitely.</li>
+</ul>
+
+<h3 class="version">Extraction Pipeline Fixes (5fb9543, 3241ce5, a17bf96, a26f9b7, 34e95c9, e5b253f)</h3>
+<ul>
+<li><strong>Numeric MACD handling</strong> (<code>shared/reports/extraction.py</code>): <code>_enrich_from_markdown()</code> now handles MACD values that are numeric (float/int) instead of only string format.</li>
+<li><strong>Playwright ProactorEventLoop fix</strong> (<code>shared/reports/playwright_export.py</code>): Uses <code>asyncio.new_event_loop()</code> on Windows to avoid ProactorEventLoop incompatibility with Playwright's subprocess management.</li>
+<li><strong>HTML section extraction</strong>: <code>_parse_markdown_sections()</code> handles edge cases in section boundary detection for nested heading levels.</li>
+<li><strong>Narrative JSON parsing</strong>: <code>_extract_deck_data()</code> gracefully handles sentiment narrative fields that arrive as JSON strings instead of dicts.</li>
+<li><strong>Sync <code>generate_pptx()</code> tries Playwright first</strong> (<code>shared/reports/__init__.py</code>): <code>generate_pptx()</code> sync wrapper now calls <code>html_to_pptx_sync()</code> (Playwright screenshot-based PPTX) before falling back to python-pptx legacy renderer, matching the async path behavior.</li>
+<li><strong>PDF fallback on Playwright error</strong> (<code>shared/reports/playwright_export.py</code>): <code>generate_pdf_async()</code> catches Playwright exceptions and returns raw HTML bytes instead of propagating the error &mdash; ensures PDF download never fails when Playwright is unavailable.</li>
+<li><strong>Context ID pass-through</strong> (<code>agent_1_adk/agent_executor.py</code>): <code>context_id</code> threaded through <code>_process_response</code> to fix session ID mismatch when popping agent outputs &mdash; the ADK runner's internal session ID may differ from the A2A <code>context_id</code>.</li>
+<li><strong>Dedup merge fix</strong> (<code>agent_1_adk/agent_executor.py</code>): <code>_store_memory</code> now merges new agent outputs into an existing brief via <code>update_brief_json</code> instead of discarding them on dedup hits. Previously, repeat queries overwrote structured agent data with empty dicts.</li>
+<li><strong><code>update_brief_json</code> method</strong> (<code>shared/memory/ticker_memory.py</code>): New <code>TickerMemory.update_brief_json()</code> for partial brief updates &mdash; merges <code>extra_data</code> into an existing brief's <code>brief_json</code> without overwriting the full record. Used by the dedup merge fix above.</li>
+<li><strong>Debug logging for session ID tracing</strong> (<code>agent_1_adk/agent.py</code>, <code>agent_1_adk/agent_executor.py</code>): Added structured log lines to <code>send_message</code> capture and <code>pop_agent_responses</code> with session ID and context ID for traceability across the A2A bridge.</li>
+<li><strong><code>&lt;/script&gt;</code> fix in deck-stage.js</strong> (<code>shared/templates/deck-stage.js</code>): A comment containing <code>&lt;/script&gt;</code> inside the inline JS broke HTML parsing &mdash; the browser's HTML parser interpreted it as closing the parent <code>&lt;script&gt;</code> tag. Fixed by splitting the string literal so <code>&lt;/s</code> + <code>cript&gt;</code> does not appear contiguously.</li>
+<li><strong>Playwright <code>wait_for_function</code> reliability</strong> (<code>shared/reports/playwright_export.py</code>): Wait predicate now checks <code>customElements.get('deck-stage')</code> before querying <code>_slides</code> &mdash; prevents <code>ReferenceError</code> when the custom element definition hasn't finished upgrading.</li>
+<li><strong>Removed obsolete refactor plan</strong>: Deleted stale <code>refactor-plan.md</code> (refactor already completed). Added <code>ppt-docx-fix-plan.md</code> documenting known PPTX/DOCX rendering issues.</li>
+<li><strong>Agent output capture in AG-UI bridge</strong> (<code>agent_1_adk/agui_bridge.py</code>): Bridge path now captures sub-agent responses for structured brief storage, matching the A2A executor path.</li>
+<li><strong>Today-cache bypass for bridge</strong>: AG-UI bridge path correctly bypasses today-cache when the user explicitly requests a fresh analysis.</li>
+<li><strong>Silent Playwright fallbacks logged</strong>: When Playwright export fails, the fallback to python-pptx/HTML is logged at INFO level instead of silently degrading.</li>
 </ul>
 
 <h2>v2.1 &mdash; Post-Phase-3 CI Hardening &amp; Runtime Fixes</h2>
@@ -291,6 +331,52 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <li><strong><code>shared/memory/store.py</code></strong>: DB path from settings (G2) &mdash; no more hardcoded paths.</li>
 </ul>
 
+<h2>v1.40 &mdash; Report Extraction Hardening, Logging Overhaul, Agent Instruction Fixes</h2>
+
+<h3 class="version">Report Generator &mdash; Extraction Hardening (cf285b8)</h3>
+<ul>
+<li><strong>Section parser handles <code>###</code>/<code>####</code> headers</strong>: <code>_parse_markdown_sections()</code> regex updated from <code>\n##\s+</code> to <code>\n#{2,6}\s+</code>. LLM output frequently uses deeper heading levels; the old parser silently merged all sub-section content into a single block.</li>
+<li><strong>Executive summary augmented from Rationale</strong>: If a "Rationale" section exists in the brief, its content is appended to the executive summary (up to 1200 chars, up from 800). Adds the analyst&rsquo;s stated reasoning alongside the metric-driven summary sentences.</li>
+<li><strong>Bear Case target extraction</strong>: New pattern captures &ldquo;bear case: $X&rdquo; and appends it to the valuation table as &ldquo;Bear Case Target&rdquo;.</li>
+<li><strong>Bare ticker peer extraction</strong>: When no <code>CompanyName (TICKER)</code> format is found, a fallback scans for bare tickers in peer context (&ldquo;peers like DLTR&rdquo;, &ldquo;from COST&rdquo;, &ldquo;vs. AAPL&rdquo;) to populate <code>peer_names</code>.</li>
+<li><strong>Risk/opportunity from inline bold blocks</strong>: <code>_enrich_from_markdown()</code> now extracts risks from <code>**Bearish Signals:**</code> and <code>**Headwinds:**</code> blocks, and opportunities from <code>**Bullish Signals:**</code> and <code>**Tailwinds:**</code> blocks — as a fallback when no dedicated section header matches.</li>
+<li><strong>Upside pattern additions</strong>: Patterns now match <code>expected return = X%</code> and <code>analyst upside: X%</code> in addition to the existing colon-separated forms.</li>
+<li><strong>Structured peer comparison from agents</strong>: Quant agent Monte Carlo output (p10/p50/p90) populates scenario cards when available. Structured peer rows are built from both the Quant agent&rsquo;s <code>peer_comparison</code> dict and the Sentiment agent&rsquo;s <code>peer_comparison</code> list, using <code>col0</code>&ndash;<code>col2</code> column keys.</li>
+</ul>
+
+<h3 class="version">Agent &mdash; <code>load_memory</code> Wrapper + Strengthened Instructions (cf285b8)</h3>
+<ul>
+<li><strong>Custom <code>load_memory</code> wrapper</strong> (<code>agent_1_adk/agent.py</code>): Replaces the ADK built-in <code>load_memory</code> tool with a custom async wrapper that calls <code>tool_context.search_memory()</code> and returns a plain <code>str</code>. The ADK tool previously returned a <code>LoadMemoryResponse</code> Pydantic model, which the AG-UI bridge&rsquo;s <code>json.dumps()</code> call could not serialize. The wrapper extracts text parts from memory events and joins them with <code>\n---\n</code>.</li>
+<li><strong>Strengthened system prompt</strong>: <code>send_message</code> is now explicitly the <em>first</em> action for any stock analysis request — the LLM is instructed to emit ALL <code>send_message</code> calls in one assistant turn before calling any other tool. <code>load_memory</code> is restricted to queries where the user explicitly asks about past recommendations; calling it on a new stock query is forbidden.</li>
+<li><strong>Tools list</strong>: <code>generate_report</code> removed from the LLM-visible tool list. The tool is still callable via the API; it is no longer offered to the LLM to avoid it being called prematurely before analysis completes.</li>
+</ul>
+
+<h3 class="version">Shared &mdash; Circular Import Fix (cf285b8)</h3>
+<ul>
+<li><strong><code>shared/trace_context.py</code></strong>: Removed unused <code>from shared.logging_config import ...</code> import that caused a circular import chain: <code>logging_config</code> &rarr; <code>trace_context</code> &rarr; <code>logging_config</code>. Any module importing <code>trace_context</code> at startup could deadlock the import system.</li>
+<li><strong><code>ui_sample/</code> removed</strong>: Deprecated sample HTML pages replaced by the Next.js frontend (<code>web/nextjs-app/</code>). Static HTML prototypes no longer maintained.</li>
+</ul>
+
+<h3 class="version">Logging Overhaul &mdash; Coverage, Operational Statements, Noise Suppression (8df085b)</h3>
+<ul>
+<li><strong>11 silent <code>except</code> blocks fixed</strong>: Bare <code>except: pass</code> and <code>except Exception: return None</code> blocks across sandbox, report_generator, memory/store, ticker_memory, performance_tracker, api_routes, and trace_context replaced with <code>logger.warning(..., exc_info=True)</code>. Errors that were previously swallowed silently now appear in log files.</li>
+<li><strong>Logger boilerplate added to 7 files</strong>: <code>shared/rate_limiter.py</code>, <code>shared/ttl_cache.py</code>, <code>shared/agui_sse.py</code>, <code>shared/base_agent.py</code>, <code>shared/memory/portfolio_store.py</code>, <code>agents/services.py</code>, and memory module files previously had no <code>logger</code> at all. All now use <code>logging.getLogger(__name__)</code>.</li>
+<li><strong>Operational log statements</strong>: Cache hit/miss/eviction in <code>ttl_cache.py</code>; sandbox entry/exit in <code>code_sandbox.py</code>; DB open/close/migrate/prune in <code>memory/store.py</code>; brief store/update in <code>ticker_memory.py</code>; portfolio upsert in <code>portfolio_store.py</code>; recommendation record in <code>performance_tracker.py</code>; report generation with byte counts in <code>api_routes.py</code>.</li>
+<li><strong>Noisy third-party loggers suppressed</strong>: <code>httpx</code>, <code>chromadb</code>, <code>langfuse</code>, <code>hpack</code>, <code>urllib3</code>, <code>asyncio</code> set to <code>WARNING</code> by default inside <code>setup_file_logging()</code>. Each is overridable via <code>LOG_LEVEL_&lt;LIB&gt;</code> env var (e.g. <code>LOG_LEVEL_HTTPX=DEBUG</code>).</li>
+<li><strong><code>@logged</code> on <code>GenericAgentExecutor.execute()</code></strong>: The A2A executor entry point now emits structured <code>Enter</code>/<code>Exit</code>/<code>Fail</code> log lines with <code>latency_ms</code> for every sub-agent request.</li>
+<li><strong>Hardcoded logger name fixed</strong> (<code>tests/evaluation/run_offline_eval.py</code>): <code>logging.getLogger("finsight_eval")</code> changed to <code>logging.getLogger(__name__)</code>.</li>
+<li><strong>39 stale log files deleted</strong> from <code>logs/</code>. Canonical log names: <code>orchestrator.log</code>, <code>rag_agent.log</code>, <code>quant.log</code>, <code>market_context.log</code>, <code>mcp.log</code>.</li>
+</ul>
+
+<h3 class="version">Diagram &amp; Doc Link Fixes (ae5ca9c, a47c8c9, 345606d)</h3>
+<ul>
+<li><strong>Mermaid syntax</strong> (<code>docs/diagrams/component-orch.html</code>): Fixed invalid node label syntax that caused the Mermaid parser to fail silently and render a blank diagram.</li>
+<li><strong>Mermaid diagram sizing</strong> (<code>docs/diagrams/shared.js</code>): Disabled <code>useMaxWidth</code> and switched to <code>getBBox()</code> for correct centering and sizing &mdash; prevents diagrams from being clipped or misaligned at different viewport sizes.</li>
+<li><strong>Zoom/drag</strong> (<code>docs/diagrams/shared.js</code>): Fixed pointer event handling so pan and zoom interactions work correctly on all diagram pages.</li>
+<li><strong>15 broken internal links fixed</strong> across <code>docs/</code> HTML files &mdash; corrected stale <code>#</code> anchor references, missing file paths, and relative path mismatches.</li>
+<li><strong>Diagrams link added to all nav bars</strong>: Every documentation page's navigation bar now includes a link to the diagrams index (<code>docs/diagrams/</code>), making diagrams discoverable from any document.</li>
+</ul>
+
 <h2>v1.39 &mdash; Report Generator: HTML Format, Robust Extraction, Route Fixes</h2>
 
 <h3 class="version">Phase 1 &mdash; DeckData Layer: Robust Extraction for Any Ticker</h3>
@@ -432,31 +518,38 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <li><strong>Case-insensitive ticker extraction</strong> (<code>shared/ticker_utils.py</code>): <code>extract_ticker()</code> uppercases output so <code>wmt</code> matches cached <code>WMT</code> brief.</li>
 </ul>
 
+<h2>v1.35 &mdash; MCP Performance, RAGAS Eval Tuning, Infrastructure Hardening</h2>
+
+<h3 class="version">RAG Synthesis Fix (09e0424)</h3>
+<ul>
+<li><strong>RAG agent no longer mentions missing historical data</strong> (<code>agent_2_llamaindex/executor.py</code>): When ChromaDB returns zero results for a ticker (no filings ingested yet), the query response previously included phrases like &ldquo;I don&rsquo;t have any historical financial data&rdquo; &mdash; which confused the orchestrator into thinking the ticker had no fundamentals. Now returns a concise <code>&ldquo;Index is warming for {ticker}...&rdquo;</code> status message instead, matching the A2A WORKING event pattern.</li>
+</ul>
+
 <h3 class="version">Quant &mdash; Weighted Vote Normalization &amp; Misc Fixes</h3>
 <ul>
-<li><strong>FCF period sorting</strong> (<code>agent_3_langgraph/nodes.py</code>): FCF data sorted descending by period so most recent year is used first in DCF.</li>
-<li><strong>Weight redistribution</strong>: Absent signal group weights redistributed proportionally across remaining groups instead of being dropped.</li>
-<li><strong><code>golden_cross</code> defaults to <code>False</code></strong>: Prevents downstream <code>None</code> comparison errors when the indicator is absent.</li>
+<li><strong>FCF period sorting</strong> (<code>agent_3_langgraph/nodes.py</code>): <code>_get_financials</code> now sorts free cash flow data descending by period so the most recent year is used first in DCF valuation.</li>
+<li><strong>Volatility scoring fix</strong>: Signal scoring logic corrected for the volatility gate &mdash; ensures <code>risk_quality</code> signal accurately reflects computed volatility tier.</li>
+<li><strong>Weight redistribution</strong>: When a signal group is absent (no data), its weight is redistributed proportionally across remaining present groups instead of being silently dropped &mdash; prevents confidence inflation on sparse data.</li>
+<li><strong><code>golden_cross</code> defaults to <code>False</code></strong>: The <code>technicals</code> dict now explicitly sets <code>golden_cross=False</code> when the indicator is absent or null, preventing downstream <code>None</code> comparison errors.</li>
 </ul>
 
 <h3 class="version">Infrastructure &mdash; DB Paths, Connection Cleanup, Misc Fixes</h3>
 <ul>
-<li><strong><code>agent_1_adk/api_routes.py</code></strong>: Uses <code>_ADK_SESSION_DB</code> constant. Proper <code>try/finally</code> connection cleanup. Dead code removed.</li>
-<li><strong><code>shared/a2a_store.py</code></strong>: Task preload uses public <code>upsert()</code> API instead of touching private <code>_impl</code> attribute.</li>
-<li><strong><code>shared/generic_executor.py</code></strong>: Corrected <code>TaskState</code> enum value for cancellation handling.</li>
-<li><strong><code>shared/mcp_client.py</code></strong>: Transient error tuple extracted to module level.</li>
-<li><strong><code>shared/memory/store.py</code></strong>: <code>prune_old_records()</code> uses <code>_ALLOWED_TABLES</code> whitelist for defensive hardening.</li>
-<li><strong><code>shared/memory/ticker_memory.py</code></strong>: Change detection identifies both upgrades and downgrades.</li>
-<li><strong><code>shared/semantic_cache.py</code></strong>: <code>_init_started</code> guard prevents re-entrancy during <code>__init__</code>.</li>
+<li><strong><code>agent_1_adk/api_routes.py</code></strong>: Memory API routes now use <code>_ADK_SESSION_DB</code> constant instead of hardcoded path. Proper <code>try/finally</code> blocks ensure connections are always cleaned up. Dead code removed.</li>
+<li><strong><code>shared/a2a_store.py</code></strong>: Task preload from SQLite fixed to avoid touching the private <code>InMemoryTaskStore._impl</code> attribute &mdash; uses the public <code>upsert()</code> API instead.</li>
+<li><strong><code>shared/generic_executor.py</code></strong>: Corrected <code>TaskState</code> enum value reference for cancellation handling.</li>
+<li><strong><code>shared/mcp_client.py</code></strong>: Transient error tuple <code>_TRANSIENT_EXC</code> extracted to module level (was inline in function scope) &mdash; enables reuse by other modules.</li>
+<li><strong><code>shared/memory/store.py</code></strong>: <code>prune_old_records()</code> now uses an <code>_ALLOWED_TABLES</code> whitelist (<code>frozenset</code>) to prevent SQL injection via table name &mdash; defensive hardening.</li>
+<li><strong><code>shared/memory/ticker_memory.py</code></strong>: Change detection (<code>has_changed</code>) now correctly identifies both upgrades (SELL&rarr;BUY) and downgrades (BUY&rarr;SELL) instead of treating all changes uniformly.</li>
+<li><strong><code>shared/rate_limiter.py</code></strong>: Added type annotations to all public methods.</li>
+<li><strong><code>shared/semantic_cache.py</code></strong>: Added <code>_init_started</code> guard to prevent re-entrancy during <code>SemanticCache.__init__</code> when the ChromaDB client creation triggers import side-effects.</li>
 </ul>
 
 <h3 class="version">Model &mdash; Local Switch to Ministral-3-14b</h3>
 <ul>
-<li><strong><code>.env</code> model changed to <code>mistralai/ministral-3-14b-reasoning</code></strong>: Active development model switched from <code>qwen/qwen3-30b-a3b-2507</code> to <code>ministral-3-14b-reasoning</code> for faster inference (~3-5s vs ~8-12s per call) and lower RAM (~3-4GB vs ~6-8GB). The <code>config.py</code> default remains <code>qwen3-30b-a3b-2507</code> as the reference model — developers override via <code>.env</code>.</li>
+<li><strong><code>.env</code> model changed to <code>mistralai/ministral-3-14b-reasoning</code></strong>: Active development model switched from <code>qwen/qwen3-30b-a3b-2507</code> to <code>ministral-3-14b-reasoning</code> for faster inference (~3-5s vs ~8-12s per call) and lower RAM (~3-4GB vs ~6-8GB). The <code>config.py</code> default remains <code>qwen3-30b-a3b-2507</code> as the reference model &mdash; developers override via <code>.env</code>.</li>
 <li><strong>Impact</strong>: Ministral&rsquo;s inconsistent <code>save_brief</code> calling directly motivated the auto-save brief fallback and full-synthesis after-turn update features above. Trade-off (speed/efficiency vs tool-calling reliability) acceptable for local development.</li>
 </ul>
-
-<h2>v1.35 &mdash; Async Event-Loop Fixes: yfinance Executor, Peer Concurrency Cap, Redis Auto-Start</h2>
 
 <h3 class="version">MCP Server &mdash; yfinance Blocking Calls Moved to Thread Executor</h3>
 <ul>
@@ -475,10 +568,11 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <li><strong>Removed fail-fast first-attempt timeout</strong> (<code>shared/mcp_client.py</code>): Previous logic used <code>self.timeout / 3</code> on first retry attempt (5s for a 15s timeout). Caused false-positive timeouts during normal yfinance slowness. All attempts now use the full configured timeout.</li>
 </ul>
 
-<h3 class="version">Infrastructure &mdash; Redis Auto-Start</h3>
+<h3 class="version">Infrastructure &mdash; Redis Auto-Start in <code>run_adk_web.bat</code></h3>
 <ul>
-<li><strong>Redis auto-detection</strong> (<code>run_adk_web.bat</code>): Reads <code>REDIS_URL</code> from <code>.env</code> &mdash; when set and <code>redis-server</code> is in PATH, auto-starts Redis before launching agent services. Logs clear message when <code>redis-server</code> is missing (suggests <code>winget install Redis.Redis</code>). Falls back to in-process TTLCache.</li>
-<li><strong>Redis cleanup</strong> (<code>stop_servers.bat</code>): Kills <code>redis-server.exe</code> when <code>REDIS_URL</code> is configured. Uses <code>taskkill</code> + WMI-based process termination. Terminal cleanup filter updated to match <code>redis-server</code> command lines.</li>
+<li><strong>Redis auto-detection and startup</strong> (<code>run_adk_web.bat</code>): Reads <code>REDIS_URL</code> from <code>.env</code> &mdash; when set and <code>redis-server</code> is in PATH, the batch file auto-starts Redis before launching agent services. Logs a clear message when <code>REDIS_URL</code> is set but <code>redis-server</code> is not found (suggests <code>winget install Redis.Redis</code>). Falls back gracefully to in-process TTLCache when Redis is unavailable.</li>
+<li><strong>Redis cleanup in stop_servers.bat</strong> (<code>stop_servers.bat</code>): <code>stop_servers.bat</code> now kills <code>redis-server.exe</code> when <code>REDIS_URL</code> is configured. Uses both <code>taskkill</code> and WMI-based process termination for robustness.</li>
+<li><strong>Terminal cleanup updated</strong>: The WMI process filter in <code>stop_servers.bat</code> now also matches <code>redis-server</code> command lines, ensuring all terminal windows are properly cleaned up.</li>
 </ul>
 
 <h3 class="version">MCP Client &mdash; Transient Error Expansion</h3>
@@ -494,6 +588,73 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <li><strong>Empty exception messages logged as type name</strong>: When <code>str(exc)</code> is empty (common for <code>TimeoutError</code> and <code>CancelledError</code>), logs <code>type(exc).__name__</code> instead of a bare colon.</li>
 </ul>
 
+<h2>v1.34 &mdash; Phase 5: Dynamic Peers, Sector-Relative Scoring, Live Scenario Shocks, Insider MCP Tool</h2>
+
+<h3 class="version">Quant Agent &mdash; Sector-Relative Fundamental Scoring + Live Scenario Shocks</h3>
+<ul>
+<li><strong>Sector-relative fundamental scoring</strong> (<code>agent_3_langgraph/nodes.py</code>): <code>_score_fundamental_value()</code> and <code>_score_fundamental_quality()</code> accept optional <code>medians</code> dict from <code>peer_comparison_node</code>. When available, scores are computed relative to sector median instead of absolute universal thresholds. New <code>_relative_score(value, median, higher_is_better)</code> returns [-1, 1] based on ratio to median. PE/EV/EBITDA use lower-is-better logic; ROE/margin/D/E use higher-is-better logic.</li>
+<li><strong>Sector medians computed in <code>peer_comparison_node</code></strong> (<code>nodes.py:919-935</code>): After ranking peers, computes median per metric (PE, EV/EBITDA, RevGrowth, OpMargin, ROE, D/E) from peer values. Passed to <code>format_output_node</code> via <code>peer_comparison.medians</code>.</li>
+<li><strong>Live sector-aware scenario shocks</strong> (<code>mcp_servers/finsight_server.py</code>): New <code>get_scenario_shocks</code> MCP tool computes historical crash returns from live price data using sector-specific ETFs (QQQ for Tech, XLP for Consumer Defensive, XLK, XLF, etc.) via <code>_SECTOR_ETFs</code> mapping. Falls back to S&amp;P 500 (^GSPC) when ETF lacks history for a given window. 4 scenarios: market_crash_2008, covid_crash_2020, dot_com_bubble, mild_recession (2022). Cached 7 days (<code>_cache_shocks</code>).</li>
+<li><strong>Stress test uses live shocks</strong> (<code>nodes.py:677-720</code>): <code>stress_test_node</code> fetches <code>get_scenario_shocks(sector)</code> via MCP before applying beta adjustment. When MCP returns live data, overrides the hardcoded S&amp;P fallback values with sector-specific crash returns. Logs <code>index_used</code> for traceability.</li>
+<li><strong>Monte Carlo runs on both paths</strong> (<code>nodes.py:832-850</code>, <code>state.py:88</code>): <code>dcf_valuation_node</code> now also runs <code>_run_monte_carlo()</code> for low-volatility tickers (routed to DCF). <code>monte_carlo</code> state field uses <code>_last_nonnull</code> reducer so format_output always gets whichever node produced the MC.</li>
+<li><strong><code>debt_to_equity</code> added to peer comparison</strong> (<code>nodes.py:898</code>): Fundamental comparison now includes D/E ratio alongside PE, EV/EBITDA, revenue growth, op margin, ROE.</li>
+</ul>
+
+<h3 class="version">Quant Agent &mdash; Fan-In Reducer Fixes + Graph Topology</h3>
+<ul>
+<li><strong>Annotated reducers for multi-writer keys</strong> (<code>agent_3_langgraph/state.py</code>): Added <code>_merge_dict</code>, <code>_last_str</code>, <code>_last_nonnull</code> reducers to <code>metrics</code>, <code>reasoning</code>, <code>recommendation</code>, <code>stress_test_result</code>, <code>dcf_error</code> fields. LangGraph requires explicit <code>Annotated[type, reducer]</code> when multiple nodes write to the same state key in the same checkpoint step.</li>
+<li><strong><code>_merge_stress_test</code> reducer</strong> (<code>state.py:20-42</code>): Custom reducer that prefers the stress_test_result with real scenario data over the &ldquo;skipped&rdquo; placeholder. When <code>format_output_node</code> writes a placeholder before the real stress data arrives, this ensures the real data wins.</li>
+<li><strong>Removed diamond dependency edge</strong> (<code>agent_3_langgraph/graph.py</code>): Removed the direct <code>fetch_fundamentals &rarr; format_output</code> edge. <code>fetch_fundamentals</code> already fans into <code>peer_comparison_node</code> which fans into <code>format_output</code> &mdash; the direct edge created a diamond pattern where <code>format_output</code> received two distinct inputs in the same step, violating LangGraph's fan-in constraint.</li>
+<li><strong>Removed passthrough keys from <code>format_output_node</code></strong> (<code>agent_3_langgraph/nodes.py</code>): Was returning passthrough copies of <code>positioning</code>, <code>dcf_valuation</code>, <code>correlation_matrix</code>, <code>fundamentals</code> that other nodes already wrote. Now only emits <code>recommendation</code>, <code>reasoning</code>, <code>metrics</code> (with signals/confidence), and <code>stress_test_result</code>. Fixes <code>INVALID_CONCURRENT_GRAPH_UPDATE</code> at <code>positioning</code> key.</li>
+</ul>
+
+<h3 class="version">Dynamic Peer Discovery &mdash; yfinance Industry/Sector Classes</h3>
+<ul>
+<li><strong><code>get_peers</code> MCP tool rewritten</strong> (<code>mcp_servers/finsight_server.py</code>): Now uses yfinance <code>Industry(slug).top_companies</code> and <code>Sector(slug).top_companies</code> instead of the Yahoo Finance HTTP <code>recommendationsBySymbol</code> API. No scraping, no cookies, no rate limits. Falls through to Sector if Industry returns nothing. <code>_industry_to_slug()</code> converts yfinance strings to URL slugs. Cached 24h.</li>
+<li><strong>Both Quant and Market Context use <code>get_peers</code></strong>: <code>peer_comparison_node</code> and <code>MarketContextAgent._collect_data_parallel()</code> call <code>mcp.call_tool_by_name("get_peers", {"ticker": ...})</code> for dynamic peer discovery.</li>
+</ul>
+
+<h3 class="version">Peer Sets &mdash; Expanded + Normalised Key Matching</h3>
+<ul>
+<li><strong><code>shared/peer_sets.py</code> &mdash; 80+ entries</strong> (up from 33): Added comprehensive sector coverage: Banks, Asset Management, Insurance (Life and P&amp;C), Capital Markets, Financial Services, Healthcare (Drug Manufacturers, Medical Devices, Biotech), Consumer Defensive (Discount Stores, Grocery, Household, Packaged Foods, Beverages, Tobacco), Consumer Cyclical (Retail, Auto, Restaurants, Apparel, Leisure), Energy (Integrated, E&amp;P, Refining, Midstream), Industrials (Aerospace, Rail, Trucking, Construction, Distribution, Electrical Equipment), Communication Services, Basic Materials (Specialty Chemicals, Gold, Copper), Real Estate (Industrial, Office, Residential, Retail REITs), Utilities (Regulated Electric, Regulated Gas), Food Distribution.</li>
+<li><strong>Normalised key matching</strong> (<code>shared/peer_sets.py</code>): New <code>_norm()</code> function collapses em-dashes/en-dashes/hyphens to single hyphen, lowercases, strips. <code>_NORM_MAP</code> pre-built for O(1) fuzzy lookup. Lookup order: exact industry &rarr; normalised industry &rarr; exact sector &rarr; normalised sector. Handles yfinance's inconsistent punctuation (e.g. &ldquo;Banks&mdash;Regional&rdquo; vs &ldquo;Banks - Regional&rdquo;).</li>
+</ul>
+
+<h3 class="version">Insider Signals &mdash; Structured MCP Tool</h3>
+<ul>
+<li><strong><code>get_insider_transactions</code> MCP tool</strong> (<code>mcp_servers/finsight_server.py</code>): Uses yfinance <code>Ticker.insider_transactions</code> DataFrame &mdash; structured buy/sell data with share counts, values, and transaction types. No Form 4 keyword parsing. Returns <code>transactions</code> list and <code>summary</code> dict with total/buys/sells/direction/net_shares/net_value. 90-day lookback default.</li>
+<li><strong><code>insider_signals_node</code> rewritten</strong> (<code>agent_3_langgraph/nodes.py</code>): Now calls <code>get_insider_transactions</code> instead of <code>get_company_filings</code> + keyword matching on Form 4 text. Uses structured <code>summary.buys/sells/direction</code> fields. Returns <code>net_shares</code> and <code>net_value</code> from the summary.</li>
+<li><strong>Agent card updated</strong>: Insider skill description updated to reflect structured data source.</li>
+</ul>
+
+<h3 class="version">Options Flow &mdash; Zero-Volume Edge Case</h3>
+<ul>
+<li><strong>Zero-volume guard</strong> (<code>agent_3_langgraph/nodes.py:979-993</code>): When <code>call_vol + put_vol == 0</code>, returns <code>flow_signal: "no_data"</code> with <code>put_call_volume_ratio: None</code> instead of a misleading 1.0. Uses <code>None</code> for ratios when denominator is zero (no calls at all).</li>
+</ul>
+
+<h3 class="version">Schema Validator &mdash; Null-Safe Signal Key Matching</h3>
+<ul>
+<li><strong><code>score_quant_deterministic()</code> updated</strong> (<code>shared/runtime_eval.py</code>): Signal group keys changed to match <code>_SIGNAL_WEIGHTS</code> in <code>nodes.py</code> (e.g. <code>"dcf"</code> &rarr; <code>"dcf_value"</code>, <code>"fund_value"</code> &rarr; <code>"fundamental_value"</code>). Now reads <code>signal_scores</code> from <code>metrics.signal_scores</code> nested path instead of top-level <code>signal_scores</code>. Reads <code>quant_confidence</code> from <code>metrics.quant_confidence</code> instead of top-level <code>confidence_score</code>.</li>
+</ul>
+
+<h3 class="version">RAG Agent &mdash; A2A WORKING Event Warm-Up</h3>
+<ul>
+<li><strong>A2A WORKING events for index warm-up</strong> (<code>agent_2_llamaindex/executor.py</code>): When the RAG agent receives a query for an un-ingested ticker, it returns a <code>status_update</code> with <code>state: WORKING</code> and message <code>"Index is warming for {ticker}..."</code>. The orchestrator's streaming event handler skips WORKING events and waits for a COMPLETED/WORKING-termination signal. This replaces the previous polling pattern where the orchestrator re-queried RAG until the index was ready.</li>
+</ul>
+
+<h3 class="version">Market Context Agent &mdash; Sector/Industry Fix</h3>
+<ul>
+<li><strong>Restored sector/industry extraction</strong> (<code>agent_4_crewai/executor.py</code>): <code>_collect_data_parallel()</code> now extracts <code>sector</code> and <code>industry</code> from <code>get_financials</code> response and passes them to the crew context. These keys were previously undefined (referenced but never populated) after the peer discovery refactor in Phase 3 &mdash; the crew context had empty strings for both fields. Fix closes the v1.31 known issue.</li>
+</ul>
+
+<h2>v1.33 &mdash; Quant Graph Fixes: Concurrent Update Resolution &amp; Fan-In Reducers</h2>
+
+<h3 class="version">Quant Graph &mdash; Fan-In Passthrough Key Removal</h3>
+<ul>
+<li><strong>Fixed <code>INVALID_CONCURRENT_GRAPH_UPDATE</code> at <code>positioning</code> key</strong> (<code>agent_3_langgraph/nodes.py</code>): <code>format_output_node</code> was returning passthrough copies of state keys (<code>positioning</code>, <code>dcf_valuation</code>, <code>correlation_matrix</code>, <code>fundamentals</code>) that other nodes already wrote in the same checkpoint step. LangGraph's fan-in saw conflicting writes, triggering the error.</li>
+<li><strong>Fix</strong>: Removed all passthrough keys from <code>format_output_node</code>'s return dict. It now only emits what it actually computes: <code>recommendation</code>, <code>reasoning</code>, <code>metrics</code> (with signals/confidence), and <code>stress_test_result</code>. Full state from <code>ainvoke()</code> still carries every key via the owning nodes, so <code>graph.run()</code> reads are unaffected.</li>
+</ul>
+
 <h2>v1.32 &mdash; Phase 4 Final Items: Date-Aware Semantic Cache + RAG Startup Warm-Up</h2>
 
 <h3 class="version">Semantic Cache &mdash; Date-Scoped Keys</h3>
@@ -507,14 +668,6 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <li><strong><code>_do_prewarm()</code> at <code>agent_2_llamaindex/server.py</code></strong>: Runs once on Starlette startup via <code>asyncio.to_thread</code>. Pre-loads HuggingFace embedder, three ChromaDB collections, and CrossEncoder reranker.</li>
 <li><strong>Per-stage timing logged</strong>: Each phase logs elapsed seconds for cold-start budget visibility.</li>
 <li><strong>Effect</strong>: First RAG query no longer pays ~3-5s model-load tax.</li>
-</ul>
-
-<h2>v1.33 &mdash; Quant Graph Fixes: Concurrent Update Resolution &amp; Fan-In Reducers</h2>
-
-<h3 class="version">Quant Graph &mdash; Fan-In Passthrough Key Removal</h3>
-<ul>
-<li><strong>Fixed <code>INVALID_CONCURRENT_GRAPH_UPDATE</code> at <code>positioning</code> key</strong> (<code>agent_3_langgraph/nodes.py</code>): <code>format_output_node</code> was returning passthrough copies of state keys (<code>positioning</code>, <code>dcf_valuation</code>, <code>correlation_matrix</code>, <code>fundamentals</code>) that other nodes already wrote in the same checkpoint step. LangGraph's fan-in saw conflicting writes, triggering the error.</li>
-<li><strong>Fix</strong>: Removed all passthrough keys from <code>format_output_node</code>'s return dict. It now only emits what it actually computes: <code>recommendation</code>, <code>reasoning</code>, <code>metrics</code> (with signals/confidence), and <code>stress_test_result</code>. Full state from <code>ainvoke()</code> still carries every key via the owning nodes, so <code>graph.run()</code> reads are unaffected.</li>
 </ul>
 
 <h2>v1.31 &mdash; Phase 3/4: Market Context Rebrand, Quant Behavioral Signals, Redis Cache, Eval Hardening</h2>

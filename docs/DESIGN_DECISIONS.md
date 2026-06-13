@@ -96,7 +96,38 @@ The 17 test files were written during the initial architecture iterations (v1.0-
 
 Fixing them would require a full rewrite against the current codebase — essentially writing new tests from scratch while also removing all the old ones. Deleting the stale fixtures was the honest option rather than maintaining dead test code that would confuse future readers.
 
-**Update (v1.26/v1.27)**: ~148 tests now covering models, quant graph nodes, ticker utilities, TTL cache, rate limiter, trace context, memory store, and the security sandbox (60 AST-gate tests). See [TESTS.md](TESTS.md) for details.
+## Testing Strategy — Core Primitives & AST-Gate Sandbox
+
+### Why test shared infrastructure before agent logic?
+
+The four agents (orchestrator, RAG, quant, market context) depend on shared infrastructure: settings, MCP client, ticker utilities, TTL cache, rate limiter, memory store, task store, trace context, log sanitizer, timing decorator. Testing agents directly requires spinning up LLM instances, databases, and MCP servers — fragile, slow, and expensive. Testing the shared primitives catches the bugs that affect all agents, with no LLM calls required.
+
+### Solution
+
+**88 unit tests covering 10 shared modules** — models, quant graph nodes (stateless computation), ticker utilities, TTL cache, rate limiter, trace context, memory store, task store, log sanitizer, timing decorator. These tests run without PyTorch, ChromaDB, or any agent framework — just pytest + pydantic + httpx.
+
+**60 AST-gate tests for the security sandbox** — an additional layer beyond the core unit tests. The sandbox (`src/shared/sandbox/`) validates that user-provided AST trees don't contain dangerous constructs (exec, eval, imports, file I/O). The 60 AST-gate tests enumerate:
+- Every blocked AST node type (`Import`, `Call` to `exec`/`eval`, `Attribute` access on `__builtins__`, etc.)
+- Every allowed construct (variable assignment, arithmetic, function calls to whitelisted APIs)
+- Boundary cases (nested dangerous constructs, Unicode obfuscation attempts, attribute access chains)
+
+The AST-gate tests are deterministic — no asyncio, no I/O, no network. They're the fastest tests in the suite (~2ms each) and the most security-critical.
+
+### Why deduplicate tests across the two categories?
+
+The AST-gate tests are separate from the 88 core tests because they test a security boundary, not a business logic path. A regression in the AST gate is a security incident — it deserves its own test category with clear failure messaging. The 88 core tests cover everything else.
+
+### Why no integration tests for sub-agent A2A flows?
+
+Integration tests that spin up all 4 agents + MCP server + orchestrator would take 30-60s per test and require LM Studio running with specific models. These exist as manual smoke tests (`smoke_test_a2a.py`, `test_full_pipeline.py`) but aren't part of CI. The contract tests (see v2.0 section) cover A2A protocol compliance in-process without agent processes.
+
+### Key properties
+
+- ✅ 88 unit tests — shared infrastructure, no LLM required, runs in CI in ~15s
+- ✅ 60 AST-gate tests — deterministic, ~2ms each, security boundary tested explicitly
+- ✅ Zero agent framework imports in test dependencies — slim CI install possible
+- ✅ Integration tests exist as manual scripts, not CI gates
+- ✅ Contract tests cover A2A protocol compliance in-process
 
 ## Same-Day Memory Cache & analysis_date Column
 
@@ -252,7 +283,7 @@ We track 2.x patches and minor updates automatically (bug fixes, new features) w
 | Orchestrator | **Google ADK** | A2A protocol built-in, agent card generation, session management |
 | RAG | **LlamaIndex** | Best document indexing/retrieval — hybrid search, multi-index routing |
 | Quant | **LangGraph** | Conditional state machine maps naturally to graph-based architecture |
-| Sentiment | **CrewAI** | Multi-agent role-playing (analysis + synthesis) is what CrewAI was designed for |
+| Market Context (née Sentiment) | **CrewAI** | Multi-agent role-playing (analysis + synthesis) is what CrewAI was designed for; rebranded from Sentiment in v1.31 when data lanes were split from RAG |
 
 ## A2A Communication
 
@@ -398,6 +429,38 @@ MCP resource-based agent card discovery is pending future work.
 **Problem**: The SDK's `AgentCard` is a protobuf message with no `url` field. Construction like `AgentCard(url="http://...")` raises `ValueError`.
 
 **Fix**: Set `supported_interfaces=[AgentInterface(protocol_binding="JSONRPC", url=...)]` instead.
+
+### 16. AgentCard Security Scheme — Protobuf Map API
+
+**Problem**: The A2A SDK's protobuf `AgentCard` has a `security` field typed as `map<string, SecurityScheme>` (protobuf map). Direct assignment like `agent_card.security = {"my_scheme": ApiKeyScheme(...)}` fails because protobuf map fields don't support standard Python dict assignment — they use `get_or_create` or direct item assignment via `field[key] = value`.
+
+**Fix**: Use `agent_card.security["my_scheme"].CopyFrom(api_scheme)` instead of dict assignment. The protobuf map type is a `MessageMapContainer` with a `CopyFrom` API, not a `dict`.
+
+**Lesson**: Protobuf map fields look like Python dicts but aren't. Always check the protobuf generated type before assigning — `type(agent_card.security)` reveals `MessageMapContainer`, not `dict`.
+
+### 17. LangGraph Node Names Colliding with State Keys
+
+**Problem**: LangGraph state keys and node names share a single namespace. Naming a node `peer_comparison` collides with the state key `peer_comparison` — the graph raises `ValueError: Duplicate key 'peer_comparison'` at compile time.
+
+**Fix**: Node names must be unique across BOTH state keys and node names. Renamed nodes to use verb-based names: `fetch_peer_comparison` (node) keeps `peer_comparison` (state key).
+
+**Lesson**: LangGraph's namespace is flat — state keys, nodes, and conditional edges all share one namespace. Prefix node names with `fetch_` / `compute_` / `format_` to avoid collisions.
+
+### 18. CrewAI Instrumentor Crash on 0.95
+
+**Problem**: `crewai` version 0.95 restructured its internal module layout. The OpenInference instrumentation auto-detected the old module path and crashed on import with `ModuleNotFoundError: No module named 'crewai.instrumentation'`.
+
+**Fix**: Upper-bound `crewai<0.95` in `pyproject.toml` until the OpenInference instrumentation is updated. The version pin is temporary — when OpenInference releases a new version supporting crewai 0.95+, the bound can be removed.
+
+**Lesson**: Auto-instrumentation libraries (OpenInference, Langfuse) probe module internals that change between minor versions. Version-pin the instrumented library until the instrumentation tooling catches up.
+
+### 19. LANGFUSE_BASE_URL Resolution — `AliasChoices` in Pydantic
+
+**Problem**: `LANGFUSE_BASE_URL` was read via `os.environ.get("LANGFUSE_BASE_URL")` in multiple files. When the env var was set but the Pydantic settings model had a different priority (e.g., `.env` file overrides env var), the raw `os.environ` read got a different value than the settings model.
+
+**Fix**: Remove all raw `os.environ` reads for Langfuse config. Use Pydantic's `AliasChoices(["LANGFUSE_BASE_URL", "langfuse_base_url"])` on a single `LangfuseSettings` model so both env var names resolve through the same priority chain. All consumers read from `get_settings().langfuse.base_url`.
+
+**Lesson**: Raw `os.environ` reads bypass Pydantic's resolution priority (env var > .env > default). Always use the settings model — mixed `os.environ` + Pydantic creates silent divergence.
 
 ## Background Async Discovery
 
@@ -557,7 +620,77 @@ Phase 0 established:
 
 **Why characterization tests before unit tests?** Characterization tests document current behaviour — they pass on the existing codebase without fixing anything. This creates a safety net for refactoring: if you change the extraction pipeline and 4 golden tests break, you know exactly what you changed.
 
-## Why TRUSTED_PROXIES for IP Lockout (v1.43)
+## CI Dependency Strategy — Slim Test Dependencies & uv Caching
+
+### Why separate test dependencies from production?
+
+The full dependency install (`pip install -e .` without `--no-deps`) pulls 293 packages including PyTorch (2.8 GB), CUDA libraries, all four agent frameworks (ADK, LlamaIndex, LangChain/LangGraph, CrewAI), and ChromaDB + sentence-transformers. A CI job that installs all of these spends 5-10 minutes on pip install alone, most of which is downloading binaries for frameworks the tests don't use.
+
+### Solution
+
+**Slim test install** (`--no-deps -e .`): The CI test job installs only ~15 packages — pytest, pydantic, httpx, and the project itself. No PyTorch, no CUDA, no agent frameworks. Tests are scoped to `tests/unit/` which exercises shared infrastructure (settings, ticker utils, cache, rate limiter, memory store, task store, trace context, log sanitizer, timing decorator).
+
+**Lazy imports** (`src/shared/memory/__init__.py`): The memory module's public API uses `__getattr__` that imports heavy dependencies only when the specific class is accessed. `from shared.memory import TickerMemory` doesn't import ChromaDB or sentence-transformers until `TickerMemory` is instantiated. This prevents import-time side-effects in modules that only reference the type.
+
+**`pytest.importorskip` guards**: Test files that need `langgraph`, `crewai`, or `google.adk` use `pytest.importorskip("module_name")` at the top. If the framework isn't installed, those tests are skipped with a clear message instead of failing.
+
+**uv cache**: All Python CI jobs share the uv cache via `actions/cache` with a hash of `pyproject.toml`. Since the slim test deps are stable (few changes), cache hit rate is >90%, reducing install time to ~3s.
+
+### Why not use pytest markers (`@pytest.mark.slow`) instead?
+
+Markers rely on developers remembering to flag tests correctly and users remembering to pass `-m "not slow"`. The slim install approach enforces the boundary at the package level — if a test file imports `langgraph`, it simply can't run in the slim job. This is a structural guarantee rather than a convention.
+
+### Why argon2-cffi in slim deps?
+
+`argon2-cffi` is needed by `shared.auth` which is tested in the unit tests. It's a lightweight C FFI binding (~5MB) — negligible cost for the slim install. Without it, auth-related tests would need `pytest.importorskip("argon2")`, and the auth module is a core shared primitive, not an agent-specific framework.
+
+### Key properties
+
+- ✅ Slim install: 15 packages vs 293 — CI install time drops from 5-10 min to ~30s
+- ✅ Lazy imports prevent import-time side effects in shared modules
+- ✅ `pytest.importorskip` — structural guarantee, not developer convention
+- ✅ uv cache with >90% hit rate — <3s install on cache hit
+- ✅ argon2-cffi included — lightweight enough for slim deps, needed by auth
+
+## Docker Hardening Strategy
+
+### Why non-root USER?
+
+The default Docker image runs as `root`. If a vulnerability in the Python process allows code execution (e.g. via a malicious filing document), the attacker gets root inside the container. Running as a non-root user limits blast radius — the attacker can only write to world-writable directories like `/tmp`. All 5 Dockerfiles (`orchestrator`, `quant`, `rag`, `market-context`, `mcp`) use `USER appuser` with `uid=10001` (non-standard to avoid conflicts with host UIDs).
+
+### Why per-service pip extras?
+
+The full install of all 4 agent frameworks in every container wastes disk space and attack surface. The orchestrator container doesn't need LlamaIndex or LangGraph, and the RAG container doesn't need ADK or CrewAI. Using pip extras per service:
+
+```
+pip install "finsight-mcp[orchestrator]"
+pip install "finsight-mcp[rag]"
+```
+
+Each container only installs the frameworks its agent needs. The `[all]` extra is available for development. On disk: orchestrator container shrinks from 12 GB (all frameworks) to 3.2 GB.
+
+### Why python urllib healthchecks instead of curl?
+
+Including `curl` in each container adds ~15 MB per image (5 containers = 75 MB total) and is a security concern (curl is frequently targeted by CVEs). Python's built-in `urllib.request` can perform health checks with no additional dependencies:
+
+```dockerfile
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')"
+```
+
+This is 5 lines of inline Python — no curl binary, no package install, no attack surface.
+
+### Why `restart: unless-stopped`?
+
+All 5 services in `docker-compose.yml` use `restart: unless-stopped`. When LM Studio or the MCP server crashes (e.g. OOM, Windows update, driver crash), Docker restarts the container automatically without manual intervention. `unless-stopped` instead of `always` means a developer can explicitly `docker stop` a container for debugging without Docker restarting it.
+
+### Key properties
+
+- ✅ Non-root user in all 5 Dockerfiles — limits vulnerability blast radius
+- ✅ Per-service pip extras — each container installs only needed frameworks (3.2 GB vs 12 GB)
+- ✅ Python healthchecks — no curl binary needed, no CVE surface
+- ✅ `restart: unless-stopped` — auto-recover from crashes, explicit stop still respected
+- ✅ `.dockerignore` — excludes `node_modules/`, `.venv/`, `__pycache__/`, `tests/` from build context
 
 The rate-limited lockout uses IP per-username to prevent brute-force attacks. But in Docker Compose, the Next.js proxy forwards all requests — `request.client.host` on the orchestrator sees the proxy's IP, not the browser's. Every login attempt appears to come from the proxy's IP, making per-IP lockout useless because all users share the proxy's IP.
 
@@ -586,6 +719,40 @@ A 3-boundary auth model (A: User→Frontend→Orchestrator, B: Orchestrator↔Su
 **Why Argon2id instead of bcrypt?** Argon2id is the current OWASP-recommended password hashing algorithm. It's memory-hard (resistant to GPU attacks) and time-hard (resistant to ASIC attacks). The `argon2-cffi` library is pure Python with a C FFI binding — no system dependency.
 
 **Why rate-limited lockout instead of exponential backoff?** Lockout provides a clear signal to legitimate users ("try again in 60s") while making brute-force impractical. The cooldown is short enough that users don't abandon the application but long enough to prevent meaningful password guessing.
+
+## Contract Test Strategy & OpenAPI Specification (v2.0)
+
+### Why contract tests before feature work?
+
+After implementing auth (v1.43), the system had multiple interacting boundaries: 4 agent types × 2 auth modes (on/off) × REST + A2A + SSE transports. Manual testing couldn't cover this matrix — bugs in the auth middleware, A2A protocol handling, or route ordering would slip through until a specific combination.
+
+### Solution
+
+**Parametrized auth × route matrix** (37 tests): Each of 13 API routes tested with valid auth, expired token, missing token, and invalid token. The parametrized fixture generates all combinations from route definitions and auth states — adding a new route automatically generates its auth tests.
+
+**In-process A2A protocol test**: Rather than spinning up 4 agent processes and testing over the network, the test runs a sub-agent executor in-process, sends A2A requests via the SDK's JSON-RPC client, and verifies the full streaming lifecycle:
+- `WORKING → artifact_update (data) → COMPLETED` (normal path)
+- `WORKING → FAILED` (error path)
+- `SendMessage → Cancel` (cancellation path)
+- `input_required` in-band queries
+
+This catches protocol-level regressions without the flakiness of inter-process tests.
+
+### Why check in openapi.json with CI enforcement?
+
+The OpenAPI spec is generated from a FastAPI spec-generator app that reuses the same Pydantic response models the real API uses. The checked-in `openapi.json` is the source of truth — CI runs `openapi diff` against it on every PR. If the spec changes, the PR must include the updated `openapi.json`. This prevents silent API drift: a new route added without updating the spec fails CI immediately. 15 Pydantic models, 13 paths, 16 schemas.
+
+### Why a trace filter for auth observability?
+
+Langfuse traces include `user_id` from the JWT token. But before auth (v1.43), traces used `user_id: "anonymous"`. The `trace_with_user()` helper wraps each traced operation with the authenticated user ID, falling back to the anonymous cookie ID when auth is disabled. The `traceFilter.ts` in the OpenAPI spec documents which fields appear in traces for each auth mode — this is documentation, not enforcement, but it prevents confusing "anonymous" labels in prod traces.
+
+### Key properties
+
+- ✅ 37 parametrized auth tests — full auth matrix coverage
+- ✅ In-process A2A tests — protocol-level regression without inter-process flakiness
+- ✅ CI-enforced OpenAPI spec — `openapi diff` blocks silent API drift
+- ✅ 15 Pydantic models, 13 paths, 16 schemas — spec is always current
+- ✅ Trace filter for auth — observability works correctly in both auth modes
 
 ## Model Change: gpt-oss-20b → qwen
 
@@ -2960,3 +3127,155 @@ If the timeout fires, a `RunError` event is sent to the frontend with a clear me
 - ✅ No indefinite hangs — frontend gets an error instead of infinite "processing"
 - ✅ Phase-aware timeout — different limits for LLM vs sub-agent execution
 - ✅ Clear error message — user knows the model is unavailable
+
+## `src/` Directory Layout Refactor
+
+### Why move everything under `src/`?
+
+Before the refactor, packages lived at repo root: `orchestrator/`, `quant/`, `financial_rag/`, `market_context/`, `mcp_tools/`, `shared/`, `web/`, `tests/`, `scripts/`. This flat layout caused three problems:
+
+1. **Import ambiguity**: `pytest` ran from root, so imports like `from shared.settings import ...` worked. But Docker containers had different `WORKDIR` setups — some ran from repo root, others from a subdirectory. The same import could resolve differently between CI, local dev, and production.
+
+2. **PyPI packaging impossible**: A flat-layout project can't be published to PyPI without moving files to `src/` (or a nested package). While publishing isn't an immediate goal, the flat layout prevented standard tooling (`build`, `pip install -e .` with consistent paths).
+
+3. **Discovery confusion**: New contributors had to read the Makefile to understand which directories were Python packages vs config vs docs vs frontend. The flat root mixed Python modules, Node.js frontend files, Docker configs, documentation, and CI configs.
+
+### Solution
+
+Move all runnable code under `src/`:
+
+```
+src/
+  orchestrator/       # ADK orchestrator
+  financial_rag/      # RAG agent (LlamaIndex)
+  quant/              # Quant agent (LangGraph)
+  market_context/     # Market Context agent (CrewAI)
+  mcp_tools/          # MCP server
+  shared/             # Shared infrastructure
+  web/                # Next.js frontend
+  tests/              # All test files
+  scripts/            # Utility scripts
+```
+
+Configuration changes:
+- `pyproject.toml`: `packages.find = { where = ["src"] }` — setuptools scans `src/` for packages. `pythonpath = ["src"]` so tests import from `src/` directly. `testpaths = ["src/tests"]`.
+- `Makefile` + Dockerfiles: All `COPY` and working directory paths prefixed with `src/`.
+- CI workflow: `mypy src/shared src/orchestrator`, `pytest src/tests`, etc.
+- Batch files: Next.js `cd src/web`, ADK web `cd src/orchestrator`.
+- Path traversals in 6 files fixed (`logging.py`, `task_store.py`, `agent_registry.py`, `openapi.py`, etc.).
+
+### Why not a monorepo with namespaced packages?
+
+A monorepo (`@finsight/orchestrator`, `@finsight/quant`, etc.) would be more conventional for a multi-package project but adds build complexity (each package needs its own `pyproject.toml`, CI matrix, version). The `src/` layout is a single-package structure that provides clean import paths without the monorepo overhead. All 5 agent packages continue to share a single `pyproject.toml`, dependency set, and version.
+
+### Key properties
+
+- ✅ All Python imports go through `src/` — consistent resolution across local dev, CI, Docker
+- ✅ Standard PyPI-compatible layout — `pip install -e .` works without path hacks
+- ✅ Clear root — config files, docs, and `pyproject.toml` are visually distinct from code
+- ✅ Only 6 files needed path traversal fixes — minimal migration cost
+- ✅ All 218 unit tests pass without changes — test imports unaffected by `pythonpath = ["src"]`
+
+## HTML Documentation Format (v1.17)
+
+### Why convert from Markdown to HTML?
+
+Commit 638a7ef converted all documentation from Markdown to HTML with a custom CSS design system (ivory background, serif headings, clay accent). Three motivations:
+
+1. **Readability**: Markdown tables, nested lists, and code blocks become hard to scan in large documents. HTML with CSS provides visual hierarchy, section spacing, and consistent typography that Markdown renderers (especially terminal-based ones) cannot match.
+
+2. **Cross-referencing**: Markdown files have no built-in cross-document navigation. The HTML version includes a shared navigation bar across all docs (`index.html`, `ARCHITECTURE.html`, `AGENTS.html`, etc.) with consistent styling. Adding a new document means adding one `<a>` tag to the nav bar rather than updating every markdown file's manual "back to main" links.
+
+3. **Diagram embedding**: The project has 10+ Mermaid diagrams (`docs/diagrams/`). HTML renders Mermaid natively; Markdown editors have inconsistent Mermaid support. The HTML layout reserves full-width diagram containers that Markdown's linear flow cannot provide.
+
+### Why a custom CSS design system instead of a framework?
+
+Bootstrap, Tailwind, or Material CSS would add 50-200KB of unused styles for a documentation site with 10 pages and a single layout. The custom CSS (~30 lines in each file) covers exactly what's needed: body typography, table styling, code blocks, nav bar, and mobile breakpoint. Zero dependencies, zero build step, identical rendering across browsers.
+
+### Why maintain both .md and .html?
+
+The .md files serve as the *source of truth* — they're editable in any text editor, diffable in git, and processable by tools. The .html files are the *rendered output* — generated from the .md source via the `html-docs` skill's templates. Keeping both means the docs are readable in raw form (via the .md files in a terminal) and in rendered form (via the .html files in a browser). The `docs: sync` commits (e.g., 5cf9c8e, 6b9f8f1) update both in lockstep.
+
+## Documentation Cleanup Policy
+
+### Why delete outdated docs and scripts instead of keeping them?
+
+Four cleanup commits (e1104ed, 0931410, b78db9f) deleted 14 debug scripts, 5 outdated .md files, 17 stale test files, and unused modules (`shared/types.py`, `shared/workflow.py`). The policy is:
+
+**If it's not used, delete it.** Dead files impose a cognitive tax:
+- New contributors grep the codebase and find irrelevant results
+- Refactoring must consider whether a dead file has hidden callers
+- Build tools (mypy, ruff, pytest) scan every file, wasting CI time on dead code
+
+### Why not archive instead of delete?
+
+Git history preserves deleted files. Anyone who needs a removed script or doc can `git log --diff-filter=D -- <file>` to find it, or `git show <commit>:<file>` to recover it. Archiving (moving to an `archive/` folder) keeps the files in the working tree where they continue to be scanned by tools, show up in grep results, and accumulate bit-rot. Delete is the honest option — the file is either maintained or gone.
+
+### Why delete tests instead of fixing them?
+
+The 17 deleted test files (commit b78db9f) referenced classes and functions from the v1.0-v1.15 architecture that no longer existed. Fixing them would require a full rewrite against the current codebase — essentially writing new tests from scratch while also removing old ones. Deleting the stale fixtures is more honest than maintaining dead test code that would confuse future readers. The 88+60 replacement tests (see "Testing Strategy" section) cover the current architecture properly.
+
+## Services.py Placement for ADK Web (v1.14)
+
+### Why put services.py at the agents root instead of in a submodule?
+
+Commit 906104d moved `services.py` from `src/orchestrator/agents/finsight_agent/` to `src/orchestrator/agents/`. Root cause: ADK's `load_services_module()` looks for `services.py` in the `agents_dir` root, not in subdirectories. If the file is nested, the `finsight://` memory service URI scheme is never registered, and `create_memory_service_from_options()` falls back to `InMemoryMemoryService` — losing all persistent memory.
+
+### Why not patch ADK's loader instead of moving the file?
+
+The loader's path resolution is a framework detail that could change between ADK versions. Moving `services.py` to the expected location is a one-line structural change that works across ADK versions. Patching the loader would require a monkey-patch or fork — brittle and hard to maintain.
+
+### Key properties
+
+- ✅ `finsight://` URI scheme registered before any memory service is created
+- ✅ Persistent SQLiteMemoryService replaces InMemoryMemoryService for `adk web` path
+- ✅ ADK-version-independent — works with any version that calls `load_services_module()`
+
+## Explanatory Comments Across All Source Files (v1.24)
+
+### Why add comments to ~40 files in a single pass?
+
+Commit 2b8b1d3 added explanatory comments to every production source file (~40 files). The motivation was **bus-factor proofing**: the sole developer had deep context on every module's non-obvious design decisions (why a particular LangGraph pattern was used, why a timeout value was chosen, why an MCP client was a singleton). Without comments, this context would be lost if the developer was unavailable.
+
+### Why not rely on the DESIGN_DECISIONS doc alone?
+
+DESIGN_DECISIONS.md documents architectural-level decisions (why IST timezone, why RAGAS, why four frameworks). But many decisions are *local* — why a specific `asyncio.Lock` pattern in one function, why a `run_in_executor` call around a specific yfinance wrapper. A design doc with 3000+ lines would bury these local decisions. Inline comments put the reasoning at the point of use, where a future reader needs it.
+
+### What comment style was used?
+
+Each source file got a module-level docstring describing its responsibility and key design choices. Within functions, only non-obvious logic received inline comments — straightforward code (`for item in items: process(item)`) was left uncommented. The principle: **explain why, not what**. The code already says what it does; comments say why it does it that way.
+
+## Secrets Externalization (v1.25)
+
+### Why move hardcoded secrets to env vars?
+
+Commit 2a9ba36 moved `SEC_USER_AGENT` (hardcoded user-agent string for SEC EDGAR HTTP requests) and `LLM_API_KEY` (hardcoded `"lmstudio"` API key) from source files to env vars read via `shared.settings`. Three motivations:
+
+1. **Audit trail**: Hardcoded strings in source files are invisible to secret scanners. An env var is a single lookup point — `grep LLM_API_KEY .env` is trivially auditable.
+
+2. **Deployment flexibility**: Different environments use different SEC user agents (dev: `"FinSight/1.0"`, staging: `"FinSight/1.0-staging"`, prod: `"FinSight/1.0-prod"`). An env var changes the agent without a code deploy.
+
+3. **Consistency**: `LLM_API_KEY` was already consumed from settings in most files, but some files still hardcoded `api_key="lmstudio"` directly. Centralizing all key reads through `settings.llm_api_key` ensures one source of truth.
+
+### Why default values still in code?
+
+`LLM_API_KEY` defaults to `"lmstudio"` in `settings.py` because LM Studio doesn't validate the API key — it accepts any non-empty string. `SEC_USER_AGENT` defaults to `"FinSight/1.0"` with `contact@finsight.example.com` as the email. Both defaults work out of the box for local development while being overridable for production. The defaults are clearly documented in `.env.example`.
+
+## Model Evolution Timeline
+
+### Why document the full timeline?
+
+The model selection history is scattered across multiple non-chronological sections ("Model Selection (Ollama Era)", "Migration from Ollama to LM Studio", "Model Change: gpt-oss-20b → qwen", "Model Change: qwen3-30b-A3B → Ministral-3-14b"). A consolidated timeline shows the reasoning at each step and prevents repeating failed experiments:
+
+| Date | Model | Provider | Outcome | Reason for Change |
+|---|---|---|---|---|
+| v0.1 | `qwen3.5:0.8b` | Ollama | Tested, too small | Replaced by ministral-3:3b |
+| v0.2 | `ministral-3:3b` | Ollama | Tested, unreliable tool calling | Replaced by llama3.2 |
+| v0.3 | `llama3.2` (3B) | Ollama | ❌ Tool calling unreliable | Failed via both ollama/openai providers |
+| v0.4 | `qwen2.5:7b` | Ollama (LiteLLM) | ✅ Reliable tool calling, ~4.7GB, 20-40s/call | Worked but Ollama inference too slow |
+| v1.0 | `gpt-oss-20b` | LM Studio | ✅ Good quality, 40-60s/call | Better inference speed than Ollama |
+| v1.17 | `qwen3-30b-a3b-2507` | LM Studio | ✅ 5-10x faster (5-10s/call), parallel function calling | Major latency improvement, maintained quality |
+| v1.36 | `ministral-3-14b-reasoning` | LM Studio | ⚠️ Faster (3-5s/call) but unreliable save_brief | Per-developer .env override, not code default |
+| v1.36+ | `qwen3-30b-a3b-2507` (default) | LM Studio | ✅ Most tested, reliable tool calling | Code default; local overrides via .env |
+
+**Key takeaway**: The project tried 7+ model/provider combinations. Each switch was driven by a specific failure mode (speed, tool-calling reliability, parallel function support). The current combination (LM Studio + qwen3-30b-a3b as default, configurable via .env) gives the best balance of speed and reliability.

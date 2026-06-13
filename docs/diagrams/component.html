@@ -29,7 +29,7 @@
 graph TB
 subgraph Orch["Orchestrator"]
 Exec("FinSightAgentExecutor")
-AGUIBridge("AG-UI Bridge\nPOST /a2a-agui\nCopilotKit SSE + auto-save")
+AGUIBridge("AG-UI Bridge\nPOST /a2a-agui\nPer-event timeout: 120s/690s\nStable anon user ID\nCopilotKit SSE + auto-save")
 Guard("Guardrails (off-topic + validate)")
 SCache("SemanticCache (ChromaDB)")
 SubClient("SubAgentClient (A2A dispatch)")
@@ -75,6 +75,8 @@ LLMQ("LLMPriorityQueue\nCRITICAL > NORMAL > LOW")
 Eval("RuntimeEval\nCircuit breaker + SHA dedup\nBurst limit + 90s timeout")
 Trace("TraceContext\nContextVars → Langfuse")
 MCPCli("MCPClient (SSE singleton)\nAuto-reconnect on disconnect")
+Sett("Settings\nPydantic-settings config\nPer-agent timeouts")
+Boot("Bootstrap\nStartup: event loop + logging\nLangfuse init + env vars")
 end
 subgraph Memory["SQLite Memory Layer"]
 TMem("TickerMemory\nstore_brief / get_latest")
@@ -118,6 +120,9 @@ Exec -- "LLM queue" --> LLMQ
 QLLMSum -- "CRITICAL" --> LLMQ
 EvalFire -- "LOW" --> LLMQ
 Eval -- "circuit breaker" --> LLMQ
+Sett -- "config" --> LLMQ
+Sett -- "config" --> Eval
+Boot -- "init" --> Sett
 style Exec fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
 style Guard fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
 style SCache fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
@@ -155,6 +160,8 @@ style LLMQ fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
 style Eval fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
 style Trace fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
 style MCPCli fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
+style Sett fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
+style Boot fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
 style SMem fill:#abebc6,stroke:#1e8449,color:#1a1a1a
 style TMem fill:#abebc6,stroke:#1e8449,color:#1a1a1a
 style PStore fill:#abebc6,stroke:#1e8449,color:#1a1a1a

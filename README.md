@@ -1,4 +1,4 @@
-# FinSight � Multi-Agent Investment Research System
+# FinSight — Multi-Agent Investment Research System
 
 An autonomous multi-agent system that answers investment queries like *"Should I invest in NVIDIA?"* by coordinating four specialized agents across different frameworks, communicating via the **Agent-to-Agent (A2A)** protocol, and using **MCP (Model Context Protocol)** servers for external tool access.
 
@@ -11,53 +11,53 @@ An autonomous multi-agent system that answers investment queries like *"Should I
 - **AG-UI / CopilotKit frontend**: Next.js 16 + CopilotKit 1.59 streaming chat interface (`src/web/nextjs-app/`) via `POST /a2a-agui`; AG-UI bridge with off-topic guardrail, brief auto-save, per-event timeout, and `active_agents` state tracking
 - **Input/output guardrails**: Off-topic filter, pre-flight ticker validation, empty-response guard, and BUY/HOLD/SELL signal enforcement with auto-retry
 - **Persistent memory layer**: SQLite-backed session storage, cross-session memory search, ticker brief history, portfolio persistence, and recommendation tracking with live price snapshots
-- **Incremental RAG ingestion**: Tracks ingested filing URLs in SQLite � restarts never re-ingest already-indexed documents
+- **Incremental RAG ingestion**: Tracks ingested filing URLs in SQLite — restarts never re-ingest already-indexed documents
 - **RAGAS evaluation pipeline**: Offline batch evaluation (Faithfulness, ResponseRelevancy, ContextPrecision, ContextRecall, ToolCallAccuracy, AgentGoalAccuracy) with Langfuse score push. Runtime per-query evaluation on live production responses with per-metric streaming, client caching, and 180s LLM timeout
 - **Structured logging**: `@logged`/`@logged_sync` timing decorators emit `Enter`/`Exit`/`Fail` with `latency_ms`; operational log statements at cache, DB, sandbox, and report-generation boundaries; noisy third-party loggers suppressed by default, overridable via `LOG_LEVEL_<LIB>` env vars
 - **Portfolio correlation analysis**: When you explicitly mention portfolio holdings (e.g. "My portfolio holds AAPL, MSFT"), the quant agent computes cross-stock correlation matrices alongside the primary analysis
 - **Distributed tracing**: Langfuse traces span all four agent processes in a single trace tree via text-based context propagation, with automatic filtering of noisy A2A internal spans
 - **Health monitoring**: `/health` endpoints on all five services with docker-compose healthcheck integration
-- **Local LLM inference**: All agents use LM Studio (OpenAI-compatible API) � no cloud dependencies
+- **Local LLM inference**: All agents use LM Studio (OpenAI-compatible API) — no cloud dependencies
 - **MCP data tools**: Unified server providing SEC filings, price data, financials, news sentiment, insider transactions, peer discovery, scenario shocks, and more
 
 ## Architecture
 
 ```
 +--------------------------------------------------------------+
-�              ADK Web UI (port 8080)                           �
-�           Orchestrator (ADK LlmAgent)                        �
-�         Discovers agents ? LLM routes via send_message       �
-�         Tools: send_message(name, task), load_memory(query)  �
+│              ADK Web UI (port 8080)                           │
+│           Orchestrator (ADK LlmAgent)                        │
+│         Discovers agents ? LLM routes via send_message       │
+│         Tools: send_message(name, task), load_memory(query)  │
 +--------------------------------------------------------------+
-                       � A2A Protocol (JSON-RPC over HTTP, streaming)
+                       │ A2A Protocol (JSON-RPC over HTTP, streaming)
                        ?
 +--------------------------------------------------------------+
-�  Agent Pool                                                   �
-�  RAG (:8002)    Quant (:8003)    Market Context (:8004)      �
-�  (LlamaIndex)   (LangGraph)      (CrewAI)                    �
+│  Agent Pool                                                   │
+│  RAG (:8002)    Quant (:8003)    Market Context (:8004)      │
+│  (LlamaIndex)   (LangGraph)      (CrewAI)                    │
 +--------------------------------------------------------------+
-         �            �                �
+         │            │                │
          ?            ?                ?
 +--------------------------------------------------------------+
-�          Unified finsight-mcp Server (port 8010)              �
-�  +-----------------+  +---------------------------------+   �
-�  � Agent Registry  �  �  Data Sources                 �   �
-�  � find_agent()    �  �  get_prices, get_financials,  �   �
-�  � resource://agent_cards�  �  get_options_chain,           �   �
-�  +-----------------+  �  get_company_filings,         �   �
-�                        �  get_financial_filings,       �   �
-�                        �  get_filing_content,          �   �
-�                        �  validate_ticker,             �   �
-�                        �  resolve_company_ticker,      �   �
-�                        �  full_text_search,            �   �
-�                        �  get_news_sentiment,          �   �
-�                        �  get_earnings_calendar,       �   �
-�                        �  get_insider_transactions,    �   �
-�                        �  get_peers,                   �   �
-�                        �  get_macro_indicators,        �   �
-�                        �  get_scenario_shocks,         �   �
-�                        �  execute_python, ...          �   �
-�                        +---------------------------------+   �
+│          Unified finsight-mcp Server (port 8010)              │
+│  +-----------------+  +---------------------------------+   │
+│  │ Agent Registry  │  │  Data Sources                 │   │
+│  │ find_agent()    │  │  get_prices, get_financials,  │   │
+│  │ resource://agent_cards│  │  get_options_chain,           │   │
+│  +-----------------+  │  get_company_filings,         │   │
+│                        │  get_financial_filings,       │   │
+│                        │  get_filing_content,          │   │
+│                        │  validate_ticker,             │   │
+│                        │  resolve_company_ticker,      │   │
+│                        │  full_text_search,            │   │
+│                        │  get_news_sentiment,          │   │
+│                        │  get_earnings_calendar,       │   │
+│                        │  get_insider_transactions,    │   │
+│                        │  get_peers,                   │   │
+│                        │  get_macro_indicators,        │   │
+│                        │  get_scenario_shocks,         │   │
+│                        │  execute_python, ...          │   │
+│                        +---------------------------------+   │
 +--------------------------------------------------------------+
 ```
 
@@ -70,7 +70,7 @@ All A2A communication uses `A2ACardResolver` for standard discovery and `ClientF
 | Agent Communication | Google A2A Protocol (JSON-RPC over HTTP, streaming) |
 | Orchestrator | Google ADK `LlmAgent` with `send_message` tool |
 | Sub-agent Executor | `GenericAgentExecutor` + `BaseAgent` pattern |
-| Memory Layer | SQLite (`aiosqlite`) � sessions, ticker briefs, portfolio, performance, ingested filings |
+| Memory Layer | SQLite (`aiosqlite`) — sessions, ticker briefs, portfolio, performance, ingested filings |
 | Caching | `_TTLCache` (MCP tools), LangChain `SQLiteCache` (LLM), ChromaDB semantic cache, `LLMPriorityQueue` (async semaphore, 3 tiers) |
 | Guardrails | Regex off-topic filter + MCP ticker pre-check (input), signal check + retry (output) |
 | RAG | LlamaIndex + ChromaDB (local) + HuggingFace embeddings, incremental ingestion |
@@ -86,7 +86,7 @@ All A2A communication uses `A2ACardResolver` for standard discovery and `ClientF
 | Vector Store | ChromaDB (local, persisted) |
 | Agent Discovery | `A2ACardResolver` via `AGENT_SEED_URLS` |
 | Observability | Langfuse + LangChainInstrumentor + sub-agent latency spans |
-| Logging | `src/shared/logging_config.py` � `@logged`/`@logged_sync` decorators, third-party suppression, `LOG_LEVEL_<LIB>` overrides |
+| Logging | `src/shared/logging_config.py` — `@logged`/`@logged_sync` decorators, third-party suppression, `LOG_LEVEL_<LIB>` overrides |
 
 ## Quick Start
 
@@ -159,52 +159,52 @@ stop_servers.bat
 
 ```
 +-- src/
-�   +-- orchestrator/          # ADK Orchestrator
-�   �   +-- agent.py           # LlmAgent with single send_message tool
-�   �   +-- agent_executor.py  # FinSightAgentExecutor (guardrails, semantic cache, A2A runtime)
-�   �   +-- sub_agent_client.py# SubAgentClient (A2A discovery + latency tracking)
-�   �   +-- main.py            # A2A server entrypoint (uvicorn)
-�   �   +-- web/               # ADK Web callbacks (merged from agents/)
-�   �   +-- Dockerfile
-�   �
-�   +-- financial_rag/          # RAG Agent
-�   �   +-- server.py           # GenericAgentExecutor(RAGAgent)
-�   �   +-- executor.py         # RAGAgent extends BaseAgent with stream()
-�   �   +-- index_manager.py    # ChromaDB multi-index + LM Studio LLM
-�   �   +-- hybrid_search.py    # BM25 + dense + RRF + reranker
-�   �   +-- document_ingestion.py
-�   �
-�   +-- quant/                  # Quant Agent
-�   �   +-- server.py           # GenericAgentExecutor(QuantAgent)
-�   �   +-- executor.py         # QuantAgent extends BaseAgent with stream()
-�   �   +-- graph.py            # LangGraph state machine
-�   �   +-- nodes/              # Compute nodes (calculations, dcf, etc.)
-�   �   +-- state.py            # QuantAnalysisState schema
-�   �
-�   +-- market_context/         # Market Context Agent
-�   �   +-- server.py           # GenericAgentExecutor(MarketContextAgent)
-�   �   +-- executor.py         # MarketContextAgent extends BaseAgent with stream()
-�   �   +-- crew.py             # MarketContextCrew (macro regime + peer landscape)
-�   �   +-- mcp_tools.py        # DynamicMCPTool with Pydantic args_schema
-�   �
-�   +-- mcp_tools/              # MCP Server (port 8010)
-�   �   +-- finsight_server.py  # get_app() (FastMCP)
-�   �   +-- tools/              # Per-tool modules (market_data, edgar, sentiment, etc.)
-�   �   +-- infra/              # Rate limiters, caching, embed loader
-�   �
-�   +-- shared/                 # Shared libraries
-�   �   +-- base_agent.py       # BaseAgent abstract class
-�   �   +-- settings.py         # Pydantic-settings BaseSettings
-�   �   +-- bootstrap.py        # Process-level side-effects
-�   �   +-- mcp_client.py       # MCP client with dynamic tool discovery
-�   �   +-- reports/            # HTML/PPTX/DOCX report generation
-�   �   +-- memory/             # SQLite persistence layer
-�   �   +-- templates/          # Jinja2 templates
-�   �
-�   +-- web/nextjs-app/         # Next.js 16 + CopilotKit 1.59 frontend
-�   +-- tests/                  # Unit, characterization, regression, security tests
-�   +-- scripts/                # Utility scripts
-�
+│   +-- orchestrator/          # ADK Orchestrator
+│   │   +-- agent.py           # LlmAgent with single send_message tool
+│   │   +-- agent_executor.py  # FinSightAgentExecutor (guardrails, semantic cache, A2A runtime)
+│   │   +-- sub_agent_client.py# SubAgentClient (A2A discovery + latency tracking)
+│   │   +-- main.py            # A2A server entrypoint (uvicorn)
+│   │   +-- web/               # ADK Web callbacks (merged from agents/)
+│   │   +-- Dockerfile
+│   │
+│   +-- financial_rag/          # RAG Agent
+│   │   +-- server.py           # GenericAgentExecutor(RAGAgent)
+│   │   +-- executor.py         # RAGAgent extends BaseAgent with stream()
+│   │   +-- index_manager.py    # ChromaDB multi-index + LM Studio LLM
+│   │   +-- hybrid_search.py    # BM25 + dense + RRF + reranker
+│   │   +-- document_ingestion.py
+│   │
+│   +-- quant/                  # Quant Agent
+│   │   +-- server.py           # GenericAgentExecutor(QuantAgent)
+│   │   +-- executor.py         # QuantAgent extends BaseAgent with stream()
+│   │   +-- graph.py            # LangGraph state machine
+│   │   +-- nodes/              # Compute nodes (calculations, dcf, etc.)
+│   │   +-- state.py            # QuantAnalysisState schema
+│   │
+│   +-- market_context/         # Market Context Agent
+│   │   +-- server.py           # GenericAgentExecutor(MarketContextAgent)
+│   │   +-- executor.py         # MarketContextAgent extends BaseAgent with stream()
+│   │   +-- crew.py             # MarketContextCrew (macro regime + peer landscape)
+│   │   +-- mcp_tools.py        # DynamicMCPTool with Pydantic args_schema
+│   │
+│   +-- mcp_tools/              # MCP Server (port 8010)
+│   │   +-- finsight_server.py  # get_app() (FastMCP)
+│   │   +-- tools/              # Per-tool modules (market_data, edgar, sentiment, etc.)
+│   │   +-- infra/              # Rate limiters, caching, embed loader
+│   │
+│   +-- shared/                 # Shared libraries
+│   │   +-- base_agent.py       # BaseAgent abstract class
+│   │   +-- settings.py         # Pydantic-settings BaseSettings
+│   │   +-- bootstrap.py        # Process-level side-effects
+│   │   +-- mcp_client.py       # MCP client with dynamic tool discovery
+│   │   +-- reports/            # HTML/PPTX/DOCX report generation
+│   │   +-- memory/             # SQLite persistence layer
+│   │   +-- templates/          # Jinja2 templates
+│   │
+│   +-- web/nextjs-app/         # Next.js 16 + CopilotKit 1.59 frontend
+│   +-- tests/                  # Unit, characterization, regression, security tests
+│   +-- scripts/                # Utility scripts
+│
 +-- agent_cards/               # A2A Agent Card JSON files
 +-- db/                        # SQLite + ChromaDB data
 +-- docs/                      # Documentation
@@ -239,13 +239,13 @@ Key environment variables in `.env`:
 |---|---|
 | `docs/ARCHITECTURE.md` | System architecture, communication patterns, caching layer, guardrails, agent internals |
 | `docs/AGENTS.md` | Detailed agent reference (skills, architecture, streaming flow) |
-| `docs/API_REFERENCE.md` | Complete endpoint reference � REST routes, A2A protocol, AG-UI, health checks |
-| `docs/mcp_tools.md` | MCP server tools, TTL caching, registry, client usage |
+| `docs/API_REFERENCE.md` | Complete endpoint reference — REST routes, A2A protocol, AG-UI, health checks |
+| `docs/MCP_SERVERS.md` | MCP server tools, TTL caching, registry, client usage |
 | `docs/DESIGN_DECISIONS.md` | Evolution log: why each design choice was made |
 | `docs/CHANGELOG.md` | Version history |
 | `docs/TESTS.md` | Test coverage, patterns, RAGAS evaluation, running instructions |
 | `docs/SECURITY.md` | Auth model, Python sandbox, trusted proxies, hardening history |
-| `src/web/nextjs-app/README.md` | Frontend architecture � pages, components, design system, data flow |
+| `src/web/nextjs-app/README.md` | Frontend architecture — pages, components, design system, data flow |
 
 ## Testing
 

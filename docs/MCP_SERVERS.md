@@ -3,7 +3,7 @@
 MCP server hosting both agent registry and data tools. Split from a single monolithic file (2095 lines) into per-tool modules (v1.41):
 
 ```
-mcp_tools/
+src/mcp_tools/
   ├── _app.py                # 78-line composition root with get_app() factory
   ├── finsight_server.py     # re-exports get_app() for backward compat
   ├── tools/
@@ -30,7 +30,7 @@ No API keys required (SEC uses public API, news uses RSS feeds). Windows-compati
 ## Running
 
 ```bash
-python -m uvicorn mcp_tools.finsight_server:get_app --host 0.0.0.0 --port 8010
+uv run python -m uvicorn mcp_tools.finsight_server:get_app --host 0.0.0.0 --port 8010
 ```
 
 Health check: `GET http://localhost:8010/health` → `{"status":"ok","agent":"mcp"}`
@@ -135,7 +135,7 @@ Auto-discovered by any agent that connects and calls `list_tools()`.
 ## MCP Client Usage
 
 ```python
-from shared.mcp_client import MCPClient, MCPServerConfig
+from src.shared.mcp_client import MCPClient, MCPServerConfig
 
 mcp = MCPClient(configs=[MCPServerConfig(name="finsight", url="http://localhost:8010/sse")])
 await mcp.connect_all()
@@ -161,7 +161,7 @@ The MCP server wraps its SSE mount with `AuthMiddleware(accept={"service"})` —
 Use the `parse_mcp_result()` utility for consistent response handling:
 
 ```python
-from shared.mcp_client import parse_mcp_result
+from src.shared.mcp_client import parse_mcp_result
 
 result = await mcp.call_tool_by_name("get_company_filings", {"ticker": "NVDA"})
 data = parse_mcp_result(result)  # Returns dict, list, str, or {"error": "..."}

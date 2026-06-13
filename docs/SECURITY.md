@@ -6,7 +6,7 @@ FinSight's security model focuses on two layers: **network authentication** (ser
 
 ### Bearer Token Auth
 
-All HTTP endpoints are protected by `AuthMiddleware` (Starlette ASGI middleware in `shared/auth/middleware.py`). Auth is enabled via `AUTH_ENABLED=true` in `.env`.
+All HTTP endpoints are protected by `AuthMiddleware` (Starlette ASGI middleware in `src/shared/auth/middleware.py`). Auth is enabled via `AUTH_ENABLED=true` in `.env`.
 
 | Principal Kind | Token Source | Where It Applies |
 |---|---|---|
@@ -30,7 +30,7 @@ Tokens are validated on every request. Unauthenticated requests receive `401 Una
 - Sub-agents bind their A2A + eval endpoints to `accept=frozenset({"service"})` — only valid service tokens pass
 - The orchestrator allows both user and service tokens on different paths, with per-route principal-kind checks
 - MCP server (`finsight_server`) wraps its SSE mount with `AuthMiddleware(accept={"service"})`
-- MCP client (`shared/mcp_client.py`) injects `SERVICE_AUTH_TOKEN` into every outbound SSE connection
+- MCP client (`src/shared/mcp_client.py`) injects `SERVICE_AUTH_TOKEN` into every outbound SSE connection
 - Agent cards include `securitySchemes` + `securityRequirements` for automatic A2A SDK negotiation
 
 ### Trusted Proxies (IP Lockout)
@@ -74,7 +74,7 @@ Prompts for password (interactive). Passwords hashed with Argon2id. User records
 
 | Layer | Mechanism | Scope |
 |---|---|---|
-| **1. AST static analysis** | `_check_code_safety()` in `shared/sandbox.py` | Pre-execution gate — rejects forbidden constructs before any subprocess is spawned |
+| **1. AST static analysis** | `_check_code_safety()` in `src/shared/sandbox.py` | Pre-execution gate — rejects forbidden constructs before any subprocess is spawned |
 | **2. Subprocess isolation** | User code runs in a separate `subprocess.run()` with `-I -S` flags, or Docker container | Crash/memory error/segfault cannot affect the parent server |
 | **3. OS resource limits** | `RLIMIT_CPU` (25s), `RLIMIT_AS` (512 MB), `RLIMIT_NOFILE` (0) | Unix only — kills infinite loops, memory bombs, and filesystem writes |
 
@@ -147,7 +147,7 @@ The following libraries are available in the sandbox:
 
 ### Test Coverage
 
-`tests/security/test_sandbox.py` contains **60+ parametrized test cases**:
+`src/tests/security/test_sandbox.py` contains **60+ parametrized test cases**:
 
 - **Negative cases**: Every restricted import, builtin call, dunder attribute, getattr-with-dunder, and subscript-with-dunder pattern
 - **Positive cases**: Safe code (math, json, list comprehensions, `isinstance`, `str`) is not blocked
@@ -171,7 +171,7 @@ The MCP server applies rate limits to upstream data sources:
 
 ### Secrets in Environment
 
-All secrets and API keys are loaded from environment variables via `shared/settings.py`. No hardcoded secrets exist in source code. The `.env.example` file contains placeholder values.
+All secrets and API keys are loaded from environment variables via `src/shared/settings.py`. No hardcoded secrets exist in source code. The `.env.example` file contains placeholder values.
 
 ### Service Binding
 
@@ -209,11 +209,11 @@ If you discover a security vulnerability in FinSight:
 | v2.1 | `TRUSTED_PROXIES` setting closes IP-spoofing lockout bypass (EC5). `proxy.ts.disabled` — middleware that forced login redirect even with `AUTH_ENABLED=false` removed. `sub_agent_client.py` NameError fix (`__get_data_parts` → `_get_data_parts`). `SECURITY.md` fixed stale `shared/config.py` reference. |
 | v2.0 | Phase 3 auth audit — contract tests, parametrized auth × route matrix, `trace_with_user()` for Langfuse user_id propagation. |
 | v1.43 | Bearer auth middleware for all HTTP endpoints. JWT user auth (Argon2 passwords, refresh token rotation, rate-limited lockout). Service-to-service A2A + MCP authentication. Sandbox container mode (Docker). Audit logging for all sandbox invocations. `TRUSTED_PROXIES` prevents IP-spoofing lockout bypass. |
-| v1.41 | Centralized settings (`shared/settings.py` pydantic-settings) replaces `shared/config.py`. `shared/bootstrap.py` centralises process-level side-effects. MCP server module split (reduces attack surface per tool). Non-root USER in Dockerfiles. |
-| v1.40 | Deferred Eval Gate (`shared/eval_gate.py`) — sub-agent evals held until orchestrator releases them. Prevents concurrent eval-LLM competition. |
-| v1.38 | LLM Priority Queue (`shared/llm_queue.py`) — 3-tier async semaphore prevents RAGAS eval starvation of production LLM inference. |
+| v1.41 | Centralized settings (`src/shared/settings.py` pydantic-settings) replaces `src/shared/config.py`. `src/shared/bootstrap.py` centralises process-level side-effects. MCP server module split (reduces attack surface per tool). Non-root USER in Dockerfiles. |
+| v1.40 | Deferred Eval Gate (`src/shared/eval_gate.py`) — sub-agent evals held until orchestrator releases them. Prevents concurrent eval-LLM competition. |
+| v1.38 | LLM Priority Queue (`src/shared/llm_queue.py`) — 3-tier async semaphore prevents RAGAS eval starvation of production LLM inference. |
 | v1.36 | `_ALLOWED_TABLES` whitelist in `prune_old_records()` prevents SQL injection via table name. |
-| v1.27 | Sandbox extracted to `shared/sandbox.py`. Expanded `_RESTRICTED_IMPORTS` from 12 to 50+ modules. Added `shlex`, `concurrent`, `ssl`, `http`, `urllib`, `requests`, `ftplib`, `poplib`, `smtplib`, `telnetlib`, `xmlrpc`, `socketserver`, `pathlib`, `io`, `glob`, `fnmatch`, `tempfile`, `zipfile`, `tarfile`, `gzip`, `bz2`, `lzma`, `base64`, `codecs`. 60 AST-gate tests added. |
+| v1.27 | Sandbox extracted to `src/shared/sandbox.py` (was `shared/sandbox.py` before src/ layout). Expanded `_RESTRICTED_IMPORTS` from 12 to 50+ modules. Added `shlex`, `concurrent`, `ssl`, `http`, `urllib`, `requests`, `ftplib`, `poplib`, `smtplib`, `telnetlib`, `xmlrpc`, `socketserver`, `pathlib`, `io`, `glob`, `fnmatch`, `tempfile`, `zipfile`, `tarfile`, `gzip`, `bz2`, `lzma`, `base64`, `codecs`. 60 AST-gate tests added. |
 | v1.27 | `preexec_fn` moved inside `_sandbox_preexec()` with try/except for Windows compatibility. Subprocess runs with `-I -S` isolation flags. |
 | v1.25 | `SEC_USER_AGENT` and `LLM_API_KEY` moved to env vars. No hardcoded secrets. |
 | v1.25 | SQLite WAL mode + busy_timeout set once at singleton init. |

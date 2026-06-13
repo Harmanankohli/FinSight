@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>FinSight � Architecture</title>
+<title>FinSight &mdash; Architecture</title>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:1.7;color:#2c2c2c;background:#faf8f5;padding:2rem 1rem}
@@ -189,7 +189,7 @@ RAGAgent._ensure_ingested(ticker) [background]:
 
 <p><strong>Sector-Relative Scoring</strong>: <code>format_output_node</code> now passes <code>peer_comparison.medians</code> (sector medians for PE, EV/EBITDA, ROE, margins, D/E) into <code>_score_fundamental_value</code> and <code>_score_fundamental_quality</code>. When available, these use <code>_relative_score()</code> to score metrics relative to the sector median instead of absolute universal thresholds &mdash; making fundamental scoring sector-aware.</p>
 
-<p><strong>Live Scenario Shocks</strong>: <code>stress_test_node</code> fetches <code>get_scenario_shocks(sector)</code> via MCP for live historical crash returns per sector ETF (QQQ for tech, XLF for financials, etc.), replacing hardcoded S&P-only fallbacks.</p>
+<p><strong>Live Scenario Shocks</strong>: <code>stress_test_node</code> fetches <code>get_scenario_shocks(sector)</code> via MCP for live historical crash returns per sector ETF (QQQ for tech, XLF for financials, etc.), replacing hardcoded S&amp;P-only fallbacks.</p>
 
 <h3>Quant Agent &mdash; LangGraph Module Split (v1.41)</h3>
 <p><code>src/quant/nodes.py</code> (1286 lines) was split into <code>src/quant/nodes/</code> package:</p>
@@ -298,7 +298,7 @@ RAGAgent._ensure_ingested(ticker) [background]:
 
 <h2>MCP Architecture</h2>
 <p>MCP server split from a single monolithic file (<code>src/mcp_tools/finsight_server.py</code>, 2095 lines) into a package with per-tool modules (v1.41):</p>
-<pre>mcp_tools/
+<pre>src/mcp_tools/
   &#x251C;&#x2500;&#x2500; _app.py              # 78-line composition root with get_app() factory
   &#x251C;&#x2500;&#x2500; finsight_server.py   # re-exports get_app() for backward compat
   &#x251C;&#x2500;&#x2500; tools/
@@ -431,7 +431,7 @@ Sub-agents (agent_2, agent_3, agent_4)
 <p>All sidecar evals are gated by <code>EVAL_TRACE_ENABLED</code> in <code>.env</code> (default <code>True</code>). The flag is exposed as <code>EVAL_ENABLED</code> in <code>shared.settings</code>; every agent's <code>asyncio.create_task(_eval_*)</code> call site checks it. Set <code>EVAL_TRACE_ENABLED=False</code> to disable all per-agent runtime scoring with no code changes &mdash; useful for fast iteration when LM Studio judge calls add 5&ndash;180s of background work per query.</p>
 
 <h3>Orchestrator eval hook lives in <code>after_agent_callback</code></h3>
-<p>When the orchestrator runs through <code>adk web</code> (the path <code>run_adk_web.bat</code> uses), the ADK Web runner is responsible &mdash; <code>FinSightAgentExecutor</code> is never invoked. The orchestrator's eval is therefore scheduled from <code>src/orchestrator/web/finsight_agent/agent.py</code>'s <code>_persist_memory_callback</code>, not from <code>agent_executor.py</code>. The callback first runs <code>_is_analysis_turn(session.events)</code>: if <code>save_brief</code> was not called in this turn (e.g. the user only asked "what were my last recommendations?"), both memory persist and eval are skipped to avoid polluting long-term memory with conversational queries.</p>
+<p>When the orchestrator runs through <code>adk web</code> (the path <code>run_adk_web.bat</code> uses), the ADK Web runner is responsible &mdash; <code>FinSightAgentExecutor</code> is never invoked. The orchestrator's eval is therefore scheduled from <code>src/orchestrator/web/agent.py</code>'s <code>_persist_memory_callback</code>, not from <code>agent_executor.py</code>. The callback first runs <code>_is_analysis_turn(session.events)</code>: if <code>save_brief</code> was not called in this turn (e.g. the user only asked "what were my last recommendations?"), both memory persist and eval are skipped to avoid polluting long-term memory with conversational queries.</p>
 <p><code>FinSightAgentExecutor</code> still keeps its eval call for completeness &mdash; it fires when an A2A client hits <code>src/orchestrator/main.py</code> directly. The A2A server is not started by <code>run_adk_web.bat</code> by default; start it manually with <code>uv run python -m orchestrator.main</code> if needed.</p>
 
 <table>

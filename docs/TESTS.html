@@ -43,8 +43,8 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <h2>Running Tests</h2>
 <pre><code>pytest                          # all unit tests
 pytest -v                       # verbose
-pytest tests/unit/              # unit tests only
-pytest tests/characterization/  # characterization tests only
+pytest src/tests/unit/              # unit tests only
+pytest src/tests/characterization/  # characterization tests only
 pytest -m auth                  # auth-related tests (Phase 3)
 pytest -m openapi               # OpenAPI spec tests
 pytest -m integration           # integration/smoke tests (requires running services)

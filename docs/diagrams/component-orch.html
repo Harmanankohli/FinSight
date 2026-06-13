@@ -31,7 +31,7 @@ UI("ADK Web / Next.js")
 LLM("LM Studio")
 MCP("MCP Server")
 subgraph Orchestrator["Orchestrator (orchestrator/)"]
-A2AEntry("① A2A / AG-UI Entry\nPOST /a2a · POST /a2a-agui\nAGUIBridge: guardrail + auto-save")
+A2AEntry("① A2A / AG-UI Entry\nPOST /a2a · POST /a2a-agui\nPer-event timeout: 120s/690s\nStable anon user ID via cookie\nAGUIBridge: guardrail + auto-save")
 InputGuard("② Input Guardrails\nOff-topic regex + MCP validate_ticker\n→ rejects in &lt; 2s")
 SemCache("③ Semantic Cache\nChromaDB cosine > 0.95\nDate-scoped, 1h TTL")
 BriefCache("④ Today Brief Cache\nSQLite TickerMemory.get_latest()\nSame-day → 200ms")

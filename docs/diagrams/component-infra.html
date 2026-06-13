@@ -39,13 +39,15 @@ MCP_Edgar("_EdgarClient\nTicker→CIK map\nPaginated + 3-retry")
 MCP_Sandbox("Python Sandbox\nAST safety check\nSubprocess isolation\n25s CPU / 512MB / 0 FD")
 end
 subgraph SharedInfra["Shared Infrastructure"]
-SI_TTL("TTLCache\nshared/ttl_cache.py\nAsync dict\nSingle-flight locking")
-SI_TB("TokenBucket\nshared/rate_limiter.py\nAsync token bucket\nacquire() with wait")
-SI_LLM("LLMPriorityQueue\nshared/llm_queue.py\n3-tier heap semaphore\nCRITICAL > NORMAL > LOW\nLLM_MAX_CONCURRENT=2")
-SI_Eval("RuntimeEval\nshared/runtime_eval.py\nRAGAS offline + per-query\nCircuit breaker: 5 consecutive fails\nSHA-256 dedup: 1h TTL\nBurst limiter: EVAL_BURST_LIMIT/min\nPer-metric timeout: 90s")
-SI_Trace("TraceContext\nshared/trace_context.py\nContextVars propagation\nLangfuse span tree")
-SI_MCP("MCPClient\nshared/mcp_client.py\nSSE session singleton\nAuto-reconnect on disconnect\nTransient retry set")
-SI_Gate("Deferred Eval Gate\nshared/eval_gate.py\nSub-agents defer evals\nOrchestrator POST /release-evals\n120s safety-net auto-release")
+SI_TTL("TTLCache\nsrc/shared/ttl_cache.py\nAsync dict\nSingle-flight locking")
+SI_TB("TokenBucket\nsrc/shared/rate_limiter.py\nAsync token bucket\nacquire() with wait")
+SI_LLM("LLMPriorityQueue\nsrc/shared/llm_queue.py\n3-tier heap semaphore\nCRITICAL > NORMAL > LOW\nLLM_MAX_CONCURRENT=2")
+SI_Eval("RuntimeEval\nsrc/shared/runtime_eval.py\nRAGAS offline + per-query\nCircuit breaker: 5 consecutive fails\nSHA-256 dedup: 1h TTL\nBurst limiter: EVAL_BURST_LIMIT/min\nPer-metric timeout: 90s")
+SI_Trace("TraceContext\nsrc/shared/trace_context.py\nContextVars propagation\nLangfuse span tree")
+SI_MCP("MCPClient\nsrc/shared/mcp_client.py\nSSE session singleton\nAuto-reconnect on disconnect\nTransient retry set")
+SI_Gate("Deferred Eval Gate\nsrc/shared/eval_gate.py\nSub-agents defer evals\nOrchestrator POST /release-evals\n120s safety-net auto-release")
+SI_Sett("Settings\nsrc/shared/settings.py\nPydantic-settings config\nPer-agent A2A timeouts\nLLM queue + eval config")
+SI_Boot("Bootstrap\nsrc/shared/bootstrap.py\nStartup side-effects\nEvent loop + logging + env")
 end
 subgraph DataTools["MCP Data Tools (18)"]
 T1("Market Data\nget_prices / get_financials")
@@ -65,6 +67,9 @@ MCP_Edgar -- "REST" --> SEC
 MCP_Tools -- "REST" --> YF
 MCP_Tools -- "RSS" --> RSS
 SI_MCP -. "connects to" .-> MCP_SSE
+SI_Sett -. "config" .-> SI_LLM
+SI_Sett -. "config" .-> SI_Eval
+SI_Boot -. "init" .-> SI_Sett
 style SEC fill:#fadbd8,stroke:#c0392b,color:#1a1a1a
 style YF fill:#fadbd8,stroke:#c0392b,color:#1a1a1a
 style RSS fill:#fadbd8,stroke:#c0392b,color:#1a1a1a
@@ -81,6 +86,8 @@ style SI_Eval fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
 style SI_Trace fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
 style SI_MCP fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
 style SI_Gate fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
+style SI_Sett fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
+style SI_Boot fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
 style T1 fill:#f0ebe3,stroke:#888,color:#1a1a1a
 style T2 fill:#f0ebe3,stroke:#888,color:#1a1a1a
 style T3 fill:#f0ebe3,stroke:#888,color:#1a1a1a

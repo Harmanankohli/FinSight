@@ -22,28 +22,30 @@
 %%{init: {'theme': 'base', 'themeVariables': {'background': '#ffffff', 'primaryColor': '#d4e6f1', 'primaryTextColor': '#1a1a1a', 'primaryBorderColor': '#2980b9', 'lineColor': '#8b6f4e', 'secondaryColor': '#d5f5e3', 'tertiaryColor': '#fadbd8', 'clusterBkg': '#faf8f5', 'clusterBorder': '#d5c4a1', 'fontSize': '11px'}}}%%
 graph TB
 subgraph AgentHierarchy["Agent Class Hierarchy"]
-Base["[abstract] BaseAgent\nshared/base_agent.py\n+ stream(query, ctx, task_id)"]
-GE["GenericAgentExecutor\nshared/generic_executor.py\nWraps BaseAgent → A2A"]
-RAG["RAGAgent\nfinancial_rag/executor.py\n+ query(ticker, query_text)"]
-QuantA["QuantAgent\nquant/executor.py\n+ analyze(ticker, period...)"]
-Mkt["MarketContextAgent\nmarket_context/executor.py\n+ analyze(ticker, query)"]
+Base["[abstract] BaseAgent\nsrc/shared/base_agent.py\n+ stream(query, ctx, task_id)"]
+GE["GenericAgentExecutor\nsrc/shared/generic_executor.py\nWraps BaseAgent → A2A"]
+RAG["RAGAgent\nsrc/financial_rag/executor.py\n+ query(ticker, query_text)"]
+QuantA["QuantAgent\nsrc/quant/executor.py\n+ analyze(ticker, period...)"]
+Mkt["MarketContextAgent\nsrc/market_context/executor.py\n+ analyze(ticker, query)"]
 end
 subgraph Orchestrator["Orchestrator Classes"]
-FExec["FinSightAgentExecutor\norchestrator/agent_executor.py\n+ execute() + cancel()"]
-SubClient["SubAgentClient\norchestrator/sub_agent_client.py\nA2A dispatch + streaming"]
-RootAgent["root_agent (LlmAgent)\norchestrator/agent.py\n3 tools + preamble"]
+FExec["FinSightAgentExecutor\nsrc/orchestrator/agent_executor.py\n+ execute() + cancel()"]
+SubClient["SubAgentClient\nsrc/orchestrator/sub_agent_client.py\nA2A dispatch + streaming"]
+RootAgent["root_agent (LlmAgent)\nsrc/orchestrator/agent.py\n3 tools + preamble"]
 CacheCB["_memory_cache_callback\nbefore_agent_callback\n200ms short-circuit"]
 AfterCB["after_agent_callback\npersist + eval + release"]
 Prune["prune_old_records()\nMEMORY_RETENTION_DAYS=90"]
 end
 subgraph SharedInfra["Shared Infrastructure"]
-TLC["TTLCache\nshared/ttl_cache.py\nSingle-flight locking"]
-TB["TokenBucket\nshared/rate_limiter.py\nAsync token-bucket"]
-LPQ["LLMPriorityQueue\nshared/llm_queue.py\nCRITICAL > NORMAL > LOW\nLLM_MAX_CONCURRENT=2"]
-SC["SemanticCache\nshared/semantic_cache.py\nChromaDB cosine > 0.95\nDate-scoped get/set"]
-MCPC["MCPClient\nshared/mcp_client.py\nSSE singleton\nAuto-reconnect"]
-EvalG["RuntimeEval\nshared/runtime_eval.py\nCircuit breaker + dedup\nBurst + 90s timeout"]
-EvalD["EvalGate\nshared/eval_gate.py\nDeferred eval release\n120s auto-release"]
+TLC["TTLCache\nsrc/shared/ttl_cache.py\nSingle-flight locking"]
+TB["TokenBucket\nsrc/shared/rate_limiter.py\nAsync token-bucket"]
+LPQ["LLMPriorityQueue\nsrc/shared/llm_queue.py\nCRITICAL > NORMAL > LOW\nLLM_MAX_CONCURRENT=2"]
+SC["SemanticCache\nsrc/shared/semantic_cache.py\nChromaDB cosine > 0.95\nDate-scoped get/set"]
+MCPC["MCPClient\nsrc/shared/mcp_client.py\nSSE singleton\nAuto-reconnect"]
+EvalG["RuntimeEval\nsrc/shared/runtime_eval.py\nCircuit breaker + dedup\nBurst + 90s timeout"]
+EvalD["EvalGate\nsrc/shared/eval_gate.py\nDeferred eval release\n120s auto-release"]
+Sett["Settings\nsrc/shared/settings.py\nPydantic-settings\nPer-agent timeouts + LLM config"]
+Boot["Bootstrap\nsrc/shared/bootstrap.py\nStartup: event loop, logging\nLangfuse, env vars"]
 end
 subgraph Storage["Storage / Memory (SQLite)"]
 SMem["SQLiteMemoryService\nBM25 + embedding RRF"]
@@ -80,6 +82,8 @@ FExec -. "track" .-> PTrack
 FExec -. "chat mem" .-> SMem
 AfterCB -. "eval" .-> EvalG
 AfterCB -. "release evals" .-> EvalD
+FExec -. "settings" .-> Sett
+FExec -. "boot" .-> Boot
 TMem -. "SQLite" .-> DB
 PStore -. "SQLite" .-> DB
 SMem -. "SQLite" .-> DB
@@ -102,6 +106,8 @@ style SC fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
 style MCPC fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
 style EvalG fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
 style EvalD fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
+style Sett fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
+style Boot fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
 style QGraph fill:#fdebd0,stroke:#e67e22,color:#1a1a1a
 style SMem fill:#abebc6,stroke:#1e8449,color:#1a1a1a
 style TMem fill:#abebc6,stroke:#1e8449,color:#1a1a1a

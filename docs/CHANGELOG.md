@@ -1,5 +1,27 @@
 # Changelog
 
+## v2.3 — Source Tree Restructure to `src/` Layout (ef596a7)
+
+### Directory Layout Migration (ef596a7)
+
+All Python packages, web frontend, tests, and scripts moved under `src/`:
+
+- **Agent packages moved**: `agent_1_adk/` → `src/orchestrator/`, `agent_3_langgraph/` → `src/quant/`, `agent_4_crewai/` → `src/market_context/`, `mcp_servers/` → `src/mcp_tools/`, `shared/` → `src/shared/`
+- **Web frontend moved**: `web/` → `src/web/`
+- **Tests moved**: `tests/` → `src/tests/`
+- **Scripts moved**: `scripts/` → `src/scripts/`
+- **All configuration updated**: `pyproject.toml` (packages.find where=["src"]), Makefile (mypy targets), docker-compose.yml + 5 Dockerfiles (COPY paths), CI workflow (mypy, pytest, frontend, openapi, Docker build matrix), batch files (Next.js and ADK web directory references)
+- **Path traversal fixes**: 6 files updated (logging, store, agent_registry, openapi, etc.)
+- **Missing `__init__.py`** created in `src/mcp_tools/`
+- **13 documentation files** updated with new `src/` paths
+- **218 unit tests passing**, all 5 package imports verified
+
+### Model Rename: SentimentIntelligence → MarketContext (da2688e)
+
+- **`shared/models.py`** → `src/shared/models.py`: `SentimentIntelligence` renamed to `MarketContext` with restructured fields: `key_risks`/`catalysts` → `key_headwinds`/`key_tailwinds`, added `macro_regime` and `relative_peer_positioning` fields.
+- **`shared/reports/extraction.py`** → `src/shared/reports/extraction.py`: Updated all references to use the new `MarketContext` model and field names.
+- **Asset rename**: All references to "Sentiment agent" replaced with "Market Context agent" across codebase and docs.
+
 ## v2.2 — Agent Output Capture, Playwright Export, Ticker Hardening
 
 ### Agent Output Capture for Structured Brief Storage (db6472e, e505b33)
@@ -44,6 +66,15 @@
 - **Playwright ProactorEventLoop fix** (`shared/reports/playwright_export.py`): Uses `asyncio.new_event_loop()` on Windows to avoid ProactorEventLoop incompatibility with Playwright's subprocess management.
 - **HTML section extraction**: `_parse_markdown_sections()` handles edge cases in section boundary detection for nested heading levels.
 - **Narrative JSON parsing**: `_extract_deck_data()` gracefully handles sentiment narrative fields that arrive as JSON strings instead of dicts.
+- **Sync `generate_pptx()` tries Playwright first** (`shared/reports/__init__.py`): `generate_pptx()` sync wrapper now calls `html_to_pptx_sync()` (Playwright screenshot-based PPTX) before falling back to python-pptx legacy renderer, matching the async path behavior.
+- **PDF fallback on Playwright error** (`shared/reports/playwright_export.py`): `generate_pdf_async()` catches Playwright exceptions and returns raw HTML bytes instead of propagating the error — ensures PDF download never fails when Playwright is unavailable.
+- **Context ID pass-through** (`agent_1_adk/agent_executor.py`): `context_id` threaded through `_process_response` to fix session ID mismatch when popping agent outputs — the ADK runner's internal session ID may differ from the A2A `context_id`.
+- **Dedup merge fix** (`agent_1_adk/agent_executor.py`): `_store_memory` now merges new agent outputs into an existing brief via `update_brief_json` instead of discarding them on dedup hits. Previously, repeat queries overwrote structured agent data with empty dicts.
+- **`update_brief_json` method** (`shared/memory/ticker_memory.py`): New `TickerMemory.update_brief_json()` for partial brief updates — merges `extra_data` into an existing brief's `brief_json` without overwriting the full record. Used by the dedup merge fix above.
+- **Debug logging for session ID tracing** (`agent_1_adk/agent.py`, `agent_1_adk/agent_executor.py`): Added structured log lines to `send_message` capture and `pop_agent_responses` with session ID and context ID for traceability across the A2A bridge.
+- **`</script>` fix in deck-stage.js** (`shared/templates/deck-stage.js`): A comment containing `</script>` inside the inline JS broke HTML parsing — the browser's HTML parser interpreted it as closing the parent `<script>` tag. Fixed by splitting the string literal so `</s` + `cript>` does not appear contiguously.
+- **Playwright `wait_for_function` reliability** (`shared/reports/playwright_export.py`): Wait predicate now checks `customElements.get('deck-stage')` before querying `_slides` — prevents `ReferenceError` when the custom element definition hasn't finished upgrading.
+- **Removed obsolete refactor plan**: Deleted stale `refactor-plan.md` (refactor already completed). Added `ppt-docx-fix-plan.md` documenting known PPTX/DOCX rendering issues.
 - **Agent output capture in AG-UI bridge** (`agent_1_adk/agui_bridge.py`): Bridge path now captures sub-agent responses for structured brief storage, matching the A2A executor path.
 - **Today-cache bypass for bridge**: AG-UI bridge path correctly bypasses today-cache when the user explicitly requests a fresh analysis.
 - **Silent Playwright fallbacks logged**: When Playwright export fails, the fallback to python-pptx/HTML is logged at INFO level instead of silently degrading.
@@ -81,6 +112,10 @@
 - **Coverage/pytest hang fixes**: `uv run pytest --cov` hangs indefinitely after tests complete. Replaced with coverage run directly via venv binary, then removed coverage entirely — run pytest directly. Added `pytest_unconfigure` hook that detects leaked non-daemon aiosqlite threads and `os._exit()`s with real session status. 5-minute timeout on CI test step as safety net.
 - **`_REPORTS_OFFLINE` patching**: CI sets `REPORTS_OFFLINE=true` which skips the yfinance code path at module import time. Tests now patch the module-level flag to `False` so the yfinance mock is actually exercised.
 - **Google ADK stubs in slim CI**: `google.adk`/`google.genai` stubs added to `test_save_brief_persists_synthesis` — prevents `ModuleNotFoundError` when ADK is not installed in slim test env.
+
+### Documentation Sync (ed9293c)
+
+- **`.md` → `.html` sync for 9 doc pairs**: All Markdown documentation files covering versions v1.41 through v2.1 regenerated as HTML — `CHANGELOG.md → CHANGELOG.html`, `AGENTS.md → AGENTS.html`, `ARCHITECTURE.md → ARCHITECTURE.html`, `SECURITY.md → SECURITY.html`, `DEMO.md → DEMO.html`, `API.md → API.html`, `UNIFIED_IMPLEMENTATION_PLAN.md → UNIFIED_IMPLEMENTATION_PLAN.html`, plus diagram pages. Ensures the browser-readable `docs/` HTML files stay current with their Markdown sources after Phase 3 content updates.
 
 ## v2.0 — Phase 3: Quality, Observability, Docs & Shim Removal
 
@@ -280,10 +315,13 @@
 - **Hardcoded logger name fixed** (`tests/evaluation/run_offline_eval.py`): `logging.getLogger("finsight_eval")` → `logging.getLogger(__name__)`.
 - **39 stale log files deleted** from `logs/`. Canonical names: `orchestrator.log`, `rag_agent.log`, `quant.log`, `market_context.log`, `mcp.log`.
 
-### Diagram Fixes (ae5ca9c)
+### Diagram & Doc Link Fixes (ae5ca9c, a47c8c9, 345606d)
 
 - **Mermaid syntax** (`docs/diagrams/component-orch.html`): Fixed invalid node label syntax that caused the Mermaid parser to fail silently and render a blank diagram.
+- **Mermaid diagram sizing** (`docs/diagrams/shared.js`): Disabled `useMaxWidth` and switched to `getBBox()` for correct centering and sizing — prevents diagrams from being clipped or misaligned at different viewport sizes.
 - **Zoom/drag** (`docs/diagrams/shared.js`): Fixed pointer event handling so pan and zoom interactions work correctly on all diagram pages.
+- **15 broken internal links fixed** across `docs/` HTML files — corrected stale `#` anchor references, missing file paths, and relative path mismatches.
+- **Diagrams link added to all nav bars**: Every documentation page's navigation bar now includes a link to the diagrams index (`docs/diagrams/`), making diagrams discoverable from any document.
 
 ## v1.39 — Report Generation: Data Layer, HTML Engine, Modular Slides, Regression Tests
 
@@ -469,6 +507,12 @@
 **`shared/ticker_utils.py`**:
 - **Case-insensitive ticker extraction**: `extract_ticker()` now uppercases its output, so `wmt` matches the cached `WMT` brief in the memory cache callback.
 
+## v1.35 — MCP Performance, RAGAS Eval Tuning, Infrastructure Hardening
+
+### RAG Synthesis Fix (09e0424)
+
+- **RAG agent no longer mentions missing historical data** (`agent_2_llamaindex/executor.py`): When ChromaDB returns zero results for a ticker (no filings ingested yet), the query response previously included phrases like "I don't have any historical financial data" — which confused the orchestrator into thinking the ticker had no fundamentals. Now returns a concise `"Index is warming for {ticker}..."` status message instead, matching the A2A WORKING event pattern.
+
 ### Quant — Weighted Vote Normalization & Misc Fixes
 
 **`agent_3_langgraph/nodes.py`**:
@@ -574,6 +618,13 @@
 
 - **Restored sector/industry extraction** (`agent_4_crewai/executor.py`): `_collect_data_parallel()` now extracts `sector` and `industry` from `get_financials` response and passes them to the crew context. These keys were previously undefined (referenced but never populated) after the peer discovery refactor in Phase 3 — the crew context had empty strings for both fields. Fix closes the v1.31 known issue.
 
+## v1.33 — Quant Graph Fixes: Concurrent Update Resolution & Fan-In Reducers
+
+### Quant Graph — Fan-In Passthrough Key Removal
+
+- **Fixed `INVALID_CONCURRENT_GRAPH_UPDATE` at `positioning` key** (`agent_3_langgraph/nodes.py`): `format_output_node` was returning passthrough copies of state keys (`positioning`, `dcf_valuation`, `correlation_matrix`, `fundamentals`) that other nodes already wrote in the same checkpoint step. LangGraph's fan-in saw conflicting writes, triggering the error.
+- **Fix**: Removed all passthrough keys from `format_output_node`'s return dict. It now only emits what it actually computes: `recommendation`, `reasoning`, `metrics` (with signals/confidence), and `stress_test_result`. Full state from `ainvoke()` still carries every key via the owning nodes, so `graph.run()` reads are unaffected.
+
 ## v1.32 — Phase 4 Final Items: Date-Aware Semantic Cache + RAG Startup Warm-Up
 
 ### Semantic Cache — Date-Scoped Keys
@@ -590,13 +641,6 @@
   - CrossEncoder reranker from `hybrid_search.py`
 - **Per-stage timing logged**: Each warm-up phase logs elapsed seconds so the cold-start budget is visible in server logs.
 - **Effect**: First RAG query no longer pays ~3-5s model-load tax. Cold-start drops from ~12s to ~9s (ChromDB query still happens on first hit).
-
-## v1.33 — Quant Graph Fixes: Concurrent Update Resolution & Fan-In Reducers
-
-### Quant Graph — Fan-In Passthrough Key Removal
-
-- **Fixed `INVALID_CONCURRENT_GRAPH_UPDATE` at `positioning` key** (`agent_3_langgraph/nodes.py`): `format_output_node` was returning passthrough copies of state keys (`positioning`, `dcf_valuation`, `correlation_matrix`, `fundamentals`) that other nodes already wrote in the same checkpoint step. LangGraph's fan-in saw conflicting writes, triggering the error.
-- **Fix**: Removed all passthrough keys from `format_output_node`'s return dict. It now only emits what it actually computes: `recommendation`, `reasoning`, `metrics` (with signals/confidence), and `stress_test_result`. Full state from `ainvoke()` still carries every key via the owning nodes, so `graph.run()` reads are unaffected.
 
 ## v1.31 — Phase 3/4: Market Context Rebrand, Quant Behavioral Signals, Redis Cache, Eval Hardening
 

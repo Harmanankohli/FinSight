@@ -37,7 +37,8 @@ participant LLM as LM Studio
 Note over User,LLM: ══════ Phase 1: Input Processing ══════
 
 User->>UI: ① "Should I invest in NVIDIA?"
-UI->>Orch: ② POST /a2a-agui (SSE stream)
+UI->>Orch: ② POST /a2a-agui + X-FinSight-User-Id
+Note over UI,Orch: Cookie → finsight_user_id header<br/>→ stable anon ID for cache affinity
 activate Orch
 Orch->>Orch: ③ Off-topic filter
 Note over Orch: Regex against _NON_INVESTMENT_RE<br/>→ pass (investment query)

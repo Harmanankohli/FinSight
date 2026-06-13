@@ -54,7 +54,7 @@ subgraph MktAgent["Market Context Agent — CrewAI (port 8004)"]
 M_E("MarketContextAgent\nanalyze() → collect → crew")
 M_C("_collect_data_parallel()\nStep 1: macro + financials\nStep 2: get_peers (yfinance)\nStep 3: peer data")
 M_W("MCPClientWrapper\nDiscovers tools\nWraps as CrewAI BaseTool")
-M_R("MarketContextCrew\n1 agent + 1 task\nJSON: narrative, regime,\npeer_positioning, signal")
+M_R("MarketContextCrew\n1 agent + 1 task\nJSON: narrative, macro_regime,\nrelative_peer_positioning, signal,\nkey_headwinds, key_tailwinds,\npeer_comparison, confidence")
 M_EVAL("Deferred Eval\nFaithfulness, macro_regime\npeer_landscape_quality")
 end
 Orch -- "① A2A" --> RAG_E
