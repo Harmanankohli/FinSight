@@ -5,8 +5,6 @@ The orchestrator validates combined agent outputs through ValidatedAgentOutputs
 before passing to report generation, replacing ~220 lines of manual dict extraction.
 """
 
-from __future__ import annotations
-
 from typing import Optional
 
 from pydantic import BaseModel, Field
