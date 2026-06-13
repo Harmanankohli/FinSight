@@ -18,11 +18,12 @@ export const POST = async (req: NextRequest) => {
   if (isNewAnon) {
     userId = `anon-${crypto.randomUUID()}`;
   }
-  const token = req.cookies.get("finsight_token")?.value || "";
+  const userToken = req.cookies.get("finsight_token")?.value || "";
+  const serviceToken = process.env.SERVICE_AUTH_TOKEN || "";
 
   const headers: Record<string, string> = {};
   headers["X-FinSight-User-Id"] = userId;
-  if (token) headers["Authorization"] = `Bearer ${token}`;
+  headers["Authorization"] = `Bearer ${userToken || serviceToken}`;
 
   const agent = new HttpAgent({
     url: `${ORCHESTRATOR_URL}/a2a-agui`,
