@@ -100,7 +100,7 @@ async def login(request: Request) -> JSONResponse:
     except Exception:
         return _ERROR_ENVELOPE("VALIDATION_ERROR", "Invalid JSON body")
 
-    username = (body.get("username") or "").strip()
+    username = (body.get("username") or "").strip().lower()
     password = body.get("password") or ""
 
     if not username or not password:

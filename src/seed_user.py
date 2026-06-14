@@ -17,6 +17,7 @@ async def main(username: str, password: str, role: str) -> None:
 
     await ensure_schema_v4()
 
+    username = username.strip().lower()
     existing = await get_user_by_username(username)
     if existing:
         print(f"User '{username}' already exists (id={existing['user_id']}, role={existing['role']})")

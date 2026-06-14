@@ -54,6 +54,7 @@ async def ensure_schema_v4() -> None:
 async def create_user(username: str, password: str, role: str = "user") -> str:
     """Create a new user. Returns the user_id. Raises on duplicate username."""
     await ensure_schema_v4()
+    username = username.strip().lower()
     user_id = str(uuid.uuid4())
     pw_hash = _ph.hash(password)
     now = datetime.now(timezone.utc).isoformat()
@@ -93,12 +94,12 @@ async def get_user(user_id: str) -> dict | None:
 
 
 async def get_user_by_username(username: str) -> dict | None:
-    """Look up a user by username. Returns None if not found."""
+    """Look up a user by username (case-insensitive). Returns None if not found."""
     await ensure_schema_v4()
     conn = await get_db()
     cursor = await conn.execute(
         "SELECT user_id, username, password_hash, role, created_at, disabled FROM users WHERE username = ?",  # noqa: E501
-        (username,),
+        (username.strip().lower(),),
     )
     row = await cursor.fetchone()
     if not row:

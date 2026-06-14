@@ -28,6 +28,8 @@ async def _clean_env(monkeypatch):
         p = Path(str(db_path) + suffix)
         if p.exists():
             p.unlink(missing_ok=True)
+    import shared.memory.user_store as us_mod
+    us_mod._schema_v4_ensured = False
     yield
     if store_mod._db_conn is not None:
         await store_mod._db_conn.close()
