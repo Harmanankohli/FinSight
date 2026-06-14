@@ -3,7 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Investment Recommendation | {{ deck.company_name }} ({{ deck.ticker }})</title>
+<title>Investment Recommendation | HOLD
+
+Apple Inc. (AAPL)</title>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;0,9..40,800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
   :root {
@@ -582,7 +584,9 @@
 <!-- ── Sticky PDF bar ─── -->
 <div class="pdf-download-bar">
   <div class="container">
-    <span class="doc-title">{{ deck.company_name }} ({{ deck.ticker }}) — Investment Report</span>
+    <span class="doc-title">HOLD
+
+Apple Inc. (AAPL) — Investment Report</span>
     <button class="btn-pdf" onclick="window.print()">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
       Download PDF
@@ -594,66 +598,88 @@
 <header class="hero">
   <div class="container">
     <div class="hero-label">Equity Research Report</div>
-    <h1 class="hero-title">{{ deck.company_name }}</h1>
-    <p class="hero-subtitle">{{ deck.exchange }}: {{ deck.ticker }}{% if deck.sector %} · {{ deck.sector }}{% endif %}</p>
+    <h1 class="hero-title">HOLD
+
+Apple Inc.</h1>
+    <p class="hero-subtitle">: AAPL</p>
 
     <div class="hero-metrics">
       <div class="hero-metric">
         <span class="label">Recommendation</span>
-        <span class="value" style="color:{{ rec_colors.get(deck.recommendation, 'var(--blue)') }};">{{ deck.recommendation }}</span>
+        <span class="value" style="color:var(--blue);">HOLD</span>
       </div>
       <div class="hero-metric">
         <span class="label">Confidence</span>
-        <span class="value">{{ confidence_pct }}</span>
+        <span class="value">55%</span>
       </div>
-      {% if deck.scenarios.get('base') %}
+      
       <div class="hero-metric">
         <span class="label">Median Target</span>
-        <span class="value">{{ deck.scenarios['base'] }}</span>
+        <span class="value">$344.14</span>
       </div>
-      {% endif %}
-      {% if deck.analysis_date %}
+      
+      
       <div class="hero-metric">
         <span class="label">Analysis Date</span>
-        <span class="value" style="font-size:24px;">{{ deck.analysis_date }}</span>
+        <span class="value" style="font-size:24px;">2026-06-13</span>
       </div>
-      {% endif %}
+      
     </div>
   </div>
 </header>
 
 <!-- ─── KEY METRICS ─── -->
-{% if deck.kpi_chips %}
+
 <div class="report-section">
   <div class="container">
     <div class="section-label">Key Metrics</div>
     <h2 class="section-title">Performance Snapshot</h2>
     <div class="kpi-row">
-      {% for chip in deck.kpi_chips[:4] %}
+      
       <div class="kpi-chip">
-        <span class="label">{{ chip.label }}</span>
-        <span class="value {{ 'pos' if chip.positive else 'neg' }}">{{ chip.value }}</span>
-        <span class="context">{{ chip.context }}</span>
+        <span class="label">Revenue Growth</span>
+        <span class="value pos">16.6%</span>
+        <span class="context">YoY</span>
       </div>
-      {% endfor %}
+      
+      <div class="kpi-chip">
+        <span class="label">ROE</span>
+        <span class="value pos">141.5%</span>
+        <span class="context">Return on Equity</span>
+      </div>
+      
+      <div class="kpi-chip">
+        <span class="label">Operating Margin</span>
+        <span class="value pos">32.3%</span>
+        <span class="context">Profitability</span>
+      </div>
+      
+      <div class="kpi-chip">
+        <span class="label">P/E Ratio</span>
+        <span class="value pos">35.2</span>
+        <span class="context">Valuation</span>
+      </div>
+      
     </div>
   </div>
 </div>
-{% endif %}
+
 
 <!-- ─── EXECUTIVE SUMMARY ─── -->
-{% if deck.executive_summary %}
+
 <div class="report-section">
   <div class="container">
     <div class="section-label">Investment Thesis</div>
     <h2 class="section-title">Executive Summary</h2>
-    <div class="thesis-block">{{ deck.executive_summary }}</div>
+    <div class="thesis-block">HOLD
+
+Apple Inc. demonstrates revenue growth of 16.6%, ROE of 141.5%, operating margin of 32.3%, P/E Ratio of 35.2x. DCF analysis estimates intrinsic value at $132.10. Analyst consensus targets $344.14. Technical outlook is bullish. Flat yield curve regime favoring large-cap tech with strong cash flow generation. Key risk: High valuation relative to peers may limit upside.</div>
   </div>
 </div>
-{% endif %}
+
 
 <!-- ─── FINANCIAL PERFORMANCE ─── -->
-{% if deck.financials %}
+
 <div class="report-section">
   <div class="container">
     <div class="section-label">Financial Performance</div>
@@ -667,27 +693,69 @@
         </tr>
       </thead>
       <tbody>
-        {% for metric, current, context in deck.financials[:8] %}
+        
         <tr>
-          <td class="metric-name">{{ metric }}</td>
-          <td class="mono">{{ current }}</td>
-          <td class="mono" {% if context and context.startswith('+') %}style="color:var(--green-dark);"{% endif %}>{{ context }}</td>
+          <td class="metric-name">Revenue Growth</td>
+          <td class="mono">16.6%</td>
+          <td class="mono" >Year-over-year</td>
         </tr>
-        {% endfor %}
+        
+        <tr>
+          <td class="metric-name">ROE</td>
+          <td class="mono">141.5%</td>
+          <td class="mono" >Return on Equity</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Operating Margin</td>
+          <td class="mono">32.3%</td>
+          <td class="mono" >Profitability</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">P/E Ratio</td>
+          <td class="mono">35.2</td>
+          <td class="mono" >Price / Earnings</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Beta</td>
+          <td class="mono">1.21</td>
+          <td class="mono" >Market sensitivity</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Sharpe Ratio</td>
+          <td class="mono">0.74</td>
+          <td class="mono" >Risk-adjusted return</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">RSI</td>
+          <td class="mono">34.</td>
+          <td class="mono" >Momentum (14-day)</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Volatility</td>
+          <td class="mono">27.5%</td>
+          <td class="mono" >Annualized</td>
+        </tr>
+        
       </tbody>
     </table>
   </div>
 </div>
-{% endif %}
+
 
 <!-- ─── VALUATION ─── -->
-{% if deck.valuation_table or deck.scenarios %}
+
 <div class="report-section">
   <div class="container">
     <div class="section-label">Valuation</div>
     <h2 class="section-title">Scenario Analysis</h2>
     <div class="two-col">
-      {% if deck.valuation_table %}
+      
       <table class="data-table">
         <thead>
           <tr>
@@ -696,137 +764,150 @@
           </tr>
         </thead>
         <tbody>
-          {% for label, value in deck.valuation_table %}
+          
           <tr>
-            <td class="metric-name">{{ label }}</td>
-            <td class="mono">{{ value }}</td>
+            <td class="metric-name">Analyst Price Target</td>
+            <td class="mono">$344.14</td>
           </tr>
-          {% endfor %}
+          
+          <tr>
+            <td class="metric-name">DCF Fair Value</td>
+            <td class="mono">$132.10</td>
+          </tr>
+          
+          <tr>
+            <td class="metric-name">Bull Case Target</td>
+            <td class="mono">$494.91</td>
+          </tr>
+          
+          <tr>
+            <td class="metric-name">Bear Case Target</td>
+            <td class="mono">$240.19</td>
+          </tr>
+          
         </tbody>
       </table>
-      {% else %}
-      <div></div>
-      {% endif %}
+      
 
-      {% if scenario_cards %}
+      
       <div class="scenario-cards">
-        {% for label, value, color in scenario_cards %}
+        
         <div class="scenario-card">
-          <div class="card-label">{{ label }}</div>
-          <div class="card-value" style="color:{{ color }};">{{ value }}</div>
+          <div class="card-label">Bull Case</div>
+          <div class="card-value" style="color:var(--green-dark);">$494.91</div>
         </div>
-        {% endfor %}
+        
+        <div class="scenario-card">
+          <div class="card-label">Base Case</div>
+          <div class="card-value" style="color:var(--blue);">$344.14</div>
+        </div>
+        
+        <div class="scenario-card">
+          <div class="card-label">DCF Fair Value</div>
+          <div class="card-value" style="color:var(--amber);">$132.10</div>
+        </div>
+        
+        <div class="scenario-card">
+          <div class="card-label">Bear Case</div>
+          <div class="card-value" style="color:var(--red);">$240.19</div>
+        </div>
+        
       </div>
-      {% endif %}
+      
     </div>
   </div>
 </div>
-{% endif %}
+
 
 <!-- ─── SCORECARD ─── -->
-{% if deck.scorecard|length > 1 %}
+
 <div class="report-section">
   <div class="container">
     <div class="section-label">Assessment</div>
     <h2 class="section-title">Investment Scorecard</h2>
     <div class="score-grid">
-      {% for dim, rating, badge_type in deck.scorecard[:6] %}
+      
       <div class="score-item">
-        <span class="dim">{{ dim }}</span>
-        <span class="rating-badge badge-{{ badge_type }}">{{ rating }}</span>
+        <span class="dim">Technical Outlook</span>
+        <span class="rating-badge badge-bullish">Bullish</span>
       </div>
-      {% endfor %}
+      
+      <div class="score-item">
+        <span class="dim">Valuation</span>
+        <span class="rating-badge badge-expensive">High</span>
+      </div>
+      
+      <div class="score-item">
+        <span class="dim">Momentum</span>
+        <span class="rating-badge badge-moderate">Neutral</span>
+      </div>
+      
+      <div class="score-item">
+        <span class="dim">Recommendation</span>
+        <span class="rating-badge badge-bullish">HOLD</span>
+      </div>
+      
     </div>
   </div>
 </div>
-{% endif %}
+
 
 <!-- ─── PEER COMPARISON ─── -->
-{% if deck.peers and deck.peer_names %}
-<div class="report-section">
-  <div class="container">
-    <div class="section-label">Competitive Landscape</div>
-    <h2 class="section-title">Peer Comparison</h2>
-    <table class="data-table peer-table">
-      <thead>
-        <tr>
-          <th style="width:30%;">Metric</th>
-          <th style="width:23%;">{{ deck.ticker }}</th>
-          {% for pname in deck.peer_names[:2] %}
-          <th style="width:23%;">{{ pname }}</th>
-          {% endfor %}
-        </tr>
-      </thead>
-      <tbody>
-        {% for peer_row in deck.peers %}
-        <tr class="{{ 'highlight' if loop.index is odd }}">
-          <td class="metric-name">{{ peer_row.get('metric', '') }}</td>
-          <td class="mono">{{ peer_row.get('col0', 'N/A') }}</td>
-          <td class="mono">{{ peer_row.get('col1', 'N/A') }}</td>
-          {% if deck.peer_names|length > 1 %}
-          <td class="mono" style="color:var(--text-light);">{{ peer_row.get('col2', 'N/A') }}</td>
-          {% endif %}
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</div>
-{% endif %}
+
 
 <!-- ─── RISK-REWARD ─── -->
-{% if deck.opportunities or deck.risks %}
+
 <div class="report-section">
   <div class="container">
     <div class="section-label">Risk–Reward</div>
     <h2 class="section-title">Assessment</h2>
     <div class="rr-grid">
-      {% if deck.opportunities %}
+      
       <div class="rr-col opp">
         <h3>Growth Opportunities</h3>
         <ul>
-          {% for opp in deck.opportunities[:5] %}
-          <li>{{ opp }}</li>
-          {% endfor %}
+          
+          <li>Flat yield curve regime favoring large-cap tech with strong cash flow generation</li>
+          
+          <li>Stabilization in market volatility supporting defensive tech stocks</li>
+          
+          <li>Relative underperformance of cyclically sensitive sectors</li>
+          
         </ul>
       </div>
-      {% endif %}
-      {% if deck.risks %}
+      
+      
       <div class="rr-col risk">
         <h3>Key Risks</h3>
         <ul>
-          {% for risk in deck.risks[:5] %}
-          <li>{{ risk }}</li>
-          {% endfor %}
+          
+          <li>High valuation relative to peers may limit upside</li>
+          
+          <li>Potential margin compression due to competitive pressures</li>
+          
         </ul>
       </div>
-      {% endif %}
+      
     </div>
   </div>
 </div>
-{% endif %}
+
 
 <!-- ─── ADDITIONAL SECTIONS ─── -->
-{% for sec in deck.sections %}
-<div class="report-section">
-  <div class="container">
-    <div class="section-label">{{ sec.title|upper }}</div>
-    <h2 class="section-title">{{ sec.title }}</h2>
-    <div class="thesis-block">{{ sec.body }}</div>
-  </div>
-</div>
-{% endfor %}
+
 
 <!-- ─── CONCLUSION ─── -->
 <div class="conclusion">
   <div class="container">
     <div class="section-label">Conclusion</div>
     <div class="divider"></div>
-    <div class="rec-badge">{{ deck.recommendation }}</div>
-    <div class="rec-conf">{{ confidence_pct }} Confidence</div>
-    {% if deck.executive_summary %}
-    <p class="rec-text">{{ deck.executive_summary }}</p>
-    {% endif %}
+    <div class="rec-badge">HOLD</div>
+    <div class="rec-conf">55% Confidence</div>
+    
+    <p class="rec-text">HOLD
+
+Apple Inc. demonstrates revenue growth of 16.6%, ROE of 141.5%, operating margin of 32.3%, P/E Ratio of 35.2x. DCF analysis estimates intrinsic value at $132.10. Analyst consensus targets $344.14. Technical outlook is bullish. Flat yield curve regime favoring large-cap tech with strong cash flow generation. Key risk: High valuation relative to peers may limit upside.</p>
+    
   </div>
 </div>
 

@@ -1050,7 +1050,7 @@ def _stage_executive_summary(ctx: ExtractionCtx) -> None:
                     if len(narrative) > 50:
                         d.executive_summary = d.executive_summary.rstrip(".") + ". " + narrative
                         break
-        d.executive_summary = d.executive_summary[:1200]
+        d.executive_summary = d.executive_summary[:4000]
     else:
         bull = re.search(
             r"(?:bull\s+case|synthesis|investment\s+thesis)\s*:\s*(.+?)(?:\n(?:bear\s+case|confidence|key\s+risk)|\Z)",
@@ -1259,7 +1259,7 @@ def _populate_from_agent_outputs(data: DeckData, brief_data: dict, response_text
     if rag:
         summary = rag.get("summary") or ""
         if summary:
-            data.executive_summary = _strip_markdown(summary[:1200])
+            data.executive_summary = _strip_markdown(summary[:4000])
         sources = rag.get("sources") or []
         if sources:
             source_text = "\n".join(f"- {s}" if isinstance(s, str) else f"- {s.get('title', s.get('url', ''))}" for s in sources[:5])
@@ -1313,7 +1313,7 @@ def _populate_from_agent_outputs(data: DeckData, brief_data: dict, response_text
             except (json.JSONDecodeError, TypeError):
                 pass
         if narrative:
-            data.sections.append(Section("Market Narrative", _strip_markdown(str(narrative)[:1200])))
+            data.sections.append(Section("Market Narrative", _strip_markdown(str(narrative)[:4000])))
 
         signal = str(sentiment.get("overall_signal") or "")
         if signal:
@@ -1330,7 +1330,7 @@ def _populate_from_agent_outputs(data: DeckData, brief_data: dict, response_text
         if sentiment.get("narrative"):
             parts.append(sentiment["narrative"][:400])
         if parts:
-            data.executive_summary = _strip_markdown(" ".join(parts)[:1200])
+            data.executive_summary = _strip_markdown(" ".join(parts)[:4000])
 
     # ── Final recommendation scorecard entry ───────────────────────────────
     rec = data.recommendation
@@ -1495,7 +1495,7 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
     # ── RAG ────────────────────────────────────────────────────────────────────
     if rag:
         if rag.summary:
-            data.executive_summary = _truncate_at_sentence(_strip_markdown(rag.summary), 1200)
+            data.executive_summary = _truncate_at_sentence(_strip_markdown(rag.summary), 4000)
         if rag.sources:
             source_text = "\n".join(
                 f"- {s}" if isinstance(s, str) else f"- {s.get('title', s.get('url', ''))}"
@@ -1531,7 +1531,7 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
 
         # Narrative — already clean text (CrewAI output_pydantic strips code blocks)
         if sentiment.narrative:
-            data.sections.append(Section("Market Narrative", _truncate_at_sentence(_strip_markdown(sentiment.narrative), 1200)))
+            data.sections.append(Section("Market Narrative", _truncate_at_sentence(_strip_markdown(sentiment.narrative), 4000)))
 
         if sentiment.overall_signal:
             sig = sentiment.overall_signal
@@ -1548,7 +1548,7 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
         if sentiment and sentiment.narrative:
             parts.append(_truncate_at_sentence(sentiment.narrative, 400))
         if parts:
-            data.executive_summary = _truncate_at_sentence(_strip_markdown(" ".join(parts)), 1200)
+            data.executive_summary = _truncate_at_sentence(_strip_markdown(" ".join(parts)), 4000)
 
     # ── Final recommendation scorecard entry ───────────────────────────────────
     rec = data.recommendation
@@ -1583,7 +1583,7 @@ def _extract_deck_data(
     # ── Structured InvestmentBrief path ──────────────────────────────────────
     if "final_recommendation" in brief_data or "rag_insights" in brief_data:
         rationale = brief_data.get("recommendation_rationale", "")
-        data.executive_summary = _strip_markdown(rationale[:1200]) if rationale else ""
+        data.executive_summary = _strip_markdown(rationale[:4000]) if rationale else ""
         data.disclaimer = brief_data.get("disclaimer", _DEFAULT_DISCLAIMER)
 
         qm = brief_data.get("quant_metrics", {})
@@ -1824,10 +1824,10 @@ def _extract_deck_data(
 
     if not data.executive_summary and sections:
         first = sections[0]
-        data.executive_summary = (first.body or first.title)[:1200]
+        data.executive_summary = (first.body or first.title)[:4000]
         data.sections = sections[1:]
     elif not data.executive_summary:
-        data.executive_summary = _strip_markdown(cleaned_text[:1200])
+        data.executive_summary = _strip_markdown(cleaned_text[:4000])
 
     return data
 
@@ -2664,7 +2664,7 @@ def _enrich_from_markdown(
                             data.executive_summary.rstrip(".") + ". " + narrative
                         )
                         break
-        data.executive_summary = data.executive_summary[:1200]
+        data.executive_summary = data.executive_summary[:4000]
     else:
         # Fallback: extract from Bull Case or Synthesis block
         bull = re.search(

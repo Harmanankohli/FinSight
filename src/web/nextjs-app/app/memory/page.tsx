@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useState, FormEvent } from "react";
 import { useSearchParams } from "next/navigation";
 
-async function downloadReportById(briefId: string, ticker: string, format: "pptx" | "docx") {
+async function downloadReportById(briefId: string, ticker: string, format: "html" | "pdf") {
   const res = await fetch(`/api/orch/api/reports/${briefId}/${format}`);
   if (!res.ok) return;
   const blob = await res.blob();
@@ -40,7 +40,7 @@ function MemoryContent() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [downloading, setDownloading] = useState<string | null>(null); // "{id}-{format}"
 
-  const handleDownload = async (e: React.MouseEvent, b: Brief, format: "pptx" | "docx") => {
+  const handleDownload = async (e: React.MouseEvent, b: Brief, format: "html" | "pdf") => {
     e.stopPropagation();
     const key = `${b.id}-${format}`;
     setDownloading(key);
@@ -185,7 +185,7 @@ function MemoryContent() {
                       <span className="mono" style={{ fontSize: 10, color: "var(--text-muted)" }}>
                         {b.confidence?.toFixed(2)}
                       </span>
-                      {(["pptx", "docx"] as const).map((fmt) => {
+                      {(["html", "pdf"] as const).map((fmt) => {
                         const key = `${b.id}-${fmt}`;
                         return (
                           <button
@@ -201,7 +201,7 @@ function MemoryContent() {
                               opacity: downloading && downloading !== key ? 0.5 : 1,
                             }}
                           >
-                            {downloading === key ? "…" : fmt === "pptx" ? "PPT" : "DOC"}
+                            {downloading === key ? "…" : fmt.toUpperCase()}
                           </button>
                         );
                       })}

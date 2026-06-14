@@ -213,7 +213,7 @@ async def _build_report_response(
         return Response(
             content=html_str,
             media_type="text/html",
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            headers={"Content-Disposition": f'inline; filename="{filename}"'},
         )
 
     if fmt == "pptx":

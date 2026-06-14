@@ -6,7 +6,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { addRecentQuery } from "@/lib/recentQueries";
 
-async function downloadReport(ticker: string, format: "html" | "pptx" | "docx" | "pdf") {
+async function downloadReport(ticker: string, format: "html" | "pdf") {
   const res = await fetch(`/api/orch/api/reports/ticker/${ticker}/latest/${format}`);
   if (!res.ok) return;
   const blob = await res.blob();
@@ -92,7 +92,7 @@ export default function ResearchPage() {
   const activeAgents = state?.active_agents ?? [];
   const anyActive = activeAgents.length > 0;
 
-  const handleDownload = async (format: "html" | "pptx" | "docx" | "pdf") => {
+  const handleDownload = async (format: "html" | "pdf") => {
     const ticker = extractTicker(messages as { role: string; content: string | unknown }[]);
     if (!ticker) return;
     setDownloading(format);
@@ -240,7 +240,7 @@ export default function ResearchPage() {
                             <span style={{ fontSize: 12, color: "var(--text-muted)", fontFamily: "var(--font-sans, system-ui)" }}>
                               Export report:
                             </span>
-                            {(["html", "pptx", "docx", "pdf"] as const).map((fmt) => (
+                            {(["html", "pdf"] as const).map((fmt) => (
                               <button
                                 key={fmt}
                                 onClick={() => handleDownload(fmt)}

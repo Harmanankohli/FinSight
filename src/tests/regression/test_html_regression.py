@@ -56,9 +56,9 @@ def test_html_generates_valid_output(tmp_path):
     assert isinstance(html_str, str)
     assert len(html_str) > 5000, f"HTML too small: {len(html_str)} chars"
     assert "Walmart Inc." in html_str
-    assert "deck-stage" in html_str
-    assert "<section" in html_str
-    assert "</deck-stage>" in html_str
+    assert "class=\"hero\"" in html_str
+    assert "class=\"report-section\"" in html_str
+    assert "class=\"conclusion\"" in html_str
     assert "var(--blue)" in html_str or "color:var" in html_str
     out = tmp_path / "WMT_report.html"
     out.write_text(html_str, encoding="utf-8")
@@ -71,7 +71,7 @@ def test_html_with_empty_brief(tmp_path):
         html_str = generate_html({}, "XYZ", "UNKNOWN", 0.0, "2026-01-01")
     assert isinstance(html_str, str)
     assert len(html_str) > 2000
-    assert "<section" in html_str
+    assert "class=\"hero\"" in html_str
     assert "XYZ" in html_str or "No analysis" in html_str
     out = tmp_path / "XYZ_empty.html"
     out.write_text(html_str, encoding="utf-8")
@@ -159,8 +159,8 @@ def test_html_with_markdown_tables(tmp_path):
     print(f"WMT (tables) HTML written to {out} ({len(html_str)} chars)")
 
 
-def test_html_deck_stage_js_embedded(tmp_path):
-    """deck-stage.js is embedded inline, not a separate src reference."""
+def test_html_is_standalone_page(tmp_path):
+    """HTML is a standalone scrollable page with PDF download button."""
     with patch("yfinance.Ticker", _make_yf_mock("Walmart Inc.", "Consumer Defensive", "NYQ")):
         html_str = generate_html(
             {"response_text": WMT_RESPONSE_TEXT},
@@ -169,11 +169,9 @@ def test_html_deck_stage_js_embedded(tmp_path):
             0.58,
             "2026-06-08",
         )
-    # Only one actual <script> HTML element, and it has no src attribute
-    first_script = html_str[html_str.lower().find("<script") :]
-    open_tag = first_script.split(">")[0].strip()
-    assert "src=" not in open_tag, f"Script tag unexpectedly has src: {open_tag}"
-    assert "customElements" in html_str
+    assert "deck-stage" not in html_str, "Should not contain deck-stage (slide format)"
+    assert "Download PDF" in html_str, "Should have PDF download button"
+    assert "window.print()" in html_str, "Should use print for PDF"
     out = tmp_path / "WMT_standalone.html"
     out.write_text(html_str, encoding="utf-8")
     print(f"WMT (standalone) HTML written to {out}")
@@ -200,6 +198,6 @@ if __name__ == "__main__":
         test_html_with_nonstandard_rec(tmp)
         test_html_with_unicode(tmp)
         test_html_with_markdown_tables(tmp)
-        test_html_deck_stage_js_embedded(tmp)
+        test_html_is_standalone_page(tmp)
         test_html_autoescape_prevents_xss(tmp)
     print("\nAll HTML regression tests passed.")

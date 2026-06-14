@@ -81,11 +81,13 @@ def _pdf_worker(html: str) -> bytes:
 
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=True)
-        page = browser.new_page(viewport={"width": 1920, "height": 1080})
+        page = browser.new_page(viewport={"width": 1024, "height": 1400})
         page.set_content(html, wait_until="networkidle")
         page.emulate_media(media="print")
         pdf_bytes = page.pdf(
-            landscape=True, width="1920px", height="1080px", print_background=True
+            format="A4",
+            print_background=True,
+            margin={"top": "18mm", "right": "16mm", "bottom": "20mm", "left": "16mm"},
         )
         browser.close()
         return pdf_bytes

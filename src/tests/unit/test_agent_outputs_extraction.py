@@ -405,5 +405,5 @@ def test_agent_path_generates_valid_html():
         html = generate_html(brief, "NVDA", "BUY", 0.85, "2026-06-12")
 
     assert isinstance(html, str)
-    assert "deck-stage" in html
+    assert "class=\"hero\"" in html
     assert "NVDA" in html
