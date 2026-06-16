@@ -128,13 +128,13 @@ class TestReviewerModels:
 
     def test_confidence_breakdown(self):
         c = ConfidenceBreakdown(
-            agent_scores={"Quant": 0.8, "RAG": 0.7},
+            agent_scores={"quant": 0.8, "rag": 0.7},
             agreement_score=0.75,
             data_quality_score=0.85,
             meta_confidence=0.78,
         )
         assert c.meta_confidence == 0.78
-        assert c.agent_scores["Quant"] == 0.8
+        assert c.agent_scores.quant == 0.8
 
     def test_recommendation_validation(self):
         r = RecommendationValidation(

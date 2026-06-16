@@ -34,21 +34,32 @@ async def _compute_statistics(price_data: dict, mcp_client) -> dict:
         regression_r2 = None
 
         try:
+            import json as _json
+
             spy_result = await mcp_client.call_tool_by_name("get_prices", {"ticker": "SPY", "period": "1y", "interval": "1d"})
-            spy_content = spy_result.get("content", [])
-            spy_data = {}
-            for item in spy_content:
-                if isinstance(item, dict) and "text" in item:
-                    import json
-                    spy_data = json.loads(item["text"]) if isinstance((json.loads(item["text"])), dict) else {}
+            spy_raw = {}
+            if hasattr(spy_result, "content"):
+                for item in spy_result.content:
+                    txt = item.text if hasattr(item, "text") else str(item)
+                    try:
+                        spy_raw = _json.loads(txt)
+                    except (ValueError, TypeError):
+                        continue
+            spy_records = spy_raw.get("data", []) if isinstance(spy_raw, dict) else []
+            spy_close_map = {}
+            for row in spy_records:
+                if not isinstance(row, dict):
+                    continue
+                d = row.get("Date") or row.get("date", "")
+                c = row.get("Close") or row.get("close")
+                if d and c is not None:
+                    spy_close_map[d] = float(c)
             spy_closes = []
             common_dates = []
             for d in sorted_dates:
-                if d in spy_data and isinstance(spy_data[d], dict):
-                    sc = spy_data[d].get("Close") or spy_data[d].get("close")
-                    if sc is not None and d in price_data and price_data[d] is not None:
-                        spy_closes.append(float(sc))
-                        common_dates.append(d)
+                if d in spy_close_map and d in price_data and price_data[d] is not None:
+                    spy_closes.append(spy_close_map[d])
+                    common_dates.append(d)
 
             if len(spy_closes) > 10 and len(common_dates) > 10:
                 stock_returns = np.diff(np.log([price_data[d] for d in common_dates if price_data[d] is not None]))

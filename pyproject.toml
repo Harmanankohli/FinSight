@@ -19,6 +19,8 @@ dependencies = [
     "langchain-community>=0.3.0",
     "langgraph>=0.2.0,<0.3.0",
     "crewai>=0.40.0,<1.0.0",
+    "pydantic-ai>=1.0.0,<2.0.0",
+    "openai-agents[litellm]>=0.1.0,<1.0.0",
     # API / Server
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",
@@ -38,7 +40,7 @@ dependencies = [
     "sentence-transformers>=3.0.0",
     "rank-bm25>=0.2.0",
     "feedparser>=6.0.0",
-    "duckduckgo-search>=7.0.0",
+    "ddgs>=8.0.0",
     # Observability
     "opentelemetry-api>=1.28.0",
     "opentelemetry-sdk>=1.28.0",
@@ -179,7 +181,7 @@ quant = [
     "aiosqlite>=0.20.0",
 ]
 analytics = [
-    "pydantic-ai[openai]>=1.0.0,<2.0.0",
+    "pydantic-ai>=1.0.0,<2.0.0",
     "pydantic-graph>=1.0.0,<2.0.0",
     "pandas>=2.2.0",
     "numpy>=1.26.0",

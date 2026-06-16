@@ -95,7 +95,8 @@ async def _run_forecast(price_data: dict) -> dict:
                 "mape": None,
             }
 
-        last_date = datetime.strptime(sorted_dates[-1], "%Y-%m-%d") if "-" in sorted_dates[-1] else datetime.now()
+        raw_date = sorted_dates[-1].split("T")[0] if "T" in sorted_dates[-1] else sorted_dates[-1]
+        last_date = datetime.strptime(raw_date, "%Y-%m-%d") if "-" in raw_date else datetime.now()
         dates = [(last_date + timedelta(days=i + 1)).strftime("%Y-%m-%d") for i in range(30)]
 
         holdout_size = max(1, len(closes) // 5)

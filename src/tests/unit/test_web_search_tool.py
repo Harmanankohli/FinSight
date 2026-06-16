@@ -7,10 +7,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-# Ensure duckduckgo_search is importable even when not installed, so that
-# patch("duckduckgo_search.DDGS", ...) can resolve the target module.
-if "duckduckgo_search" not in sys.modules:
-    sys.modules["duckduckgo_search"] = MagicMock()
+# Ensure ddgs is importable even when not installed, so that
+# patch("ddgs.DDGS", ...) can resolve the target module.
+if "ddgs" not in sys.modules:
+    sys.modules["ddgs"] = MagicMock()
 
 
 @pytest.fixture
@@ -20,7 +20,7 @@ def mock_limiter(monkeypatch):
 
 @pytest.fixture
 def fake_ddgs():
-    """Return a (patcher, ddgs_instance) tuple that patches duckduckgo_search.DDGS."""
+    """Return a (patcher, ddgs_instance) tuple that patches ddgs.DDGS."""
 
     def _make(results):
         ddgs_instance = MagicMock()
@@ -28,7 +28,7 @@ def fake_ddgs():
         ddgs_cls = MagicMock(
             return_value=MagicMock(__enter__=MagicMock(return_value=ddgs_instance)))
 
-        patcher = patch("duckduckgo_search.DDGS", ddgs_cls)
+        patcher = patch("ddgs.DDGS", ddgs_cls)
         return patcher, ddgs_instance
 
     return _make
@@ -76,7 +76,7 @@ async def test_web_search_uncached_empty_results(fake_ddgs, mock_limiter):
 @pytest.mark.skip(
     reason="ImportError path requires removing installed package; covered by code review")
 async def test_web_search_import_error_fallback():
-    """When duckduckgo_search module can't be imported, return error dict."""
+    """When ddgs module can't be imported, return error dict."""
     from mcp_tools.tools.web_search import _web_search_uncached
 
     result = await _web_search_uncached("test", 5, "none")

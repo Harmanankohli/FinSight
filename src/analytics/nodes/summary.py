@@ -95,10 +95,10 @@ class LLMSummaryNode(BaseNode[AnalyticsState, AnalyticsDeps]):
         return {
             "ticker": state.ticker,
             "trend_analysis": state.trend_analysis,
-            "forecast_result": state.forecast_result,
-            "chart_payloads": state.chart_payloads,
+            "forecast": state.forecast_result,
+            "charts": state.chart_payloads,
             "statistical_summary": state.statistical_summary,
-            "anomaly_report": state.anomaly_report,
+            "anomalies": state.anomaly_report,
             "analytics_signal": state.analytics_signal,
             "analytics_confidence": state.analytics_confidence,
             "reasoning": state.reasoning,

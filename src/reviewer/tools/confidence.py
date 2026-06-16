@@ -81,10 +81,10 @@ def score_confidence(agent_outputs: dict) -> dict:
 
     return {
         "agent_scores": {
-            "Quant Analysis Agent": round(quant_conf, 2),
-            "Financial RAG Agent": round(rag_conf, 2),
-            "Market Context Agent": round(market_conf, 2),
-            "Analytics Agent": round(analytics_conf, 2),
+            "quant": round(quant_conf, 2),
+            "rag": round(rag_conf, 2),
+            "market_context": round(market_conf, 2),
+            "analytics": round(analytics_conf, 2),
         },
         "agreement_score": round(agreement, 2),
         "data_quality_score": round(data_quality, 2),

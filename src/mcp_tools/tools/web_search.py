@@ -23,21 +23,21 @@ logger = logging.getLogger(__name__)
 
 async def _web_search_uncached(query: str, max_results: int, time_filter: str) -> dict:
     try:
-        from duckduckgo_search import DDGS
+        from ddgs import DDGS
     except ImportError:
         return {
             "query": query,
             "results": [],
-            "error": "duckduckgo-search package not installed",
+            "error": "ddgs package not installed",
         }
 
     try:
         loop = asyncio.get_running_loop()
 
         def _search():
-            ddgs = DDGS(headers={"Accept-Language": "en-US,en;q=0.9"})
+            ddgs = DDGS()
             kwargs = {
-                "keywords": query,
+                "query": query,
                 "max_results": max_results,
                 "region": "us-en",
                 "backend": "html",

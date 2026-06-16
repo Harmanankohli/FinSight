@@ -67,12 +67,12 @@ async def fetch_rss(url: str, client: httpx.AsyncClient) -> dict:
 
 
 async def fetch_ddg_news(ticker: str, company_name: str, limit: int = 10) -> list[dict]:
-    """4th-tier news fallback via DuckDuckGo. Silently skips if ``duckduckgo_search`` is not installed.  # noqa: E501
+    """4th-tier news fallback via DuckDuckGo. Silently skips if ``ddgs`` is not installed.  # noqa: E501
 
     Returns a list of article dicts: {source, title, link, publisher, published, sentiment}.
     """
     try:
-        from duckduckgo_search import DDGS  # optional dep
+        from ddgs import DDGS  # optional dep
     except ImportError:
         return []
     try:
@@ -81,7 +81,7 @@ async def fetch_ddg_news(ticker: str, company_name: str, limit: int = 10) -> lis
         loop = asyncio.get_running_loop()
 
         def _search():
-            ddgs = DDGS(headers={"Accept-Language": "en-US,en;q=0.9"})
+            ddgs = DDGS()
             return list(ddgs.news(query, max_results=limit, region="us-en"))
 
         await _NEWS_LIMITER.acquire()

@@ -316,8 +316,15 @@ class SourceVerification(BaseModel):
     unverified_claims: list[str] = Field(default_factory=list)
 
 
+class AgentScores(BaseModel):
+    quant: float = 0.0
+    rag: float = 0.0
+    market_context: float = 0.0
+    analytics: float = 0.0
+
+
 class ConfidenceBreakdown(BaseModel):
-    agent_scores: dict[str, float] = Field(default_factory=dict)
+    agent_scores: AgentScores = Field(default_factory=AgentScores)
     agreement_score: float = 0.0
     data_quality_score: float = 0.0
     meta_confidence: float = 0.0
