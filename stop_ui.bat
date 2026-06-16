@@ -4,7 +4,7 @@ cd /d "%~dp0"
 echo Stopping FinSight UI services...
 
 :: Kill by port — covers all backend + frontend ports
-for %%p in (3000 8001 8002 8003 8004 8010) do (
+for %%p in (3000 8001 8002 8003 8004 8005 8006 8010) do (
     for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":%%p " 2^>nul') do (
         taskkill /f /pid %%a >nul 2>&1
     )

@@ -48,6 +48,8 @@ class Settings(BaseSettings):
     agent_port_rag: int = 8002
     agent_port_quant: int = 8003
     agent_port_market: int = 8004
+    agent_port_analytics: int = 8005
+    agent_port_reviewer: int = 8006
     mcp_host: str = "127.0.0.1"
     mcp_port: int = 8010  # env: MCP_PORT (finsight_server)
     mcp_server_port: int = 8010  # env: MCP_SERVER_PORT (clients)
@@ -55,7 +57,7 @@ class Settings(BaseSettings):
     agent_registry_url: str = "http://localhost:8010"
 
     # ── Agent discovery ───────────────────────────────────────────────────
-    agent_seed_urls: str = "http://localhost:8002,http://localhost:8003,http://localhost:8004"
+    agent_seed_urls: str = "http://localhost:8002,http://localhost:8003,http://localhost:8004,http://localhost:8005,http://localhost:8006"
 
     # ── MCP / A2A timeouts ────────────────────────────────────────────────
     mcp_timeout: float = 30.0
@@ -64,6 +66,8 @@ class Settings(BaseSettings):
     a2a_timeout_rag: float = 600.0
     a2a_timeout_quant: float = 600.0
     a2a_timeout_market_context: float = 600.0  # also accepts A2A_TIMEOUT_SENTIMENT
+    a2a_timeout_analytics: float = 600.0
+    a2a_timeout_reviewer: float = 300.0
 
     # ── Storage ───────────────────────────────────────────────────────────
     chroma_dir: str = "./db/chroma_db"
@@ -201,6 +205,8 @@ A2A_TIMEOUT = _s.a2a_timeout
 A2A_TIMEOUT_RAG = _s.a2a_timeout_rag
 A2A_TIMEOUT_QUANT = _s.a2a_timeout_quant
 A2A_TIMEOUT_MARKET_CONTEXT = _s.a2a_timeout_market_context
+A2A_TIMEOUT_ANALYTICS = _s.a2a_timeout_analytics
+A2A_TIMEOUT_REVIEWER = _s.a2a_timeout_reviewer
 CHROMA_DIR = _s.chroma_dir
 MCP_SERVER_URL = _s.mcp_server_url
 MCP_SERVER_PORT = _s.mcp_server_port

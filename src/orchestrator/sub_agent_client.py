@@ -50,9 +50,11 @@ from shared.logging_config import logged
 from shared.observability import get_langfuse_client
 from shared.settings import (
     A2A_TIMEOUT,
+    A2A_TIMEOUT_ANALYTICS,
     A2A_TIMEOUT_MARKET_CONTEXT,
     A2A_TIMEOUT_QUANT,
     A2A_TIMEOUT_RAG,
+    A2A_TIMEOUT_REVIEWER,
     AGENT_SEED_URLS,
 )
 from shared.trace_context import current_trace_id, current_user_id, inject_trace_context
@@ -266,6 +268,8 @@ class SubAgentClient:
             "rag": A2A_TIMEOUT_RAG,
             "quant": A2A_TIMEOUT_QUANT,
             "market context": A2A_TIMEOUT_MARKET_CONTEXT,
+            "analytics": A2A_TIMEOUT_ANALYTICS,
+            "reviewer": A2A_TIMEOUT_REVIEWER,
         }
         agent_lower = agent_name.lower()
         timeout = next(

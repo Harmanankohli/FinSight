@@ -5,6 +5,8 @@ const TARGETS: Record<string, string> = {
   rag: "http://localhost:8002/health",
   quant: "http://localhost:8003/health",
   market: "http://localhost:8004/health",
+  analytics: "http://localhost:8005/health",
+  reviewer: "http://localhost:8006/health",
   mcp: "http://localhost:8010/health",
 };
 

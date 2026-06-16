@@ -4,7 +4,7 @@ cd /d "%~dp0"
 echo Stopping FinSight services...
 
 echo Killing server processes by port...
-for %%p in (8001 8002 8003 8004 8010 8080) do (
+for %%p in (8001 8002 8003 8004 8005 8006 8010 8080) do (
     for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":%%p "') do (
         taskkill /f /pid %%a >nul 2>&1
     )

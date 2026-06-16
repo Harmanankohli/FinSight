@@ -10,6 +10,8 @@ const SERVICES: Omit<SvcStatus, "status" | "latency">[] = [
   { name: "Financial RAG Agent", url: "/api/health?svc=rag", port: ":8002", fw: "LlamaIndex" },
   { name: "Quant Analysis Agent", url: "/api/health?svc=quant", port: ":8003", fw: "LangGraph" },
   { name: "Market Context Agent", url: "/api/health?svc=market", port: ":8004", fw: "CrewAI" },
+  { name: "Analytics Agent", url: "/api/health?svc=analytics", port: ":8005", fw: "PydanticAI" },
+  { name: "Reviewer Agent", url: "/api/health?svc=reviewer", port: ":8006", fw: "OpenAI Agents SDK" },
   { name: "finsight-mcp Server", url: "/api/health?svc=mcp", port: ":8010", fw: "FastMCP" },
 ];
 

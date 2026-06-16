@@ -9,6 +9,7 @@ services:
       - AGENT_LLAMAINDEX_URL=http://financial-rag:8002
       - AGENT_LANGGRAPH_URL=http://quant:8003
       - AGENT_CREWAI_URL=http://market-context:8004
+      - AGENT_SEED_URLS=http://financial-rag:8002,http://quant:8003,http://market-context:8004,http://analytics:8005,http://reviewer:8006
       - MCP_SERVER_URL=http://mcp:8010/sse
       - SEMANTIC_CACHE_ENABLED=false
       - FINSIGHT_DB_PATH=/data/finsight_memory.db
@@ -20,6 +21,10 @@ services:
       quant:
         condition: service_healthy
       market-context:
+        condition: service_healthy
+      analytics:
+        condition: service_healthy
+      reviewer:
         condition: service_healthy
       mcp:
         condition: service_healthy
@@ -85,6 +90,39 @@ services:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8004/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+
+  analytics:
+    build:
+      context: .
+      dockerfile: src/analytics/Dockerfile
+    ports: ["8005:8005"]
+    env_file: .env
+    environment:
+      - MCP_SERVER_URL=http://mcp:8010/sse
+    depends_on:
+      mcp:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8005/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+
+  reviewer:
+    build:
+      context: .
+      dockerfile: src/reviewer/Dockerfile
+    ports: ["8006:8006"]
+    env_file: .env
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8006/health')"]
       interval: 30s
       timeout: 10s
       retries: 3

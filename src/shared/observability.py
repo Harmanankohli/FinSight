@@ -130,3 +130,7 @@ def init_instrumentation(agent_type: str) -> None:
         except (ImportError, ModuleNotFoundError):
             pass
         StarletteInstrumentor().instrument()
+    elif agent_type in ("analytics", "reviewer"):
+        from opentelemetry.instrumentation.starlette import StarletteInstrumentor
+
+        StarletteInstrumentor().instrument()

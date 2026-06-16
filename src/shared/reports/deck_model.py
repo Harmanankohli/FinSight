@@ -71,4 +71,6 @@ class DeckData:
     opportunities_extracted: bool = False
     # Extra content sections (overflow)
     sections: list[Section] = field(default_factory=list)
+    # Analytics Agent chart payloads (candlestick, line, area)
+    charts: list[dict] = field(default_factory=list)
     disclaimer: str = _DEFAULT_DISCLAIMER

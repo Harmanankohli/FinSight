@@ -5,7 +5,7 @@ The orchestrator validates combined agent outputs through ValidatedAgentOutputs
 before passing to report generation, replacing ~220 lines of manual dict extraction.
 """
 
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
@@ -240,17 +240,121 @@ class MarketContextOutput(BaseModel):
     peer_comparison: list[MarketContextPeer] = Field(default_factory=list)
 
 
+# ── Analytics Agent models ──────────────────────────────────────────────────
+
+
+class TrendAnalysis(BaseModel):
+    trend_direction: str = "neutral"
+    ma_crossover_signal: Optional[str] = None
+    momentum_shift: Optional[str] = None
+    trend_strength: float = 0.0
+    supporting_indicators: list[str] = Field(default_factory=list)
+
+
+class ForecastResult(BaseModel):
+    method: str = "exponential_smoothing"
+    horizon_days: int = 30
+    forecast_prices: list[float] = Field(default_factory=list)
+    forecast_dates: list[str] = Field(default_factory=list)
+    confidence_lower: list[float] = Field(default_factory=list)
+    confidence_upper: list[float] = Field(default_factory=list)
+    mape: Optional[float] = None
+
+
+class ChartPayload(BaseModel):
+    chart_type: str = "candlestick"
+    labels: list[str] = Field(default_factory=list)
+    datasets: list[dict[str, Any]] = Field(default_factory=list)
+    annotations: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class StatisticalSummary(BaseModel):
+    return_distribution: Optional[str] = None
+    skewness: Optional[float] = None
+    kurtosis: Optional[float] = None
+    jarque_bera_pvalue: Optional[float] = None
+    correlations: dict[str, float] = Field(default_factory=dict)
+    regression_beta: Optional[float] = None
+    regression_r_squared: Optional[float] = None
+
+
+class AnomalyReport(BaseModel):
+    price_anomalies: list[dict[str, Any]] = Field(default_factory=list)
+    volume_anomalies: list[dict[str, Any]] = Field(default_factory=list)
+    fundamental_anomalies: list[str] = Field(default_factory=list)
+    anomaly_count: int = 0
+    severity: str = "none"
+
+
+class AnalyticsAgentOutput(BaseModel):
+    ticker: str
+    trend_analysis: Optional[TrendAnalysis] = None
+    forecast: Optional[ForecastResult] = None
+    charts: list[ChartPayload] = Field(default_factory=list)
+    statistical_summary: Optional[StatisticalSummary] = None
+    anomalies: Optional[AnomalyReport] = None
+    analytics_confidence: float = 0.0
+    analytics_signal: str = "neutral"
+
+
+# ── Reviewer Agent models ───────────────────────────────────────────────────
+
+
+class ContradictionFlag(BaseModel):
+    agents: list[str]
+    field: str
+    description: str
+    severity: str = "low"
+
+
+class SourceVerification(BaseModel):
+    agent_name: str
+    claims_checked: int = 0
+    claims_verified: int = 0
+    verification_rate: float = 0.0
+    unverified_claims: list[str] = Field(default_factory=list)
+
+
+class ConfidenceBreakdown(BaseModel):
+    agent_scores: dict[str, float] = Field(default_factory=dict)
+    agreement_score: float = 0.0
+    data_quality_score: float = 0.0
+    meta_confidence: float = 0.0
+
+
+class RecommendationValidation(BaseModel):
+    recommendation: str = "HOLD"
+    evidence_supports: bool = True
+    supporting_evidence: list[str] = Field(default_factory=list)
+    contradicting_evidence: list[str] = Field(default_factory=list)
+    evidence_strength: str = "moderate"
+
+
+class ReviewerAgentOutput(BaseModel):
+    ticker: str
+    verdict: str = "HOLD"
+    review_summary: str = ""
+    contradictions: list[ContradictionFlag] = Field(default_factory=list)
+    source_verifications: list[SourceVerification] = Field(default_factory=list)
+    confidence_breakdown: Optional[ConfidenceBreakdown] = None
+    recommendation_validation: Optional[RecommendationValidation] = None
+    flags: list[str] = Field(default_factory=list)
+    review_confidence: float = 0.0
+
+
 # ── Combined report-level model ──────────────────────────────────────────────
 
 
 class ValidatedAgentOutputs(BaseModel):
-    """All three agent outputs validated together at the orchestrator level."""
+    """All agent outputs validated together at the orchestrator level."""
 
     ticker: str
     quant: Optional[QuantAgentOutput] = None
     rag: Optional[RAGAgentOutput] = None
     market_context: Optional[MarketContextOutput] = None
+    analytics: Optional[AnalyticsAgentOutput] = None
+    reviewer: Optional[ReviewerAgentOutput] = None
 
     @property
     def has_all_agents(self) -> bool:
-        return all([self.quant, self.rag, self.market_context])
+        return all([self.quant, self.rag, self.market_context, self.analytics, self.reviewer])

@@ -40,6 +40,14 @@ timeout /t 3 /nobreak >nul
 start "FinSight Market Context" cmd /k "uv run python -m uvicorn market_context.server:app --host 0.0.0.0 --port 8004 --log-level info"
 timeout /t 3 /nobreak >nul
 
+:: ── Analytics Agent (:8005) ──────────────────────────────────────────────────
+start "FinSight Analytics" cmd /k "uv run python -m uvicorn analytics.server:app --host 0.0.0.0 --port 8005 --log-level info"
+timeout /t 3 /nobreak >nul
+
+:: ── Reviewer Agent (:8006) ───────────────────────────────────────────────────
+start "FinSight Reviewer" cmd /k "uv run python -m uvicorn reviewer.server:app --host 0.0.0.0 --port 8006 --log-level info"
+timeout /t 3 /nobreak >nul
+
 :: ── Orchestrator A2A + AG-UI bridge (:8001) ──────────────────────────────────
 :: Runs src/orchestrator/main.py — exposes /a2a, /a2a-agui, /api/*, /health
 start "FinSight Orchestrator" cmd /k "uv run python -m orchestrator.main"
@@ -56,6 +64,8 @@ echo   MCP Server:    http://127.0.0.1:8010
 echo   RAG Agent:     http://127.0.0.1:8002
 echo   Quant Agent:   http://127.0.0.1:8003
 echo   Market Ctx:    http://127.0.0.1:8004
+echo   Analytics:     http://127.0.0.1:8005
+echo   Reviewer:      http://127.0.0.1:8006
 echo   Orchestrator:  http://127.0.0.1:8001   (A2A + /a2a-agui + REST API)
 echo   FinSight UI:   http://127.0.0.1:3000   ^<-- open this
 echo.

@@ -110,7 +110,7 @@ class FinSightAgentExecutor(AgentExecutor):
             response_text = ""
 
         has_agent_data = any(
-            k in data for k in ("quant_response", "rag_response", "sentiment_response")
+            k in data for k in ("quant_response", "rag_response", "sentiment_response", "analytics_response", "reviewer_response")
         )
         if not has_agent_data:
             logger.info(
@@ -478,7 +478,7 @@ class FinSightAgentExecutor(AgentExecutor):
                     try:
                         bj = json.loads(latest.get("brief_json", "{}"))
                         has_agent_data = any(
-                            k in bj for k in ("quant_response", "rag_response", "sentiment_response")
+                            k in bj for k in ("quant_response", "rag_response", "sentiment_response", "analytics_response", "reviewer_response")
                         )
                     except Exception:
                         pass
@@ -528,6 +528,10 @@ class FinSightAgentExecutor(AgentExecutor):
                 extra["quant_response"] = data
             elif "market" in name_lower or "sentiment" in name_lower:
                 extra["sentiment_response"] = data
+            elif "analytics" in name_lower:
+                extra["analytics_response"] = data
+            elif "reviewer" in name_lower:
+                extra["reviewer_response"] = data
 
         logger.info(
             "_store_memory: ticker=%s session=%s extra_keys=%s",
@@ -548,7 +552,7 @@ class FinSightAgentExecutor(AgentExecutor):
                     logger.debug("Could not parse brief_json for %s", ticker, exc_info=True)
                 needs_update = len(response_text) > len(stored)
                 has_new_agent_data = extra and not any(
-                    k in bj for k in ("quant_response", "rag_response", "sentiment_response")
+                    k in bj for k in ("quant_response", "rag_response", "sentiment_response", "analytics_response", "reviewer_response")
                 )
                 if needs_update or has_new_agent_data:
                     if has_new_agent_data:

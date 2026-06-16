@@ -1125,6 +1125,8 @@ def _populate_from_agent_outputs(data: DeckData, brief_data: dict, response_text
     quant = _safe_parse(brief_data.get("quant_response"))
     rag = _safe_parse(brief_data.get("rag_response"))
     sentiment = _safe_parse(brief_data.get("sentiment_response"))
+    analytics = _safe_parse(brief_data.get("analytics_response"))
+    reviewer = _safe_parse(brief_data.get("reviewer_response"))
 
     # ── Quant response ─────────────────────────────────────────────────────
     if quant:
@@ -1320,6 +1322,64 @@ def _populate_from_agent_outputs(data: DeckData, brief_data: dict, response_text
             sig_badge = "bullish" if "bull" in signal.lower() or signal.upper() == "BUY" else "expensive" if "bear" in signal.lower() or signal.upper() == "SELL" else "moderate"
             data.scorecard.append(("Market Sentiment", signal.capitalize(), sig_badge))
 
+    # ── Analytics response (legacy dict path) ─────────────────────────────
+    if analytics:
+        trend = analytics.get("trend_analysis") or {}
+        td = trend.get("trend_direction") or "neutral"
+        badge = "bullish" if td == "bullish" else "expensive" if td == "bearish" else "moderate"
+        data.scorecard.append(("Analytics Trend", td.capitalize(), badge))
+        ma_signal = trend.get("ma_crossover_signal")
+        if ma_signal:
+            ma_badge = "bullish" if ma_signal == "golden_cross" else "expensive"
+            data.scorecard.append(("MA Crossover", ma_signal.replace("_", " ").title(), ma_badge))
+
+        forecast = analytics.get("forecast") or {}
+        forecast_prices = forecast.get("forecast_prices") or []
+        if forecast_prices:
+            data.valuation_table.append(("30d Forecast", _fmt_dollar(forecast_prices[-1])))
+
+        anomalies = analytics.get("anomalies") or {}
+        if anomalies.get("severity") in ("medium", "high"):
+            for a in anomalies.get("price_anomalies", []):
+                desc = a.get("date", "") + " " + a.get("type", "anomaly")
+                data.risks.append(desc)
+            for a in anomalies.get("volume_anomalies", []):
+                desc = a.get("date", "") + " " + a.get("type", "anomaly")
+                data.risks.append(desc)
+            for fa in anomalies.get("fundamental_anomalies", []):
+                data.risks.append(fa)
+
+        stats = analytics.get("statistical_summary") or {}
+        if stats.get("skewness") is not None:
+            data.financials.append(("Skewness", f"{stats['skewness']:.3f}", "Return Distribution"))
+        if stats.get("kurtosis") is not None:
+            data.financials.append(("Kurtosis", f"{stats['kurtosis']:.3f}", "Return Distribution"))
+
+        charts = analytics.get("charts") or []
+        if charts:
+            data.charts = charts
+
+    # ── Reviewer response (legacy dict path) ──────────────────────────────
+    if reviewer:
+        for c in reviewer.get("contradictions", []):
+            if c.get("severity") == "high":
+                data.risks.append(f"Contradiction: {c.get('description', '')}")
+
+        cb = reviewer.get("confidence_breakdown") or {}
+        if cb.get("meta_confidence") is not None:
+            data.confidence = cb["meta_confidence"]
+
+        rv = reviewer.get("recommendation_validation") or {}
+        if rv.get("evidence_strength") == "strong":
+            data.sections.append(Section("Evidence Strength", "Strong evidence supports the recommendation."))
+
+        for flag in reviewer.get("flags", []):
+            data.risks.append(flag)
+
+        review_summary = reviewer.get("review_summary") or ""
+        if review_summary:
+            data.executive_summary = _truncate_at_sentence(_strip_markdown(review_summary), 4000)
+
     # ── Executive summary synthesis ────────────────────────────────────────
     if not data.executive_summary:
         parts = []
@@ -1348,6 +1408,8 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
     quant = outputs.quant
     rag = outputs.rag
     sentiment = outputs.market_context
+    analytics = outputs.analytics
+    reviewer = outputs.reviewer
 
     # ── Quant ──────────────────────────────────────────────────────────────────
     if quant:
@@ -1537,6 +1599,62 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
             sig = sentiment.overall_signal
             sig_badge = "bullish" if "bull" in sig.lower() or sig.upper() == "BUY" else "expensive" if "bear" in sig.lower() or sig.upper() == "SELL" else "moderate"
             data.scorecard.append(("Market Sentiment", sig.capitalize(), sig_badge))
+
+    # ── Analytics (validated path) ──────────────────────────────────────────────
+    if analytics:
+        trend = analytics.trend_analysis
+        if trend:
+            td = trend.trend_direction or "neutral"
+            badge = "bullish" if td == "bullish" else "expensive" if td == "bearish" else "moderate"
+            data.scorecard.append(("Analytics Trend", td.capitalize(), badge))
+            if trend.ma_crossover_signal:
+                badge = "bullish" if trend.ma_crossover_signal == "golden_cross" else "expensive"
+                data.scorecard.append(("MA Crossover", trend.ma_crossover_signal.replace("_", " ").title(), badge))
+
+        forecast = analytics.forecast
+        if forecast and forecast.forecast_prices:
+            data.valuation_table.append(("30d Forecast", _fmt_dollar(forecast.forecast_prices[-1])))
+
+        anomalies = analytics.anomalies
+        if anomalies and anomalies.severity in ("medium", "high"):
+            for a in anomalies.price_anomalies:
+                desc = a.get("date", "") + " " + a.get("type", "anomaly")
+                data.risks.append(desc)
+            for a in anomalies.volume_anomalies:
+                desc = a.get("date", "") + " " + a.get("type", "anomaly")
+                data.risks.append(desc)
+            for fa in anomalies.fundamental_anomalies:
+                data.risks.append(fa)
+
+        stats = analytics.statistical_summary
+        if stats:
+            if stats.skewness is not None:
+                data.financials.append(("Skewness", f"{stats.skewness:.3f}", "Return Distribution"))
+            if stats.kurtosis is not None:
+                data.financials.append(("Kurtosis", f"{stats.kurtosis:.3f}", "Return Distribution"))
+
+        if analytics.charts:
+            data.charts = [c.model_dump() if hasattr(c, "model_dump") else c for c in analytics.charts]
+
+    # ── Reviewer (validated path) ───────────────────────────────────────────────
+    if reviewer:
+        for c in reviewer.contradictions:
+            if c.severity == "high":
+                data.risks.append(f"Contradiction: {c.description}")
+
+        cb = reviewer.confidence_breakdown
+        if cb and cb.meta_confidence is not None:
+            data.confidence = cb.meta_confidence
+
+        rv = reviewer.recommendation_validation
+        if rv and rv.evidence_strength == "strong":
+            data.sections.append(Section("Evidence Strength", "Strong evidence supports the recommendation."))
+
+        for flag in reviewer.flags:
+            data.risks.append(flag)
+
+        if reviewer.review_summary:
+            data.executive_summary = _truncate_at_sentence(_strip_markdown(reviewer.review_summary), 4000)
 
     # ── Executive summary synthesis ────────────────────────────────────────────
     if not data.executive_summary:
@@ -1770,16 +1888,18 @@ def _extract_deck_data(
         return data
 
     # ── Raw agent outputs path ─────────────────────────────────────────────
-    if any(k in brief_data for k in ("quant_response", "rag_response", "sentiment_response")):
+    if any(k in brief_data for k in ("quant_response", "rag_response", "sentiment_response", "analytics_response", "reviewer_response")):
         # Try the validated Pydantic path first; fall back to legacy dict extraction
         # if validation fails (e.g., briefs stored before models were introduced).
         _used_validated = False
         try:
             from pydantic import ValidationError
             from shared.agent_models import (
+                AnalyticsAgentOutput,
                 MarketContextOutput,
                 QuantAgentOutput,
                 RAGAgentOutput,
+                ReviewerAgentOutput,
                 ValidatedAgentOutputs,
             )
 
@@ -1793,6 +1913,12 @@ def _extract_deck_data(
                 else None,
                 market_context=MarketContextOutput.model_validate(brief_data["sentiment_response"])
                 if brief_data.get("sentiment_response")
+                else None,
+                analytics=AnalyticsAgentOutput.model_validate(brief_data["analytics_response"])
+                if brief_data.get("analytics_response")
+                else None,
+                reviewer=ReviewerAgentOutput.model_validate(brief_data["reviewer_response"])
+                if brief_data.get("reviewer_response")
                 else None,
             )
             _populate_from_validated_outputs(data, outputs)

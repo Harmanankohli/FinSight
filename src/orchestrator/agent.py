@@ -257,11 +257,14 @@ PROCEDURE — follow these steps IN ORDER:
 1.  Identify the stock ticker from the user's question. If the user mentions
     a company name (e.g. "Mastercard", "Apple", "Microsoft"), determine its
     ticker symbol (MA, AAPL, MSFT).
-2.  YOUR VERY FIRST ACTION must be to call `send_message` for EVERY agent
-    listed under "Available agents" below. Do NOT call `load_memory` first.
-    Do NOT call any other tool first. You MUST emit ALL `send_message` calls
-    in a SINGLE assistant response so they execute in PARALLEL.
-    Use their EXACT names — never invent agent names.
+
+PHASE 1 — Parallel Analysis:
+2.  YOUR VERY FIRST ACTION must be to call `send_message` for EVERY Phase 1
+    agent listed under "Available agents" below (Financial RAG Agent, Quant
+    Analysis Agent, Market Context Agent, Analytics Agent). Do NOT call
+    `load_memory` first. Do NOT call any other tool first. You MUST emit ALL
+    Phase 1 `send_message` calls in a SINGLE assistant response so they
+    execute in PARALLEL. Use their EXACT names — never invent agent names.
 3.  Each task MUST include the SAME ticker symbol in ALL CAPS (e.g. "MA").
     Do NOT use different tickers for different agents.
 4.  Only include portfolio holdings in the Quant Analysis Agent task if the
@@ -270,11 +273,19 @@ PROCEDURE — follow these steps IN ORDER:
     Do NOT include holdings from memory context background lines — those are
     for your reference only. If the user just asks about a single stock, send
     only that ticker to the Quant agent.
-5.  After ALL agents have responded (you will receive their results together in
-    the next turn), synthesize their findings into a BUY/HOLD/SELL
-    recommendation with supporting evidence. Include a confidence score
-    (0.0–1.0) in your response. Your analysis is automatically saved after
-    you respond — no manual save step needed.
+
+PHASE 2 — Review:
+5.  After ALL Phase 1 agents have responded (you will receive their results
+    together in the next turn), call `send_message` for the Reviewer Agent.
+    Pass a JSON payload: {"ticker": "AAPL", "agent_outputs": {"quant": <result>, "rag": <result>, "market_context": <result>, "analytics": <result>}}
+    Include each agent's full result as a JSON object in the agent_outputs map.
+
+PHASE 3 — Synthesis:
+6.  After the Reviewer Agent responds, synthesize ALL findings including the
+    reviewer's cross-validation into a BUY/HOLD/SELL recommendation with
+    supporting evidence. Include a confidence score (0.0–1.0) in your response.
+    Your analysis is automatically saved after you respond — no manual save
+    step needed.
 
 TOOL RULES:
 - `send_message`: Use this for ALL stock analysis requests. ALWAYS call it first.
@@ -332,7 +343,11 @@ def _build_instruction() -> str:
             "  - Market Context Agent provides macro regime (rates, VIX, sector ETFs)\n"
             "    and peer landscape narrative — treat its output as 'context' for synthesis\n"
             "  - Quant Analysis Agent owns numeric risk, fundamentals, technicals, DCF,\n"
-            "    Monte Carlo, peer comparison, and behavioral signals (options/insider/positioning)"
+            "    Monte Carlo, peer comparison, and behavioral signals (options/insider/positioning)\n"
+            "  - Analytics Agent (PHASE 1) owns trend detection, forecasting, chart data,\n"
+            "    statistical analysis, and anomaly detection\n"
+            "  - Reviewer Agent (PHASE 2 ONLY) cross-validates all agent outputs, checks\n"
+            "    for contradictions, and produces calibrated meta-confidence"
         )
     else:
         preamble = _STATIC_PREAMBLE_FALLBACK

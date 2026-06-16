@@ -73,6 +73,10 @@ _AGENT_DISPLAY_NAMES = {
     "market context agent": "Market Context Agent",
     "market context": "Market Context Agent",
     "sentiment": "Market Context Agent",
+    "analytics agent": "Analytics Agent",
+    "analytics": "Analytics Agent",
+    "reviewer agent": "Reviewer Agent",
+    "reviewer": "Reviewer Agent",
 }
 
 
@@ -112,7 +116,7 @@ async def _get_today_cached_text(ticker: str, *, user_id: str | None = None) -> 
         data = {}
         response_text = ""
     has_agent_data = any(
-        k in data for k in ("quant_response", "rag_response", "sentiment_response")
+        k in data for k in ("quant_response", "rag_response", "sentiment_response", "analytics_response", "reviewer_response")
     )
     if not has_agent_data:
         logger.info("Cache SKIP for %s — missing agent outputs, allowing re-run", ticker)
@@ -149,7 +153,7 @@ async def _build_memory_context(user_input: str, user_id: str) -> str:
                 try:
                     bj = json.loads(latest.get("brief_json", "{}"))
                     has_agent_data = any(
-                        k in bj for k in ("quant_response", "rag_response", "sentiment_response")
+                        k in bj for k in ("quant_response", "rag_response", "sentiment_response", "analytics_response", "reviewer_response")
                     )
                 except Exception:
                     pass
@@ -207,6 +211,10 @@ async def _auto_save_brief(
                 extra["quant_response"] = data
             elif "market" in name_lower or "sentiment" in name_lower:
                 extra["sentiment_response"] = data
+            elif "analytics" in name_lower:
+                extra["analytics_response"] = data
+            elif "reviewer" in name_lower:
+                extra["reviewer_response"] = data
 
         tm = TickerMemory()
         existing = await tm.get_latest(ticker, user_id=user_id)
@@ -222,7 +230,7 @@ async def _auto_save_brief(
                     logger.debug("Could not parse brief_json", exc_info=True)
                 needs_update = len(response_text) > len(stored)
                 has_new_agent_data = extra and not any(
-                    k in bj for k in ("quant_response", "rag_response", "sentiment_response")
+                    k in bj for k in ("quant_response", "rag_response", "sentiment_response", "analytics_response", "reviewer_response")
                 )
                 if needs_update or has_new_agent_data:
                     if has_new_agent_data:
