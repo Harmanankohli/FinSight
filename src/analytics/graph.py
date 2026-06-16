@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 
-from pydantic_graph import Graph
+from pydantic_graph import BaseNode, Graph, GraphRunContext
 
 from analytics.deps import AnalyticsDeps
 from analytics.state import AnalyticsState
@@ -17,8 +17,8 @@ from analytics.nodes.summary import FormatOutputNode, LLMSummaryNode
 logger = logging.getLogger(__name__)
 
 
-class FetchDataNode:
-    async def run(self, ctx) -> "AnalyzeNode":
+class FetchDataNode(BaseNode[AnalyticsState, AnalyticsDeps]):
+    async def run(self, ctx: GraphRunContext[AnalyticsState, AnalyticsDeps]) -> "AnalyzeNode":
         ticker = ctx.deps.ticker
         period = ctx.deps.period
         mcp = ctx.deps.mcp_client
@@ -33,8 +33,8 @@ class FetchDataNode:
         return AnalyzeNode()
 
 
-class AnalyzeNode:
-    async def run(self, ctx) -> FormatOutputNode:
+class AnalyzeNode(BaseNode[AnalyticsState, AnalyticsDeps]):
+    async def run(self, ctx: GraphRunContext[AnalyticsState, AnalyticsDeps]) -> FormatOutputNode:
         trend, forecast, stats, anomalies, charts = await asyncio.gather(
             _detect_trends(ctx.state.price_data),
             _run_forecast(ctx.state.price_data),

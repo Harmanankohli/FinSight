@@ -81,8 +81,8 @@ async def fetch_ddg_news(ticker: str, company_name: str, limit: int = 10) -> lis
         loop = asyncio.get_running_loop()
 
         def _search():
-            with DDGS() as ddgs:
-                return list(ddgs.news(query, max_results=limit, region="us-en"))
+            ddgs = DDGS(headers={"Accept-Language": "en-US,en;q=0.9"})
+            return list(ddgs.news(query, max_results=limit, region="us-en"))
 
         await _NEWS_LIMITER.acquire()
         results = await loop.run_in_executor(None, _search)

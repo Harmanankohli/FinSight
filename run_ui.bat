@@ -1,5 +1,6 @@
 @echo off
 cd /d "%~dp0"
+set "FINRIGHT_SRC=%~dp0src"
 
 echo Starting FinSight services (AG-UI mode)...
 echo.
@@ -25,32 +26,32 @@ start "LM Studio Server" cmd /k "lms server start"
 timeout /t 5 /nobreak >nul
 
 :: ── MCP Server (:8010) ───────────────────────────────────────────────────────
-start "FinSight MCP" cmd /k "uv run python -m uvicorn mcp_tools.finsight_server:get_app --host 0.0.0.0 --port 8010 --log-level info"
+start "FinSight MCP" cmd /k "set "PYTHONPATH=%FINRIGHT_SRC%" && uv run python -m uvicorn mcp_tools.finsight_server:get_app --host 0.0.0.0 --port 8010 --log-level info"
 timeout /t 3 /nobreak >nul
 
 :: ── RAG Agent (:8002) ────────────────────────────────────────────────────────
-start "FinSight RAG" cmd /k "uv run python -m uvicorn financial_rag.server:app --host 0.0.0.0 --port 8002 --log-level info"
+start "FinSight RAG" cmd /k "set "PYTHONPATH=%FINRIGHT_SRC%" && uv run python -m uvicorn financial_rag.server:app --host 0.0.0.0 --port 8002 --log-level info"
 timeout /t 3 /nobreak >nul
 
 :: ── Quant Agent (:8003) ──────────────────────────────────────────────────────
-start "FinSight Quant" cmd /k "uv run python -m uvicorn quant.server:app --host 0.0.0.0 --port 8003 --log-level info"
+start "FinSight Quant" cmd /k "set "PYTHONPATH=%FINRIGHT_SRC%" && uv run python -m uvicorn quant.server:app --host 0.0.0.0 --port 8003 --log-level info"
 timeout /t 3 /nobreak >nul
 
 :: ── Market Context Agent (:8004) ─────────────────────────────────────────────
-start "FinSight Market Context" cmd /k "uv run python -m uvicorn market_context.server:app --host 0.0.0.0 --port 8004 --log-level info"
+start "FinSight Market Context" cmd /k "set "PYTHONPATH=%FINRIGHT_SRC%" && uv run python -m uvicorn market_context.server:app --host 0.0.0.0 --port 8004 --log-level info"
 timeout /t 3 /nobreak >nul
 
 :: ── Analytics Agent (:8005) ──────────────────────────────────────────────────
-start "FinSight Analytics" cmd /k "uv run python -m uvicorn analytics.server:app --host 0.0.0.0 --port 8005 --log-level info"
+start "FinSight Analytics" cmd /k "set "PYTHONPATH=%FINRIGHT_SRC%" && uv run python -m uvicorn analytics.server:app --host 0.0.0.0 --port 8005 --log-level info"
 timeout /t 3 /nobreak >nul
 
 :: ── Reviewer Agent (:8006) ───────────────────────────────────────────────────
-start "FinSight Reviewer" cmd /k "uv run python -m uvicorn reviewer.server:app --host 0.0.0.0 --port 8006 --log-level info"
+start "FinSight Reviewer" cmd /k "set "PYTHONPATH=%FINRIGHT_SRC%" && uv run python -m uvicorn reviewer.server:app --host 0.0.0.0 --port 8006 --log-level info"
 timeout /t 3 /nobreak >nul
 
 :: ── Orchestrator A2A + AG-UI bridge (:8001) ──────────────────────────────────
 :: Runs src/orchestrator/main.py — exposes /a2a, /a2a-agui, /api/*, /health
-start "FinSight Orchestrator" cmd /k "uv run python -m orchestrator.main"
+start "FinSight Orchestrator" cmd /k "set "PYTHONPATH=%FINRIGHT_SRC%" && uv run python -m orchestrator.main"
 timeout /t 5 /nobreak >nul
 
 :: ── Next.js UI (:3000) ───────────────────────────────────────────────────────

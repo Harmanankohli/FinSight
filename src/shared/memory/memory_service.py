@@ -68,9 +68,9 @@ class SQLiteMemoryService(BaseMemoryService):
                 )
 
                 await conn.execute(
-                    """INSERT INTO memory_entries
-                       (id, user_id, session_id, content_json, metadata_json, search_text, created_at)  # noqa: E501
-                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    "INSERT INTO memory_entries"
+                    " (id, user_id, session_id, content_json, metadata_json, search_text, created_at)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (
                         entry_id,
                         session.user_id,
@@ -124,9 +124,9 @@ class SQLiteMemoryService(BaseMemoryService):
                 )
 
                 await conn.execute(
-                    """INSERT INTO memory_entries
-                       (id, user_id, session_id, content_json, metadata_json, search_text, created_at)  # noqa: E501
-                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    "INSERT INTO memory_entries"
+                    " (id, user_id, session_id, content_json, metadata_json, search_text, created_at)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (
                         entry_id,
                         user_id or "default_user",

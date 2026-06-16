@@ -3,7 +3,8 @@ import logging
 
 from pydantic_graph import BaseNode, End, GraphRunContext
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel, OpenAIProvider
+from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.providers.openai import OpenAIProvider
 
 from analytics.deps import AnalyticsDeps
 from analytics.state import AnalyticsState

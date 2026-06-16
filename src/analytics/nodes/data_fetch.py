@@ -5,16 +5,17 @@ logger = logging.getLogger(__name__)
 
 async def _fetch_prices(mcp_client, ticker: str, period: str) -> dict:
     try:
+        import json
+
         result = await mcp_client.call_tool_by_name(
             "get_prices", {"ticker": ticker, "period": period, "interval": "1d"}
         )
-        content = result.get("content", [])
         data = {}
-        for item in content:
-            if isinstance(item, dict) and "text" in item:
+        if hasattr(result, "content"):
+            for item in result.content:
+                txt = item.text if hasattr(item, "text") else str(item)
                 try:
-                    import json
-                    data = json.loads(item["text"])
+                    data = json.loads(txt)
                 except (json.JSONDecodeError, TypeError):
                     continue
         raw = data if isinstance(data, dict) else {}
@@ -42,15 +43,16 @@ async def _fetch_prices(mcp_client, ticker: str, period: str) -> dict:
 
 async def _fetch_fundamentals(mcp_client, ticker: str) -> dict:
     try:
+        import json
+
         result = await mcp_client.call_tool_by_name(
             "get_financials", {"ticker": ticker}
         )
-        content = result.get("content", [])
-        for item in content:
-            if isinstance(item, dict) and "text" in item:
+        if hasattr(result, "content"):
+            for item in result.content:
+                txt = item.text if hasattr(item, "text") else str(item)
                 try:
-                    import json
-                    return json.loads(item["text"])
+                    return json.loads(txt)
                 except (json.JSONDecodeError, TypeError):
                     continue
         return {}

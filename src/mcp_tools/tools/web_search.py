@@ -35,11 +35,16 @@ async def _web_search_uncached(query: str, max_results: int, time_filter: str) -
         loop = asyncio.get_running_loop()
 
         def _search():
-            with DDGS() as ddgs:
-                kwargs = {"keywords": query, "max_results": max_results, "region": "us-en"}
-                if time_filter and time_filter != "none":
-                    kwargs["timelimit"] = time_filter
-                return list(ddgs.text(**kwargs))
+            ddgs = DDGS(headers={"Accept-Language": "en-US,en;q=0.9"})
+            kwargs = {
+                "keywords": query,
+                "max_results": max_results,
+                "region": "us-en",
+                "backend": "html",
+            }
+            if time_filter and time_filter != "none":
+                kwargs["timelimit"] = time_filter
+            return list(ddgs.text(**kwargs))
 
         await _WEB_SEARCH_LIMITER.acquire()
         raw_results = await loop.run_in_executor(None, _search)
