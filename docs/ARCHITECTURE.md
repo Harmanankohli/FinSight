@@ -229,13 +229,15 @@ Each file is < 400 lines. The `__init__.py` re-exports all node functions throug
 
 ### Quant Agent — LangGraph Fan-In Topology
 
-The quant agent's LangGraph state machine required three fixes in v1.33-1.34 to handle concurrent fan-in writes:
+The quant agent's LangGraph state machine required fixes across multiple versions to handle concurrent fan-in writes:
 
 - **Annotated reducers** (`src/quant/state.py`): State keys written by multiple nodes (`metrics`, `reasoning`, `recommendation`, `stress_test_result`, `dcf_error`) use `Annotated[type, reducer]` — `_merge_dict`, `_last_str`, `_last_nonnull`. Without reducers, LangGraph raises `INVALID_CONCURRENT_GRAPH_UPDATE` when two nodes write to the same key in the same checkpoint step.
 
 - **Diamond dependency removed** (`src/quant/graph.py`): The direct `fetch_fundamentals ? format_output` edge was removed. `fetch_fundamentals` already fans into `peer_comparison_node` which fans into `format_output` — the direct edge created a diamond pattern where `format_output` triggered twice in the same step.
 
 - **Passthrough keys removed** (`src/quant/nodes.py`): `format_output_node` was returning copies of state keys (`positioning`, `dcf_valuation`, `correlation_matrix`, `fundamentals`) that other nodes already wrote. Now only emits `recommendation`, `reasoning`, `metrics`, and `stress_test_result` — only what it actually computes.
+
+- **Data-readiness guard on `llm_summary_node`** (`src/quant/nodes/summary.py`, v2.5): The 5-way fan-in at `format_output` causes LangGraph to fire `format_output` (and consequently `llm_summary`) multiple times as predecessors complete in different supersteps — resulting in 4 sequential LLM calls (~78s) instead of 1. `llm_summary_node` now checks that all predecessor branches (`metrics`, `reasoning`, `recommendation`, `fundamentals`) have written their data before firing the LLM call. Skipped invocations return `{}` silently.
 
 ### Market Context Agent (CrewAI)
 
@@ -467,7 +469,7 @@ The Langfuse client uses `is_default_export_span` to filter out noisy A2A intern
 |---|---|---|---|
 | Orchestrator | `orchestrator` | GoogleADKInstrumentor, HTTPXClientInstrumentor | `orchestrator-execute` span, per-sub-agent latency spans |
 | RAG Agent | `rag_agent` | LlamaIndexInstrumentor | `rag-agent-stream` span |
-| Quant Agent | `quant_agent` | StarletteInstrumentor, **LangChainInstrumentor** | `quant-agent-stream` span + CallbackHandler for LangGraph nodes |
+| Quant Agent | `quant_agent` | StarletteInstrumentor | `quant-agent-stream` span + CallbackHandler for LangGraph nodes |
 | Market Context Agent | `market_context_agent` | CrewAIInstrumentor, StarletteInstrumentor | `market-context-agent-stream` span |
 | MCP Server | `mcp_server` | — | `@observe()` on individual tools |
 
@@ -767,16 +769,15 @@ All databases are stored under the `db/` folder at the project root — the enti
 
 ## Report Generation
 
-Report generation is a separate subsystem in `src/shared/reports/` package (split from the monolithic `src/shared/report_generator.py` in v1.41) that produces three output formats (PPTX, DOCX, HTML) from the same shared data extraction pipeline. It is invoked via HTTP API routes in `src/orchestrator/api_routes.py`.
+Report generation is a separate subsystem in `src/shared/reports/` package (split from the monolithic `src/shared/report_generator.py` in v1.41) that produces two output formats (HTML, PDF) from the same shared data extraction pipeline. It is invoked via HTTP API routes in `src/orchestrator/api_routes.py`.
 
 ```
 shared/reports/
-  +-- __init__.py        # public API re-exports generate_pptx/docx/html
-  +-- deck_model.py      # DeckData dataclass with 16+ typed fields
-  +-- extraction.py      # _extract_deck_data() pipeline with robust regex
-  +-- pptx_renderer.py   # 9 slide builder functions + _SlidesHelper
-  +-- docx_renderer.py   # DOCX-specific rendering preserving Word structure
-  +-- html_renderer.py   # Jinja2 template rendering with deck-stage.js
+  ├── __init__.py        # public API re-exports generate_html/pdf
+  ├── deck_model.py      # DeckData dataclass with 16+ typed fields
+  ├── extraction.py      # _extract_deck_data() pipeline with robust regex + Pydantic models
+  ├── playwright_export.py # Playwright-based PDF export (A4 portrait)
+  └── html_renderer.py   # Jinja2 template rendering (scrollable page)
 ```
 
 Back-compat shim `src/shared/report_generator.py` was removed in v2.0 (Phase 3.5).
@@ -785,9 +786,8 @@ Back-compat shim `src/shared/report_generator.py` was removed in v2.0 (Phase 3.5
 
 | Route | Method | Format | Description |
 |---|---|---|---|
-| `/api/reports/ticker/{symbol}/latest/{format}` | GET | pptx, docx, html | Generate report for ticker's latest brief |
-| `/api/reports/{brief_id}/{format}` | GET | pptx, docx, html | Generate report from a specific brief by ID |
-| `/api/reports/stream/{brief_id}` | GET | SSE | Stream deck-stage.js HTML as Server-Sent Events |
+| `/api/reports/ticker/{symbol}/latest/{format}` | GET | html, pdf | Generate report for ticker's latest brief |
+| `/api/reports/{brief_id}/{format}` | GET | html, pdf | Generate report from a specific brief by ID |
 
 Route ordering is significant: `/ticker/{symbol}/latest/{format}` must be declared before `/{brief_id}/{format}` in the Starlette route list. Otherwise `/{brief_id}` captures `"ticker"` and `{format}` captures `"{symbol}"`.
 
@@ -796,67 +796,42 @@ Route ordering is significant: `/ticker/{symbol}/latest/{format}` must be declar
 ```
 HTTP Request ? api_routes.py handler
   ? _load_brief_data(brief_id_or_symbol)  — loads from TickerMemory
-  ? generate_pptx / generate_docx / generate_html
-    ? _extract_deck_data(brief)  — shared pipeline
+  ? generate_html / generate_pdf_async
+    ? _extract_deck_data(brief)  — shared pipeline (Pydantic models)
       +-- _extract_metric(deck, "sharpe_ratio")   ? 1.45
       +-- _extract_recommendation(brief)           ? "BUY"
       +-- _extract_scorecards(metrics)             ? Momentum, RSI scorecards
       +-- _extract_advanced_scorecard(metrics)     ? VaR, beta, volatility
       +-- _extract_fundamentals(metrics)           ? PE, ROE, margins
       +-- _extract_executive_sections(brief)       ? [Price Target, Thesis, Recommendation]
+      +-- _populate_from_agent_outputs(brief)      ? Pydantic model parsing
       +-- _extract_holdings(metrics)               ? portfolio table
-    ? format-specific generator
+    ? format-specific generator (HTML scrollable page or A4 PDF)
 ```
 
 ### Format-Specific Generators
 
-**PPTX** (`generate_pptx`):
-- Tries Playwright first (`generate_pptx_async`): renders HTML slides via deck-stage web component, screenshots each slide, assembles into PPTX
-- Falls back to python-pptx if Playwright unavailable
-- Instantiates `_SlidesHelper(prs, deck_data, style, charts)` — a namespace class holding shared state
-- Calls 9 slide builder methods in order:
-  1. `_add_title_slide()` — ticker, company, date
-  2. `_add_executive_summary()` — Price Target, Thesis, Recommendation sections
-  3. `_add_scorecard()` — Momentum (RSI, MACD, SMA50/200) + RSI classification
-  4. `_add_metrics_slide()` — Sharpe, volatility, VaR, beta with color thresholds
-  5. `_add_advanced_metrics_slide()` — alpha, Treynor, Sortino, max drawdown
-  6. `_add_analysis_slide()` — analyst consensus, short interest, earnings surprise
-  7. `_add_fundamentals_slide()` — PE, ROE, margins, D/E table
-  8. `_add_holdings_slide()` — portfolio composition table
-  9. `_add_disclaimer_slide()` — required legal disclaimer
-- Each method creates one `Slide`, populates shapes, and applies `_style` (color scheme, font sizes)
-- Uses python-pptx for `.pptx` output with `Content-Type: application/vnd.openxmlformats-officedocument.presentationml.presentation`
-
-**DOCX** (`generate_docx`):
-- Builds sections sequentially using python-docx
-- Title section ? Scorecard tables ? Metrics section ? Analysis section ? Fundamentals table ? Holdings table ? Disclaimer
-- Uses `_add_table_to_doc()` helper for uniform table formatting
-- Returns `Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document`
-
 **HTML** (`generate_html`):
 - Uses `_get_jinja_env()` — lazy-loaded `Jinja2` `Environment` with `FileSystemLoader("shared/templates/")`
-- Renders `investment_deck.html` template, which:
-  - Extends `base.html` for full-page layout with CSS
-  - Emits deck-stage.js web component structure
-  - Each slide section becomes a `<section data-slide>` inside `<deck-stage>` custom element
-- `deck-stage.js` web component:
-  - Shows one slide at a time (`display: block` / `display: none`)
-  - Keyboard navigation: ArrowLeft (previous), ArrowRight (next)
-  - `connectedCallback()` hides all sections except the first
-- Full HTML includes CSS styles, deck-stage.js inline, and `<deck-stage>` wrapper
+- Renders `investment_deck.html` template as a full scrollable page (v2.5 replaced the slide deck format):
+  - Sticky PDF download bar at top, responsive layout
+  - Section-based layout with `break-inside-avoid` for PDF print CSS
+  - All sections rendered conditionally; empty-data sections are omitted
+- Full HTML includes CSS styles and is self-contained with zero external dependencies
 - Returns `text/html` with `Content-Type: text/html`
 
 **PDF** (`generate_pdf_async`):
-- Uses Playwright in print-mode (`page.pdf()`) to render the HTML template as PDF
+- Uses Playwright in print-mode (`page.pdf()`) to render the scrollable HTML as A4 portrait
+- Print CSS: cover page, section breaks, conclusion back page
+- Margins: 18mm top, 16mm right, 20mm bottom, 16mm left
 - Falls back to HTML download when Playwright is unavailable
 - Returns `Content-Type: application/pdf`
 
 ### Playwright Export (`src/shared/reports/playwright_export.py`)
 
-- `html_to_pptx(html_content, output_path)`: Launches headless Chromium, renders HTML in deck-stage web component, screenshots each slide via `page.evaluate("() => deck.getSlides()")`, assembles screenshots into PPTX using python-pptx
-- `html_to_pdf(html_content, output_path)`: Launches headless Chromium, renders HTML, calls `page.pdf()` with print media type
-- Both functions use `asyncio.new_event_loop()` on Windows to avoid ProactorEventLoop incompatibility with Playwright's subprocess management
-- Graceful fallback: when Playwright is not installed or Chromium is unavailable, functions log a warning and return empty bytes, allowing the caller to fall back to legacy generators
+- `html_to_pdf(html_content, output_path)`: Launches headless Chromium, renders scrollable HTML, calls `page.pdf()` with A4 portrait dimensions and print media type. Margins: 18/16/20/16mm.
+- Uses `asyncio.new_event_loop()` on Windows to avoid ProactorEventLoop incompatibility with Playwright's subprocess management
+- Graceful fallback: when Playwright is not installed or Chromium is unavailable, functions log a warning and return raw HTML bytes, allowing the caller to serve HTML directly
 
 ### Agent Output Capture
 
@@ -877,11 +852,9 @@ This enables `_populate_from_agent_outputs()` in the extraction pipeline to buil
 | Component | File | Purpose |
 |---|---|---|
 | `_extract_deck_data()` | `src/shared/reports/extraction.py` | Shared extraction pipeline — returns `DeckData` dataclass |
-| `_populate_from_agent_outputs()` | `src/shared/reports/extraction.py` | Extracts report data from structured agent responses |
+| `_populate_from_agent_outputs()` | `src/shared/reports/extraction.py` | Extracts report data from structured agent responses (Pydantic models) |
+| `_truncate_at_sentence()` | `src/shared/reports/extraction.py` | Sentence-aware truncation for executive summary and market narrative |
 | `_rsi_status()` | `src/shared/reports/extraction.py` | Classifies RSI (Overbought/Bullish/Neutral/Oversold) |
-| `_SlidesHelper` | `src/shared/reports/pptx_renderer.py` | PPTX namespace class — shared state + 9 slide builders |
 | `_get_jinja_env()` | `src/shared/reports/html_renderer.py` | Lazy-loaded Jinja2 environment for HTML templates |
-| `html_to_pptx()` | `src/shared/reports/playwright_export.py` | Playwright screenshot-based HTML → PPTX export |
-| `html_to_pdf()` | `src/shared/reports/playwright_export.py` | Playwright print-mode HTML → PDF export |
-| `investment_deck.html` | `src/shared/templates/` | HTML template with slide blocks |
-| `deck-stage.js` | `src/shared/templates/` | Web component for interactive slide navigation |
+| `html_to_pdf()` | `src/shared/reports/playwright_export.py` | Playwright print-mode HTML → A4 PDF export |
+| `investment_deck.html` | `src/shared/templates/` | Scrollable HTML page template (replaced slide deck in v2.5) |

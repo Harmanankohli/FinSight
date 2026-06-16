@@ -211,20 +211,18 @@ GET /api/reports/{brief_id}/{format}
 
 | Endpoint | Parameters | Returns |
 |---|---|---|
-| `/api/reports/ticker/{symbol}/latest/{format}` | `format`: `pptx`, `docx`, `html`, or `pdf` | Binary file download or HTML string |
-| `/api/reports/{brief_id}/{format}` | `format`: `pptx`, `docx`, `html`, or `pdf` | Binary file download or HTML string for specified brief |
+| `/api/reports/ticker/{symbol}/latest/{format}` | `format`: `html` or `pdf` | HTML page or PDF file |
+| `/api/reports/{brief_id}/{format}` | `format`: `html` or `pdf` | HTML page or PDF file for specified brief |
 
 **Response headers**:
 
 ```
-Content-Type: application/vnd.openxmlformats-officedocument.presentationml.presentation (PPTX)
-              application/vnd.openxmlformats-officedocument.wordprocessingml.document (DOCX)
-              text/html (HTML)
+Content-Type: text/html (HTML)
               application/pdf (PDF)
-Content-Disposition: attachment; filename="FinSight_{ticker}_{date}.{format}" (PPTX/DOCX/PDF)
+Content-Disposition: attachment; filename="FinSight_{ticker}_{date}.pdf" (PDF only)
 ```
 
-**Report format endpoints** are served via `generate_pptx()`, `generate_docx()`, `generate_html()`, and `generate_pdf_async()` in the `src/shared/reports/` package (split from `src/shared/report_generator.py` in v1.41; the monolithic shim was removed in v2.0). PPTX generation now tries Playwright first (screenshot-based) before falling back to python-pptx. The HTML format uses a Jinja2 template (`src/shared/templates/investment_deck.html`) with an embedded `deck-stage.js` web component for slide navigation. All formats share a common `_extract_deck_data()` extraction pipeline in `src/shared/reports/extraction.py`, which can also consume structured agent outputs via `_populate_from_agent_outputs()`.
+**Report format endpoints** are served via `generate_html()` and `generate_pdf_async()` in the `src/shared/reports/` package (split from `src/shared/report_generator.py` in v1.41; the monolithic shim was removed in v2.0). PPTX and DOCX renderers were removed in v2.5 — the HTML scrollable page replaced the slide deck format. The HTML format uses a Jinja2 template (`src/shared/templates/investment_deck.html`) as a full scrollable page. PDF uses Playwright to render the same HTML as A4 portrait. All formats share a common `_extract_deck_data()` extraction pipeline in `src/shared/reports/extraction.py` with Pydantic agent output models, which can also consume structured agent outputs via `_populate_from_agent_outputs()`.
 
 ---
 

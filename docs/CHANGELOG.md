@@ -1,5 +1,43 @@
 # Changelog
 
+## v2.5 — Pydantic Agent Models, Scrollable HTML Reports, Fan-In Fix, AG-UI Eval Hook (9664a84–5b57c3e)
+
+### Pydantic Output Models for All Agents (f543de8)
+
+- **`src/shared/agent_models.py` (new, 258 lines)**: Typed Pydantic models at every agent boundary replacing ~220 lines of fragile `.get()`/regex extraction chains. Models: `QuantAgentOutput`, `MarketContextOutput`, `RAGAgentOutput`. Fixes zeroed KPI chips (fundamentals fallback), raw JSON narrative from CrewAI (`output_pydantic`), and DCF key mismatch (`intrinsic_value` vs `fair_value`). Validated path falls back to legacy dict extraction for old briefs without agent output metadata.
+- **`src/shared/reports/extraction.py`**: `_populate_from_agent_outputs()` now uses typed model parsing via `model_validate()` with `mode="json"`. Falls back to legacy dict extraction when `extra_data` is missing or malformed.
+- **`src/quant/graph.py`**: Quant agent graph output now validated through `QuantAgentOutput` model before returning to orchestrator.
+- **`src/market_context/crew.py`**: CrewAI crew now uses `output_pydantic=MarketContextOutput` to enforce structured JSON output from the LLM instead of relying on prose parsing.
+- **`src/financial_rag/index_manager.py`**: RAG agent output validated through `RAGAgentOutput` model.
+
+### Scrollable HTML Report & A4 PDF (fe405d0)
+
+- **Template replaced** (`src/shared/templates/investment_deck.html`): The deck-stage slide presentation template replaced with a full scrollable HTML page using the same design theme. Sticky PDF download bar, responsive layout, section break-inside-avoid.
+- **PDF generation** (`src/shared/reports/playwright_export.py`): Playwright renders A4 portrait with 18/16/20/16mm margins. Print CSS: cover page, section breaks, conclusion back page.
+- **Frontend simplified** (`src/web/nextjs-app/app/research/page.tsx`): PPTX and DOCX download options removed. HTML + PDF only.
+- **Extraction limit increased** (`src/shared/reports/extraction.py`): Executive summary limit raised from 1200 to 4000 chars for the scrollable format.
+
+### AG-UI Bridge Eval Hook & Sentence-Aware Truncation (24d0807)
+
+- **Missing eval hook** (`src/orchestrator/agui_bridge.py`): `_stream` now calls `score_response()` and `_release_sub_agent_evals()` after synthesis. Previously evals only ran through the A2A executor and ADK Web paths — the AG-UI bridge (used by CopilotKit frontend) silently skipped all runtime scoring.
+- **Sentence-aware truncation** (`src/shared/reports/extraction.py`): New `_truncate_at_sentence(text, max_chars)` prevents mid-word cuts in executive summary and market narrative fields. Truncates at the last sentence boundary before `max_chars`.
+- **Debug logging** (`src/market_context/crew.py`): Added structured debug logging for CrewAI crew output parsing, including raw output type and length.
+
+### CrewAI Future Annotations Fix & seed_user.py (47f2a7d)
+
+- **`from __future__ import annotations` removed** (`src/shared/agent_models.py`): CrewAI's `generate_model_description` reads `__annotations__` directly; `from __future__ import annotations` stringifies them, causing `AttributeError` on `field_type.__name__` for generic types like `list[str]`.
+- **`src/seed_user.py` (new)**: Script for creating test login credentials with Argon2 hashing. Used by CI and manual testing.
+
+### Quant Fan-In Redundant LLM Fix (9664a84)
+
+- **Data-readiness guard** (`src/quant/nodes/summary.py`): `llm_summary_node` now checks that all predecessor branches (`metrics`, `reasoning`, `recommendation`, `fundamentals`) have written their data before firing the LLM call. The 5-way fan-in at `format_output` caused LangGraph to fire `format_output` (and consequently `llm_summary`) multiple times as predecessors completed in different supersteps — resulting in 4 sequential LLM calls (~78s) instead of 1.
+- **Duplicate LangChainInstrumentor removed** (`src/shared/observability.py`): The quant agent's auto-instrumentation was doubling every span because the executor already passes a Langfuse `CallbackHandler` into LangGraph. Removed the redundant `LangChainInstrumentor().instrument()` call.
+
+### Case-Insensitive Username Matching (5b57c3e)
+
+- **Username normalization** (`src/shared/memory/user_store.py`): Usernames normalized to lowercase at creation and lookup. Login now accepts any casing (e.g. "Admin" matches "admin").
+- **Test isolation fix** (`src/shared/memory/user_store.py`): `_schema_v4_ensured` flag now reset between tests to prevent cross-test contamination.
+
 ## v2.4 — Auth Public Endpoints, ADK Web Discovery Fix, RAG Filing Source Switch (d84a3cc–274d4b5)
 
 ### Agent Discovery in ADK Web Mode (d84a3cc)

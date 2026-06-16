@@ -187,15 +187,14 @@ GET /api/reports/ticker/{symbol}/latest/{format}</code></pre>
 <p><strong>Route ordering</strong>: The <code>/ticker/{symbol}/latest/{format}</code> route is registered before the generic <code>/{brief_id}/{format}</code> catch-all to prevent shadowing.</p>
 <table>
 <tr><th>Endpoint</th><th>Parameters</th><th>Returns</th></tr>
-<tr><td><code>/api/reports/{brief_id}/{format}</code></td><td><code>format</code>: <code>pptx</code>, <code>docx</code>, or <code>html</code></td><td>Binary file (PPTX/DOCX) or HTML page</td></tr>
-<tr><td><code>/api/reports/ticker/{symbol}/latest/{format}</code></td><td><code>format</code>: <code>pptx</code>, <code>docx</code>, or <code>html</code></td><td>Most recent brief as PPTX, DOCX, or HTML</td></tr>
+<tr><td><code>/api/reports/{brief_id}/{format}</code></td><td><code>format</code>: <code>html</code> or <code>pdf</code></td><td>HTML page or PDF file</td></tr>
+<tr><td><code>/api/reports/ticker/{symbol}/latest/{format}</code></td><td><code>format</code>: <code>html</code> or <code>pdf</code></td><td>Most recent brief as HTML or PDF</td></tr>
 </table>
 <p><strong>Response headers</strong>:</p>
-<pre><code>Content-Type: application/vnd.openxmlformats-officedocument.presentationml.presentation (pptx)
-              application/vnd.openxmlformats-officedocument.wordprocessingml.document (docx)
-              text/html (html)
-Content-Disposition: attachment; filename="FinSight_{ticker}_{date}.{format}"  (pptx/docx only)</code></pre>
-<p>The HTML format produces a fully self-contained, zero-dependency file rendered via Jinja2 (<code>shared/templates/investment_deck.html</code> + inlined <code>deck-stage.js</code>). All 9 slides are rendered conditionally; empty-data slides are omitted.</p>
+<pre><code>Content-Type: text/html (html)
+              application/pdf (pdf)
+Content-Disposition: attachment; filename="FinSight_{ticker}_{date}.pdf"  (pdf only)</code></pre>
+<p>The HTML format produces a fully self-contained scrollable page rendered via Jinja2 (<code>shared/templates/investment_deck.html</code>). All sections are rendered conditionally; empty-data sections are omitted. The PDF format uses Playwright to render the same HTML as A4 portrait with print-optimized CSS.</p>
 
 <hr>
 

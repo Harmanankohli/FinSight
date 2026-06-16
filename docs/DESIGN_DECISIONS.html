@@ -2808,7 +2808,143 @@ src/
 </table>
 <p><strong>Key takeaway</strong>: The project tried 7+ model/provider combinations. Each switch was driven by a specific failure mode (speed, tool-calling reliability, parallel function support). The current combination (LM Studio + qwen3-30b-a3b as default, configurable via .env) gives the best balance of speed and reliability.</p>
 
+<h2>Scrollable HTML Report Replacing Slide Deck (v2.5)</h2>
+
+<h3>Why replace the deck-stage slide presentation?</h3>
+<p>The original deck-stage web component (<code>&lt;deck-stage&gt;</code> + <code>deck-stage.js</code>) rendered reports as an interactive slide deck with keyboard navigation. While visually polished, this format had several practical problems:</p>
+<ol>
+<li><strong>PDF export was poor</strong>: Playwright screenshots of individual slides produced a multi-page PDF with no print-optimized CSS, no cover page, and no section breaks. Each slide was a fixed-aspect-ratio screenshot rather than reflowable content.</li>
+<li><strong>Mobile unfriendly</strong>: The slide deck format required horizontal scrolling on narrow viewports. Each slide was locked to a fixed aspect ratio.</li>
+<li><strong>Print unfriendly</strong>: Users who wanted a hard copy had to screenshot each slide individually.</li>
+</ol>
+
+<h3>Solution</h3>
+<p>Replace the slide presentation with a full scrollable HTML page using the same design theme. The new template:</p>
+<ul>
+<li>Renders all sections vertically as a single scrollable page</li>
+<li>Uses CSS <code>break-inside-avoid</code> for section boundaries that respect page breaks</li>
+<li>Includes a sticky PDF download bar at the top</li>
+<li>Is responsive across viewport widths</li>
+<li>Produces a properly paginated A4 portrait PDF via Playwright's <code>page.pdf()</code> with explicit margins (18/16/20/16mm)</li>
+</ul>
+<p><strong>Tradeoff</strong>: Lost the interactive slide-by-slide navigation (arrow keys, single-slide focus). Gained: better PDF output, better print support, mobile responsiveness, simpler template maintenance.</p>
+
+<h2>Data-Readiness Guard on <code>llm_summary_node</code> (v2.5)</h2>
+
+<h3>Why was <code>llm_summary_node</code> firing multiple times?</h3>
+<p>The quant agent's LangGraph has a 5-way fan-in: <code>fetch_prices</code>, <code>fetch_fundamentals</code>, <code>options_flow</code>, <code>insider_signals</code>, and <code>analyst_positioning</code> all converge at <code>format_output</code>. LangGraph processes node executions in "supersteps" &mdash; when predecessors complete in different supersteps, <code>format_output</code> fires once per incoming predecessor. Since <code>llm_summary</code> is the only successor of <code>format_output</code>, it also fired multiple times.</p>
+<p>Result: 4 sequential LLM calls (~78 seconds) instead of 1, with only the last one's output used.</p>
+
+<h3>Solution</h3>
+<p>Add a data-readiness guard at the top of <code>llm_summary_node</code>: check that all predecessor branches (<code>metrics</code>, <code>reasoning</code>, <code>recommendation</code>, <code>fundamentals</code>) have written non-empty data. If any are missing, skip the LLM call and return <code>{}</code>. This ensures the LLM fires exactly once when all data is available.</p>
+<p><strong>Why a guard instead of LangGraph conditional edges?</strong> Conditional edges add graph complexity and make the topology harder to reason about. A guard check inside the node is 5 lines of code and doesn't change the graph structure.</p>
+
+<h2>Case-Insensitive Username Matching (v2.5)</h2>
+
+<h3>Why normalize usernames to lowercase?</h3>
+<p>The user store used case-sensitive string comparison for username lookup. A user created as &ldquo;Admin&rdquo; could not log in with &ldquo;admin&rdquo; &mdash; the Argon2 hash comparison failed because the lookup key differed. This is a common UX footgun &mdash; users don't remember the exact casing they used during registration.</p>
+
+<h3>Solution</h3>
+<p>Normalize usernames to lowercase at both creation and lookup time. <code>user_store.py</code> calls <code>.lower()</code> on the username before hashing and before querying. The login route passes the normalized username to <code>authenticate_user()</code>.</p>
+<p><strong>Why not enforce a casing policy instead?</strong> Normalizing silently is more forgiving. Telling a user &ldquo;username must be all lowercase&rdquo; is extra friction with no security benefit. Case-insensitive usernames are standard practice (GitHub, Gmail, etc.).</p>
+
+<h2>CrewAI Future Annotations Incompatibility (v2.5)</h3>
+
+<h3>Why remove <code>from __future__ import annotations</code>?</h3>
+<p>CrewAI&rsquo;s <code>generate_model_description()</code> introspects Pydantic model fields by reading <code>cls.__annotations__</code> directly and calling <code>field_type.__name__</code>. The <code>from __future__ import annotations</code> import causes Python to store annotations as strings (PEP 563) instead of actual type objects. When CrewAI calls <code>field_type.__name__</code> on a string like <code>&ldquo;list[str]&rdquo;</code>, it raises <code>AttributeError: &#39;str&#39; object has no attribute &#39;__name__&#39;</code>.</p>
+
+<h3>Solution</h3>
+<p>Remove <code>from __future__ import annotations</code> from <code>src/shared/agent_models.py</code>. The file is imported by CrewAI&rsquo;s agent creation path, so it must use runtime-resolvable annotations. This is the only file in the project that needs this constraint &mdash; other files can use future annotations freely.</p>
+
 <hr>
+
+<h2>Quant Fan-In Data-Readiness Guard</h2>
+
+<h3>Problem</h3>
+<p>The 5-way fan-in at <code>format_output</code> causes LangGraph to fire <code>format_output</code> (and consequently <code>llm_summary</code>) multiple times as predecessors complete in different supersteps. With 5 predecessor branches (fetch_prices, fetch_fundamentals, options_flow, insider_signals, analyst_positioning), LangGraph may schedule <code>format_output</code> after each branch completes rather than waiting for all 5. This results in 4 sequential LLM calls (~78s) instead of 1.</p>
+
+<h3>Solution</h3>
+<p><strong>Data-readiness guard in <code>llm_summary_node</code></strong> (<code>src/quant/nodes/summary.py</code>): Before firing the LLM call, check that all predecessor branches have written their data by verifying that <code>metrics</code>, <code>reasoning</code>, <code>recommendation</code>, and <code>fundamentals</code> are all non-empty in state. If any are missing, return <code>{}</code> silently &mdash; the next invocation (when more predecessors have completed) will have the full data.</p>
+
+<h3>Why not fix this at the LangGraph topology level?</h3>
+<p>LangGraph's scheduling of fan-in nodes is an implementation detail that depends on checkpoint ordering and runtime concurrency. The diamond dependency fix (v1.33) reduced but did not eliminate the issue &mdash; with 5 predecessors, the probability of partial completion triggering duplicate <code>format_output</code> invocations is non-trivial. The data-readiness guard is a defensive check that works regardless of LangGraph's scheduling behavior.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; Zero wasted LLM calls &mdash; guard skips invocation when data is incomplete</li>
+<li>&check; Silent skip &mdash; returns <code>{}</code>, no error logging for expected partial firings</li>
+<li>&check; Backward compatible &mdash; full-data invocations proceed normally</li>
+<li>&check; Also removed duplicate LangChainInstrumentor auto-instrumentation from quant agent</li>
+</ul>
+
+<h2>Scrollable HTML Report Replacing Slide Deck</h2>
+
+<h3>Problem</h3>
+<p>The HTML report template used <code>&lt;deck-stage&gt;</code> custom element with JavaScript-based slide navigation (one slide at a time, keyboard arrows). PDF export rendered this as a static print of a single slide &mdash; not a multi-page document. Users wanted a scrollable HTML page for reading and a properly paginated A4 PDF for sharing.</p>
+
+<h3>Solution</h3>
+<p>Replace the deck-stage slide presentation with a full scrollable HTML page in <code>investment_deck.html</code>. The template now renders all sections vertically with CSS <code>break-inside-avoid</code> for PDF print. Playwright renders the same HTML as A4 portrait with print-optimized CSS (cover page, section breaks, conclusion back page). PPTX and DOCX download options removed from the frontend &mdash; HTML + PDF only.</p>
+
+<h3>Why remove PPTX/DOCX?</h3>
+<p>PPTX required either Playwright screenshot-based rendering (fragile, slow) or python-pptx (limited formatting). DOCX had similar limitations. The scrollable HTML page with PDF export covers both use cases: interactive reading (HTML) and print-friendly sharing (PDF). The extraction pipeline now focuses on two formats instead of four.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; Scrollable HTML &mdash; responsive, self-contained, zero JavaScript navigation</li>
+<li>&check; A4 PDF &mdash; properly paginated with cover page and section breaks</li>
+<li>&check; Executive summary limit raised from 1200 to 4000 chars for scrollable format</li>
+<li>&check; Frontend simplified &mdash; two download buttons instead of four</li>
+</ul>
+
+<h2>Case-Insensitive Username Matching</h2>
+
+<h3>Problem</h3>
+<p>Usernames were stored and compared case-sensitively. A user who created account &ldquo;admin&rdquo; could not log in with &ldquo;Admin&rdquo; or &ldquo;ADMIN&rdquo;. While technically correct, this is poor UX &mdash; users rarely remember exact casing of their usernames.</p>
+
+<h3>Solution</h3>
+<p>Normalize usernames to lowercase at creation (<code>seed_user.py</code>) and lookup (<code>user_store.py</code>). The <code>get_user()</code> and <code>create_user()</code> functions now call <code>username.lower()</code> before any database operation. Login accepts any casing &mdash; &ldquo;Admin&rdquo; matches &ldquo;admin&rdquo;.</p>
+
+<h3>Why lowercase instead of case-insensitive comparison?</h3>
+<p>Lowercase normalization at the boundary (creation + lookup) is simpler and more robust than case-insensitive comparison at every query site. A single <code>username.lower()</code> at the entry points guarantees all downstream code works with canonical lowercase form.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; Login accepts any casing &mdash; better UX, no security impact</li>
+<li>&check; Single normalization point &mdash; creation + lookup, not scattered across queries</li>
+<li>&check; Test isolation fix &mdash; <code>_schema_v4_ensured</code> flag reset between tests</li>
+</ul>
+
+<h2>AG-UI Bridge Eval Hook</h2>
+
+<h3>Problem</h3>
+<p>The AG-UI bridge (<code>src/orchestrator/agui_bridge.py</code>) is the primary endpoint for the CopilotKit frontend. When the bridge's <code>_stream</code> method processed a query, it never called <code>score_response()</code> or <code>_release_sub_agent_evals()</code>. Runtime RAGAS evaluation only ran through the A2A executor and ADK Web paths &mdash; the most common user-facing path (CopilotKit) silently skipped all quality scoring.</p>
+
+<h3>Solution</h3>
+<p>Add eval hook to <code>_stream</code>: after synthesis completes, fire <code>score_response()</code> and <code>_release_sub_agent_evals()</code> as background tasks, matching the A2A executor pattern. Also add <code>_truncate_at_sentence()</code> for sentence-aware truncation of executive summary and market narrative fields &mdash; prevents mid-word cuts in report extraction.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; All three execution paths now fire eval &mdash; A2A, ADK Web, and AG-UI bridge</li>
+<li>&check; Sentence-aware truncation &mdash; cleaner report fields</li>
+<li>&check; Debug logging added to Market Context crew output parsing</li>
+</ul>
+
+<h2>Pydantic Agent Output Models</h2>
+
+<h3>Problem</h3>
+<p>Agent outputs were extracted using ~220 lines of fragile <code>.get()</code> chains and regex patterns. This caused: zeroed KPI chips (fundamentals fallback returned <code>{}</code> instead of <code>None</code>), raw JSON narrative from CrewAI (<code>output_pydantic</code> not enforced), and DCF key mismatch (<code>intrinsic_value</code> vs <code>fair_value</code> in different agent outputs).</p>
+
+<h3>Solution</h3>
+<p>Typed Pydantic models at every agent boundary in <code>src/shared/agent_models.py</code>: <code>QuantAgentOutput</code>, <code>MarketContextOutput</code>, <code>RAGAgentOutput</code>. Each agent validates its output through its model before returning. The extraction pipeline uses <code>model_validate(mode="json")</code> with fallback to legacy dict extraction for old briefs without agent output metadata.</p>
+
+<h3>Key properties</h3>
+<ul>
+<li>&check; Type-safe output extraction &mdash; no more <code>.get("key", {}).get("subkey", [])</code></li>
+<li>&check; Fixes three classes of extraction bugs in one change</li>
+<li>&check; Backward compatible &mdash; validated path falls back to legacy for old briefs</li>
+<li>&check; CrewAI <code>output_pydantic</code> enforced &mdash; structured JSON from LLM, not prose</li>
+</ul>
+
 <p style="font-size:.85rem;color:#888"><a href="index.html">Back to docs hub</a></p>
 </div>
 </body>

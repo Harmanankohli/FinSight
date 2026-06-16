@@ -38,7 +38,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 
 <h1>Test Coverage</h1>
 
-<p><strong>~251 test functions (~317 parametrized cases) across 28 test files + offline evaluation driver. v1.39 added DOCX/HTML/PPTX regression tests. Phase 0 added 45 characterization tests (4 files). Phase 3 added auth contract tests (3 files). Phase R added corpus regression harness (1 file). v2.2 added agent output extraction tests (1 file).</strong></p>
+<p><strong>~260 test functions (~330 parametrized cases) across 28 test files + offline evaluation driver. v2.2 added agent output extraction tests. v2.5 added test isolation fixes and auth route test updates for case-insensitive usernames.</strong></p>
 
 <h2>Running Tests</h2>
 <pre><code>pytest                          # all unit tests
@@ -106,7 +106,7 @@ pytest -m "not external"        # exclude tests that need external services</cod
 &crarr;       &crarr; test_ticker_memory.py        # 7 &mdash; store/get_latest, flip detection
 &crarr;       &crarr; test_save_brief_persists_synthesis.py  # 2 &mdash; synthesis wins, rationale fallback</code></pre>
 
-<p><strong>Total: ~300 parametrized test cases across 27 test files.</strong></p>
+<p><strong>Total: ~330 parametrized test cases across 28 test files.</strong></p>
 
 <h2>Key Patterns</h2>
 <ul>

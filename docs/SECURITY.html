@@ -182,6 +182,7 @@ openssl rand -hex 16</code></pre>
 <tr><td>v1.43</td><td>Bearer auth middleware for all HTTP endpoints. JWT user auth (Argon2 passwords, refresh token rotation, rate-limited lockout). Service-to-service A2A + MCP authentication. Sandbox container mode (Docker). Audit logging for all sandbox invocations. <code>TRUSTED_PROXIES</code> prevents IP-spoofing lockout bypass.</td></tr>
 <tr><td>v2.0</td><td>Phase 3 auth audit &mdash; contract tests, parametrized auth &times; route matrix, <code>trace_with_user()</code> for Langfuse user_id propagation.</td></tr>
 <tr><td>v2.1</td><td><code>TRUSTED_PROXIES</code> setting closes IP-spoofing lockout bypass (EC5). <code>proxy.ts.disabled</code> &mdash; middleware that forced login redirect even with <code>AUTH_ENABLED=false</code> removed. <code>sub_agent_client.py</code> NameError fix (<code>__get_data_parts</code> &rarr; <code>_get_data_parts</code>). <code>SECURITY.md</code> fixed stale <code>shared/config.py</code> reference.</td></tr>
+<tr><td>v2.5</td><td>Case-insensitive username matching &mdash; usernames normalized to lowercase at creation and lookup, preventing login failures from casing variations. Test isolation fix for <code>_schema_v4_ensured</code> flag.</td></tr>
 </tbody>
 </table>
 

@@ -207,6 +207,7 @@ If you discover a security vulnerability in FinSight:
 | Version | Change |
 |---|---|
 | v2.1 | `TRUSTED_PROXIES` setting closes IP-spoofing lockout bypass (EC5). `proxy.ts.disabled` — middleware that forced login redirect even with `AUTH_ENABLED=false` removed. `sub_agent_client.py` NameError fix (`__get_data_parts` → `_get_data_parts`). `SECURITY.md` fixed stale `shared/config.py` reference. |
+| v2.5 | Case-insensitive username matching — usernames normalized to lowercase at creation and lookup, preventing login failures from casing variations. Test isolation fix for `_schema_v4_ensured` flag. |
 | v2.0 | Phase 3 auth audit — contract tests, parametrized auth × route matrix, `trace_with_user()` for Langfuse user_id propagation. |
 | v1.43 | Bearer auth middleware for all HTTP endpoints. JWT user auth (Argon2 passwords, refresh token rotation, rate-limited lockout). Service-to-service A2A + MCP authentication. Sandbox container mode (Docker). Audit logging for all sandbox invocations. `TRUSTED_PROXIES` prevents IP-spoofing lockout bypass. |
 | v1.41 | Centralized settings (`src/shared/settings.py` pydantic-settings) replaces `src/shared/config.py`. `src/shared/bootstrap.py` centralises process-level side-effects. MCP server module split (reduces attack surface per tool). Non-root USER in Dockerfiles. |

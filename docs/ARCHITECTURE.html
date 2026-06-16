@@ -193,11 +193,12 @@ RAGAgent._ensure_ingested(ticker) [background]:
 <p>Each file is &lt; 400 lines. The <code>__init__.py</code> re-exports all node functions through a clean public API.</p>
 
 <h3>Quant Agent &mdash; LangGraph Fan-In Topology</h3>
-<p>The quant agent's LangGraph state machine required three fixes in v1.33-1.34 to handle concurrent fan-in writes:</p>
+<p>The quant agent&rsquo;s LangGraph state machine required fixes across multiple versions to handle concurrent fan-in writes:</p>
 <ul>
 <li><strong>Annotated reducers</strong> (<code>src/quant/state.py</code>): State keys written by multiple nodes (<code>metrics</code>, <code>reasoning</code>, <code>recommendation</code>, <code>stress_test_result</code>, <code>dcf_error</code>) use <code>Annotated[type, reducer]</code> &mdash; <code>_merge_dict</code>, <code>_last_str</code>, <code>_last_nonnull</code>. Without reducers, LangGraph raises <code>INVALID_CONCURRENT_GRAPH_UPDATE</code> when two nodes write to the same key in the same checkpoint step.</li>
 <li><strong>Diamond dependency removed</strong> (<code>src/quant/graph.py</code>): The direct <code>fetch_fundamentals &rarr; format_output</code> edge was removed. <code>fetch_fundamentals</code> already fans into <code>peer_comparison_node</code> which fans into <code>format_output</code> &mdash; the direct edge created a diamond pattern where <code>format_output</code> triggered twice in the same step.</li>
 <li><strong>Passthrough keys removed</strong> (<code>src/quant/nodes.py</code>): <code>format_output_node</code> was returning copies of state keys (<code>positioning</code>, <code>dcf_valuation</code>, <code>correlation_matrix</code>, <code>fundamentals</code>) that other nodes already wrote. Now only emits <code>recommendation</code>, <code>reasoning</code>, <code>metrics</code>, and <code>stress_test_result</code> &mdash; only what it actually computes.</li>
+<li><strong>Data-readiness guard on <code>llm_summary_node</code></strong> (<code>src/quant/nodes/summary.py</code>, v2.5): The 5-way fan-in at <code>format_output</code> causes LangGraph to fire <code>format_output</code> (and consequently <code>llm_summary</code>) multiple times as predecessors complete in different supersteps &mdash; resulting in 4 sequential LLM calls (~78s) instead of 1. <code>llm_summary_node</code> now checks that all predecessor branches (<code>metrics</code>, <code>reasoning</code>, <code>recommendation</code>, <code>fundamentals</code>) have written their data before firing the LLM call. Skipped invocations return <code>{}</code> silently.</li>
 </ul>
 
 <h3>Market Context Agent (CrewAI)</h3>
@@ -396,7 +397,7 @@ Sub-agents (agent_2, agent_3, agent_4)
 <tr><th>Agent</th><th>Service Name</th><th>Instrumentors</th><th>Manual Spans</th></tr>
 <tr><td>Orchestrator</td><td><code>orchestrator</code></td><td>GoogleADKInstrumentor, HTTPXClientInstrumentor</td><td><code>orchestrator-execute</code> span, per-sub-agent latency spans</td></tr>
 <tr><td>RAG Agent</td><td><code>rag_agent</code></td><td>LlamaIndexInstrumentor</td><td><code>rag-agent-stream</code> span</td></tr>
-<tr><td>Quant Agent</td><td><code>quant_agent</code></td><td>StarletteInstrumentor, <strong>LangChainInstrumentor</strong></td><td><code>quant-agent-stream</code> span + CallbackHandler for LangGraph nodes</td></tr>
+<tr><td>Quant Agent</td><td><code>quant_agent</code></td><td>StarletteInstrumentor</td><td><code>quant-agent-stream</code> span + CallbackHandler for LangGraph nodes</td></tr>
 <tr><td>Market Context Agent</td><td><code>market_context_agent</code></td><td>CrewAIInstrumentor, StarletteInstrumentor</td><td><code>market-context-agent-stream</code> span</td></tr>
 <tr><td>MCP Server</td><td><code>mcp_server</code></td><td>&mdash;</td><td><code>@observe()</code> on individual tools</td></tr>
 </table>
@@ -594,96 +595,65 @@ ingested_filings (edgar_url PRIMARY KEY, ticker, ingested_at)  -- v1.18</pre>
 <p>The LLM does not need to call any tool to persist memory &mdash; auto-save happens on every response.</p>
 
 <h2>Report Generation</h2>
-<p>Report generation is a separate subsystem in <code>src/shared/reports/</code> package (split from the monolithic <code>src/shared/report_generator.py</code> in v1.41) that produces three output formats (PPTX, DOCX, HTML) from the same shared data extraction pipeline. It is invoked via HTTP API routes in <code>src/orchestrator/api_routes.py</code>.</p>
+<p>Report generation is a separate subsystem in <code>src/shared/reports/</code> package (split from the monolithic <code>src/shared/report_generator.py</code> in v1.41) that produces two output formats (HTML, PDF) from the same shared data extraction pipeline. It is invoked via HTTP API routes in <code>src/orchestrator/api_routes.py</code>.</p>
 <pre>shared/reports/
-  &#x251C;&#x2500;&#x2500; __init__.py        # public API re-exports generate_pptx/docx/html
+  &#x251C;&#x2500;&#x2500; __init__.py        # public API re-exports generate_html/pdf
   &#x251C;&#x2500;&#x2500; deck_model.py      # DeckData dataclass with 16+ typed fields
-  &#x251C;&#x2500;&#x2500; extraction.py      # _extract_deck_data() pipeline with robust regex
-  &#x251C;&#x2500;&#x2500; pptx_renderer.py   # 9 slide builder functions + _SlidesHelper
-  &#x251C;&#x2500;&#x2500; docx_renderer.py   # DOCX-specific rendering preserving Word structure
-  &#x2514;&#x2500;&#x2500; html_renderer.py   # Jinja2 template rendering with deck-stage.js</pre>
-<p>Back-compat shim <code>src/shared/report_generator.py</code> was removed in v2.0 (Phase 3.5).</p>
+  &#x251C;&#x2500;&#x2500; extraction.py      # _extract_deck_data() pipeline with robust regex + Pydantic models
+  &#x251C;&#x2500;&#x2500; playwright_export.py # Playwright-based PDF export (A4 portrait)
+  &#x2514;&#x2500;&#x2500; html_renderer.py   # Jinja2 template rendering (scrollable page)</pre>
+<p>Back-compat shim <code>src/shared/report_generator.py</code> was removed in v2.0 (Phase 3.5). PPTX and DOCX renderers were removed in v2.5 &mdash; the HTML scrollable page replaced the slide deck format.</p>
 
 <h3>API Routes</h3>
 <table>
 <tr><th>Route</th><th>Method</th><th>Format</th><th>Description</th></tr>
-<tr><td><code>/api/reports/ticker/{symbol}/latest/{format}</code></td><td>GET</td><td>pptx, docx, html</td><td>Generate report for ticker&rsquo;s latest brief</td></tr>
-<tr><td><code>/api/reports/{brief_id}/{format}</code></td><td>GET</td><td>pptx, docx, html</td><td>Generate report from a specific brief by ID</td></tr>
-<tr><td><code>/api/reports/stream/{brief_id}</code></td><td>GET</td><td>SSE</td><td>Stream deck-stage.js HTML as Server-Sent Events</td></tr>
+<tr><td><code>/api/reports/ticker/{symbol}/latest/{format}</code></td><td>GET</td><td>html, pdf</td><td>Generate report for ticker&rsquo;s latest brief</td></tr>
+<tr><td><code>/api/reports/{brief_id}/{format}</code></td><td>GET</td><td>html, pdf</td><td>Generate report from a specific brief by ID</td></tr>
 </table>
 <p>Route ordering is significant: <code>/ticker/{symbol}/latest/{format}</code> must be declared before <code>/{brief_id}/{format}</code> in the Starlette route list. Otherwise <code>/{brief_id}</code> captures <code>&ldquo;ticker&rdquo;</code> and <code>{format}</code> captures <code>&ldquo;{symbol}&rdquo;</code>.</p>
 
 <h3>Data Flow</h3>
 <pre>HTTP Request &rarr; api_routes.py handler
   &rarr; _load_brief_data(brief_id_or_symbol)  &mdash; loads from TickerMemory
-  &rarr; generate_pptx / generate_docx / generate_html
-    &rarr; _extract_deck_data(brief)  &mdash; shared pipeline
+  &rarr; generate_html / generate_pdf_async
+    &rarr; _extract_deck_data(brief)  &mdash; shared pipeline (Pydantic models)
       &#x251C;&#x2500;&#x2500; _extract_metric(deck, &quot;sharpe_ratio&quot;)   &rarr; 1.45
       &#x251C;&#x2500;&#x2500; _extract_recommendation(brief)           &rarr; &quot;BUY&quot;
       &#x251C;&#x2500;&#x2500; _extract_scorecards(metrics)             &rarr; Momentum, RSI scorecards
       &#x251C;&#x2500;&#x2500; _extract_advanced_scorecard(metrics)     &rarr; VaR, beta, volatility
       &#x251C;&#x2500;&#x2500; _extract_fundamentals(metrics)           &rarr; PE, ROE, margins
       &#x251C;&#x2500;&#x2500; _extract_executive_sections(brief)       &rarr; [Price Target, Thesis, Recommendation]
+      &#x251C;&#x2500;&#x2500; _populate_from_agent_outputs(brief)      &rarr; Pydantic model parsing
       &#x2514;&#x2500;&#x2500; _extract_holdings(metrics)               &rarr; portfolio table
-    &rarr; format-specific generator</pre>
+    &rarr; format-specific generator (HTML scrollable page or A4 PDF)</pre>
 
 <h3>Format-Specific Generators</h3>
-
-<p><strong>PPTX</strong> (<code>generate_pptx</code>):</p>
-<ul>
-<li>Tries Playwright first (<code>generate_pptx_async</code>): renders HTML slides via deck-stage web component, screenshots each slide, assembles into PPTX</li>
-<li>Falls back to python-pptx if Playwright unavailable</li>
-<li>Instantiates <code>_SlidesHelper(prs, deck_data, style, charts)</code> &mdash; a namespace class holding shared state</li>
-<li>Calls 9 slide builder methods in order:</li>
-<li><code>_add_title_slide()</code> &mdash; ticker, company, date</li>
-<li><code>_add_executive_summary()</code> &mdash; Price Target, Thesis, Recommendation sections</li>
-<li><code>_add_scorecard()</code> &mdash; Momentum (RSI, MACD, SMA50/200) + RSI classification</li>
-<li><code>_add_metrics_slide()</code> &mdash; Sharpe, volatility, VaR, beta with color thresholds</li>
-<li><code>_add_advanced_metrics_slide()</code> &mdash; alpha, Treynor, Sortino, max drawdown</li>
-<li><code>_add_analysis_slide()</code> &mdash; analyst consensus, short interest, earnings surprise</li>
-<li><code>_add_fundamentals_slide()</code> &mdash; PE, ROE, margins, D/E table</li>
-<li><code>_add_holdings_slide()</code> &mdash; portfolio composition table</li>
-<li><code>_add_disclaimer_slide()</code> &mdash; required legal disclaimer</li>
-<li>Each method creates one <code>Slide</code>, populates shapes, and applies <code>_style</code> (color scheme, font sizes)</li>
-<li>Uses python-pptx for <code>.pptx</code> output with <code>Content-Type: application/vnd.openxmlformats-officedocument.presentationml.presentation</code></li>
-</ul>
-
-<p><strong>DOCX</strong> (<code>generate_docx</code>):</p>
-<ul>
-<li>Builds sections sequentially using python-docx</li>
-<li>Title section &rarr; Scorecard tables &rarr; Metrics section &rarr; Analysis section &rarr; Fundamentals table &rarr; Holdings table &rarr; Disclaimer</li>
-<li>Uses <code>_add_table_to_doc()</code> helper for uniform table formatting</li>
-<li>Returns <code>Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document</code></li>
-</ul>
 
 <p><strong>HTML</strong> (<code>generate_html</code>):</p>
 <ul>
 <li>Uses <code>_get_jinja_env()</code> &mdash; lazy-loaded <code>Jinja2</code> <code>Environment</code> with <code>FileSystemLoader(&quot;shared/templates/&quot;)</code></li>
-<li>Renders <code>investment_deck.html</code> template, which:</li>
-<li>Extends <code>base.html</code> for full-page layout with CSS</li>
-<li>Emits deck-stage.js web component structure</li>
-<li>Each slide section becomes a <code>&lt;section data-slide&gt;</code> inside <code>&lt;deck-stage&gt;</code> custom element</li>
-<li><code>deck-stage.js</code> web component:</li>
-<li>Shows one slide at a time (<code>display: block</code> / <code>display: none</code>)</li>
-<li>Keyboard navigation: ArrowLeft (previous), ArrowRight (next)</li>
-<li><code>connectedCallback()</code> hides all sections except the first</li>
-<li>Full HTML includes CSS styles, deck-stage.js inline, and <code>&lt;deck-stage&gt;</code> wrapper</li>
+<li>Renders <code>investment_deck.html</code> template as a full scrollable page (v2.5 replaced the slide deck format):</li>
+<li>Sticky PDF download bar at top, responsive layout</li>
+<li>Section-based layout with <code>break-inside-avoid</code> for PDF print CSS</li>
+<li>All sections rendered conditionally; empty-data sections are omitted</li>
+<li>Full HTML includes CSS styles and is self-contained with zero external dependencies</li>
 <li>Returns <code>text/html</code> with <code>Content-Type: text/html</code></li>
 </ul>
 
 <p><strong>PDF</strong> (<code>generate_pdf_async</code>):</p>
 <ul>
-<li>Uses Playwright in print-mode (<code>page.pdf()</code>) to render the HTML template as PDF</li>
+<li>Uses Playwright in print-mode (<code>page.pdf()</code>) to render the scrollable HTML as A4 portrait</li>
+<li>Print CSS: cover page, section breaks, conclusion back page</li>
+<li>Margins: 18mm top, 16mm right, 20mm bottom, 16mm left</li>
 <li>Falls back to HTML download when Playwright is unavailable</li>
 <li>Returns <code>Content-Type: application/pdf</code></li>
 </ul>
 
 <h3>Playwright Export (<code>src/shared/reports/playwright_export.py</code>)</h3>
 <ul>
-<li><code>html_to_pptx(html_content, output_path)</code>: Launches headless Chromium, renders HTML in deck-stage web component, screenshots each slide via <code>page.evaluate(&quot;() =&gt; deck.getSlides()&quot;)</code>, assembles screenshots into PPTX using python-pptx</li>
-<li><code>html_to_pdf(html_content, output_path)</code>: Launches headless Chromium, renders HTML, calls <code>page.pdf()</code> with print media type</li>
-<li>Both functions use <code>asyncio.new_event_loop()</code> on Windows to avoid ProactorEventLoop incompatibility with Playwright&rsquo;s subprocess management</li>
-<li>Graceful fallback: when Playwright is not installed or Chromium is unavailable, functions log a warning and return empty bytes, allowing the caller to fall back to legacy generators</li>
+<li><code>html_to_pdf(html_content, output_path)</code>: Launches headless Chromium, renders scrollable HTML, calls <code>page.pdf()</code> with A4 portrait dimensions and print media type. Margins: 18/16/20/16mm.</li>
+<li>Uses <code>asyncio.new_event_loop()</code> on Windows to avoid ProactorEventLoop incompatibility with Playwright&rsquo;s subprocess management</li>
+<li>Graceful fallback: when Playwright is not installed or Chromium is unavailable, functions log a warning and return raw HTML bytes, allowing the caller to serve HTML directly</li>
 </ul>
 
 <h3>Agent Output Capture</h3>
@@ -699,14 +669,12 @@ ingested_filings (edgar_url PRIMARY KEY, ticker, ingested_at)  -- v1.18</pre>
 <table>
 <tr><th>Component</th><th>File</th><th>Purpose</th></tr>
 <tr><td><code>_extract_deck_data()</code></td><td><code>src/shared/reports/extraction.py</code></td><td>Shared extraction pipeline &mdash; returns <code>DeckData</code> dataclass</td></tr>
-<tr><td><code>_populate_from_agent_outputs()</code></td><td><code>src/shared/reports/extraction.py</code></td><td>Extracts report data from structured agent responses</td></tr>
+<tr><td><code>_populate_from_agent_outputs()</code></td><td><code>src/shared/reports/extraction.py</code></td><td>Extracts report data from structured agent responses (Pydantic models)</td></tr>
+<tr><td><code>_truncate_at_sentence()</code></td><td><code>src/shared/reports/extraction.py</code></td><td>Sentence-aware truncation for executive summary and market narrative</td></tr>
 <tr><td><code>_rsi_status()</code></td><td><code>src/shared/reports/extraction.py</code></td><td>Classifies RSI (Overbought/Bullish/Neutral/Oversold)</td></tr>
-<tr><td><code>_SlidesHelper</code></td><td><code>src/shared/reports/pptx_renderer.py</code></td><td>PPTX namespace class &mdash; shared state + 9 slide builders</td></tr>
 <tr><td><code>_get_jinja_env()</code></td><td><code>src/shared/reports/html_renderer.py</code></td><td>Lazy-loaded Jinja2 environment for HTML templates</td></tr>
-<tr><td><code>html_to_pptx()</code></td><td><code>src/shared/reports/playwright_export.py</code></td><td>Playwright screenshot-based HTML &rarr; PPTX export</td></tr>
-<tr><td><code>html_to_pdf()</code></td><td><code>src/shared/reports/playwright_export.py</code></td><td>Playwright print-mode HTML &rarr; PDF export</td></tr>
-<tr><td><code>investment_deck.html</code></td><td><code>src/shared/templates/</code></td><td>HTML template with slide blocks</td></tr>
-<tr><td><code>deck-stage.js</code></td><td><code>src/shared/templates/</code></td><td>Web component for interactive slide navigation</td></tr>
+<tr><td><code>html_to_pdf()</code></td><td><code>src/shared/reports/playwright_export.py</code></td><td>Playwright print-mode HTML &rarr; A4 PDF export</td></tr>
+<tr><td><code>investment_deck.html</code></td><td><code>src/shared/templates/</code></td><td>Scrollable HTML page template (replaced slide deck in v2.5)</td></tr>
 </table>
 
 <h3>DeckData Pipeline</h3>
@@ -716,7 +684,9 @@ ingested_filings (edgar_url PRIMARY KEY, ticker, ingested_at)  -- v1.18</pre>
   &rarr; _parse_markdown_sections() &mdash; split text into named sections
   &rarr; _resolve_ticker_info()     &mdash; yfinance lookup for company name, sector, exchange
   &rarr; _enrich_from_markdown()    &mdash; regex extraction of 13+ metrics, 6 scorecard dims, peers
-  &rarr; DeckData                   &mdash; typed dataclass passed to all three generators</pre>
+  &rarr; _populate_from_agent_outputs() &mdash; Pydantic model parsing from extra_data
+  &rarr; _truncate_at_sentence()    &mdash; sentence-aware truncation for summary/narrative fields
+  &rarr; DeckData                   &mdash; typed dataclass passed to all generators</pre>
 
 <h3>Key design points</h3>
 <ul>

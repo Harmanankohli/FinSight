@@ -51,7 +51,7 @@ MemStore("Memory Persistence\nSQLite:\nTickerMemory\nPerformanceTracker\nPortfol
 CacheWrite("Semantic Cache\nChromaDB\nset(query, response,\ndate=today)")
 EvalFire("Background Eval\nRAGAS: 6 metrics\nCircuit breaker\nSHA-256 dedup\nBurst: EVAL_BURST_LIMIT/min\nTimeout: 90s/metric")
 EvalRelease("Sub-Agent Eval Release\nPOST /release-evals\n→ Faithfulness\n→ FactualCorrectness\n→ macro_regime\n→ peer_landscape")
-Output("Final Output\nAG-UI SSE stream\nInvestmentBrief JSON\nOptional PPTX/DOCX/HTML")
+Output("Final Output\nAG-UI SSE stream\nInvestmentBrief JSON\nHTML · PDF")
 MemCtx --> RAG
 MemCtx --> Quant
 MemCtx --> Mkt

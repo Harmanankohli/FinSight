@@ -44,7 +44,9 @@ AGENTS.html
 CLAUDE.md
 graphify-out
 .opencode
+.mimocode
 .claude/
+.dockerignore
 .mcp.json
 
 # Evaluation artifacts

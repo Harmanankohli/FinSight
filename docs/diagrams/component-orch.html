@@ -43,7 +43,7 @@ Synthesis("⑧ LLM Synthesis\nCollect 3 outputs\n→ BUY/HOLD/SELL + confidence"
 OutGuard("⑨ Output Guardrails\n≥50 chars + signal check\nAuto-retry × 3")
 Persist("⑩ Memory Persistence\nTickerMemory + Portfolio\n+ PerformanceTracker")
 EvalFire("⑪ Background Eval\nRAGAS score_response()\nPOST /release-evals")
-ReportGen("⑫ Report Generator\nGET /api/reports/{id}/{fmt}\npptx · docx · html")
+ReportGen("⑫ Report Generator\nGET /api/reports/{id}/{fmt}\nhtml · pdf")
 end
 UI -- "POST" --> A2AEntry
 A2AEntry --> InputGuard

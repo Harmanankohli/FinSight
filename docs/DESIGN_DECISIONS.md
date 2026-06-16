@@ -3323,3 +3323,108 @@ The model selection history is scattered across multiple non-chronological secti
 | v1.36+ | `qwen3-30b-a3b-2507` (default) | LM Studio | ✅ Most tested, reliable tool calling | Code default; local overrides via .env |
 
 **Key takeaway**: The project tried 7+ model/provider combinations. Each switch was driven by a specific failure mode (speed, tool-calling reliability, parallel function support). The current combination (LM Studio + qwen3-30b-a3b as default, configurable via .env) gives the best balance of speed and reliability.
+
+---
+
+## Quant Fan-In Data-Readiness Guard (v2.5)
+
+### Problem
+
+The 5-way fan-in at `format_output` causes LangGraph to fire `format_output` (and consequently `llm_summary`) multiple times as predecessors complete in different supersteps. With 5 predecessor branches (fetch_prices, fetch_fundamentals, options_flow, insider_signals, analyst_positioning), LangGraph may schedule `format_output` after each branch completes rather than waiting for all 5. This results in 4 sequential LLM calls (~78s) instead of 1.
+
+### Solution
+
+Data-readiness guard in `llm_summary_node` (`src/quant/nodes/summary.py`): Before firing the LLM call, check that all predecessor branches have written their data by verifying that `metrics`, `reasoning`, `recommendation`, and `fundamentals` are all non-empty in state. If any are missing, return `{}` silently — the next invocation (when more predecessors have completed) will have the full data.
+
+### Why not fix this at the LangGraph topology level?
+
+LangGraph's scheduling of fan-in nodes is an implementation detail that depends on checkpoint ordering and runtime concurrency. The diamond dependency fix (v1.33) reduced but did not eliminate the issue — with 5 predecessors, the probability of partial completion triggering duplicate `format_output` invocations is non-trivial. The data-readiness guard is a defensive check that works regardless of LangGraph's scheduling behavior.
+
+### Key properties
+
+- ✅ Zero wasted LLM calls — guard skips invocation when data is incomplete
+- ✅ Silent skip — returns `{}`, no error logging for expected partial firings
+- ✅ Backward compatible — full-data invocations proceed normally
+- ✅ Also removed duplicate LangChainInstrumentor auto-instrumentation from quant agent
+
+---
+
+## Scrollable HTML Report Replacing Slide Deck (v2.5)
+
+### Problem
+
+The HTML report template used `<deck-stage>` custom element with JavaScript-based slide navigation (one slide at a time, keyboard arrows). PDF export rendered this as a static print of a single slide — not a multi-page document. Users wanted a scrollable HTML page for reading and a properly paginated A4 PDF for sharing.
+
+### Solution
+
+Replace the deck-stage slide presentation with a full scrollable HTML page in `investment_deck.html`. The template now renders all sections vertically with CSS `break-inside-avoid` for PDF print. Playwright renders the same HTML as A4 portrait with print-optimized CSS (cover page, section breaks, conclusion back page). PPTX and DOCX download options removed from the frontend — HTML + PDF only.
+
+### Why remove PPTX/DOCX?
+
+PPTX required either Playwright screenshot-based rendering (fragile, slow) or python-pptx (limited formatting). DOCX had similar limitations. The scrollable HTML page with PDF export covers both use cases: interactive reading (HTML) and print-friendly sharing (PDF). The extraction pipeline now focuses on two formats instead of four.
+
+### Key properties
+
+- ✅ Scrollable HTML — responsive, self-contained, zero JavaScript navigation
+- ✅ A4 PDF — properly paginated with cover page and section breaks
+- ✅ Executive summary limit raised from 1200 to 4000 chars for scrollable format
+- ✅ Frontend simplified — two download buttons instead of four
+
+---
+
+## Case-Insensitive Username Matching (v2.5)
+
+### Problem
+
+Usernames were stored and compared case-sensitively. A user who created account "admin" could not log in with "Admin" or "ADMIN". While technically correct, this is poor UX — users rarely remember exact casing of their usernames.
+
+### Solution
+
+Normalize usernames to lowercase at creation (`seed_user.py`) and lookup (`user_store.py`). The `get_user()` and `create_user()` functions now call `username.lower()` before any database operation. Login accepts any casing — "Admin" matches "admin".
+
+### Why lowercase instead of case-insensitive comparison?
+
+Lowercase normalization at the boundary (creation + lookup) is simpler and more robust than case-insensitive comparison at every query site. A single `username.lower()` at the entry points guarantees all downstream code works with canonical lowercase form.
+
+### Key properties
+
+- ✅ Login accepts any casing — better UX, no security impact
+- ✅ Single normalization point — creation + lookup, not scattered across queries
+- ✅ Test isolation fix — `_schema_v4_ensured` flag reset between tests
+
+---
+
+## AG-UI Bridge Eval Hook (v2.5)
+
+### Problem
+
+The AG-UI bridge (`src/orchestrator/agui_bridge.py`) is the primary endpoint for the CopilotKit frontend. When the bridge's `_stream` method processed a query, it never called `score_response()` or `_release_sub_agent_evals()`. Runtime RAGAS evaluation only ran through the A2A executor and ADK Web paths — the most common user-facing path (CopilotKit) silently skipped all quality scoring.
+
+### Solution
+
+Add eval hook to `_stream`: after synthesis completes, fire `score_response()` and `_release_sub_agent_evals()` as background tasks, matching the A2A executor pattern. Also add `_truncate_at_sentence()` for sentence-aware truncation of executive summary and market narrative fields — prevents mid-word cuts in report extraction.
+
+### Key properties
+
+- ✅ All three execution paths now fire eval — A2A, ADK Web, and AG-UI bridge
+- ✅ Sentence-aware truncation — cleaner report fields
+- ✅ Debug logging added to Market Context crew output parsing
+
+---
+
+## Pydantic Agent Output Models (v2.5)
+
+### Problem
+
+Agent outputs were extracted using ~220 lines of fragile `.get()` chains and regex patterns. This caused: zeroed KPI chips (fundamentals fallback returned `{}` instead of `None`), raw JSON narrative from CrewAI (`output_pydantic` not enforced), and DCF key mismatch (`intrinsic_value` vs `fair_value` in different agent outputs).
+
+### Solution
+
+Typed Pydantic models at every agent boundary in `src/shared/agent_models.py`: `QuantAgentOutput`, `MarketContextOutput`, `RAGAgentOutput`. Each agent validates its output through its model before returning. The extraction pipeline uses `model_validate(mode="json")` with fallback to legacy dict extraction for old briefs without agent output metadata.
+
+### Key properties
+
+- ✅ Type-safe output extraction — no more `.get("key", {}).get("subkey", [])`
+- ✅ Fixes three classes of extraction bugs in one change
+- ✅ Backward compatible — validated path falls back to legacy for old briefs
+- ✅ CrewAI `output_pydantic` enforced — structured JSON from LLM, not prose

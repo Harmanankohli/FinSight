@@ -294,7 +294,8 @@ QuantAgent._build_response(query):
         &rarr; format_output (8-group weighted voting, sum=1.0)
           (risk_quality 0.15, dcf_value 0.20, fundamental_value 0.13, fundamental_quality 0.12,
            technicals_trend 0.15, technicals_momentum 0.10, peer_positioning 0.10, behavioral 0.05)
-        &rarr; llm_summary (CRITICAL priority queue — enriched 3-4 sentence summary)
+        &rarr; llm_summary (data-readiness guard — skips if predecessors incomplete)
+               (CRITICAL priority queue — enriched 3-4 sentence summary)
       &rarr; if EVAL_ENABLED: defer_eval(score_quant_response, ...) (deferred via shared/eval_gate.py)
       &rarr; return {response_type: "data", content: result, ...}</pre>
 
@@ -362,9 +363,9 @@ MarketContextAgent._build_response(query):
         &#x2502;   &#x2514;&#x2500;&#x2500; Step 3: asyncio.gather(peer financials, peer prices for each peer)
         &#x2514;&#x2500;&#x2500; MarketContextCrew.analyze(ticker, precollected_data)  (CRITICAL priority queue &mdash; crew.kickoff() issues LLM call)
             &#x2514;&#x2500;&#x2500; Single Agent ("Market Context Analyst") &mdash; no crew collaboration, data is pre-collected
-              &rarr; Outputs JSON: narrative, macro_regime, relative_peer_positioning,
-                overall_signal (bullish/bearish/neutral), confidence_score (0-1),
-                key_tailwinds, key_headwinds
+              &rarr; Outputs MarketContextOutput (Pydantic model, v2.5): narrative, macro_regime,
+                relative_peer_positioning, overall_signal (bullish/bearish/neutral),
+                confidence_score (0-1), key_tailwinds, key_headwinds
       &rarr; if EVAL_ENABLED: defer_eval(score_market_context_response, ...) (deferred via shared/eval_gate.py)
       &rarr; return {response_type: "data", content: result, ...}</pre>
 
@@ -398,6 +399,7 @@ MarketContextAgent._build_response(query):
 <tr><td><strong><code>SEC_USER_AGENT</code> env var</strong></td><td>Replaces hardcoded SEC user agent string in MCP server filing requests.</td></tr>
 <tr><td><strong>LLM Priority Queue</strong></td><td><code>LLMPriorityQueue</code> in <code>src/shared/llm_queue.py</code> (process-local, heap-based async semaphore). Three tiers: <code>CRITICAL</code> (quant summary, crew kickoff), <code>NORMAL</code> (warmup ping), <code>LOW</code> (RAGAS eval). Default <code>LLM_MAX_CONCURRENT=2</code>. Prevents eval starvation of production inference.</td></tr>
 <tr><td><strong>Deferred Eval Gate</strong></td><td><code>src/shared/eval_gate.py</code> &mdash; holds sub-agent eval LLM calls until the orchestrator releases them via <code>POST /release-evals</code> after synthesis completes. Prevents 3 sub-agent eval processes from competing with orchestrator synthesis on a single LM Studio instance. Includes 120s safety-net auto-release.</td></tr>
+<tr><td><strong>Pydantic Agent Output Models</strong></td><td><code>src/shared/agent_models.py</code> (v2.5) &mdash; typed models (<code>QuantAgentOutput</code>, <code>MarketContextOutput</code>, <code>RAGAgentOutput</code>) at every agent boundary, replacing ~220 lines of fragile regex/<code>.get()</code> chains. Fixes zeroed KPI chips, raw JSON narrative from CrewAI, and DCF key mismatch. Falls back to legacy dict extraction for old briefs.</td></tr>
 <tr><td><strong><code>SERVICE_AUTH_TOKEN</code></strong></td><td><code>SubAgentClient</code> accepts <code>bearer_token</code> from <code>settings.service_auth_token</code>. When <code>AUTH_ENABLED=true</code>, orchestrator-to-sub-agent A2A requests carry the service bearer token.</td></tr>
 </table>
 
@@ -428,6 +430,7 @@ exception message classification.</td></tr>
 <tr><td><strong>&mdash;</strong></td><td>v2.2</td><td>Agent output capture (structured sub-agent responses stored via <code>extra_data</code> on <code>store_minimal()</code>), Playwright-based HTML&rarr;PPTX/PDF export (<code>src/shared/reports/playwright_export.py</code>), <code>SentimentIntelligence</code> &rarr; <code>MarketContext</code> model rename, ticker extraction hardening (pronouns + holdings word boundaries), stable anonymous user ID cookie, AG-UI bridge per-event timeout, 16 new agent-output extraction tests.</td></tr>
 <tr><td><strong>&mdash;</strong></td><td>v2.3</td><td>Source tree restructure to <code>src/</code> layout. Model rename + field restructure (key_risks&rarr;key_headwinds, etc.).</td></tr>
 <tr><td><strong>&mdash;</strong></td><td>v2.4</td><td>ADK Web UI discovery fix (before_agent_callback), callable instruction, services.py moved. RAG <code>get_financial_filings</code> switch. Auth public endpoints, frontend auth middleware/redirect, service token forwarding.</td></tr>
+<tr><td><strong>&mdash;</strong></td><td>v2.5</td><td>Pydantic output models for all agents (<code>src/shared/agent_models.py</code>), scrollable HTML report + A4 PDF (replaced slide deck), AG-UI bridge eval hook + sentence-aware truncation, quant fan-in data-readiness guard (eliminates redundant LLM calls), CrewAI future annotations fix, case-insensitive username matching, <code>seed_user.py</code> test utility.</td></tr>
 </table>
 
 <hr>

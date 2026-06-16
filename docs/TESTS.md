@@ -1,6 +1,6 @@
 # Test Coverage
 
-**~251 test functions (~317 parametrized cases) across 28 test files + offline evaluation driver. v1.39 added DOCX/HTML/PPTX regression tests. Phase 0 added 45 characterization tests (4 files). Phase 3 added auth contract tests (3 files). Phase R added corpus regression harness (1 file). v2.2 added agent output extraction tests (1 file). All tests now live under `src/tests/`.**
+**~260 test functions (~330 parametrized cases) across 28 test files + offline evaluation driver. v1.39 added DOCX/HTML/PPTX regression tests. Phase 0 added 45 characterization tests (4 files). Phase 3 added auth contract tests (3 files). Phase R added corpus regression harness (1 file). v2.2 added agent output extraction tests (1 file). All tests now live under `src/tests/`.**
 
 ## Running Tests
 
@@ -70,7 +70,7 @@ src/tests/
         ├── test_ticker_memory.py        #   7 - store/get_latest, flip detection
         └── test_save_brief_persists_synthesis.py  # 2 - synthesis wins, rationale fallback
 
-**Total: ~317 parametrized test cases across 28 test files.**
+**Total: ~330 parametrized test cases across 28 test files.**
 ```
 
 ## Key Patterns

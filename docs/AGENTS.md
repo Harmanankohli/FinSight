@@ -277,7 +277,8 @@ QuantAgent._build_response(query):
         ? format_output (8-group weighted voting, sum=1.0)
           (risk_quality 0.15, dcf_value 0.20, fundamental_value 0.13, fundamental_quality 0.12,
            technicals_trend 0.15, technicals_momentum 0.10, peer_positioning 0.10, behavioral 0.05)
-        ? llm_summary (CRITICAL priority queue — enriched 3-4 sentence summary)
+        ? llm_summary (data-readiness guard — skips if predecessors incomplete)
+               (CRITICAL priority queue — enriched 3-4 sentence summary)
       ? if EVAL_ENABLED: defer_eval(score_quant_response, ...) (deferred via shared/eval_gate.py)
       ? return {response_type: "data", content: result, ...}
 ```
@@ -351,7 +352,7 @@ MarketContextAgent._build_response(query):
         —   +-- Step 3: asyncio.gather(peer financials, peer prices for each peer)
         +-- MarketContextCrew.analyze(ticker, precollected_data)  (CRITICAL priority queue — crew.kickoff() issues LLM call)
             +-- Single Agent ("Market Context Analyst") — no crew collaboration, data is pre-collected
-              ? Outputs JSON: narrative, macro_regime, relative_peer_positioning,
+              ? Outputs MarketContextOutput (Pydantic model, v2.5): narrative, macro_regime,
                 overall_signal (bullish/bearish/neutral), confidence_score (0-1),
                 key_tailwinds, key_headwinds
       ? if EVAL_ENABLED: defer_eval(score_market_context_response, ...) (deferred via shared/eval_gate.py)
@@ -391,6 +392,7 @@ All four agents share a common infrastructure layer:
 | **`SEC_USER_AGENT` env var** | Replaces hardcoded SEC user agent string in MCP server filing requests. |
 | **LLM Priority Queue** | `LLMPriorityQueue` in `src/shared/llm_queue.py` (process-local, heap-based async semaphore). Three tiers: `CRITICAL` (quant summary, crew kickoff), `NORMAL` (warmup ping), `LOW` (RAGAS eval). Default `LLM_MAX_CONCURRENT=2`. Prevents eval starvation of production inference. |
 | **Deferred Eval Gate** | `src/shared/eval_gate.py` — holds sub-agent eval LLM calls until the orchestrator releases them via `POST /release-evals` after synthesis completes. Prevents 3 sub-agent eval processes from competing with orchestrator synthesis on a single LM Studio instance. Includes 120s safety-net auto-release. |
+| **Pydantic Agent Output Models** | `src/shared/agent_models.py` (v2.5) — typed models (`QuantAgentOutput`, `MarketContextOutput`, `RAGAgentOutput`) at every agent boundary, replacing ~220 lines of fragile regex/`.get()` chains. Fixes zeroed KPI chips, raw JSON narrative from CrewAI, and DCF key mismatch. Falls back to legacy dict extraction for old briefs. |
 | **`SERVICE_AUTH_TOKEN`** | `SubAgentClient` accepts `bearer_token` from `settings.service_auth_token`. When `AUTH_ENABLED=true`, orchestrator-to-sub-agent A2A requests carry the service bearer token. |
 
 ## Phase Map
@@ -416,3 +418,4 @@ The project evolved through thirteen phases, each adding distinct agent capabili
 | **—** | v2.2 | Agent output capture (structured sub-agent responses stored via `extra_data` on `store_minimal()`), Playwright-based HTML→PPTX/PDF export (`src/shared/reports/playwright_export.py`), `SentimentIntelligence` → `MarketContext` model rename, ticker extraction hardening (pronouns + holdings word boundaries), stable anonymous user ID cookie, AG-UI bridge per-event timeout, 16 new agent-output extraction tests. |
 | **—** | v2.3 | Source tree restructure to `src/` layout. Model rename + field restructure (key_risks→key_headwinds, etc.). |
 | **—** | v2.4 | ADK Web UI discovery fix (before_agent_callback), callable instruction, services.py moved. RAG `get_financial_filings` switch. Auth public endpoints, frontend auth middleware/redirect, service token forwarding. |
+| **—** | v2.5 | Pydantic output models for all agents (`src/shared/agent_models.py`), scrollable HTML report + A4 PDF (replaced slide deck), AG-UI bridge eval hook + sentence-aware truncation, quant fan-in data-readiness guard (eliminates redundant LLM calls), CrewAI future annotations fix, case-insensitive username matching, `seed_user.py` test utility. |
