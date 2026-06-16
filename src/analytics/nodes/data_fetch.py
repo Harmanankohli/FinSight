@@ -18,23 +18,24 @@ async def _fetch_prices(mcp_client, ticker: str, period: str) -> dict:
                     data = json.loads(txt)
                 except (json.JSONDecodeError, TypeError):
                     continue
-        raw = data if isinstance(data, dict) else {}
+        records = data.get("data", []) if isinstance(data, dict) else []
         close_data = {}
         ohlcv_data = []
-        for date_str, row in raw.items():
-            if isinstance(row, dict):
-                close_val = row.get("Close") or row.get("close")
-                if close_val is not None:
-                    close_data[date_str] = float(close_val)
-                ohlcv_row = {
-                    "date": date_str,
-                    "open": float(row.get("Open", row.get("open", 0))),
-                    "high": float(row.get("High", row.get("high", 0))),
-                    "low": float(row.get("Low", row.get("low", 0))),
-                    "close": float(row.get("Close", row.get("close", 0))),
-                    "volume": float(row.get("Volume", row.get("volume", 0))),
-                }
-                ohlcv_data.append(ohlcv_row)
+        for row in records:
+            if not isinstance(row, dict):
+                continue
+            date_str = row.get("Date") or row.get("date", "")
+            close_val = row.get("Close") or row.get("close")
+            if close_val is not None and date_str:
+                close_data[date_str] = float(close_val)
+            ohlcv_data.append({
+                "date": date_str,
+                "open": float(row.get("Open", row.get("open", 0))),
+                "high": float(row.get("High", row.get("high", 0))),
+                "low": float(row.get("Low", row.get("low", 0))),
+                "close": float(row.get("Close", row.get("close", 0))),
+                "volume": float(row.get("Volume", row.get("volume", 0))),
+            })
         return {"close_data": close_data, "ohlcv_data": ohlcv_data}
     except Exception as e:
         logger.warning("Failed to fetch prices for %s: %s", ticker, e)
