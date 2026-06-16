@@ -12,6 +12,7 @@ from .nodes import (
     correlation_node,
     dcf_valuation_node,
     fetch_price_data_node,
+    fetch_web_context_node,
     format_output_node,
     fundamental_analysis_node,
     insider_signals_node,
@@ -74,6 +75,7 @@ class QuantAnalysisGraph:
         builder.add_node("analyst_positioning", analyst_positioning_node)
         builder.add_node("options_flow", options_flow_node)
         builder.add_node("run_insider_signals", insider_signals_node)
+        builder.add_node("web_context", fetch_web_context_node)
         builder.add_node("format_output", format_output_node)
         builder.add_node("llm_summary", llm_summary_node)
 
@@ -82,6 +84,7 @@ class QuantAnalysisGraph:
         builder.add_edge(START, "fetch_fundamentals")
         builder.add_edge(START, "options_flow")
         builder.add_edge(START, "run_insider_signals")
+        builder.add_edge(START, "web_context")
 
         # Price path: fetch_prices → compute + technicals in parallel
         builder.add_edge("fetch_prices", "compute_base_metrics")
@@ -114,6 +117,7 @@ class QuantAnalysisGraph:
         builder.add_edge("analyst_positioning", "format_output")
         builder.add_edge("options_flow", "format_output")
         builder.add_edge("run_insider_signals", "format_output")
+        builder.add_edge("web_context", "format_output")
 
         builder.add_edge("format_output", "llm_summary")
         builder.add_edge("llm_summary", END)
@@ -150,6 +154,7 @@ class QuantAnalysisGraph:
             "options_signals": None,
             "insider_signals": None,
             "positioning": None,
+            "web_context": [],
             "recommendation": "",
             "reasoning": "",
             "mcp_client": mcp_client,

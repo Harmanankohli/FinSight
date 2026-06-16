@@ -218,6 +218,33 @@ async def insider_signals_node(state: QuantAnalysisState) -> dict:
 
 
 @logged()
+async def fetch_web_context_node(state: QuantAnalysisState) -> dict:
+    """Fetches recent analyst/news web context via DuckDuckGo search."""
+    ticker = state["ticker"]
+    mcp = state.get("mcp_client")
+    if not mcp:
+        return {"web_context": []}
+    try:
+        result = await mcp.call_tool_by_name("web_search", {
+            "query": f"{ticker} stock analyst opinion news",
+            "max_results": 5,
+            "time_filter": "w",
+        })
+        if not hasattr(result, "content") or not result.content:
+            return {"web_context": []}
+        raw = result.content[0].text if hasattr(result.content[0], "text") else str(result.content[0])
+        data = json.loads(raw)
+        results_list = [
+            {"title": r.get("title", ""), "snippet": r.get("snippet", "")}
+            for r in (data.get("results") or [])
+        ]
+        return {"web_context": results_list}
+    except Exception as e:
+        logger.warning("Web context fetch failed for %s: %s", ticker, e)
+        return {"web_context": []}
+
+
+@logged()
 async def analyst_positioning_node(state: QuantAnalysisState) -> dict:
     """Extracts analyst consensus, price target upside, and short interest from pre-fetched financials."""  # noqa: E501
     raw_fin = state.get("_financials_raw") or {}

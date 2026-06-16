@@ -10,21 +10,22 @@ from shared.settings import reset_settings_for_tests
 
 
 @pytest_asyncio.fixture(autouse=True)
-async def _clean_env(monkeypatch):
+async def _clean_env(monkeypatch, tmp_path):
     monkeypatch.setenv("AUTH_JWT_SECRETS", "a" * 32)
     monkeypatch.setenv("SERVICE_AUTH_TOKEN", "b" * 16)
     reset_settings_for_tests()
     import shared.memory.store as store_mod
 
-    # Close and reset the DB connection, then delete the DB file
+    # Close any existing DB connection and redirect to a per-test temp DB
     if store_mod._db_conn is not None:
         await store_mod._db_conn.close()
         store_mod._db_conn = None
-    db_path = store_mod.DB_PATH
-    for suffix in ("", "-wal", "-shm"):
-        p = Path(str(db_path) + suffix)
-        if p.exists():
-            p.unlink(missing_ok=True)
+    db_path = tmp_path / "test_users.db"
+    store_mod.DB_PATH = db_path
+    # Pre-open connection to temp path — get_db()'s default arg captures the
+    # original DB_PATH at function definition time, so we must pass explicitly.
+    from shared.memory.store import get_db
+    await get_db(db_path)
     import shared.memory.user_store as us_mod
     us_mod._schema_v4_ensured = False
     yield

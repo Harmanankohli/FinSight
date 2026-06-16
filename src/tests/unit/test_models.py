@@ -30,12 +30,11 @@ def _make_rag(**kw):
     return RAGInsights(
         **{
             "ticker": "AAPL",
-            "revenue_growth_yoy": 0.12,
-            "rd_spend_billions": 3.5,
-            "forward_guidance": "positive",
-            "key_risks": ["competition"],
-            "cited_documents": ["10-K 2024"],
+            "summary": "Strong revenue growth driven by services.",
+            "sources": [{"title": "10-K 2024"}],
+            "relevance_scores": [0.92],
             "confidence_score": 0.85,
+            "context_texts": ["Revenue grew 12% YoY"],
             **kw,
         }
     )
@@ -45,13 +44,8 @@ def _make_quant(**kw):
     return QuantMetrics(
         **{
             "ticker": "AAPL",
-            "sharpe_ratio": 1.5,
-            "annual_volatility": 0.25,
-            "beta": 1.1,
-            "var_95_daily": -0.022,
-            "portfolio_correlation": {"MSFT": 0.7},
-            "quant_signal": "BUY",
-            "quant_confidence": 0.78,
+            "recommendation": "BUY",
+            "reasoning": "Strong risk-adjusted returns.",
             **kw,
         }
     )
@@ -112,12 +106,12 @@ def test_rag_round_trip():
     rag2 = RAGInsights.model_validate(rag.model_dump())
     assert rag2.ticker == rag.ticker
     assert rag2.confidence_score == rag.confidence_score
-    assert rag2.key_risks == rag.key_risks
+    assert rag2.context_texts == rag.context_texts
 
 
-def test_rag_multiple_risks():
-    rag = _make_rag(key_risks=["competition", "regulation", "fx_risk"])
-    assert len(rag.key_risks) == 3
+def test_rag_multiple_context_texts():
+    rag = _make_rag(context_texts=["text1", "text2", "text3"])
+    assert len(rag.context_texts) == 3
 
 
 # ── QuantMetrics ──────────────────────────────────────────────────────────────
@@ -125,17 +119,20 @@ def test_rag_multiple_risks():
 
 def test_quant_optional_fields_default_none():
     quant = _make_quant()
-    assert quant.dcf_intrinsic_value is None
-    assert quant.stress_test_result is None
+    assert quant.dcf_valuation is None
+    assert quant.stress_test is None
 
 
 def test_quant_with_optional_fields():
     quant = _make_quant(
-        dcf_intrinsic_value=185.0,
-        stress_test_result={"cvar_95": -0.03, "var_95": -0.025},
+        dcf_valuation={"intrinsic_value": 185.0, "current_price": 170.0,
+                       "upside_pct": 8.8, "wacc": 0.09, "growth_rate": 0.05,
+                       "terminal_growth": 0.025, "enterprise_value": 2.5e12,
+                       "fcf_used": 1.0e11},
+        stress_test={"cvar_95": -0.03, "var_95": -0.025},
     )
-    assert quant.dcf_intrinsic_value == 185.0
-    assert quant.stress_test_result["cvar_95"] == -0.03
+    assert quant.dcf_valuation.intrinsic_value == 185.0
+    assert quant.stress_test.cvar_95 == -0.03
 
 
 # ── MarketContext ─────────────────────────────────────────────────────
@@ -154,8 +151,8 @@ def test_brief_nested_construction():
     brief = _make_brief()
     assert brief.ticker == "AAPL"
     assert brief.query_context.ticker == "AAPL"
-    assert brief.rag_insights.revenue_growth_yoy == 0.12
-    assert brief.quant_metrics.sharpe_ratio == 1.5
+    assert brief.rag_insights.confidence_score == 0.85
+    assert brief.quant_metrics.recommendation == "BUY"
     assert brief.market_context.overall_signal == "BUY"
 
 

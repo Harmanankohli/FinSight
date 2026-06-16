@@ -1,6 +1,7 @@
 from .data_fetch import (
     analyst_positioning_node,
     fetch_price_data_node,
+    fetch_web_context_node,
     fundamental_analysis_node,
     insider_signals_node,
     options_flow_node,
@@ -17,6 +18,7 @@ __all__ = [
     "correlation_node",
     "dcf_valuation_node",
     "fetch_price_data_node",
+    "fetch_web_context_node",
     "format_output_node",
     "fundamental_analysis_node",
     "insider_signals_node",

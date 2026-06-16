@@ -38,6 +38,17 @@ def _stub_modules():
         )
     for name, mock in stubs.items():
         sys.modules.setdefault(name, mock)
+    # The characterization conftest may have stubbed orchestrator.agent as a
+    # MagicMock. Temporarily remove it so we can import the real save_brief,
+    # then restore the stub so later characterization tests aren't affected.
+    oa = sys.modules.get("orchestrator.agent")
+    if oa is not None and isinstance(oa, MagicMock):
+        del sys.modules["orchestrator.agent"]
+        import orchestrator.agent as _real_mod  # noqa: E402
+        # Graft the real function onto the mock so both paths work
+        oa.save_brief = _real_mod.save_brief
+        oa._synthesis_text_from_context = _real_mod._synthesis_text_from_context
+        sys.modules["orchestrator.agent"] = oa
 
 
 _stub_modules()

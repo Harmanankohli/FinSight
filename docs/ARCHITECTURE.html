@@ -39,7 +39,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <h1>Architecture</h1>
 
 <h2>Overview</h2>
-<p>FinSight is a multi-agent investment research system where four specialized agents communicate via the <strong>Google A2A Protocol</strong> (Agent-to-Agent). The orchestrator (ADK <code>LlmAgent</code>) discovers sub-agents at startup via <code>A2ACardResolver</code>, delegates tasks via two tools (<code>send_message</code>, <code>load_memory</code>), and the LLM routes to all agents in parallel (instructed via system prompt to emit all <code>send_message</code> calls in one assistant turn). Each sub-agent processes tasks internally using its own framework and tools.</p>
+<p>FinSight is a multi-agent investment research system where six specialized agents communicate via the <strong>Google A2A Protocol</strong> (Agent-to-Agent). The orchestrator (ADK <code>LlmAgent</code>) discovers sub-agents at startup via <code>A2ACardResolver</code>, delegates tasks via two tools (<code>send_message</code>, <code>load_memory</code>), and executes a three-phase procedure: <strong>Phase 1</strong> (4 agents in parallel: RAG, Quant, Market Context, Analytics), <strong>Phase 2</strong> (Reviewer cross-validates all outputs), <strong>Phase 3</strong> (synthesis). Each sub-agent processes tasks internally using its own framework and tools.</p>
 
 <h2>Communication Pattern</h2>
 <pre>&#x250C;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2510;
@@ -84,7 +84,7 @@ ADK Web UI (src/orchestrator/services.py fires memory service registration):
 </ul>
 
 <h2>Agent Server Factory (v1.41)</h2>
-<p>All three sub-agent servers (<code>src/financial_rag/server.py</code>, <code>src/quant/server.py</code>, <code>src/market_context/server.py</code>) use <code>build_agent_app()</code> from <code>src/shared/agent_server.py</code>. This shared factory:</p>
+<p>All five sub-agent servers (<code>src/financial_rag/server.py</code>, <code>src/quant/server.py</code>, <code>src/market_context/server.py</code>, <code>src/analytics/server.py</code>, <code>src/reviewer/server.py</code>) use <code>build_agent_app()</code> from <code>src/shared/agent_server.py</code>. This shared factory:</p>
 <ul>
 <li>Creates Starlette app with A2A routes, health check, agent card, and <code>/release-evals</code> endpoint</li>
 <li>Wraps with <code>AuthMiddleware</code> when auth is enabled</li>
@@ -216,6 +216,52 @@ RAGAgent._ensure_ingested(ticker) [background]:
   &rarr; Yields data response</pre>
 <p><strong>Note</strong>: The old Sentiment agent fetched <code>get_news_sentiment</code> and <code>get_company_filings</code>, both redundant with the RAG agent after Phase 1. As of Phase 3, Market Context exclusively owns macro regime analysis and peer landscape positioning.</p>
 
+<h3>Analytics Agent (PydanticAI + pydantic-graph, v2.6)</h3>
+<p>Port <strong>8005</strong>. 4-node linear DAG for technical analytics, forecasting, statistical analysis, and anomaly detection.</p>
+<pre>A2A Request &rarr; DefaultRequestHandler &rarr; GenericAgentExecutor(AnalyticsAgent)
+  &rarr; AnalyticsAgent.stream()
+    &rarr; AnalyticsAgent.analyze(ticker, period="1y")
+      &rarr; pydantic-graph Pipeline (FetchDataNode &rarr; AnalyzeNode &rarr; FormatOutputNode &rarr; LLMSummaryNode)
+
+      FetchDataNode:
+        &rarr; asyncio.gather(get_prices(ticker), get_financials(ticker)) via MCP
+        &rarr; Populates price_data, ohlcv_data, fundamentals_data
+
+      AnalyzeNode (5 parallel functions):
+        &rarr; _detect_trends() &mdash; SMA-20/50/200, EMA-12/26, MACD, golden/death cross, ROC
+        &rarr; _run_forecast() &mdash; Holt-Winters exp. smoothing, 30d forecast, 80% CI, MAPE
+        &rarr; _compute_statistics() &mdash; log returns, skewness, kurtosis, JB test, SPY beta/R2
+        &rarr; _detect_anomalies() &mdash; z-score &gt; 2.5 price, &gt; 3.0 volume, P/E &lt;5 or &gt;100, D/E &gt;5
+        &rarr; _generate_charts() &mdash; candlestick &amp; line chart payloads
+
+      FormatOutputNode:
+        &rarr; Composite signal from trend + forecast + anomaly + statistics votes
+        &rarr; Returns analytics_signal + analytics_confidence
+
+      LLMSummaryNode:
+        &rarr; PydanticAI agent call (CRITICAL priority queue)
+        &rarr; Generates structured narrative with reasoning
+  &rarr; Returns data response</pre>
+
+<h3>Reviewer Agent (OpenAI Agents SDK, v2.6)</h3>
+<p>Port <strong>8006</strong>. Phase 2 cross-validation. Receives all Phase 1 agent outputs as JSON, runs 4 deterministic tools, and produces a review verdict.</p>
+<pre>A2A Request &rarr; DefaultRequestHandler &rarr; GenericAgentExecutor(ReviewerAgent)
+  &rarr; ReviewerAgent.stream()
+    &rarr; Parse JSON payload: {ticker, agent_outputs: {quant, rag, market_context, analytics}}
+    &rarr; OpenAI Agents SDK Runner.run(reviewer_agent, input=prompt)
+      &rarr; Input guardrail: payload_structure_guardrail
+      &rarr; 4 deterministic tools:
+        &rarr; check_contradictions(agent_outputs) &mdash; pairwise contradiction detection
+        &rarr; verify_sources(agent_outputs) &mdash; per-agent internal consistency
+        &rarr; score_confidence(agent_outputs) &mdash; meta_confidence = 0.4*avg_conf + 0.3*agreement + 0.3*data_quality
+        &rarr; validate_recommendation(agent_outputs) &mdash; evidence analysis, evidence_strength
+      &rarr; LLM synthesizes verdict (CRITICAL priority queue)
+      &rarr; Output guardrail: confidence_range_guardrail
+      &rarr; Returns ReviewerAgentOutput
+  &rarr; Returns data response</pre>
+
+<p><strong>No MCP calls</strong>: The Reviewer operates exclusively on already-produced agent outputs. No external data fetching or tool calls beyond the 4 deterministic Python functions.</p>
+
 <h2>Caching Layer</h2>
 <p>Four independent caching tiers reduce latency and external API load:</p>
 
@@ -312,6 +358,8 @@ RAGAgent._ensure_ingested(ticker) [background]:
 <tr><td>A2A &mdash; RAG agent</td><td>600s</td><td><code>asyncio.wait_for</code> in <code>send_message</code></td></tr>
 <tr><td>A2A &mdash; Quant agent</td><td>600s</td><td><code>asyncio.wait_for</code> in <code>send_message</code></td></tr>
 <tr><td>A2A &mdash; Market Context agent</td><td>600s</td><td><code>asyncio.wait_for</code> in <code>send_message</code></td></tr>
+<tr><td>A2A &mdash; Analytics agent</td><td>600s</td><td><code>asyncio.wait_for</code> in <code>send_message</code></td></tr>
+<tr><td>A2A &mdash; Reviewer agent</td><td>300s</td><td><code>asyncio.wait_for</code> in <code>send_message</code></td></tr>
 <tr><td>MCP tool calls</td><td>30s</td><td>MCPClient default</td></tr>
 </table>
 
@@ -334,7 +382,7 @@ RAGAgent._ensure_ingested(ticker) [background]:
 <tr><td><strong>test</strong></td><td><code>pytest tests/unit/ -v</code></td><td>Unit tests with slim deps (no PyTorch/CUDA)</td></tr>
 <tr><td><strong>frontend</strong></td><td><code>npx next lint</code> + <code>npx tsc --noEmit</code></td><td>web/nextjs-app/</td></tr>
 <tr><td><strong>openapi</strong></td><td><code>python scripts/generate_openapi.py --check</code></td><td>docs/openapi.json freshness</td></tr>
-<tr><td><strong>docker</strong></td><td>Docker build for all 5 services (continue-on-error)</td><td>Dockerfiles</td></tr>
+<tr><td><strong>docker</strong></td><td>Docker build for all 7 services (continue-on-error)</td><td>Dockerfiles</td></tr>
 </table>
 <p>Test job uses <code>--no-deps -e .</code> to install only ~15 packages instead of all 293 base deps (avoids PyTorch, CUDA, all agent frameworks). A <code>AUTH_ENABLED={false,true}</code> matrix runs auth contract tests twice.</p>
 
@@ -361,10 +409,12 @@ RAGAgent._ensure_ingested(ticker) [background]:
 <tr><td>RAG (LlamaIndex)</td><td><code>qwen/qwen3-30b-a3b-2507</code></td><td><code>llama-index-llms-openai-like</code></td></tr>
 <tr><td>Quant (LangGraph)</td><td><code>qwen/qwen3-30b-a3b-2507</code></td><td><code>langchain-openai</code></td></tr>
 <tr><td>Market Context (CrewAI)</td><td><code>qwen/qwen3-30b-a3b-2507</code></td><td>CrewLLM (OpenAI-compatible)</td></tr>
+<tr><td>Analytics (PydanticAI)</td><td><code>qwen/qwen3-30b-a3b-2507</code></td><td>PydanticAI <code>OpenAIModel</code></td></tr>
+<tr><td>Reviewer (OpenAI Agents SDK)</td><td><code>qwen/qwen3-30b-a3b-2507</code></td><td>OpenAI Agents SDK <code>OpenAIChatCompletionsModel</code></td></tr>
 </table>
 
 <h2>Observability &amp; Tracing</h2>
-<p>Langfuse provides distributed tracing across all four agent processes. Trace context is propagated through the A2A protocol via text-based injection.</p>
+<p>Langfuse provides distributed tracing across all six agent processes. Trace context is propagated through the A2A protocol via text-based injection.</p>
 
 <h3>Trace Propagation Flow</h3>
 <pre>Orchestrator (orchestrator)
@@ -399,6 +449,8 @@ Sub-agents (agent_2, agent_3, agent_4)
 <tr><td>RAG Agent</td><td><code>rag_agent</code></td><td>LlamaIndexInstrumentor</td><td><code>rag-agent-stream</code> span</td></tr>
 <tr><td>Quant Agent</td><td><code>quant_agent</code></td><td>StarletteInstrumentor</td><td><code>quant-agent-stream</code> span + CallbackHandler for LangGraph nodes</td></tr>
 <tr><td>Market Context Agent</td><td><code>market_context_agent</code></td><td>CrewAIInstrumentor, StarletteInstrumentor</td><td><code>market-context-agent-stream</code> span</td></tr>
+<tr><td>Analytics Agent</td><td><code>analytics_agent</code></td><td>Langfuse <code>@observe()</code></td><td><code>analytics-agent-stream</code> span</td></tr>
+<tr><td>Reviewer Agent</td><td><code>reviewer_agent</code></td><td>Langfuse <code>@observe()</code></td><td><code>reviewer-agent-stream</code> span</td></tr>
 <tr><td>MCP Server</td><td><code>mcp_server</code></td><td>&mdash;</td><td><code>@observe()</code> on individual tools</td></tr>
 </table>
 
@@ -429,13 +481,15 @@ Sub-agents (agent_2, agent_3, agent_4)
 <tr><td>RAG</td><td><code>score_rag_response()</code></td><td>Faithfulness, ContextPrecisionWithoutReference, cross_collection_synthesis</td><td>Faithfulness: prevents hallucinated dates/numbers by verifying claims against retrieved source text. ContextPrecisionWithoutReference: flags retrieval drift &mdash; when RAG returns irrelevant filings, this drops even if Faithfulness passes. cross_collection_synthesis: checks whether response cites sources from &ge;2 collections (sec_filings, news, earnings).</td><td><code>user_input</code>, <code>response</code>, <code>context_texts</code> (ChromaDB nodes)</td></tr>
 <tr><td>Quant</td><td><code>score_quant_response()</code></td><td>FactualCorrectness, signal_explanation_quality, deterministic</td><td>FactualCorrectness: compares LLM summary numbers (Sharpe, VaR, DCF) against actual computed values &mdash; primary failure mode is hallucinated numbers. signal_explanation_quality: scores whether three or more signal groups are explained with specific numeric values. deterministic: zero-LLM schema validator for all 8 signal groups.</td><td><code>user_input</code>, <code>response</code>, <code>quant_result</code> (computed metrics dict)</td></tr>
 <tr><td>Market Context</td><td><code>score_market_context_response()</code></td><td>Faithfulness, macro_regime_analysis, peer_landscape_quality</td><td>Faithfulness: verifies narrative is factually grounded in collected macro and peer data. macro_regime_analysis: scores whether yield curve, VIX, DXY, and sector ETFs are discussed with actual values. peer_landscape_quality: evaluates depth of peer comparison on at least two metrics.</td><td><code>user_input</code>, <code>response</code>, <code>_retrieved_contexts</code> (macro + peer data)</td></tr>
+<tr><td>Analytics</td><td><code>score_analytics_response()</code></td><td>FactualCorrectness, trend_forecast_consistency (rubric), anomaly_disclosure (rubric) + 17 deterministic inline checks</td><td>FactualCorrectness: compares LLM summary metrics (trend strength, MAPE, beta, anomaly count) against computed values. trend_forecast_consistency: whether narrative explains trend + crossover + forecast alignment. anomaly_disclosure: whether detected anomalies are explicitly discussed. deterministic: 17 zero-LLM schema checks (confidence range, signal, trend, forecast, chart, anomaly, statistics validity).</td><td><code>user_input</code>, <code>response</code>, <code>analytics_result</code> (computed metrics dict)</td></tr>
+<tr><td>Reviewer</td><td><code>score_reviewer_response()</code></td><td>FactualCorrectness, contradiction_detection_quality (rubric), confidence_calibration_quality (rubric) + 10+ deterministic inline checks</td><td>FactualCorrectness: compares verdict claims (contradiction count, verification rates, meta-confidence) against tool outputs. contradiction_detection_quality: whether critical contradictions are correctly identified with investment implications. confidence_calibration_quality: whether confidence scores are justified by evidence. deterministic: 10+ zero-LLM schema checks (verdict, contradictions, verification rates, confidence, evidence strength).</td><td><code>user_input</code>, <code>response</code>, <code>reviewer_result</code> (tools output dict)</td></tr>
 </table>
 
 <h3>Per-Metric Streaming</h3>
 <p>Metrics within an agent are run concurrently via <code>asyncio.wait(FIRST_COMPLETED)</code> instead of <code>asyncio.gather</code>. Each metric score is logged and pushed to Langfuse the moment its <code>ascore()</code> finishes &mdash; fast metrics (AnswerRelevancy, DomainSpecificRubrics ~3-5s) appear immediately without waiting for slow metrics (e.g., Faithfulness which runs multiple sequential LLM calls and can take ~180s).</p>
 
 <h3>Client Caching</h3>
-<p><code>_setup_ragas_clients()</code> caches the <code>(InstructorLLM, _STEmbeddings)</code> tuple at module level after the first call. All four agents reuse the cached <code>SentenceTransformer</code> model &mdash; the previous approach loaded a fresh model (~1-2s, ~80MB) on every agent response, multiplying latency by 4 per query.</p>
+<p><code>_setup_ragas_clients()</code> caches the <code>(InstructorLLM, _STEmbeddings)</code> tuple at module level after the first call. All six agents reuse the cached <code>SentenceTransformer</code> model &mdash; the previous approach loaded a fresh model (~1-2s, ~80MB) on every agent response, multiplying latency by 6 per query.</p>
 
 <h3>Error Handling</h3>
 <ul>
@@ -474,6 +528,8 @@ Sub-agents (agent_2, agent_3, agent_4)
 <tr><td>RAG Agent</td><td><code>POST http://localhost:8002/release-evals</code></td><td><code>{"released": N}</code></td></tr>
 <tr><td>Quant Agent</td><td><code>POST http://localhost:8003/release-evals</code></td><td><code>{"released": N}</code></td></tr>
 <tr><td>Market Context Agent</td><td><code>POST http://localhost:8004/release-evals</code></td><td><code>{"released": N}</code></td></tr>
+<tr><td>Analytics Agent</td><td><code>POST http://localhost:8005/release-evals</code></td><td><code>{"released": N}</code></td></tr>
+<tr><td>Reviewer Agent</td><td><code>POST http://localhost:8006/release-evals</code></td><td><code>{"released": N}</code></td></tr>
 </table>
 
 <h2>Memory Layer Architecture</h2>

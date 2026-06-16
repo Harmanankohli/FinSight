@@ -258,6 +258,25 @@ class RAGAgent(BaseAgent):
 
             try:
                 result = await self.query(ticker, query)
+
+                # Augment context_texts with web search results
+                try:
+                    mcp = await get_shared_mcp()
+                    web_res = await mcp.call_tool_by_name("web_search", {
+                        "query": f"{ticker} recent news analysis",
+                        "max_results": 5,
+                        "time_filter": "w",
+                    })
+                    if hasattr(web_res, "content") and web_res.content:
+                        raw = web_res.content[0].text if hasattr(web_res.content[0], "text") else str(web_res.content[0])  # noqa: E501
+                        web_data = json.loads(raw)
+                        for r in (web_data.get("results") or []):
+                            snippet = r.get("snippet", "")
+                            if snippet:
+                                result.setdefault("context_texts", []).append(f"[Web] {r.get('title', '')}: {snippet}")  # noqa: E501
+                except Exception as we:
+                    logger.debug("Web search augmentation failed: %s", we)
+
                 span.update(
                     output={
                         "ticker": ticker,

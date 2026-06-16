@@ -123,7 +123,7 @@ def test_validate_runtime_production_without_auth_raises(monkeypatch):
 
 def test_validate_runtime_auth_enabled_missing_jwt_raises(monkeypatch):
     monkeypatch.setenv("AUTH_ENABLED", "true")
-    monkeypatch.delenv("AUTH_JWT_SECRETS", raising=False)
+    monkeypatch.setenv("AUTH_JWT_SECRETS", "")
     monkeypatch.setenv("SERVICE_AUTH_TOKEN", "a" * 16)
     s = Settings()
     with pytest.raises(EnvironmentError, match="AUTH_JWT_SECRETS"):

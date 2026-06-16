@@ -60,11 +60,33 @@ class MarketContextCrew:
             )
         peer_summary = "\n".join(peer_lines) if peer_lines else "(no peer data)"
 
+        def _fmt_web_results(w: dict | None, label: str) -> str:
+            if not w or not isinstance(w, dict):
+                return ""
+            results = w.get("results") or []
+            if not results:
+                return ""
+            lines = [f"WEB SEARCH — {label}:"]
+            for r in results[:5]:
+                title = r.get("title", "")
+                snippet = r.get("snippet", "")
+                url = r.get("url", "")
+                lines.append(f"- {title}: {snippet} (source: {url})")
+            return "\n".join(lines)
+
+        web_company = _fmt_web_results(data.get("web_context"), "COMPANY CONTEXT")
+        web_macro = _fmt_web_results(data.get("macro_web_context"), "MACRO/SECTOR CONTEXT")
+        web_section = "\n\n".join(p for p in (web_company, web_macro) if p)
+        if len(web_section) > 2000:
+            web_section = web_section[:2000] + "…"
+
         context_data = (
             f"Target: {ticker} ({industry or sector})\n\n"
             f"MACRO REGIME:\n{macro_summary}\n\n"
             f"PEER LANDSCAPE ({len(peers)} peers):\n{peer_summary}"
         )
+        if web_section:
+            context_data += f"\n\n{web_section}"
 
         agent = Agent(
             role="Market Context Analyst",

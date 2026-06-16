@@ -38,7 +38,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 
 <h1>Test Coverage</h1>
 
-<p><strong>~260 test functions (~330 parametrized cases) across 28 test files + offline evaluation driver. v2.2 added agent output extraction tests. v2.5 added test isolation fixes and auth route test updates for case-insensitive usernames.</strong></p>
+<p><strong>~275 test functions (~345 parametrized cases) across 33 test files + offline evaluation driver. v2.2 added agent output extraction tests. v2.5 added test isolation fixes and auth route test updates for case-insensitive usernames. v2.6 added 5 new test files for Analytics Agent, Reviewer Agent, and new agent models.</strong></p>
 
 <h2>Running Tests</h2>
 <pre><code>pytest                          # all unit tests
@@ -93,6 +93,9 @@ pytest -m "not external"        # exclude tests that need external services</cod
 &crarr;   &crarr; test_settings.py                 # Phase 1: pydantic-settings validation
 &crarr;   &crarr; test_deck_data_extraction.py     # 38 &mdash; Phase R: extraction pipeline edge cases
 &crarr;   &crarr; test_agent_outputs_extraction.py # 16 &mdash; v2.2: agent output capture + extraction routing
+&crarr;   &crarr; test_new_agent_models.py         # 4 &mdash; v2.6: AnalyticsAgentOutput + ReviewerAgentOutput model validation
+&crarr;   &crarr; test_analytics_nodes.py          # 10 &mdash; v2.6: Analytics graph node functions (trend, forecast, stats, anomaly, charts) with synthetic data
+&crarr;   &crarr; test_reviewer_tools.py           # 8 &mdash; v2.6: Reviewer deterministic tools (contradiction, verification, confidence, validation)
 &crarr;   &crarr; test_auth_tokens.py              # 132 &mdash; Phase 2: JWT gen, validation, rotation
 &crarr;   &crarr; test_auth_middleware.py          # 189 &mdash; Phase 2: middleware chain, routing
 &crarr;   &crarr; test_auth_routes.py              # 145 &mdash; Phase 2: login/refresh/logout, lockout
@@ -106,7 +109,7 @@ pytest -m "not external"        # exclude tests that need external services</cod
 &crarr;       &crarr; test_ticker_memory.py        # 7 &mdash; store/get_latest, flip detection
 &crarr;       &crarr; test_save_brief_persists_synthesis.py  # 2 &mdash; synthesis wins, rationale fallback</code></pre>
 
-<p><strong>Total: ~330 parametrized test cases across 28 test files.</strong></p>
+<p><strong>Total: ~345 parametrized test cases across 33 test files.</strong></p>
 
 <h2>Key Patterns</h2>
 <ul>
@@ -164,10 +167,12 @@ pytest -m "not external"        # exclude tests that need external services</cod
 </ul>
 
 <h2>Integration Tests</h2>
-<p>9 tests across 2 files, all marked <code>@pytest.mark.integration</code> + <code>@pytest.mark.external</code> &mdash; skipped by default. Run with <code>pytest -m integration</code>:</p>
+<p>13 tests across 4 files, all marked <code>@pytest.mark.integration</code> + <code>@pytest.mark.external</code> &mdash; skipped by default. Run with <code>pytest -m integration</code>:</p>
 <ul>
-<li><code>test_mcp_server_smoke.py</code> (4): Verifies MCP server (port 8010) and agent card endpoints (ports 8002&ndash;8004) are reachable. Requires all services running (<code>run_adk_web.bat</code>).</li>
+<li><code>test_mcp_server_smoke.py</code> (4): Verifies MCP server (port 8010) and agent card endpoints (ports 8002&ndash;8006) are reachable. Requires all services running (<code>run_adk_web.bat</code>).</li>
 <li><code>test_behavioral_signals_e2e.py</code> (5): End-to-end tests for options flow, insider signals, analyst positioning, peer comparison, and Monte Carlo. Requires Quant agent running.</li>
+<li><code>test_analytics_smoke.py</code> (2): Smoke tests for Analytics Agent A2A endpoint and health check. Requires Analytics agent running on port 8005.</li>
+<li><code>test_reviewer_smoke.py</code> (2): Smoke tests for Reviewer Agent A2A endpoint and health check. Requires Reviewer agent running on port 8006.</li>
 </ul>
 
 <h2>Offline Evaluation</h2>

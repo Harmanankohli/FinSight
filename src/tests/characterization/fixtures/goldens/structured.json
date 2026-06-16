@@ -1,5 +1,6 @@
 {
   "analysis_date": "2024-01-15",
+  "charts": [],
   "company_name": "NVDA",
   "confidence": 0.85,
   "disclaimer": "For informational purposes only. Not financial advice.",
@@ -76,16 +77,6 @@
       "Risk Profile",
       "High",
       "moderate"
-    ],
-    [
-      "Analyst Consensus",
-      "Strong Buy",
-      "bullish"
-    ],
-    [
-      "Insider Signal",
-      "Buying",
-      "strong"
     ],
     [
       "Recommendation",

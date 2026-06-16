@@ -8,4 +8,5 @@ from mcp_tools.tools import (
     sandbox,  # noqa: F401
     sentiment,  # noqa: F401
     ticker,  # noqa: F401
+    web_search,  # noqa: F401
 )

@@ -36,6 +36,59 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 
 <h1>Changelog</h1>
 
+<h2>v2.6 &mdash; Analytics Agent (PydanticAI) &amp; Reviewer Agent (OpenAI Agents SDK), Two-Phase Orchestration (53a2cde&ndash;2d0c35e)</h2>
+
+<h3 class="version">Analytics Agent — PydanticAI + pydantic-graph (53a2cde)</h3>
+<ul>
+<li><strong><code>src/analytics/</code> (new, 14 files)</strong>: Fifth sub-agent running on <code>:8005</code>. Framework: PydanticAI with pydantic-graph. 4-node linear DAG: <code>FetchDataNode &rarr; AnalyzeNode &rarr; FormatOutputNode &rarr; LLMSummaryNode</code>.</li>
+<li><strong>FetchDataNode</strong>: Parallel MCP <code>get_prices</code> + <code>get_financials</code>. Populates price/OHLCV/fundamentals state.</li>
+<li><strong>AnalyzeNode</strong>: Five parallel analysis functions &mdash; <code>_detect_trends()</code> (SMA/EMA/MACD crossovers, golden/death cross, ROC momentum), <code>_run_forecast()</code> (Holt-Winters exponential smoothing, 30-day, 80% CI, MAPE), <code>_compute_statistics()</code> (log returns, skewness, kurtosis, Jarque-Bera, SPY beta/R-squared), <code>_detect_anomalies()</code> (z-score &gt; 2.5 price/volume, P/E &lt; 5 or &gt; 100, D/E &gt; 5), <code>_generate_charts()</code> (candlestick + line chart with SMAs).</li>
+<li><strong>FormatOutputNode</strong>: Weighted composite signal from trend + forecast + anomaly + statistics.</li>
+<li><strong>LLMSummaryNode</strong>: PydanticAI agent generates human-readable reasoning (CRITICAL priority queue).</li>
+</ul>
+
+<h3 class="version">Reviewer Agent — OpenAI Agents SDK (53a2cde)</h3>
+<ul>
+<li><strong><code>src/reviewer/</code> (new, 10 files)</strong>: Sixth sub-agent running on <code>:8006</code>. Framework: OpenAI Agents SDK with 4 deterministic tools and input/output guardrails.</li>
+<li><strong><code>check_contradictions</code></strong>: Detects 4 pairwise contradictions between agent outputs (e.g. Quant BUY vs Analytics bearish trend &rarr; high severity).</li>
+<li><strong><code>verify_sources</code></strong>: Internal consistency checks per agent &mdash; Sharpe range, VaR range, DCF upside, confidence bounds, signal validity, forecast plausibility, chart structure.</li>
+<li><strong><code>score_confidence</code></strong>: Computes meta-confidence from per-agent confidence scores, agreement fraction, and data quality fraction. Formula: <code>0.4 * avg_agent_conf + 0.3 * agreement + 0.3 * data_quality</code>.</li>
+<li><strong><code>validate_recommendation</code></strong>: Gathers supporting/contradicting evidence for the quant recommendation across all agents. Computes evidence strength (strong/moderate/weak).</li>
+<li><strong>Input guardrail</strong> (<code>payload_structure_guardrail</code>): Validates JSON payload has <code>ticker</code> and <code>agent_outputs</code> keys.</li>
+<li><strong>Output guardrail</strong> (<code>confidence_range_guardrail</code>): Trips if <code>review_confidence</code> outside [0, 1].</li>
+</ul>
+
+<h3 class="version">Orchestrator Two-Phase Execution (53a2cde)</h3>
+<ul>
+<li><strong>Phase 1 &mdash; Parallel (4 agents)</strong>: LLM must call <code>send_message</code> for RAG + Quant + Market Context + Analytics in a single assistant response. All 4 fire in parallel via ADK tool-calling.</li>
+<li><strong>Phase 2 &mdash; Review</strong>: After all Phase 1 responses, call <code>send_message</code> for the Reviewer Agent with a JSON payload of all Phase 1 outputs.</li>
+<li><strong>Phase 3 &mdash; Synthesis</strong>: Synthesize all 6 agent outputs including the reviewer&rsquo;s cross-validation into a BUY/HOLD/SELL recommendation.</li>
+<li><strong><code>_agent_responses[session_id]</code></strong>: Captures sub-agent outputs keyed by resolved agent name. <code>_store_memory()</code> maps analytics and reviewer responses into <code>brief_json</code> alongside existing <code>rag_response</code>, <code>quant_response</code>, <code>sentiment_response</code>.</li>
+<li><strong>Discovery seed URLs</strong>: Updated to include ports 8005 and 8006. All 6 agents discovered at startup, all visible in the callable instruction provider.</li>
+</ul>
+
+<h3 class="version">Runtime Eval Scoring for Analytics &amp; Reviewer (2d0c35e)</h3>
+<ul>
+<li><strong><code>score_analytics_deterministic()</code></strong>: 17 zero-LLM schema checks &mdash; confidence in [0,1], signal validity, trend direction/strength/crossover, MAPE range, forecast dates future, chart shape, anomaly severity, distribution validity, Jarque-Bera p-value range.</li>
+<li><strong><code>score_reviewer_deterministic()</code></strong>: 10+ zero-LLM schema checks &mdash; confidence in [0,1], verdict validity, contradiction structure, verification rates, confidence breakdown scores, evidence strength.</li>
+<li><strong><code>score_analytics_response()</code></strong>: RAGAS metrics &mdash; FactualCorrectness (computed metrics vs LLM summary), trend_forecast_consistency (rubric), anomaly_disclosure (rubric).</li>
+<li><strong><code>score_reviewer_response()</code></strong>: RAGAS metrics &mdash; FactualCorrectness, contradiction_detection_quality (rubric), confidence_calibration_quality (rubric).</li>
+<li><strong>Both executors</strong> follow the same pattern: deterministic runs inline (zero LLM cost), RAGAS fires via <code>defer_eval()</code> when <code>EVAL_ENABLED=true</code>.</li>
+</ul>
+
+<h3 class="version">Infrastructure (53a2cde)</h3>
+<ul>
+<li><strong><code>agent_cards/analytics_agent.json</code> + <code>reviewer_agent.json</code></strong>: A2A agent cards with skills, security schemas, and service bearer auth requirements.</li>
+<li><strong><code>docker-compose.yml</code></strong>: Two new services (<code>analytics</code>, <code>reviewer</code>) with Dockerfiles, environment config, healthchecks, and port mappings.</li>
+<li><strong>Per-agent timeouts</strong>: Analytics = 600s, Reviewer = 300s (shorter — single LLM call + 4 deterministic tools).</li>
+<li><strong>Shared settings</strong>: <code>agent_port_analytics</code> (8005), <code>agent_port_reviewer</code> (8006), per-agent timeout env vars, <code>LLM_SUMMARY_MODEL</code>, <code>LLM_EVAL_MODEL</code>.</li>
+<li><strong>Observability</strong>: <code>init_instrumentation("analytics")</code> and <code>init_instrumentation("reviewer")</code> with Langfuse tracing.</li>
+<li><strong>Startup/stop scripts</strong>: <code>run_adk_web.bat</code>, <code>stop_servers.bat</code>, <code>stop_ui.bat</code> updated to manage both new agents.</li>
+<li><strong>Frontend health monitoring</strong> (<code>src/web/nextjs-app/app/operator/page.tsx</code>): Added health cards for Analytics and Reviewer agents. <code>/api/health</code> route supports <code>analytics</code> and <code>reviewer</code> service names.</li>
+<li><strong>Test coverage</strong>: <code>test_analytics_smoke.py</code>, <code>test_reviewer_smoke.py</code> (integration/smoke), <code>test_analytics_nodes.py</code>, <code>test_reviewer_tools.py</code>, <code>test_new_agent_models.py</code> (unit). Existing <code>test_parallel_dispatch.py</code> updated for 6-agent dispatch.</li>
+<li><strong>Chore</strong> (e0f2308): <code>.mimocode/</code> and <code>.dockerignore</code> removed from git tracking (already gitignored).</li>
+</ul>
+
 <h2>v2.5 &mdash; Pydantic Agent Models, Scrollable HTML Reports, Fan-In Fix, AG-UI Eval Hook (9664a84&ndash;5b57c3e)</h2>
 
 <h3 class="version">Pydantic Output Models for All Agents (f543de8)</h3>

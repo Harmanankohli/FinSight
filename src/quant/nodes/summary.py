@@ -348,6 +348,7 @@ async def llm_summary_node(state: QuantAnalysisState) -> dict:
     peer_comp = state.get("peer_comparison") or {}
     positioning = state.get("positioning") or {}
     options = state.get("options_signals") or {}
+    web_ctx = state.get("web_context") or []
     ticker = state.get("ticker", "")
     rec = state.get("recommendation", "HOLD")
     reasoning = state.get("reasoning", "")
@@ -398,6 +399,11 @@ async def llm_summary_node(state: QuantAnalysisState) -> dict:
         )
     if options.get("flow_signal"):
         prompt += f"Options flow: {options['flow_signal']} (P/C vol={options.get('put_call_volume_ratio')})\n"  # noqa: E501
+    if web_ctx:
+        web_lines = ["WEB CONTEXT (recent analyst/news):"]
+        for item in web_ctx[:5]:
+            web_lines.append(f"- {item.get('title', '')}: {item.get('snippet', '')}")
+        prompt += "\n".join(web_lines) + "\n"
     prompt += (
         "\nWrite 3-4 sentences for an investor. Note signal conflicts. Be specific about numbers."
     )

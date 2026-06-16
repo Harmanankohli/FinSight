@@ -44,10 +44,15 @@ class MarketContextAgent(BaseAgent):
                 logger.warning("MCP call %s failed: %s", tool, e)
                 return {"error": str(e)}
 
-        # Step 1: macro indicators + primary financials in parallel
-        macro, primary_fin = await asyncio.gather(
+        # Step 1: macro indicators + primary financials + company web search in parallel
+        macro, primary_fin, web_context = await asyncio.gather(
             call("get_macro_indicators", {}),
             call("get_financials", {"ticker": ticker}),
+            call("web_search", {
+                "query": f"{ticker} stock market analysis outlook",
+                "max_results": 5,
+                "time_filter": "w",
+            }),
         )
 
         # Extract industry/sector from primary financials for crew context
@@ -59,7 +64,15 @@ class MarketContextAgent(BaseAgent):
         industry = info.get("industry", "")
         sector = info.get("sector", "")
 
-        # Step 2: discover peers dynamically via Yahoo Finance recommendations API
+        # Step 2: sector-level web search (needs sector from Step 1)
+        sector_query = f"{sector or 'market'} sector outlook macro risks analyst commentary"
+        macro_web = await call("web_search", {
+            "query": sector_query,
+            "max_results": 5,
+            "time_filter": "w",
+        })
+
+        # Step 3: discover peers dynamically via Yahoo Finance recommendations API
         peers_result = await call("get_peers", {"ticker": ticker})
         peer_tickers = peers_result.get("peers", []) if isinstance(peers_result, dict) else []
         if not peer_tickers:
@@ -67,7 +80,7 @@ class MarketContextAgent(BaseAgent):
                 "get_peers returned no results for %s — peer analysis will be skipped", ticker
             )
 
-        # Step 3: peer financials — capped at 3 concurrent to avoid MCP/yfinance queue backup
+        # Step 4: peer financials — capped at 3 concurrent to avoid MCP/yfinance queue backup
         _sem = asyncio.Semaphore(3)
 
         async def _call_capped(t):
@@ -93,6 +106,8 @@ class MarketContextAgent(BaseAgent):
             "sector": sector,
             "industry": industry,
             "peers": peers,
+            "web_context": web_context,
+            "macro_web_context": macro_web,
         }
 
     @logged()
@@ -254,5 +269,13 @@ def _extract_retrieved_contexts(data: dict) -> list[str]:
                 f"OpMargin={pinfo.get('operatingMargins')}, "
                 f"MarketCap={pinfo.get('marketCap')}"
             )
+
+    for key in ("web_context", "macro_web_context"):
+        w = data.get(key)
+        if isinstance(w, dict):
+            for r in (w.get("results") or []):
+                snippet = r.get("snippet", "")
+                if snippet:
+                    contexts.append(f"[Web] {r.get('title', '')}: {snippet}")
 
     return contexts

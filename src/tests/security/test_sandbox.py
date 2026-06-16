@@ -154,7 +154,7 @@ async def test_exec_list_comprehension():
 
     out = await run_sandbox("result = [x*x for x in range(5)]")
     assert out["success"], f"stderr: {out['stderr']}"
-    assert "25" in out["result"]["value"]
+    assert "16" in out["result"]["value"]
 
 
 @pytest.mark.integration

@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 
 from pydantic_graph import Graph
@@ -46,6 +47,24 @@ class AnalyzeNode:
         ctx.state.statistical_summary = stats
         ctx.state.anomaly_report = anomalies
         ctx.state.chart_payloads = charts
+
+        # Web search for anomaly catalysts if severity >= medium
+        if anomalies.get("severity") in ("medium", "high") and ctx.deps.mcp_client:
+            try:
+                ticker = ctx.deps.ticker
+                ar = await ctx.deps.mcp_client.call_tool_by_name("web_search", {
+                    "query": f"{ticker} stock price spike catalyst news",
+                    "max_results": 3,
+                    "time_filter": "w",
+                })
+                if hasattr(ar, "content") and ar.content:
+                    raw = ar.content[0].text if hasattr(ar.content[0], "text") else str(ar.content[0])
+                    data = json.loads(raw)
+                    snippets = [f"{r.get('title', '')}: {r.get('snippet', '')}" for r in (data.get("results") or [])]
+                    ctx.state.anomaly_report["catalyst_context"] = snippets
+            except Exception as we:
+                logger.debug("Anomaly catalyst search failed: %s", we)
+
         return FormatOutputNode()
 
 

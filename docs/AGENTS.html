@@ -48,23 +48,24 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <tr><td>Health</td><td><code>GET /health</code> &rarr; <code>{"status":"ok","agent":"orchestrator"}</code></td></tr>
 </table>
 
-<p>The orchestrator uses a single <code>LlmAgent</code> with two tools (<code>send_message</code>, <code>load_memory</code>). The <code>save_brief</code> function is still defined in <code>agent.py</code> but is no longer exposed as an LLM-callable tool &mdash; briefs are auto-saved via <code>after_agent_callback</code>. The LLM delegates tasks to sub-agents by name and synthesizes results:</p>
+<p>The orchestrator uses a single <code>LlmAgent</code> with two tools (<code>send_message</code>, <code>load_memory</code>). The <code>save_brief</code> function is still defined in <code>agent.py</code> but is no longer exposed as an LLM-callable tool &mdash; briefs are auto-saved via <code>after_agent_callback</code>. The LLM delegates tasks to sub-agents by name and synthesizes results in a three-phase procedure:</p>
 <ol>
-<li><strong>Discovers agents</strong> via <code>SubAgentClient.discover()</code> &mdash; async <code>A2ACardResolver</code> with retries. In standalone mode (<code>main.py</code>), discovery runs as a lifespan background task. In ADK Web UI mode (<code>adk web</code>), discovery fires inside <code>_memory_cache_callback</code> on the first turn (the lifespan handler is never used under <code>adk web</code>). A <code>_discovery_done</code> module-level flag ensures it runs exactly once.</li>
+<li><strong>Discovers agents</strong> via <code>SubAgentClient.discover()</code> &mdash; async <code>A2ACardResolver</code> with retries. 6 agents (RAG, Quant, Market Context, Analytics, Reviewer + self) discovered at startup via seed URLs including ports 8002&ndash;8006. In standalone mode (<code>main.py</code>), discovery runs as a lifespan background task. In ADK Web UI mode (<code>adk web</code>), discovery fires inside <code>_memory_cache_callback</code> on the first turn (the lifespan handler is never used under <code>adk web</code>). A <code>_discovery_done</code> module-level flag ensures it runs exactly once.</li>
 <li><strong>Input guardrails</strong> &mdash; Off-topic queries rejected in &lt; 100 ms via <code>_NON_INVESTMENT_RE</code>. Invalid tickers rejected in &lt; 2 s via pre-flight MCP <code>validate_ticker</code> call before any sub-agent is invoked. Uses <code>get_shared_mcp()</code> singleton &mdash; no per-request connect/disconnect overhead.</li>
 <li><strong>Semantic cache</strong> &mdash; When <code>SEMANTIC_CACHE_ENABLED=true</code>, similar queries (cosine &ge; 0.95) return cached responses without running the orchestrator. <strong>Date-scoped</strong>: <code>SemanticCache.set()</code> tags entries with today&rsquo;s <code>YYYY-MM-DD</code>; <code>SemanticCache.get()</code> uses a ChromaDB <code>where={"date": today}</code> filter matching only today&rsquo;s entries. Same query on a different day = cache miss = fresh analysis.</li>
 <li><strong>Memory cache callback (before agent)</strong> &mdash; <code>root_agent.before_agent_callback = _memory_cache_callback</code> fires before the LLM runs. Extracts the user&rsquo;s ticker, queries <code>TickerMemory.get_latest()</code>, and if today&rsquo;s brief exists with a valid <code>response_text</code>, returns it as <code>types.Content</code> &mdash; short-circuiting the LLM entirely. This is the fastest path for same-day repeat queries (~200ms vs 30&ndash;60s).</li>
 <li><strong>Memory context injection</strong> &mdash; If the cache callback misses (no today brief), extracts ticker from user input, retrieves latest recommendation from <code>TickerMemory</code>, and prepends it to the user message (~300 token budget). Tags as <code>[TODAY]</code> (fresh) or <code>[STALE]</code> (prior day) &mdash; LLM is instructed <strong>&ldquo;MUST return directly&rdquo;</strong> on <code>[TODAY]</code> rather than the previous &ldquo;MAY return&rdquo;.</li>
-<li><strong>LLM routes to agents in parallel</strong> &mdash; <code>_STATIC_PREAMBLE</code> explicitly instructs the model to emit ALL <code>send_message</code> calls in a SINGLE assistant response for parallel execution (<code>agent.py:184-189</code>). <code>_build_instruction()</code> also appends agent responsibility boundaries (<code>agent.py:253-260</code>) clarifying RAG owns ALL document/news retrieval, Market Context owns macro, Quant owns numeric analysis. Each call measured with <code>time.monotonic()</code> and emitted as a Langfuse latency span. <code>root_agent.instruction</code> is a callable (<code>_instruction_provider</code>) that invokes <code>_build_instruction()</code> on every turn &mdash; newly discovered agents dynamically appear in the system prompt without a process restart.</li>
+<li><strong>Phase 1 &mdash; Parallel (4 agents)</strong> &mdash; <code>_STATIC_PREAMBLE</code> explicitly instructs the model to emit ALL <code>send_message</code> calls for Phase 1 agents (RAG, Quant, Market Context, Analytics) in a SINGLE assistant response for parallel execution (<code>agent.py:184-189</code>). <code>_build_instruction()</code> also appends agent responsibility boundaries (<code>agent.py:253-260</code>) clarifying RAG owns ALL document/news retrieval, Market Context owns macro, Quant owns numeric analysis, Analytics owns trend/forecast/charts/stats/anomaly. Each call measured with <code>time.monotonic()</code> and emitted as a Langfuse latency span. <code>root_agent.instruction</code> is a callable (<code>_instruction_provider</code>) that invokes <code>_build_instruction()</code> on every turn &mdash; newly discovered agents dynamically appear in the system prompt without a process restart.</li>
+<li><strong>Phase 2 &mdash; Review</strong> &mdash; After all Phase 1 responses are received, call <code>send_message</code> for the Reviewer Agent with a JSON payload containing all Phase 1 agent outputs (<code>{"ticker": "...", "agent_outputs": {"quant": ..., "rag": ..., "market_context": ..., "analytics": ...}}</code>). The reviewer cross-validates all outputs with contradiction detection, source verification, confidence scoring, and recommendation validation.</li>
+<li><strong>Phase 3 &mdash; Synthesis</strong> &mdash; LLM collects all 6 agent outputs (4 Phase 1 + 1 reviewer + its own) and produces a BUY/HOLD/SELL recommendation with confidence score.</li>
 <li><strong>Output guardrails</strong> &mdash; Responses shorter than 50 chars trigger <code>TASK_STATE_FAILED</code>. Missing BUY/HOLD/SELL signal emits a Langfuse warning with <code>missing_signal: true</code>.</li>
-<li><strong>Synthesizes results</strong> &mdash; LLM collects all outputs and produces a BUY/HOLD/SELL recommendation</li>
-<li><strong>Auto-save</strong> &mdash; After each response, persists ticker brief, portfolio holdings, and performance record (with live price snapshot via yfinance) to SQLite. Fires background task to evaluate past recommendations. Briefs are auto-saved via <code>after_agent_callback</code> &mdash; the LLM does not need to call <code>save_brief</code>. Confidence scores are extracted from response text via regex matching "Confidence Score: X", "confidence: X", and "X% confidence" formats. Agent output capture (<code>send_message</code> callback) stores parsed sub-agent responses (RAG summary, quant metrics, sentiment narrative) in session event metadata via <code>extra_data</code> on <code>store_minimal()</code>.</li>
-<li><strong>Memory persist + Runtime RAGAS evaluation</strong> &mdash; All run from <code>after_agent_callback</code> in <code>src/orchestrator/web/agent.py</code>. The callback first checks <code>_is_analysis_turn()</code> (was <code>save_brief</code> called or <code>send_message</code> invoked?) &mdash; non-analysis turns like "what were my last recommendations?" skip persist + eval to avoid memory pollution. Analysis turns then call <code>add_events_to_memory()</code> and fire <code>asyncio.create_task(_eval_score_response(...))</code> with 6 metrics. The callback also fires <code>_release_sub_agent_evals()</code> &mdash; a fire-and-forget task that POSTs to each sub-agent's <code>/release-evals</code> endpoint so their deferred evals run. The full synthesis text is stored directly by <code>save_brief</code> (reads longest LLM text from session events) &mdash; the post-turn <code>update_response_text</code> overwrite was removed. All gated globally by <code>EVAL_TRACE_ENABLED</code>. Scores pushed to Langfuse under <code>ragas/orchestrator/&lt;metric&gt;</code>.</li>
+<li><strong>Auto-save</strong> &mdash; After each response, persists ticker brief, portfolio holdings, and performance record (with live price snapshot via yfinance) to SQLite. Fires background task to evaluate past recommendations. Briefs are auto-saved via <code>after_agent_callback</code> &mdash; the LLM does not need to call <code>save_brief</code>. Confidence scores are extracted from response text via regex matching "Confidence Score: X", "confidence: X", and "X% confidence" formats. Agent output capture (<code>send_message</code> callback) stores parsed sub-agent responses in session event metadata via <code>extra_data</code> on <code>store_minimal()</code>. Analytics and Reviewer responses stored as <code>analytics_response</code> and <code>reviewer_response</code> alongside existing <code>rag_response</code>, <code>quant_response</code>, <code>sentiment_response</code>.</li>
+<li><strong>Memory persist + Runtime RAGAS evaluation</strong> &mdash; All run from <code>after_agent_callback</code> in <code>src/orchestrator/web/agent.py</code>. The callback first checks <code>_is_analysis_turn()</code> (was <code>save_brief</code> called or <code>send_message</code> invoked?) &mdash; non-analysis turns skip persist + eval. Analysis turns then call <code>add_events_to_memory()</code> and fire <code>asyncio.create_task(_eval_score_response(...))</code> with 6 metrics. The callback also fires <code>_release_sub_agent_evals()</code> &mdash; a fire-and-forget task that POSTs to each sub-agent&rsquo;s <code>/release-evals</code> endpoint so their deferred evals run. All gated globally by <code>EVAL_TRACE_ENABLED</code>. Scores pushed to Langfuse under <code>ragas/orchestrator/&lt;metric&gt;</code>.</li>
 <li><strong>Eval hardening</strong> &mdash; The <code>_gate_ok()</code> pre-eval gate enforces: <strong>circuit breaker</strong> (5 consecutive metric failures opens the circuit, skipping eval for the rest of the process lifetime), <strong>SHA-256 dedup</strong> (identical input+response pairs skip eval via 1h TTL dict), <strong>burst limiter</strong> (<code>_burst_ok()</code> enforces <code>EVAL_BURST_LIMIT</code> evaluations per minute), and <strong>per-metric timeout</strong> (<code>_score_metric_with_timeout()</code> default 90s via <code>EVAL_METRIC_TIMEOUT</code>).</li>
 <li><strong>Memory pruning</strong> &mdash; <code>prune_old_records()</code> called on startup deletes rows older than <code>MEMORY_RETENTION_DAYS=90</code> from <code>ticker_briefs</code>, <code>recommendation_records</code>, and <code>memory_entries</code>. Uses existing <code>write_lock()</code> for concurrency safety.</li>
 <li><strong>Cancellation support</strong> &mdash; <code>FinSightAgentExecutor.cancel()</code> stores <code>asyncio.current_task()</code>, catches <code>CancelledError</code>, emits <code>TASK_STATE_CANCELED</code>.</li>
 <li><strong>IST timezone</strong> &mdash; All datetime comparisons use <code>IST = timezone(timedelta(hours=5, minutes=30))</code>. Relevant for "today" comparisons in memory cache callback and auto-save timestamping.</li>
-<li><strong>Per-agent timeouts</strong> &mdash; <code>SubAgentClient.send_message()</code> wraps streaming in <code>asyncio.wait_for()</code> with per-agent timeouts: RAG=600s, Quant=600s, Market Context=600s, fallback = global <code>A2A_TIMEOUT</code>=680s. Timeout returns clean <code>{"error": "agent_timeout", ...}</code> JSON.</li>
+<li><strong>Per-agent timeouts</strong> &mdash; <code>SubAgentClient.send_message()</code> wraps streaming in <code>asyncio.wait_for()</code> with per-agent timeouts: RAG=600s, Quant=600s, Market Context=600s, Analytics=600s, Reviewer=300s, fallback = global <code>A2A_TIMEOUT</code>=680s. Timeout returns clean <code>{"error": "agent_timeout", ...}</code> JSON.</li>
 </ol>
 
 <p>All A2A communication uses <code>ClientFactory</code> + <code>BaseClient</code> from the official <code>a2a-sdk</code>. Streaming events are handled correctly: intermediate SUBMITTED/WORKING events are skipped, only <code>artifact_update</code> events (data or text) and terminal <code>status_update</code> events are returned to the LLM.</p>
@@ -72,9 +73,11 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <h3>Architecture</h3>
 <pre>Module load (standalone &mdash; src/orchestrator/main.py):
   &rarr; SubAgentClient.discover() in lifespan background task
-    +-- A2ACardResolver(http, "http://localhost:8002")
-    +-- A2ACardResolver(http, "http://localhost:8003")
-    +-- A2ACardResolver(http, "http://localhost:8004")
+    +-- A2ACardResolver(http, "http://localhost:8002")   # RAG
+    +-- A2ACardResolver(http, "http://localhost:8003")   # Quant
+    +-- A2ACardResolver(http, "http://localhost:8004")   # Market Context
+    +-- A2ACardResolver(http, "http://localhost:8005")   # Analytics
+    +-- A2ACardResolver(http, "http://localhost:8006")   # Reviewer
     &rarr; self.agents populated &rarr; instruction updated (callable _instruction_provider)
 
 ADK Web UI (services.py at src/orchestrator/):
@@ -87,12 +90,15 @@ FinSightAgentExecutor:
   &rarr; _build_memory_context(query) &rarr; inject [MEMORY CONTEXT] prefix
   &rarr; RUNNER.run_async(user_query)
   &rarr; ADK LlmAgent (tools: [send_message, load_memory])
-    &rarr; LLM emits ALL send_message calls in ONE assistant turn (parallel, per system prompt instruction)
+    [Three-phase orchestration]
+    &rarr; Phase 1: LLM emits ALL send_message calls for Phase 1 agents in ONE assistant turn
     &rarr; send_message("Financial RAG Agent", "Analyze NVDA...")
     &rarr; send_message("Quant Analysis Agent", "Compute metrics for NVDA...")
     &rarr; send_message("Market Context Agent", "Macro and peer landscape analysis for NVDA...")
-    &rarr; LLM receives all results together in the next turn
-    &rarr; LLM synthesizes BUY/HOLD/SELL
+    &rarr; send_message("Analytics Agent", "Trend, forecast, chart, stats, anomaly analysis for NVDA...")
+    &rarr; LLM receives all Phase 1 results together in the next turn
+    &rarr; Phase 2: send_message("Reviewer Agent", JSON with all Phase 1 outputs)
+    &rarr; Phase 3: LLM synthesizes all 6 agent outputs into BUY/HOLD/SELL
     &rarr; load_memory(query="...") &mdash; search past conversations
   &rarr; _add_events_to_memory() &rarr; get_session() &rarr; add_session_to_memory()
   &rarr; _persist_to_memory() &rarr; direct events &rarr; SQLiteMemoryService (for load_memory)
@@ -384,22 +390,148 @@ MarketContextAgent._build_response(query):
 <tr><td><code>peer_landscape_quality</code> (DomainSpecificRubrics)</td><td>Custom 5-level rubric: evaluates depth of peer comparison &mdash; whether named peers are contrasted on at least two metrics (PE, growth, margins, market cap) and competitive positioning is explained.</td></tr>
 </table>
 
+<hr>
+<h2>Agent 5: Analytics (PydanticAI + pydantic-graph)</h2>
+<table>
+<tr><th>Property</th><th>Value</th></tr>
+<tr><td>Framework</td><td>PydanticAI + pydantic-graph</td></tr>
+<tr><td>Executor</td><td><code>GenericAgentExecutor(AnalyticsAgent)</code> in <code>src/analytics/executor.py</code></td></tr>
+<tr><td>LLM</td><td>PydanticAI <code>OpenAIModel</code> via LM Studio (summary node only; API key from <code>LLM_API_KEY</code> env var)</td></tr>
+<tr><td>Port</td><td>8005</td></tr>
+<tr><td>Agent Card</td><td>Built programmatically in <code>src/analytics/server.py</code></td></tr>
+<tr><td>A2A Endpoint</td><td><code>POST /a2a</code></td></tr>
+<tr><td>Health</td><td><code>GET /health</code> &rarr; <code>{"status":"ok","agent":"analytics"}</code></td></tr>
+</table>
+
+<h3>Skills</h3>
+<table>
+<tr><th>ID</th><th>Name</th><th>Description</th></tr>
+<tr><td><code>trend_detection</code></td><td>Trend Detection</td><td>Computes SMA-20/50/200, EMA-12/26, MACD line, golden/death cross, ROC momentum &mdash; classifies as bullish/bearish/neutral with trend strength [0&ndash;1]</td></tr>
+<tr><td><code>forecasting</code></td><td>Price Forecasting</td><td>Holt-Winters exponential smoothing with seasonality, 30-day forecast with 80% confidence bands, MAPE validation</td></tr>
+<tr><td><code>chart_generation</code></td><td>Chart Data Generation</td><td>Produces candlestick payload (last 90 days) and line chart payload with SMAs for frontend rendering</td></tr>
+<tr><td><code>statistical_analysis</code></td><td>Statistical Analysis</td><td>Log returns distribution, skewness, kurtosis, Jarque-Bera normality test, SPY correlation, regression beta, R-squared</td></tr>
+<tr><td><code>anomaly_detection</code></td><td>Anomaly Detection</td><td>Z-score &gt; 2.5 price anomalies, z-score &gt; 3.0 volume anomalies, fundamental outliers (P/E &lt; 5 or &gt; 100, D/E &gt; 5). Severity classification: none/low/medium/high</td></tr>
+</table>
+
+<h3>Architecture</h3>
+<pre>Request &rarr; DefaultRequestHandler &rarr; GenericAgentExecutor(AnalyticsAgent)
+  &rarr; AnalyticsAgent.stream(query, context_id, task_id)
+    &rarr; yield await self._build_response(query)
+    &rarr; return {response_type: "data", content: result, ...}
+
+AnalyticsAgent._build_response(query):
+    &rarr; extract_trace_ids(query)
+    &rarr; with langfuse.start_as_current_observation(name="analytics-agent-stream")
+      &rarr; ticker = extract_ticker(query)
+      &rarr; Fallback chain: regex &rarr; MCP resolve &rarr; MCP validate
+      &rarr; AnalyticsAgent.analyze(ticker, period="1y")
+        &rarr; mcp = await get_shared_mcp()
+        &rarr; Pipeline.run(ticker, period, mcp_client)
+          [Linear DAG via pydantic-graph]
+          &rarr; FetchDataNode: asyncio.gather(get_prices, get_financials)
+            &rarr; price_data (date &rarr; close), ohlcv_data, fundamentals_data
+          &rarr; AnalyzeNode: parallel execution of all 5 analysis functions
+            &rarr; _detect_trends(price_data) &rarr; trend_direction, ma_crossover, momentum_shift, trend_strength
+            &rarr; _run_forecast(price_data) &rarr; Holt-Winters 30d forecast, confidence bands, MAPE
+            &rarr; _compute_statistics(price_data, mcp_client) &rarr; distribution, skewness, kurtosis, JB p-value, SPY beta/R2
+            &rarr; _detect_anomalies(price_data, ohlcv_data, fundamentals_data) &rarr; price/volume/fundamental anomalies, severity
+            &rarr; _generate_charts(ohlcv_data, price_data) &rarr; candlestick + line chart payloads
+          &rarr; FormatOutputNode: composite signal from trend + fcst + anomaly + stats votes
+            &rarr; analytics_signal (bullish/bearish/neutral), analytics_confidence
+          &rarr; LLMSummaryNode: PydanticAI agent generates reasoning narrative
+            &rarr; (CRITICAL priority queue — enriched summary)
+      &rarr; result validated via AnalyticsAgentOutput.model_validate
+      &rarr; score_analytics_deterministic(result) — 17 inline deterministic checks
+      &rarr; if EVAL_ENABLED: defer_eval(score_analytics_response, ...) (deferred via shared/eval_gate.py)
+      &rarr; return {response_type: "data", content: result, ...}</pre>
+
+<h4>Runtime Evaluation</h4>
+<p>After each response, runs 17 deterministic inline checks (zero LLM cost) and defers 3 RAGAS metrics via <code>defer_eval()</code>. The deterministic validator checks: confidence in [0,1], signal validity, trend direction/strength/crossover, MAPE range, forecast dates future, chart shape, anomaly severity, distribution validity, Jarque-Bera p-value.</p>
+<table>
+<tr><th>Metric</th><th>Why</th></tr>
+<tr><td><code>deterministic</code> (inline)</td><td>Zero-LLM schema validation &mdash; 17 checks on signal, trend, forecast, chart, anomaly, and statistics validity.</td></tr>
+<tr><td><code>FactualCorrectness</code></td><td>Compares the LLM summary&rsquo;s numerical claims (trend strength, MAPE, beta, anomaly count) against actual computed values &mdash; prevents hallucinated metrics.</td></tr>
+<tr><td><code>trend_forecast_consistency</code> (DomainSpecificRubrics)</td><td>Custom rubric: scores whether the narrative explains the trend direction, crossover signals, forecast trajectory, and whether forecast direction aligns with trend.</td></tr>
+<tr><td><code>anomaly_disclosure</code> (DomainSpecificRubrics)</td><td>Custom rubric: evaluates whether detected anomalies (price spikes, volume surges, fundamental outliers) are explicitly discussed in the narrative with context.</td></tr>
+</table>
+
+<hr>
+<h2>Agent 6: Reviewer (OpenAI Agents SDK)</h2>
+<table>
+<tr><th>Property</th><th>Value</th></tr>
+<tr><td>Framework</td><td>OpenAI Agents SDK</td></tr>
+<tr><td>Executor</td><td><code>GenericAgentExecutor(ReviewerAgent)</code> in <code>src/reviewer/executor.py</code></td></tr>
+<tr><td>LLM</td><td>OpenAI Agents SDK via <code>OpenAIChatCompletionsModel</code> (LM Studio, <code>LLM_API_KEY</code> env var)</td></tr>
+<tr><td>Data Source</td><td>Receives all Phase 1 agent outputs as JSON payload — no external MCP calls</td></tr>
+<tr><td>Port</td><td>8006</td></tr>
+<tr><td>Agent Card</td><td>Built programmatically in <code>src/reviewer/server.py</code></td></tr>
+<tr><td>A2A Endpoint</td><td><code>POST /a2a</code></td></tr>
+<tr><td>Health</td><td><code>GET /health</code> &rarr; <code>{"status":"ok","agent":"reviewer"}</code></td></tr>
+</table>
+
+<h3>Skills</h3>
+<table>
+<tr><th>ID</th><th>Name</th><th>Description</th></tr>
+<tr><td><code>contradiction_check</code></td><td>Contradiction Check</td><td>Detects pairwise contradictions between agent outputs (Quant BUY vs bearish Analytics trend, etc.) with severity classification</td></tr>
+<tr><td><code>source_verification</code></td><td>Source Verification</td><td>Per-agent internal consistency checks &mdash; Sharpe/VaR/DCF ranges, confidence bounds, signal validity, forecast plausibility, chart structure</td></tr>
+<tr><td><code>confidence_scoring</code></td><td>Confidence Scoring</td><td>Computes meta-confidence from per-agent confidence, agreement fraction, and data quality fraction &mdash; <code>0.4 * avg_conf + 0.3 * agreement + 0.3 * data_quality</code></td></tr>
+<tr><td><code>recommendation_validation</code></td><td>Recommendation Validation</td><td>Gathers supporting/contradicting evidence for the quant recommendation across all agents, computes evidence strength (strong/moderate/weak)</td></tr>
+<tr><td><code>structured_review</code></td><td>Structured Review</td><td>Produces a comprehensive review verdict with contradiction log, verification rates, confidence breakdown, evidence analysis, and overall review confidence</td></tr>
+</table>
+
+<h3>Architecture</h3>
+<pre>Request &rarr; DefaultRequestHandler &rarr; GenericAgentExecutor(ReviewerAgent)
+  &rarr; ReviewerAgent.stream(query, context_id, task_id)
+    &rarr; yield await self._build_response(query)
+    &rarr; return {response_type: "data", content: result, ...}
+
+ReviewerAgent._build_response(query):
+    &rarr; extract_trace_ids(query)
+    &rarr; with langfuse.start_as_current_observation(name="reviewer-agent-stream")
+      &rarr; Parse query as JSON: {"ticker": "...", "agent_outputs": {"quant": ..., "rag": ..., "market_context": ..., "analytics": ...}}
+      &rarr; Re-serialize as JSON prompt string
+      &rarr; llm_queue.acquire(Priority.CRITICAL, "reviewer-report")
+      &rarr; Runner.run(reviewer_agent, input=prompt)
+        &rarr; Input guardrail: payload_structure_guardrail (validates ticker + agent_outputs)
+        &rarr; Agent calls ALL 4 deterministic tools:
+          +-- check_contradictions(agent_outputs) &rarr; list of contradiction objects
+          +-- verify_sources(agent_outputs) &rarr; per-agent verification rates
+          +-- score_confidence(agent_outputs) &rarr; meta_confidence, agreement, data_quality
+          +-- validate_recommendation(agent_outputs) &rarr; evidence analysis
+        &rarr; LLM synthesizes comprehensive review verdict
+        &rarr; Output guardrail: confidence_range_guardrail (review_confidence in [0,1])
+        &rarr; Output: ReviewerAgentOutput with verdict, contradictions, verifications, confidence_breakdown, flags, review_confidence
+      &rarr; score_reviewer_deterministic(output_dict) — 10+ inline deterministic checks
+      &rarr; if EVAL_ENABLED: defer_eval(score_reviewer_response, ...) (deferred via shared/eval_gate.py)
+      &rarr; return {response_type: "data", content: result, ...}</pre>
+
+<h4>Runtime Evaluation</h4>
+<p>After each response, runs 10+ deterministic inline checks (zero LLM cost) and defers 3 RAGAS metrics via <code>defer_eval()</code>. The deterministic validator checks: confidence in [0,1], verdict validity (BUY/HOLD/SELL), contradiction structure, verification rates, confidence breakdown scores, evidence strength.</p>
+<table>
+<tr><th>Metric</th><th>Why</th></tr>
+<tr><td><code>deterministic</code> (inline)</td><td>Zero-LLM schema validation &mdash; 10+ checks on verdict, contradictions, verifications, confidence breakdown, and evidence structure.</td></tr>
+<tr><td><code>FactualCorrectness</code></td><td>Compares the LLM verdict&rsquo;s numerical claims (contradiction count, verification rates, meta-confidence) against actual computed values from the tools.</td></tr>
+<tr><td><code>contradiction_detection_quality</code> (DomainSpecificRubrics)</td><td>Custom rubric: scores whether the review narrative correctly identifies the most critical contradictions and explains their investment implications.</td></tr>
+<tr><td><code>confidence_calibration_quality</code> (DomainSpecificRubrics)</td><td>Custom rubric: evaluates whether the meta-confidence and review confidence are justified by the evidence&rsquo;s strength and agreement data.</td></tr>
+</table>
+
 <h2>Shared Infrastructure</h2>
-<p>All four agents share a common infrastructure layer:</p>
+<p>All six agents share a common infrastructure layer:</p>
 <table>
 <tr><th>Component</th><th>Details</th></tr>
 <tr><td><strong>MCP client singleton</strong></td><td><code>get_shared_mcp()</code> returns a process-wide <code>MCPClient</code> instance. Auto-reconnects on <code>ConnectionError</code>/<code>EOFError</code>/<code>IncompleteReadError</code>. No per-request connect/disconnect.</td></tr>
 <tr><td><strong>Ticker validation</strong></td><td><code>validate_ticker()</code> and <code>resolve_ticker()</code> in <code>src/shared/ticker_utils.py</code> use <code>get_shared_mcp()</code> internally. Shared across all executors &mdash; the private <code>_validate_ticker</code> methods were removed. Blocks financial acronyms (SEC, EPS, CEO, etc.) via hardcoded <code>_COMMON_ACRONYMS</code> set.</td></tr>
-<tr><td><strong><code>@logged</code> timing decorator</strong></td><td>Applied to all three sub-agent <code>_build_response()</code> methods and <code>SubAgentClient.send_message()</code>. Logs elapsed time and entry/exit.</td></tr>
+<tr><td><strong><code>@logged</code> timing decorator</strong></td><td>Applied to all sub-agent <code>_build_response()</code> methods and <code>SubAgentClient.send_message()</code>. Logs elapsed time and entry/exit.</td></tr>
 <tr><td><strong>Lazy OpenTelemetry</strong></td><td><code>init_instrumentation("&lt;agent_type&gt;")</code> replaces module-level <code>*Instrumentor().instrument()</code> calls. Called from each server entry point.</td></tr>
-<tr><td><strong>SQLiteTaskStore</strong></td><td>Replaces <code>InMemoryTaskStore</code> in all four server entry points. Tasks survive process restarts.</td></tr>
+<tr><td><strong>SQLiteTaskStore</strong></td><td>Replaces <code>InMemoryTaskStore</code> in all server entry points. Tasks survive process restarts.</td></tr>
 <tr><td><strong><code>LLM_API_KEY</code> env var</strong></td><td>Replaces hardcoded <code>api_key="lmstudio"</code>. All agent files import from <code>shared.settings</code> (was <code>src/shared/config.py</code>, removed in v2.0).</td></tr>
 <tr><td><strong>Centralized settings</strong></td><td><code>src/shared/settings.py</code> (pydantic-settings <code>BaseSettings</code>) with back-compat aliases, <code>validate_runtime()</code>, <code>get_settings()</code> singleton. <code>src/shared/bootstrap.py</code> centralises process-level side-effects (event loop policy, <code>HF_HUB_OFFLINE</code>, stdout encoding).</td></tr>
 <tr><td><strong>Per-service log levels</strong></td><td><code>LOG_LEVEL_&lt;SERVICE&gt;</code> env vars (e.g. <code>LOG_LEVEL_ORCHESTRATOR=DEBUG</code>).</td></tr>
 <tr><td><strong><code>SEC_USER_AGENT</code> env var</strong></td><td>Replaces hardcoded SEC user agent string in MCP server filing requests.</td></tr>
-<tr><td><strong>LLM Priority Queue</strong></td><td><code>LLMPriorityQueue</code> in <code>src/shared/llm_queue.py</code> (process-local, heap-based async semaphore). Three tiers: <code>CRITICAL</code> (quant summary, crew kickoff), <code>NORMAL</code> (warmup ping), <code>LOW</code> (RAGAS eval). Default <code>LLM_MAX_CONCURRENT=2</code>. Prevents eval starvation of production inference.</td></tr>
-<tr><td><strong>Deferred Eval Gate</strong></td><td><code>src/shared/eval_gate.py</code> &mdash; holds sub-agent eval LLM calls until the orchestrator releases them via <code>POST /release-evals</code> after synthesis completes. Prevents 3 sub-agent eval processes from competing with orchestrator synthesis on a single LM Studio instance. Includes 120s safety-net auto-release.</td></tr>
-<tr><td><strong>Pydantic Agent Output Models</strong></td><td><code>src/shared/agent_models.py</code> (v2.5) &mdash; typed models (<code>QuantAgentOutput</code>, <code>MarketContextOutput</code>, <code>RAGAgentOutput</code>) at every agent boundary, replacing ~220 lines of fragile regex/<code>.get()</code> chains. Fixes zeroed KPI chips, raw JSON narrative from CrewAI, and DCF key mismatch. Falls back to legacy dict extraction for old briefs.</td></tr>
+<tr><td><strong><code>LLM_SUMMARY_MODEL</code> / <code>LLM_EVAL_MODEL</code></strong></td><td>Separate model names for production LLM calls and RAGAS judge calls. Allows using a smaller/faster model for evaluation scoring. Configured via <code>.env</code>, defaults to the production model.</td></tr>
+<tr><td><strong>LLM Priority Queue</strong></td><td><code>LLMPriorityQueue</code> in <code>src/shared/llm_queue.py</code> (process-local, heap-based async semaphore). Three tiers: <code>CRITICAL</code> (quant summary, analytics summary, crew kickoff, reviewer report), <code>NORMAL</code> (warmup ping), <code>LOW</code> (RAGAS eval). Default <code>LLM_MAX_CONCURRENT=2</code>. Prevents eval starvation of production inference.</td></tr>
+<tr><td><strong>Deferred Eval Gate</strong></td><td><code>src/shared/eval_gate.py</code> &mdash; holds sub-agent eval LLM calls until the orchestrator releases them via <code>POST /release-evals</code> after synthesis completes. Prevents 5 sub-agent eval processes from competing with orchestrator synthesis on a single LM Studio instance. Includes 120s safety-net auto-release.</td></tr>
+<tr><td><strong>Pydantic Agent Output Models</strong></td><td><code>src/shared/agent_models.py</code> (v2.5) &mdash; typed models (<code>QuantAgentOutput</code>, <code>MarketContextOutput</code>, <code>RAGAgentOutput</code>, <code>AnalyticsAgentOutput</code>, <code>ReviewerAgentOutput</code>) at every agent boundary, replacing ~220 lines of fragile regex/<code>.get()</code> chains.</td></tr>
 <tr><td><strong><code>SERVICE_AUTH_TOKEN</code></strong></td><td><code>SubAgentClient</code> accepts <code>bearer_token</code> from <code>settings.service_auth_token</code>. When <code>AUTH_ENABLED=true</code>, orchestrator-to-sub-agent A2A requests carry the service bearer token.</td></tr>
 </table>
 
@@ -431,6 +563,7 @@ exception message classification.</td></tr>
 <tr><td><strong>&mdash;</strong></td><td>v2.3</td><td>Source tree restructure to <code>src/</code> layout. Model rename + field restructure (key_risks&rarr;key_headwinds, etc.).</td></tr>
 <tr><td><strong>&mdash;</strong></td><td>v2.4</td><td>ADK Web UI discovery fix (before_agent_callback), callable instruction, services.py moved. RAG <code>get_financial_filings</code> switch. Auth public endpoints, frontend auth middleware/redirect, service token forwarding.</td></tr>
 <tr><td><strong>&mdash;</strong></td><td>v2.5</td><td>Pydantic output models for all agents (<code>src/shared/agent_models.py</code>), scrollable HTML report + A4 PDF (replaced slide deck), AG-UI bridge eval hook + sentence-aware truncation, quant fan-in data-readiness guard (eliminates redundant LLM calls), CrewAI future annotations fix, case-insensitive username matching, <code>seed_user.py</code> test utility.</td></tr>
+<tr><td><strong>&mdash;</strong></td><td>v2.6</td><td><strong>Analytics Agent</strong> (PydanticAI + pydantic-graph, :8005) &mdash; trend detection, Holt-Winters forecasting, chart data, statistical analysis, anomaly detection. <strong>Reviewer Agent</strong> (OpenAI Agents SDK, :8006) &mdash; contradiction detection, source verification, confidence scoring, recommendation validation. Orchestrator three-phase execution (Phase 1: 4 agents parallel &rarr; Phase 2: reviewer &rarr; Phase 3: synthesis). Deterministic + RAGAS runtime eval for both new agents. 5 new test files, docker-compose services, startup/stop scripts, frontend health monitoring.</td></tr>
 </table>
 
 <hr>

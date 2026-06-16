@@ -11,6 +11,7 @@ _EDGAR_LIMITER = TokenBucket(rate=8, burst=10)  # SEC: 10 req/s hard cap; stay b
 _NEWS_LIMITER = TokenBucket(rate=2, burst=4)  # RSS + Yahoo news fallback
 _SEARCH_LIMITER = TokenBucket(rate=2, burst=4)  # Yahoo Finance ticker search
 _SANDBOX_LIMITER = TokenBucket(rate=4, burst=8)  # sandbox subprocess spawns
+_WEB_SEARCH_LIMITER = TokenBucket(rate=1, burst=3)  # DuckDuckGo web search
 
 # ──────────────────────────────────────────────
 # TTL caches
@@ -24,5 +25,6 @@ cache_submissions = make_cache(21600, "submissions")  # 6 hr — submission list
 cache_macro = make_cache(900, "macro")  # 15 min — macro moves slowly
 cache_peers = make_cache(86400, "peers")  # 24 hr — peers stable intraday
 cache_shocks = make_cache(604800, "shocks")  # 7 days — historical shocks
+cache_web_search = make_cache(300, "web_search")  # 5 min — web search results
 
 BENCHMARK_TICKERS = frozenset({"^GSPC", "^IXIC", "^DJI", "^RUT", "^VIX", "DXY"})

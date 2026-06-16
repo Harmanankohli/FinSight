@@ -183,6 +183,7 @@ openssl rand -hex 16</code></pre>
 <tr><td>v2.0</td><td>Phase 3 auth audit &mdash; contract tests, parametrized auth &times; route matrix, <code>trace_with_user()</code> for Langfuse user_id propagation.</td></tr>
 <tr><td>v2.1</td><td><code>TRUSTED_PROXIES</code> setting closes IP-spoofing lockout bypass (EC5). <code>proxy.ts.disabled</code> &mdash; middleware that forced login redirect even with <code>AUTH_ENABLED=false</code> removed. <code>sub_agent_client.py</code> NameError fix (<code>__get_data_parts</code> &rarr; <code>_get_data_parts</code>). <code>SECURITY.md</code> fixed stale <code>shared/config.py</code> reference.</td></tr>
 <tr><td>v2.5</td><td>Case-insensitive username matching &mdash; usernames normalized to lowercase at creation and lookup, preventing login failures from casing variations. Test isolation fix for <code>_schema_v4_ensured</code> flag.</td></tr>
+<tr><td>v2.6</td><td>Two new sub-agents (Analytics on :8005, Reviewer on :8006) added to the A2A service mesh with bearer auth via <code>SERVICE_AUTH_TOKEN</code>. Both agent cards include <code>securitySchemes</code> + <code>securityRequirements</code> for A2A SDK negotiation. Input guardrails on Reviewer Agent: <code>payload_structure_guardrail</code> validates JSON structure, <code>confidence_range_guardrail</code> trips on out-of-range confidence.</td></tr>
 </tbody>
 </table>
 

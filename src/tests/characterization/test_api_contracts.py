@@ -33,6 +33,13 @@ async def _health(request):
 @pytest_asyncio.fixture()
 async def api_app(tmp_path):
     """Build a minimal Starlette app with API routes + health, isolated DB."""
+    import os
+    from shared.settings import reset_settings_for_tests
+
+    old_auth = os.environ.get("AUTH_ENABLED")
+    os.environ["AUTH_ENABLED"] = "false"
+    reset_settings_for_tests()
+
     db_path = tmp_path / "test.db"
 
     import shared.memory.store as store_mod
@@ -80,6 +87,11 @@ async def api_app(tmp_path):
     if store_mod._db_conn is not None:
         await store_mod._db_conn.close()
         store_mod._db_conn = None
+    if old_auth is not None:
+        os.environ["AUTH_ENABLED"] = old_auth
+    else:
+        os.environ.pop("AUTH_ENABLED", None)
+    reset_settings_for_tests()
 
 
 # ── /health ───────────────────────────────────────────────────────────────────

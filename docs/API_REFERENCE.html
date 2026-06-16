@@ -207,13 +207,13 @@ Content-Disposition: attachment; filename="FinSight_{ticker}_{date}.pdf"  (pdf o
 <h2>Sub-Agent Servers</h2>
 <p>Each sub-agent exposes the same endpoint pattern.</p>
 
-<h3>Endpoints (ports 8002&ndash;8004)</h3>
+<h3>Endpoints (ports 8002&ndash;8006)</h3>
 <table>
-<tr><th>Endpoint</th><th>Port 8002 (RAG)</th><th>Port 8003 (Quant)</th><th>Port 8004 (Market Context)</th></tr>
-<tr><td><code>GET /health</code></td><td><code>{"status":"ok","agent":"rag"}</code></td><td><code>{"status":"ok","agent":"quant"}</code></td><td><code>{"status":"ok","agent":"market_context"}</code></td></tr>
-<tr><td><code>POST /a2a</code></td><td>A2A JSON-RPC</td><td>A2A JSON-RPC</td><td>A2A JSON-RPC</td></tr>
-<tr><td><code>GET /.well-known/agent-card.json</code></td><td>Agent card</td><td>Agent card</td><td>Agent card</td></tr>
-<tr><td><code>POST /release-evals</code></td><td><code>{"released": N}</code></td><td><code>{"released": N}</code></td><td><code>{"released": N}</code></td></tr>
+<tr><th>Endpoint</th><th>Port 8002 (RAG)</th><th>Port 8003 (Quant)</th><th>Port 8004 (Market Context)</th><th>Port 8005 (Analytics)</th><th>Port 8006 (Reviewer)</th></tr>
+<tr><td><code>GET /health</code></td><td><code>{"status":"ok","agent":"rag"}</code></td><td><code>{"status":"ok","agent":"quant"}</code></td><td><code>{"status":"ok","agent":"market_context"}</code></td><td><code>{"status":"ok","agent":"analytics"}</code></td><td><code>{"status":"ok","agent":"reviewer"}</code></td></tr>
+<tr><td><code>POST /a2a</code></td><td>A2A JSON-RPC</td><td>A2A JSON-RPC</td><td>A2A JSON-RPC</td><td>A2A JSON-RPC</td><td>A2A JSON-RPC</td></tr>
+<tr><td><code>GET /.well-known/agent-card.json</code></td><td>Agent card</td><td>Agent card</td><td>Agent card</td><td>Agent card</td><td>Agent card</td></tr>
+<tr><td><code>POST /release-evals</code></td><td><code>{"released": N}</code></td><td><code>{"released": N}</code></td><td><code>{"released": N}</code></td><td><code>{"released": N}</code></td><td><code>{"released": N}</code></td></tr>
 </table>
 
 <h4>Release Evals</h4>

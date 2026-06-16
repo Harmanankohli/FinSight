@@ -78,7 +78,7 @@ def _patch_heavy_imports():
 
 async def test_get_prices_shape():
     with patch("yfinance.Ticker", side_effect=_yf_ticker_mock):
-        from mcp_tools.finsight_server import get_prices
+        from mcp_tools.tools.market_data import get_prices
 
         result = await get_prices("NVDA", period="1mo", interval="1d")
     assert isinstance(result, dict)
@@ -89,7 +89,7 @@ async def test_get_prices_shape():
 
 async def test_get_prices_error_shape():
     with patch("yfinance.Ticker", side_effect=RuntimeError("network down")):
-        from mcp_tools.finsight_server import get_prices
+        from mcp_tools.tools.market_data import get_prices
 
         result = await get_prices("FAIL")
     assert isinstance(result, dict)
@@ -102,7 +102,7 @@ async def test_get_prices_error_shape():
 
 async def test_get_financials_shape():
     with patch("yfinance.Ticker", side_effect=_yf_ticker_mock):
-        from mcp_tools.finsight_server import get_financials
+        from mcp_tools.tools.market_data import get_financials
 
         result = await get_financials("NVDA")
     assert isinstance(result, dict)
@@ -115,7 +115,7 @@ async def test_get_financials_shape():
 
 async def test_get_news_sentiment_shape():
     with patch("feedparser.parse", return_value=_feedparser_mock()):
-        from mcp_tools.finsight_server import get_news_sentiment
+        from mcp_tools.tools.sentiment import get_news_sentiment
 
         result = await get_news_sentiment("NVDA", limit=3)
     assert isinstance(result, dict)
@@ -129,7 +129,7 @@ async def test_get_news_sentiment_shape():
 
 async def test_get_macro_indicators_shape():
     with patch("yfinance.Ticker", side_effect=_yf_ticker_mock):
-        from mcp_tools.finsight_server import get_macro_indicators
+        from mcp_tools.tools.market_data import get_macro_indicators
 
         result = await get_macro_indicators()
     assert isinstance(result, dict)
@@ -142,7 +142,7 @@ async def test_get_macro_indicators_shape():
 
 async def test_validate_ticker_shape():
     with patch("yfinance.Ticker", side_effect=_yf_ticker_mock):
-        from mcp_tools.finsight_server import validate_ticker
+        from mcp_tools.tools.ticker import validate_ticker
 
         result = await validate_ticker("NVDA")
     assert isinstance(result, dict)
@@ -155,7 +155,7 @@ async def test_validate_ticker_shape():
 
 async def test_get_peers_shape():
     with patch("yfinance.Ticker", side_effect=_yf_ticker_mock):
-        from mcp_tools.finsight_server import get_peers
+        from mcp_tools.tools.sentiment import get_peers
 
         result = await get_peers("NVDA")
     assert isinstance(result, dict)
@@ -168,7 +168,7 @@ async def test_get_peers_shape():
 
 
 async def test_execute_python_shape():
-    from mcp_tools.finsight_server import execute_python
+    from mcp_tools.tools.sandbox import execute_python
 
     result = await execute_python("x = 1 + 1")
     assert isinstance(result, dict)
@@ -177,7 +177,7 @@ async def test_execute_python_shape():
 
 
 async def test_execute_python_error_shape():
-    from mcp_tools.finsight_server import execute_python
+    from mcp_tools.tools.sandbox import execute_python
 
     result = await execute_python("raise ValueError('boom')")
     assert isinstance(result, dict)
@@ -191,7 +191,7 @@ async def test_execute_python_error_shape():
 
 async def test_get_earnings_calendar_shape():
     with patch("yfinance.Ticker", side_effect=_yf_ticker_mock):
-        from mcp_tools.finsight_server import get_earnings_calendar
+        from mcp_tools.tools.sentiment import get_earnings_calendar
 
         result = await get_earnings_calendar("NVDA")
     assert isinstance(result, dict)
@@ -203,7 +203,7 @@ async def test_get_earnings_calendar_shape():
 
 async def test_get_insider_transactions_shape():
     with patch("yfinance.Ticker", side_effect=_yf_ticker_mock):
-        from mcp_tools.finsight_server import get_insider_transactions
+        from mcp_tools.tools.sentiment import get_insider_transactions
 
         result = await get_insider_transactions("NVDA")
     assert isinstance(result, dict)
@@ -215,7 +215,7 @@ async def test_get_insider_transactions_shape():
 
 
 async def test_get_scenario_shocks_shape():
-    from mcp_tools.finsight_server import get_scenario_shocks
+    from mcp_tools.tools.sentiment import get_scenario_shocks
 
     result = await get_scenario_shocks("Technology")
     assert isinstance(result, dict)
@@ -226,16 +226,16 @@ async def test_get_scenario_shocks_shape():
 
 
 async def test_find_agent_shape():
-    import mcp_tools.finsight_server as _srv
+    import mcp_tools.tools.agent_registry as _ar_mod
 
-    orig = _srv._df_registry
+    orig = _ar_mod._df_registry
     try:
         import pandas as pd
 
-        _srv._df_registry = pd.DataFrame()  # empty — triggers the "no cards" path
-        result = await _srv.find_agent("investment research")
+        _ar_mod._df_registry = pd.DataFrame()  # empty — triggers the "no cards" path
+        result = await _ar_mod.find_agent("investment research")
     finally:
-        _srv._df_registry = orig
+        _ar_mod._df_registry = orig
     # Returns JSON string
     parsed = json.loads(result)
     assert isinstance(parsed, dict)

@@ -100,4 +100,5 @@ class QuantAnalysisState(TypedDict):
     options_signals: dict | None
     insider_signals: dict | None
     positioning: dict | None
+    web_context: list[dict]
     mcp_client: Any | None

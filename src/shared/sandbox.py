@@ -332,13 +332,19 @@ _SAFE_BUILTINS = {
 
 _GLOBALS = {
     "__builtins__": _SAFE_BUILTINS,
-    "pd": __import__("pandas"),
-    "np": __import__("numpy"),
     "math": math, "json": json, "datetime": datetime,
     "random": random, "statistics": statistics,
     "itertools": itertools, "collections": collections,
     "functools": functools, "typing": typing,
 }
+try:
+    _GLOBALS["pd"] = __import__("pandas")
+except ImportError:
+    pass
+try:
+    _GLOBALS["np"] = __import__("numpy")
+except ImportError:
+    pass
 
 code = sys.stdin.read()
 _locals = {}

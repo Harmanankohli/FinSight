@@ -284,6 +284,7 @@ class AnomalyReport(BaseModel):
     fundamental_anomalies: list[str] = Field(default_factory=list)
     anomaly_count: int = 0
     severity: str = "none"
+    catalyst_context: list[str] = Field(default_factory=list)
 
 
 class AnalyticsAgentOutput(BaseModel):
