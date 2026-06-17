@@ -56,7 +56,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <li><strong>Memory cache callback (before agent)</strong> &mdash; <code>root_agent.before_agent_callback = _memory_cache_callback</code> fires before the LLM runs. Extracts the user&rsquo;s ticker, queries <code>TickerMemory.get_latest()</code>, and if today&rsquo;s brief exists with a valid <code>response_text</code>, returns it as <code>types.Content</code> &mdash; short-circuiting the LLM entirely. This is the fastest path for same-day repeat queries (~200ms vs 30&ndash;60s).</li>
 <li><strong>Memory context injection</strong> &mdash; If the cache callback misses (no today brief), extracts ticker from user input, retrieves latest recommendation from <code>TickerMemory</code>, and prepends it to the user message (~300 token budget). Tags as <code>[TODAY]</code> (fresh) or <code>[STALE]</code> (prior day) &mdash; LLM is instructed <strong>&ldquo;MUST return directly&rdquo;</strong> on <code>[TODAY]</code> rather than the previous &ldquo;MAY return&rdquo;.</li>
 <li><strong>Phase 1 &mdash; Parallel (4 agents)</strong> &mdash; <code>_STATIC_PREAMBLE</code> explicitly instructs the model to emit ALL <code>send_message</code> calls for Phase 1 agents (RAG, Quant, Market Context, Analytics) in a SINGLE assistant response for parallel execution (<code>agent.py:184-189</code>). <code>_build_instruction()</code> also appends agent responsibility boundaries (<code>agent.py:253-260</code>) clarifying RAG owns ALL document/news retrieval, Market Context owns macro, Quant owns numeric analysis, Analytics owns trend/forecast/charts/stats/anomaly. Each call measured with <code>time.monotonic()</code> and emitted as a Langfuse latency span. <code>root_agent.instruction</code> is a callable (<code>_instruction_provider</code>) that invokes <code>_build_instruction()</code> on every turn &mdash; newly discovered agents dynamically appear in the system prompt without a process restart.</li>
-<li><strong>Phase 2 &mdash; Review</strong> &mdash; After all Phase 1 responses are received, call <code>send_message</code> for the Reviewer Agent with a JSON payload containing all Phase 1 agent outputs (<code>{"ticker": "...", "agent_outputs": {"quant": ..., "rag": ..., "market_context": ..., "analytics": ...}}</code>). The reviewer cross-validates all outputs with contradiction detection, source verification, confidence scoring, and recommendation validation.</li>
+<li><strong>Phase 2 &mdash; Review</strong> &mdash; After all Phase 1 responses are received, call <code>send_message</code> for the Reviewer Agent with a JSON payload (<code>{"ticker": "...", "session_id": "&lt;your_session_id&gt;"}</code>). The reviewer fetches full agent outputs from the shared SQLite store using <code>session_id</code>, runs 4 deterministic tools directly in Python, and cross-validates all outputs with contradiction detection, source verification, confidence scoring, and recommendation validation.</li>
 <li><strong>Phase 3 &mdash; Synthesis</strong> &mdash; LLM collects all 6 agent outputs (4 Phase 1 + 1 reviewer + its own) and produces a BUY/HOLD/SELL recommendation with confidence score.</li>
 <li><strong>Output guardrails</strong> &mdash; Responses shorter than 50 chars trigger <code>TASK_STATE_FAILED</code>. Missing BUY/HOLD/SELL signal emits a Langfuse warning with <code>missing_signal: true</code>.</li>
 <li><strong>Auto-save</strong> &mdash; After each response, persists ticker brief, portfolio holdings, and performance record (with live price snapshot via yfinance) to SQLite. Fires background task to evaluate past recommendations. Briefs are auto-saved via <code>after_agent_callback</code> &mdash; the LLM does not need to call <code>save_brief</code>. Confidence scores are extracted from response text via regex matching "Confidence Score: X", "confidence: X", and "X% confidence" formats. Agent output capture (<code>send_message</code> callback) stores parsed sub-agent responses in session event metadata via <code>extra_data</code> on <code>store_minimal()</code>. Analytics and Reviewer responses stored as <code>analytics_response</code> and <code>reviewer_response</code> alongside existing <code>rag_response</code>, <code>quant_response</code>, <code>sentiment_response</code>.</li>
@@ -69,6 +69,8 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 </ol>
 
 <p>All A2A communication uses <code>ClientFactory</code> + <code>BaseClient</code> from the official <code>a2a-sdk</code>. Streaming events are handled correctly: intermediate SUBMITTED/WORKING events are skipped, only <code>artifact_update</code> events (data or text) and terminal <code>status_update</code> events are returned to the LLM.</p>
+
+<p><strong>Shared Agent Output Store</strong>: The <code>send_message</code> callback persists full agent outputs to a shared SQLite store (<code>agent_output_store</code>) via <code>await store_agent_output()</code> before returning. The reviewer fetches these outputs using <code>session_id</code> — eliminating inline <code>agent_outputs</code> payload bloat and fixing the fire-and-forget race where the reviewer read an empty store. Each output is keyed by normalized agent name (rag, quant, market_context, analytics, reviewer). Stale entries are pruned after 600s via <code>prune_stale_outputs()</code>.</p>
 
 <h3>Architecture</h3>
 <pre>Module load (standalone &mdash; src/orchestrator/main.py):
@@ -482,27 +484,32 @@ AnalyticsAgent._build_response(query):
 <h3>Architecture</h3>
 <pre>Request &rarr; DefaultRequestHandler &rarr; GenericAgentExecutor(ReviewerAgent)
   &rarr; ReviewerAgent.stream(query, context_id, task_id)
-    &rarr; yield await self._build_response(query)
+    &rarr; yield await self._build_response(query, context_id)
     &rarr; return {response_type: "data", content: result, ...}
 
-ReviewerAgent._build_response(query):
+ReviewerAgent._build_response(query, context_id=""):
     &rarr; extract_trace_ids(query)
     &rarr; with langfuse.start_as_current_observation(name="reviewer-agent-stream")
-      &rarr; Parse query as JSON: {"ticker": "...", "agent_outputs": {"quant": ..., "rag": ..., "market_context": ..., "analytics": ...}}
-      &rarr; Re-serialize as JSON prompt string
+      &rarr; Parse query as JSON: {"ticker": "...", "session_id": "..."}
+      &rarr; If no session_id, fall back to A2A context_id
+      &rarr; Fetch full agent outputs from shared SQLite store:
+        +-- get_agent_outputs(session_id) &rarr; dict of normalized agent outputs
+        +-- Fall back to inline agent_outputs from payload if store empty
+      &rarr; Call 4 deterministic tools DIRECTLY in Python (not via SDK):
+        +-- check_contradictions(agent_outputs) &rarr; list of contradiction objects
+        +-- verify_sources(agent_outputs) &rarr; per-agent verification rates
+        +-- score_confidence(agent_outputs) &rarr; meta_confidence, agreement, data_quality
+        +-- validate_recommendation(agent_outputs) &rarr; evidence analysis
+      &rarr; Build compact agent_summaries dict (quant/rag/market_context/analytics)
+      &rarr; Build synthesis prompt with ticker + agent_summaries + all tool results
       &rarr; llm_queue.acquire(Priority.CRITICAL, "reviewer-report")
-      &rarr; Runner.run(reviewer_agent, input=prompt)
-        &rarr; Input guardrail: payload_structure_guardrail (validates ticker + agent_outputs)
-        &rarr; Agent calls ALL 4 deterministic tools:
-          +-- check_contradictions(agent_outputs) &rarr; list of contradiction objects
-          +-- verify_sources(agent_outputs) &rarr; per-agent verification rates
-          +-- score_confidence(agent_outputs) &rarr; meta_confidence, agreement, data_quality
-          +-- validate_recommendation(agent_outputs) &rarr; evidence analysis
-        &rarr; LLM synthesizes comprehensive review verdict
-        &rarr; Output guardrail: confidence_range_guardrail (review_confidence in [0,1])
-        &rarr; Output: ReviewerAgentOutput with verdict, contradictions, verifications, confidence_breakdown, flags, review_confidence
+      &rarr; Runner.run(reviewer_agent, input=synthesis_prompt)
+        &rarr; LLM synthesizes comprehensive review verdict from pre-computed data
+        &rarr; Output: ReviewerAgentOutput with verdict, contradictions, verifications,
+          confidence_breakdown, flags, review_confidence
       &rarr; score_reviewer_deterministic(output_dict) — 10+ inline deterministic checks
-      &rarr; if EVAL_ENABLED: defer_eval(score_reviewer_response, ...) (deferred via shared/eval_gate.py)
+      &rarr; Confidence range clamped in Python (replaces SDK output guardrail)
+      &rarr; if EVAL_ENABLED: defer_eval(score_reviewer_response, ...)
       &rarr; return {response_type: "data", content: result, ...}</pre>
 
 <h4>Runtime Evaluation</h4>

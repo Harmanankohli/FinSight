@@ -12,11 +12,11 @@
 <div class="sub-nav">
   <a href="component.html">Full (all)</a>
   <a href="component-orch.html">Orchestrator</a>
-  <a href="component-agents.html" class="active">Agents (RAG, Quant, Market)</a>
+<a href="component-agents.html" class="active">Agents (RAG, Quant, Market, Analytics, Reviewer)</a>
   <a href="component-infra.html">MCP + Shared Infra</a>
 </div>
-<h1>Component — Agents (RAG, Quant, Market)</h1>
-<p>Internal component breakdown of the three sub-agents: RAG (LlamaIndex/ChromaDB), Quant (LangGraph/nodes), Market Context (CrewAI). <strong>Drag to pan, scroll to zoom, hover nodes for details.</strong></p>
+<h1>Component — Agents (RAG, Quant, Market, Analytics, Reviewer)</h1>
+<p>Internal component breakdown of the five sub-agents: RAG (LlamaIndex/ChromaDB), Quant (LangGraph/nodes), Market Context (CrewAI), Analytics (PydanticAI), Reviewer (OpenAI Agents SDK). <strong>Drag to pan, scroll to zoom, hover nodes for details.</strong></p>
 <div class="zoom-controls">
   <button onclick="zoomIn()">+ Zoom In</button>
   <button onclick="zoomOut()">- Zoom Out</button>
@@ -32,6 +32,7 @@ LLM("LM Studio")
 MCP("MCP Server")
 Chroma("ChromaDB")
 SQLite("SQLite")
+AgentStore("Agent Output Store\nSQLite")
 subgraph RAGAgent["RAG Agent — LlamaIndex (port 8002)"]
 RAG_E("RAGAgent\nensure_ingested(), query()")
 RAG_W("Startup Warm-up\nEmbedder + ChromaDB\n+ CrossEncoder (~3-5s)")
@@ -57,9 +58,22 @@ M_W("MCPClientWrapper\nDiscovers tools\nWraps as CrewAI BaseTool")
 M_R("MarketContextCrew\n1 agent + 1 task\nJSON: narrative, macro_regime,\nrelative_peer_positioning, signal,\nkey_headwinds, key_tailwinds,\npeer_comparison, confidence")
 M_EVAL("Deferred Eval\nFaithfulness, macro_regime\npeer_landscape_quality")
 end
+subgraph AnalyticsAgent["Analytics Agent — PydanticAI (port 8005)"]
+A_E("AnalyticsAgent\nanalyze() → trend, forecast,\nstats, anomaly, charts")
+A_N("Analytics Nodes\ntrend_node, forecast_node\nstats_node, anomaly_node\nchart_node")
+end
+subgraph ReviewerAgent["Reviewer Agent — OpenAI Agents SDK (port 8006)"]
+R_E("ReviewerAgent\nreview() → session_id lookup")
+R_T("Deterministic Tools\ncheck_contradictions()\nverify_sources()\nscore_confidence()\nvalidate_recommendation()")
+R_S("LLM Synthesis\ncross_validation_verdict\nfrom agent summaries")
+end
 Orch -- "① A2A" --> RAG_E
 Orch -- "① A2A" --> Q_E
 Orch -- "① A2A" --> M_E
+Orch -- "① A2A" --> A_E
+Orch -- "① A2A" --> R_E
+Orch -- "store" --> AgentStore
+AgentStore -- "fetch" --> R_E
 RAG_E -- "② MCP" --> MCP
 Q_E -- "② MCP" --> MCP
 M_E -- "② MCP" --> MCP
@@ -102,6 +116,12 @@ style M_C fill:#fadbd8,stroke:#c0392b,color:#1a1a1a
 style M_W fill:#fadbd8,stroke:#c0392b,color:#1a1a1a
 style M_R fill:#fadbd8,stroke:#c0392b,color:#1a1a1a
 style M_EVAL fill:#fadbd8,stroke:#c0392b,color:#1a1a1a
+style A_E fill:#abebc6,stroke:#1e8449,color:#1a1a1a
+style A_N fill:#abebc6,stroke:#1e8449,color:#1a1a1a
+style R_E fill:#f5b7b1,stroke:#c0392b,color:#1a1a1a
+style R_T fill:#f5b7b1,stroke:#c0392b,color:#1a1a1a
+style R_S fill:#f5b7b1,stroke:#c0392b,color:#1a1a1a
+style AgentStore fill:#f9e79f,stroke:#f39c12,color:#1a1a1a
 </div>
 </div>
 <hr style="margin-top:2rem">

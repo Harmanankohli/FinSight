@@ -36,6 +36,65 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 
 <h1>Changelog</h1>
 
+<h2>v2.7 &mdash; Shared Agent Output Store, Rich HTML Report Sections, Frontend Auth Bypass (dc6ec77)</h2>
+
+<h3 class="version">Shared SQLite Agent Output Store (dc6ec77)</h3>
+<ul>
+<li><strong><code>src/shared/memory/agent_output_store.py</code> (new, 75 lines)</strong>: Cross-process SQLite store for full agent output persistence. <code>store_agent_output(session_id, agent_name, output)</code> called from orchestrator <code>send_message</code> callback. <code>get_agent_outputs(session_id)</code> called from reviewer executor. Keys normalized via <code>_AGENT_KEY_MAP</code> (rag, quant, market_context, analytics, reviewer). <code>prune_stale_outputs(max_age_seconds=600)</code> cleans TTL-expired entries.</li>
+<li><strong>Fire-and-forget race fixed</strong> (<code>src/orchestrator/agent.py</code>): <code>send_message</code> now <code>await store_agent_output()</code> before returning — ensures the shared store has data by the time the reviewer reads it. Previously the write was fire-and-forget, causing the reviewer to receive empty store reads.</li>
+<li><strong>Schema migration v5→v6</strong> (<code>src/shared/memory/store.py</code>): New <code>agent_output_store</code> table with composite PK <code>(session_id, agent_name)</code>. <code>prune_old_records()</code> included <code>agent_output_store</code> in its table whitelist.</li>
+<li><strong>Lazy imports</strong> (<code>src/shared/memory/__init__.py</code>): <code>store_agent_output</code>, <code>get_agent_outputs</code>, <code>prune_stale_outputs</code> exposed via <code>__getattr__</code> lazy loading — won't break slim CI.</li>
+<li><strong>Startup pruning</strong> (<code>src/orchestrator/main.py</code>): Orchestrator calls <code>prune_stale_outputs(600)</code> at startup to clean stale entries from prior sessions.</li>
+</ul>
+
+<h3 class="version">Reviewer Agent — Synthesis-Only + Agent Summaries (dc6ec77)</h3>
+<ul>
+<li><strong>Tools called directly in Python</strong> (<code>src/reviewer/executor.py</code>): The 4 deterministic tools (<code>check_contradictions</code>, <code>verify_sources</code>, <code>score_confidence</code>, <code>validate_recommendation</code>) are now imported and called directly from Python, not through the OpenAI Agents SDK <code>Runner.run</code>. The LLM receives pre-computed results as context and performs synthesis only. Reduces LLM output size, eliminates SDK tool-call overhead, and avoids guardrail issues.</li>
+<li><strong>Agent summaries passed to LLM</strong> (<code>src/reviewer/executor.py:92-123</code>): <code>_build_response</code> extracts compact summaries from each agent's output (quant: recommendation/reasoning/metrics; rag: summary/sources; market_context: signal/narrative/headwinds; analytics: signal/trend/anomalies). These summaries give the LLM structured context without the full agent output bloat.</li>
+<li><strong>Reviewer fetches from shared store</strong> (<code>src/reviewer/executor.py:69-73</code>): Instead of receiving <code>agent_outputs</code> inline, the reviewer now fetches full outputs from the shared SQLite store using <code>session_id</code> passed by the orchestrator. Falls back to inline <code>agent_outputs</code> when session_id is missing or store is empty.</li>
+<li><strong>Confidence range clamping in Python</strong> (<code>src/reviewer/executor.py:149-153</code>): The output guardrail <code>confidence_range_guardrail</code> replaced with inline Python clamping — catches out-of-range values without SDK guardrail overhead.</li>
+<li><strong>Orchestrator passes session_id</strong> (<code>src/orchestrator/agent.py:131-139</code>): <code>send_message</code> injects <code>session_id</code> into the reviewer's JSON payload so the reviewer can query the shared store.</li>
+<li><strong><code>session_id</code> fallback</strong> (<code>src/reviewer/executor.py:65-66</code>): When no <code>session_id</code> is in the payload, falls back to the A2A <code>context_id</code> from the stream call.</li>
+</ul>
+
+<h3 class="version">Rich HTML Report Sections — 10+ New Panels (dc6ec77)</h3>
+<ul>
+<li><strong>Technical indicators table</strong> (<code>src/shared/reports/extraction.py</code>): Full SMA-20/50/200, EMA-12/26, MACD &amp; signal, Bollinger bands, support/resistance, momentum, golden cross indicators added to <code>DeckData.technicals_table</code>.</li>
+<li><strong>Trend &amp; Momentum dashboard</strong>: New <code>trend_data</code> dict in DeckData drives a grid of trend cards (direction, strength, crossover, momentum, supporting indicators). Rendered with compact card CSS.</li>
+<li><strong>Forecast chart (Chart.js)</strong>: <code>forecast_chart</code> dict with dates/prices/confidence bounds drives a Chart.js line chart with 80% CI fill. <code>&lt;script src=&quot;chart.js@4.4.4&quot;&gt;</code> loaded from CDN.</li>
+<li><strong>Monte Carlo summary cards</strong>: <code>monte_carlo_summary</code> dict renders p10/p25/p50/p75/p90 percentile cards + probability of profit, expected return, MC VaR. Includes raw values for chart rendering and formatted values for display.</li>
+<li><strong>DCF breakdown</strong>: <code>dcf_breakdown</code> list renders intrinsic value, current price, upside, WACC, growth rates, enterprise value, FCF used.</li>
+<li><strong>Stress test scenarios</strong>: <code>stress_scenarios</code> renders scenario name, market decline %, and projected price for each shock event.</li>
+<li><strong>Signals dashboard</strong>: <code>signals_table</code> consolidates insider (activity/direction/net), options (P/C ratios, flow signal), analyst (consensus/target/short interest), and signal scores into one color-coded table with category badges.</li>
+<li><strong>Anomaly alerts</strong>: <code>anomaly_alerts</code> renders price/volume/fundamental/catalyst anomalies with severity-colored cards and type badges (Price=blue, Volume=purple, Fundamental=amber, Catalyst=green).</li>
+<li><strong>Statistical summary</strong>: <code>stats_table</code> renders skewness, kurtosis, Jarque-Bera p-value, regression beta/R², correlations — each with interpretive context.</li>
+<li><strong>Reviewer cross-validation</strong>: Three new sections — contradictions (agents, field, description, severity-colored), verification rates (agent, claims checked/verified, rate, unverified claims), and evidence analysis (recommendation, supports, strength, supporting/contradicting evidence). Confidence bar chart with per-agent scores.</li>
+<li><strong>Macro regime context</strong>: <code>macro_regime</code> string from market context agent displayed as narrative context.</li>
+<li><strong>All sections conditional</strong>: Each section only renders when its DeckData field has data. PDF print styles included for all new sections.</li>
+<li><strong>Template updated</strong> (<code>src/shared/templates/investment_deck.html</code>): 1609 lines (was 768). 800+ new lines of CSS/HTML for new sections. Chart.js CDN loaded in <code>&lt;head&gt;</code>.</li>
+<li><strong>DeckData model extended</strong> (<code>src/shared/reports/deck_model.py</code>): 14 new fields — <code>technicals_table</code>, <code>signals_table</code>, <code>forecast_chart</code>, <code>monte_carlo_summary</code>, <code>stress_scenarios</code>, <code>dcf_breakdown</code>, <code>stats_table</code>, <code>anomaly_alerts</code>, <code>trend_data</code>, <code>reviewer_contradictions</code>, <code>reviewer_verifications</code>, <code>reviewer_confidence</code>, <code>reviewer_validation</code>, <code>macro_regime</code>.</li>
+</ul>
+
+<h3 class="version">Frontend Auth Bypass (dc6ec77)</h3>
+<ul>
+<li><strong>NEXT_PUBLIC_AUTH_ENABLED env var</strong> (<code>src/web/nextjs-app/contexts/AuthContext.tsx</code>): When set to <code>false</code> (default), the AuthProvider instantly sets an anonymous user with <code>accessToken=&quot;disabled&quot;</code> and <code>isLoading=false</code>. All auth guards short-circuit — the frontend never hits the login page, never calls refresh, and never redirects. Existing server-side <code>AUTH_ENABLED=false</code> already disabled backend auth; this extends the bypass to the React frontend.</li>
+<li><strong>Usage</strong>: Add <code>NEXT_PUBLIC_AUTH_ENABLED=false</code> to <code>.env</code> (or <code>.env.local</code>) to bypass frontend auth entirely. Set to <code>true</code> for production deployments requiring full login flow.</li>
+</ul>
+
+<h3 class="version">Test Fixes (dc6ec77)</h3>
+<ul>
+<li><strong>test_auth_routes</strong> (<code>src/tests/unit/test_auth_routes.py</code>): Fixed Windows file locking by using unique temp DB paths per test via <code>tmp_path</code> fixture — prevents <code>PermissionError</code> from concurrent test processes sharing the same SQLite file.</li>
+<li><strong>test_web_search_tool</strong> (<code>src/tests/unit/test_web_search_tool.py</code>): Mock pattern updated to match DuckDuckGo's async API &mdash; <code>mock.AsyncMock</code> replaces <code>mock.MagicMock</code> for <code>aresults()</code> and <code>acorrect()</code> calls.</li>
+<li><strong>Chat.html output renamed</strong>: Sample report output renamed from <code>FinSight_NVDA_2026-06-13.html</code> to <code>FinSight_NVDA_2026-06-17.html</code> reflecting updated template.</li>
+<li><strong>plan.md trimmed</strong>: <code>ppt-docx fix plan.md</code> deleted (plan implemented). <code>plan.md</code> pruned completed tasks.</li>
+</ul>
+
+<h3 class="version">Config &amp; Tooling (dc6ec77)</h3>
+<ul>
+<li><strong>.env.example model defaults</strong>: <code>LLM_MODEL</code> and <code>ADK_MODEL</code> switched from <code>qwen/qwen3-30b-a3b-2507</code> to <code>mistralai/ministral-3-14b-reasoning</code>.</li>
+<li><strong>NEXT_PUBLIC_AUTH_ENABLED</strong>: New frontend env var (see above).</li>
+</ul>
+
 <h2>v2.6 &mdash; Analytics Agent (PydanticAI) &amp; Reviewer Agent (OpenAI Agents SDK), Two-Phase Orchestration (53a2cde&ndash;2d0c35e)</h2>
 
 <h3 class="version">Analytics Agent — PydanticAI + pydantic-graph (53a2cde)</h3>

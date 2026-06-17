@@ -27,6 +27,8 @@ GE["GenericAgentExecutor\nsrc/shared/generic_executor.py\nWraps BaseAgent → A2
 RAG["RAGAgent\nsrc/financial_rag/executor.py\n+ query(ticker, query_text)"]
 QuantA["QuantAgent\nsrc/quant/executor.py\n+ analyze(ticker, period...)"]
 Mkt["MarketContextAgent\nsrc/market_context/executor.py\n+ analyze(ticker, query)"]
+AnalyticsA["AnalyticsAgent\nsrc/analytics/executor.py\n+ analyze(ticker)"]
+ReviewerA["ReviewerAgent\nsrc/reviewer/executor.py\n+ review(session_id)"]
 end
 subgraph Orchestrator["Orchestrator Classes"]
 FExec["FinSightAgentExecutor\nsrc/orchestrator/agent_executor.py\n+ execute() + cancel()"]
@@ -60,9 +62,13 @@ end
 GE -. "wraps" .-> RAG
 GE -. "wraps" .-> QuantA
 GE -. "wraps" .-> Mkt
+GE -. "wraps" .-> AnalyticsA
+GE -. "wraps" .-> ReviewerA
 RAG -. "extends" .-> Base
 QuantA -. "extends" .-> Base
 Mkt -. "extends" .-> Base
+AnalyticsA -. "extends" .-> Base
+ReviewerA -. "extends" .-> Base
 RootAgent --> FExec
 FExec --> SubClient
 FExec --> CacheCB
@@ -92,6 +98,8 @@ style Base fill:#f9e79f,stroke:#f39c12,stroke-width:3px,color:#1a1a1a
 style RAG fill:#d4e6f1,stroke:#2980b9,color:#1a1a1a
 style QuantA fill:#fdebd0,stroke:#e67e22,color:#1a1a1a
 style Mkt fill:#fadbd8,stroke:#c0392b,color:#1a1a1a
+style AnalyticsA fill:#abebc6,stroke:#1e8449,color:#1a1a1a
+style ReviewerA fill:#f5b7b1,stroke:#c0392b,color:#1a1a1a
 style GE fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
 style FExec fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
 style SubClient fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a

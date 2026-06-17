@@ -3428,3 +3428,97 @@ Typed Pydantic models at every agent boundary in `src/shared/agent_models.py`: `
 - ✅ Fixes three classes of extraction bugs in one change
 - ✅ Backward compatible — validated path falls back to legacy for old briefs
 - ✅ CrewAI `output_pydantic` enforced — structured JSON from LLM, not prose
+
+---
+
+## Why Shared SQLite Agent Output Store (v2.7)
+
+### Problem
+
+The orchestrator sent agent outputs to the reviewer as inline JSON payloads inside `send_message`. For full responses (RAG narrative + quant metrics + market context narrative), the payload grew beyond 50 KB — bloating A2A messages and increasing LLM context overhead. Worse, agent outputs were ephemeral — if the reviewer crashed or the session was retried, outputs had to be recomputed.
+
+### Solution
+
+Shared SQLite table `agent_output_store` keyed by `(session_id, agent_name)`. The orchestrator's `send_message` callback calls `store_agent_output()` to persist the full structured output before returning. The reviewer receives only `session_id` and `ticker` — it fetches all outputs via `get_agent_outputs(session_id)` and runs its verification tools.
+
+### Why SQLite instead of Redis / in-memory?
+
+SQLite is already the project's persistence layer (memory store, sessions, filings index). Adding Redis would introduce a new dependency with connection management overhead. In-memory dicts don't survive restarts and can't be shared across processes. SQLite provides cross-process persistence with zero infrastructure cost.
+
+### Key properties
+
+- ✅ Cross-process persistence — orchestrator and reviewer share data without per-process coupling
+- ✅ Race-safe — reviewer reads from SQLite, orchestrator writes to SQLite, no mutex needed (SQLite WAL handles concurrency)
+- ✅ Eliminates inline payload bloat — LLM context stays lean
+- ✅ TTL-pruned at startup — stale outputs older than 600s are auto-expired by `prune_stale_outputs()`
+- ✅ Schema v6 — single migration adds the table alongside existing memory tables
+
+---
+
+## Why Reviewer Synthesis-Only Architecture (v2.7)
+
+### Problem
+
+The original reviewer (v2.6) used OpenAI Agents SDK `Runner.run()` to call 4 tools as native SDK tool calls. This meant the LLM received the full agent output payloads in the system prompt, paid the overhead of parsing/tokenizing them, and made 4 separate runner steps — each requiring an LLM round-trip. The SDK runner also introduced a 20-second overhead just for handshake and context setup.
+
+### Solution
+
+The reviewer calls 4 deterministic Python functions directly: `check_contradictions()`, `verify_sources()`, `score_confidence()`, `validate_recommendation()`. These run in milliseconds — no LLM round-trips. The outputs (contradiction report, source verification, confidence score, validation result) are compiled into a structured verdict dict. Only the final synthesis step uses the LLM, receiving compressed agent summaries (not full payloads) to produce a `cross_validation_verdict` string.
+
+### Why not keep the SDK Runner?
+
+The Runner is designed for interactive multi-step agents — it maintains conversation state, supports handoffs, and streams partial tokens. None of those features are needed here. The reviewer is a batch verification pipeline: collect data, run deterministic checks, summarize with one LLM call. Direct Python calls are simpler, faster (4ms vs 20s+), and have no SDK versioning risks.
+
+### Key properties
+
+- ✅ Tools run in Python — 4 deterministic checks in ~4 ms total, zero LLM cost
+- ✅ LLM sees only agent summaries — reduced context, faster synthesis
+- ✅ No SDK dependency — avoids OpenAI Agents SDK version lock-in
+- ✅ Session ID access — fetches full outputs from shared store only when needed
+
+---
+
+## Why Chart.js from CDN (v2.7)
+
+### Problem
+
+The HTML investment deck needed interactive charts (forecast distribution, Monte Carlo percentiles, trend overlays, stress scenario bars, DCF breakdown). Generating chart images server-side would require a headless browser (Playwright/selenium) — adding ~300 MB to the Docker image and significant complexity. Static SVG generation would produce non-interactive charts that could not show tooltips, zoom, or dynamic toggles.
+
+### Solution
+
+Embed Chart.js 4.4.4 from CDN in the Jinja2 HTML template. The extraction pipeline pre-computes chart-ready data series (labels, arrays, colors) and serializes them as JSON directly into `<script>` blocks. Each chart is a ~10-line JavaScript instantiation. No build step, no bundler, no server-side rendering.
+
+### Why not bundle Chart.js locally?
+
+The HTML report is a self-contained file served by the orchestrator. Bundling Chart.js into the Next.js frontend would require a separate npm dependency, a build step for the report route, and would not work for PDF export or API-based report retrieval. CDN delivery keeps the report self-contained: open the HTML file offline and charts still render.
+
+### Key properties
+
+- ✅ Zero-build integration — no bundler, no npm, no server-side chart rendering
+- ✅ Interactive charts — tooltips, zoom, legend toggle all work natively
+- ✅ Template grew from 768→1609 lines — all chart init is inline JavaScript
+- ✅ 10+ new report sections — technicals table, signals, forecast chart, Monte Carlo summary, stress scenarios, DCF breakdown, stats table, anomaly alerts, trend data, cross-validation
+- ✅ 14 new `DeckData` fields — fully typed in Pydantic model
+
+---
+
+## Why NEXT_PUBLIC_AUTH_ENABLED (v2.7)
+
+### Problem
+
+The existing `AUTH_ENABLED` env var controlled backend authentication (orchestrator middleware, A2A service tokens, MCP auth). But the frontend (Next.js) had its own auth checks in `AuthContext.tsx` and `middleware.ts` — these ran independently of the backend flag. Setting `AUTH_ENABLED=false` did not disable frontend auth redirects, so developers hit login screens even in auth-disabled mode.
+
+### Solution
+
+Add `NEXT_PUBLIC_AUTH_ENABLED=false` as a separate frontend-only env var. When false, `AuthContext.tsx` short-circuits all auth checks (no token validation, no login redirect, no HTTP calls to auth endpoints). The frontend behaves as if always authenticated — perfect for local development. The backend `AUTH_ENABLED` remains independently togglable for production deployments that may want frontend auth but backend-only service auth.
+
+### Why two separate env vars instead of one?
+
+Single env var usage: backend reads it at startup, Next.js reads it at build time. With one var, changing auth behavior requires rebuilding the Next.js frontend. Two vars allow independent control: disable frontend auth during local dev (`NEXT_PUBLIC_AUTH_ENABLED=false`) while keeping backend auth on for integration testing (`AUTH_ENABLED=true`), without a rebuild.
+
+### Key properties
+
+- ✅ Frontend auth bypass — zero HTTP calls, zero redirects when disabled
+- ✅ Independent from backend `AUTH_ENABLED` — any combination works
+- ✅ No rebuild needed — Next.js public env vars are baked at build time but can differ per deployment
+- ✅ Default commented out in `.env.example` — opt-in for dev convenience

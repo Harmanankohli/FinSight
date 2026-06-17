@@ -17,7 +17,7 @@
   <a href="sequence-phase3.html">Phase 3: Synthesis</a>
 </div>
 <h1>Sequence Diagram — Phase 2: Agent Dispatch</h1>
-<p>Orchestrator dispatches RAG, Quant, and Market Context agents in parallel via A2A protocol. <strong>Drag to pan, scroll to zoom, hover nodes for details.</strong></p>
+<p>Orchestrator dispatches RAG, Quant, Market Context, and Analytics agents in parallel via A2A protocol, then stores and reviews outputs. <strong>Drag to pan, scroll to zoom, hover nodes for details.</strong></p>
 <div class="zoom-controls">
   <button onclick="zoomIn()">+ Zoom In</button>
   <button onclick="zoomOut()">- Zoom Out</button>
@@ -32,13 +32,15 @@ participant Orch as Orchestrator
 participant RAG as RAG (LlamaIndex)
 participant Quant as Quant (LangGraph)
 participant Mkt as Market Context (CrewAI)
+participant Analytics as Analytics (PydanticAI)
+participant Reviewer as Reviewer (OpenAI Agents SDK)
 participant MCP as MCP Server
 participant LLM as LM Studio
 participant SEC as SEC EDGAR
 participant YF as Yahoo Finance
-Note over Orch,YF: ══════ Phase 2: Parallel A2A Dispatch ══════
+Note over Orch,YF: ══════ Phase 2a: Parallel A2A Dispatch ══════
 
-par ⑧ All 3 agents fire simultaneously
+par ⑧ All 4 agents fire simultaneously
 Orch->>RAG: A2A SendMessage("Analyze NVDA")
 activate RAG
 RAG->>MCP: get_financial_filings("NVDA")
@@ -73,7 +75,22 @@ Mkt->>LLM: Narrative (CRITICAL)
 LLM-->>Mkt: Bullish macro, leads peers
 Mkt-->>Orch: Market context
 deactivate Mkt
+Orch->>Analytics: A2A SendMessage("Analytics NVDA")
+activate Analytics
+Analytics->>Analytics: Trend + forecast + stats + anomaly
+Analytics-->>Orch: Analytics report
+deactivate Analytics
 end
+Note over Orch,YF: ══════ Phase 2b: Store + Review ══════
+Orch->>Orch: Store agent outputs in SQLite
+Orch->>Reviewer: A2A SendMessage(session_id)
+activate Reviewer
+Reviewer->>Orch: Fetch outputs from SQLite
+Reviewer->>Reviewer: check_contradictions()\nverify_sources()\nscore_confidence()\nvalidate_recommendation()
+Reviewer->>LLM: Summarize (agent summaries)
+LLM-->>Reviewer: Cross-validation verdict
+Reviewer-->>Orch: Reviewer verdict
+deactivate Reviewer
 Note over Orch,YF: ✓ Phase 2 complete → Phase 3: Synthesis
 </div>
 </div>

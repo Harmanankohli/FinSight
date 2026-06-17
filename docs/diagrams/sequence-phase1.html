@@ -54,9 +54,9 @@ Note over Orch,Mem: TickerMemory.get_latest() (stale)<br/>PortfolioStore.get_hol
 Orch->>Orch: ⑧ Build system prompt
 Note over Orch: Agent list from discovery<br/>Memory context as prefix<br/>LLM instructed: emit ALL send_message<br/>calls in ONE assistant turn
 Orch->>LLM: ⑨ LLM dispatch decision
-Note over Orch,LLM: LLM sees: query + memory + agent list<br/>Decides: RAG + Quant + Market Ctx
-LLM-->>Orch: send_message("RAG", ...)<br/>send_message("Quant", ...)<br/>send_message("MarketCtx", ...)
-Note over Orch,LLM: ✓ Phase 1 → Phase 2: Parallel A2A dispatch
+Note over Orch,LLM: LLM sees: query + memory + agent list<br/>Decides: RAG + Quant + Market Ctx + Analytics
+LLM-->>Orch: send_message("RAG", ...)<br/>send_message("Quant", ...)<br/>send_message("MarketCtx", ...)<br/>send_message("Analytics", ...)
+Note over Orch,LLM: ✓ Phase 1 → Phase 2a: Parallel A2A dispatch
 deactivate Orch
 </div>
 </div>

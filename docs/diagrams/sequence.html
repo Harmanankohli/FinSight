@@ -35,6 +35,8 @@ participant LLM as LM Studio
 participant RAG as RAG(LlamaIndex)
 participant Quant as Quant(LangGraph)
 participant Mkt as MktContext(CrewAI)
+participant Analytics as Analytics(PydanticAI)
+participant Reviewer as Reviewer(OpenAI Agents SDK)
 participant MCP as MCP Server
 Note over User,MCP: ═══ Phase 1: Input Processing (&lt; 5s) ═══
 
@@ -44,8 +46,8 @@ activate Orch
 Orch->>Orch: ③ Guardrails + Cache + Memory ctx
 Note over Orch: Per-event timeout: 120s LLM wait<br/>A2A_TIMEOUT+30s tool wait
 Orch->>LLM: ④ Decide dispatch
-LLM-->>Orch: ⑤ send_message to all 3
-Note over Orch,MCP: ═══ Phase 2: Agent Dispatch (15-45s) ═══
+LLM-->>Orch: ⑤ send_message to all 5
+Note over Orch,MCP: ═══ Phase 2a: Agent Dispatch (15-45s) ═══
 
 par ⑥ Parallel A2A dispatch
 Orch->>RAG: A2A "Analyze NVDA"
@@ -80,16 +82,31 @@ Mkt->>LLM: Narrative (CRITICAL)
 LLM-->>Mkt: Market context
 Mkt-->>Orch: Done
 deactivate Mkt
+Orch->>Analytics: A2A "Analytics NVDA"
+
+activate Analytics
+Analytics->>Analytics: Trend + forecast + stats + anomaly
+Analytics-->>Orch: Done
+deactivate Analytics
 end
+Note over Orch,MCP: ═══ Phase 2b: Store + Review (2-5s) ═══
+
+Orch->>Orch: ⑦ Store agent outputs\nin SQLite agent_output_store
+Orch->>Reviewer: ⑧ A2A "(session_id)"
+Reviewer->>Orch: Fetch agent_outputs
+Reviewer->>Reviewer: Run deterministic tools\ncontradictions, sources,\nconfidence, validation
+Reviewer->>LLM: Summarize verdict
+LLM-->>Reviewer: Cross-validation verdict
+Reviewer-->>Orch: Done
 Note over Orch,MCP: ═══ Phase 3: Synthesis + Persist (5-15s) ═══
 
-Orch->>LLM: ⑦ Synthesize final
-LLM-->>Orch: ⑧ BUY (0.78)
-Orch->>Orch: ⑨ Output guard + persist + eval
-Orch->>Orch: ⑩ Cache write + /release-evals
-Orch->>UI: ⑪ SSE stream
+Orch->>LLM: ⑨ Synthesize final
+LLM-->>Orch: ⑩ BUY (0.78)
+Orch->>Orch: ⑪ Output guard + persist + eval
+Orch->>Orch: ⑫ Cache write + /release-evals
+Orch->>UI: ⑬ SSE stream
 deactivate Orch
-UI->>User: ⑫ Investment brief
+UI->>User: ⑭ Investment brief
 </div>
 </div>
 <hr style="margin-top:2rem">

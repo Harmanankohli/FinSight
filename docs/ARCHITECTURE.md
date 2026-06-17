@@ -373,6 +373,8 @@ Timeouts configured via `.env` with `A2A_TIMEOUT=680.0`:
 | A2A — RAG agent | 600s | `asyncio.wait_for` in `send_message` |
 | A2A — Quant agent | 600s | `asyncio.wait_for` in `send_message` |
 | A2A — Market Context agent | 600s | `asyncio.wait_for` in `send_message` |
+| A2A — Analytics agent | 600s | `asyncio.wait_for` in `send_message` |
+| A2A — Reviewer agent | 300s | `asyncio.wait_for` in `send_message` |
 | MCP tool calls | 30s | MCPClient default |
 
 ## Error Handling
@@ -384,6 +386,18 @@ Timeouts configured via `.env` with `A2A_TIMEOUT=680.0`:
 | MCP connection failure | Exponential backoff (2^attempt), max 3 retries |
 | Agent unavailable | Skipped, LLM works with what it has |
 | Response parse failure | `json.JSONDecodeError` caught, text used as-is |
+
+## Shared Agent Output Store (v2.7)
+
+`src/shared/memory/agent_output_store.py` provides a cross-process SQLite store for full agent output persistence. The orchestrator's `send_message` callback calls `await store_agent_output(session_id, agent_name, output)` before returning, ensuring the reviewer always has data. The reviewer fetches outputs via `get_agent_outputs(session_id)` which normalizes agent names through `_AGENT_KEY_MAP`.
+
+| Function | Purpose |
+|---|---|
+| `store_agent_output(session_id, agent_name, output)` | INSERT OR REPLACE into `agent_output_store` table. Called by orchestrator after each sub-agent response. |
+| `get_agent_outputs(session_id)` | Fetch all outputs for a session, keyed by normalized short name (rag, quant, etc.). Called by reviewer executor. |
+| `prune_stale_outputs(max_age_seconds=600)` | DELETE entries older than TTL. Called at orchestrator startup. |
+
+The `agent_output_store` table (`session_id TEXT, agent_name TEXT, output_json TEXT, created_at TIMESTAMP, PRIMARY KEY (session_id, agent_name)`) was added in schema migration v5→v6.
 
 ## CI Pipeline
 

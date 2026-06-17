@@ -38,7 +38,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 
 <h1>Test Coverage</h1>
 
-<p><strong>~275 test functions (~345 parametrized cases) across 33 test files + offline evaluation driver. v2.2 added agent output extraction tests. v2.5 added test isolation fixes and auth route test updates for case-insensitive usernames. v2.6 added 5 new test files for Analytics Agent, Reviewer Agent, and new agent models.</strong></p>
+<p><strong>~275 test functions (~355 parametrized cases) across 34 test files + offline evaluation driver. v2.2 added agent output extraction tests. v2.5 added test isolation fixes and auth route test updates for case-insensitive usernames. v2.6 added 5 new test files for Analytics Agent, Reviewer Agent, and new agent models. v2.7 added agent_output_store memory test and Windows/locking fixes.</strong></p>
 
 <h2>Running Tests</h2>
 <pre><code>pytest                          # all unit tests
@@ -107,9 +107,10 @@ pytest -m "not external"        # exclude tests that need external services</cod
 &crarr;   &crarr; memory/
 &crarr;       &crarr; test_memory_store.py         # 5 &mdash; tables, indexes, WAL
 &crarr;       &crarr; test_ticker_memory.py        # 7 &mdash; store/get_latest, flip detection
-&crarr;       &crarr; test_save_brief_persists_synthesis.py  # 2 &mdash; synthesis wins, rationale fallback</code></pre>
+&crarr;       &crarr; test_save_brief_persists_synthesis.py  # 2 &mdash; synthesis wins, rationale fallback
+&crarr;       &crarr; test_agent_output_store.py   # 10 &mdash; v2.7: store/get/prune, cross-agent isolation, TTL expiry</code></pre>
 
-<p><strong>Total: ~345 parametrized test cases across 33 test files.</strong></p>
+<p><strong>Total: ~355 parametrized test cases across 34 test files.</strong></p>
 
 <h2>Key Patterns</h2>
 <ul>
@@ -118,6 +119,8 @@ pytest -m "not external"        # exclude tests that need external services</cod
 <li><strong>No network calls</strong>: Quant graph tests call LangGraph nodes directly with synthetic <code>numpy</code> price data. <code>mcp_client=None</code> forces beta to <code>1.0</code>.</li>
 <li><strong>Asyncio</strong>: All tests use <code>pytest-asyncio</code> with <code>asyncio_mode = "auto"</code> and <code>asyncio_default_fixture_loop_scope = "function"</code>.</li>
 <li><strong>Runtime eval gated</strong>: <code>test_runtime_eval_gates.py</code> verifies circuit breaker, SHA-256 dedup, burst limiter, kill switch, unified gate, and <code>score_quant_deterministic</code> schema validation without LLM calls.</li>
+<li><strong>Windows file locking fix (v2.7)</strong>: <code>test_auth_routes.py</code> uses <code>tmp_path</code> per-test database files to avoid SQLite locking on Windows where <code>NamedTemporaryFile</code> cannot be reopened while open.</li>
+<li><strong>DDG mock pattern (v2.7)</strong>: <code>test_web_search_tool.py</code> mocks DuckDuckGo at the <code>aiohttp.ClientSession</code> level (not <code>DDGS</code>) to avoid real HTTP calls during CI.</li>
 </ul>
 
 <h2>Characterization Tests (Phase 0)</h2>

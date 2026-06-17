@@ -243,24 +243,36 @@ RAGAgent._ensure_ingested(ticker) [background]:
         &rarr; Generates structured narrative with reasoning
   &rarr; Returns data response</pre>
 
-<h3>Reviewer Agent (OpenAI Agents SDK, v2.6)</h3>
-<p>Port <strong>8006</strong>. Phase 2 cross-validation. Receives all Phase 1 agent outputs as JSON, runs 4 deterministic tools, and produces a review verdict.</p>
+<h3>Reviewer Agent (OpenAI Agents SDK, v2.7)</h3>
+<p>Port <strong>8006</strong>. Phase 2 cross-validation, synthesis-only. Fetches agent outputs from shared SQLite store, runs 4 deterministic tools directly in Python, then passes results to LLM for synthesis.</p>
 <pre>A2A Request &rarr; DefaultRequestHandler &rarr; GenericAgentExecutor(ReviewerAgent)
   &rarr; ReviewerAgent.stream()
-    &rarr; Parse JSON payload: {ticker, agent_outputs: {quant, rag, market_context, analytics}}
-    &rarr; OpenAI Agents SDK Runner.run(reviewer_agent, input=prompt)
-      &rarr; Input guardrail: payload_structure_guardrail
-      &rarr; 4 deterministic tools:
-        &rarr; check_contradictions(agent_outputs) &mdash; pairwise contradiction detection
-        &rarr; verify_sources(agent_outputs) &mdash; per-agent internal consistency
-        &rarr; score_confidence(agent_outputs) &mdash; meta_confidence = 0.4*avg_conf + 0.3*agreement + 0.3*data_quality
-        &rarr; validate_recommendation(agent_outputs) &mdash; evidence analysis, evidence_strength
-      &rarr; LLM synthesizes verdict (CRITICAL priority queue)
-      &rarr; Output guardrail: confidence_range_guardrail
-      &rarr; Returns ReviewerAgentOutput
+    &rarr; Parse JSON payload: {ticker, session_id}
+    &rarr; Fetch full outputs from shared agent_output_store via session_id
+    &rarr; Fall back to inline agent_outputs from payload if store empty
+    &rarr; Call 4 deterministic tools DIRECTLY in Python (no SDK):
+      &rarr; check_contradictions(agent_outputs) &mdash; pairwise contradiction detection
+      &rarr; verify_sources(agent_outputs) &mdash; per-agent internal consistency
+      &rarr; score_confidence(agent_outputs) &mdash; meta_confidence = 0.4*avg_conf + 0.3*agreement + 0.3*data_quality
+      &rarr; validate_recommendation(agent_outputs) &mdash; evidence analysis, evidence_strength
+    &rarr; Build compact agent_summaries (quant/rag/market_context/analytics key fields)
+    &rarr; Build synthesis prompt with ticker + summaries + all tool results
+    &rarr; LLM synthesizes verdict from pre-computed data (CRITICAL priority queue)
+    &rarr; Confidence range clamped in Python (replaces SDK output guardrail)
+    &rarr; Returns ReviewerAgentOutput
   &rarr; Returns data response</pre>
 
-<p><strong>No MCP calls</strong>: The Reviewer operates exclusively on already-produced agent outputs. No external data fetching or tool calls beyond the 4 deterministic Python functions.</p>
+<p><strong>No MCP calls</strong>: The Reviewer operates exclusively on already-produced agent outputs. Tools are called directly in Python (no SDK tool-call overhead). Agent summaries provide the LLM with structured context without full output bloat.</p>
+
+<h2>Shared Agent Output Store (v2.7)</h2>
+<p><code>src/shared/memory/agent_output_store.py</code> provides a cross-process SQLite store for full agent output persistence. The orchestrator&#39;s <code>send_message</code> callback <code>await store_agent_output(session_id, agent_name, output)</code> before returning, ensuring the reviewer always has data. The reviewer fetches outputs via <code>get_agent_outputs(session_id)</code> which normalizes agent names through <code>_AGENT_KEY_MAP</code>.</p>
+<table>
+<tr><th>Function</th><th>Purpose</th></tr>
+<tr><td><code>store_agent_output(session_id, agent_name, output)</code></td><td>INSERT OR REPLACE into <code>agent_output_store</code> table. Called by orchestrator after each sub-agent response.</td></tr>
+<tr><td><code>get_agent_outputs(session_id)</code></td><td>Fetch all outputs for a session, keyed by normalized short name (rag, quant, etc.). Called by reviewer executor.</td></tr>
+<tr><td><code>prune_stale_outputs(max_age_seconds=600)</code></td><td>DELETE entries older than TTL. Called at orchestrator startup and on a background schedule.</td></tr>
+</table>
+<p>The <code>agent_output_store</code> table (<code>session_id TEXT, agent_name TEXT, output_json TEXT, created_at TIMESTAMP, PRIMARY KEY (session_id, agent_name)</code>) was added in schema migration v5&rarr;v6.</p>
 
 <h2>Caching Layer</h2>
 <p>Four independent caching tiers reduce latency and external API load:</p>

@@ -207,6 +207,7 @@ If you discover a security vulnerability in FinSight:
 | Version | Change |
 |---|---|
 | v2.1 | `TRUSTED_PROXIES` setting closes IP-spoofing lockout bypass (EC5). `proxy.ts.disabled` — middleware that forced login redirect even with `AUTH_ENABLED=false` removed. `sub_agent_client.py` NameError fix (`__get_data_parts` → `_get_data_parts`). `SECURITY.md` fixed stale `shared/config.py` reference. |
+| v2.7 | Frontend auth bypass via `NEXT_PUBLIC_AUTH_ENABLED=false` — separate frontend toggle from backend `AUTH_ENABLED`. Inline confidence clamping in report generation (bounded to 0-1 range). Shared agent output store — cross-process data sharing between orchestrator and reviewer without inline payload bloat. |
 | v2.5 | Case-insensitive username matching — usernames normalized to lowercase at creation and lookup, preventing login failures from casing variations. Test isolation fix for `_schema_v4_ensured` flag. |
 | v2.0 | Phase 3 auth audit — contract tests, parametrized auth × route matrix, `trace_with_user()` for Langfuse user_id propagation. |
 | v1.43 | Bearer auth middleware for all HTTP endpoints. JWT user auth (Argon2 passwords, refresh token rotation, rate-limited lockout). Service-to-service A2A + MCP authentication. Sandbox container mode (Docker). Audit logging for all sandbox invocations. `TRUSTED_PROXIES` prevents IP-spoofing lockout bypass. |

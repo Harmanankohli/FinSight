@@ -37,9 +37,11 @@ subgraph Agents["Parallel Agents (A2A)"]
 
 RAG("RAG Agent\nSEC filings + News\n+ Earnings → LLM")
 Quant("Quant Agent\n14-node LangGraph\nPrices → DCF → voting")
-Mkt("Market Context\nMacro + Peers\n→ CrewAI narrative")
+Mkt("Market Context\nMacro indicators\n+ Peer landscape → LLM")
+Analytics("Analytics Agent\nTrends, forecast,\nstats, anomalies")
+Reviewer("Reviewer Agent\nCross-validation\nVerdict → synthesis")
 end
-Synth("LLM Synthesis\nMerge 3 outputs\n→ BUY/HOLD/SELL")
+Synth("LLM Synthesis\nMerge 4 outputs + verdict\n→ BUY/HOLD/SELL")
 OutGuard("Output Guardrails\n≥50 chars + signal\nAuto-retry × 3")
 MemStore("Memory Persist\nTickerMemory\n+ Portfolio + Perf")
 CacheWrite("Cache Write\nChromaDB upsert")
@@ -53,9 +55,12 @@ Cache --> MemCtx
 MemCtx --> RAG
 MemCtx --> Quant
 MemCtx --> Mkt
+MemCtx --> Analytics
 RAG --> Synth
 Quant --> Synth
 Mkt --> Synth
+Analytics --> Synth
+Reviewer --> Synth
 Synth --> OutGuard
 OutGuard --> MemStore
 MemStore --> CacheWrite
@@ -70,6 +75,8 @@ style MemCtx fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
 style RAG fill:#d4e6f1,stroke:#2980b9,color:#1a1a1a
 style Quant fill:#fdebd0,stroke:#e67e22,color:#1a1a1a
 style Mkt fill:#fadbd8,stroke:#c0392b,color:#1a1a1a
+style Analytics fill:#abebc6,stroke:#1e8449,color:#1a1a1a
+style Reviewer fill:#f5b7b1,stroke:#c0392b,color:#1a1a1a
 style Synth fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
 style OutGuard fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
 style MemStore fill:#abebc6,stroke:#1e8449,color:#1a1a1a

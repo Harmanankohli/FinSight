@@ -38,10 +38,10 @@ participant UI as ADK Web / Next.js
 participant User as User
 Note over Orch,User: ══════ Phase 3: Synthesis + Persistence ══════
 
-Orch->>Orch: ⑨ Collect 3 agent outputs
-Note over Orch: RAG: "NVDA revenue grew 125%..."<br/>Quant: "BUY (+0.31), 6/8 groups bullish"<br/>Mkt: "Bullish macro, yield curve steepening"
+Orch->>Orch: ⑨ Collect 4 agent outputs + Reviewer verdict
+Note over Orch: RAG: "NVDA revenue grew 125%..."<br/>Quant: "BUY (+0.31), 6/8 groups bullish"<br/>Mkt: "Bullish macro, yield curve steepening"<br/>Analytics: "Strong uptrend, low anomaly"<br/>Reviewer: "No contradictions, high confidence"
 Orch->>LLM: ⑩ Synthesize final recommendation
-Note over Orch,LLM: LLM receives 3 agent results + query + memory<br/>Produces BUY/HOLD/SELL + detailed rationale
+Note over Orch,LLM: LLM receives 4 agent results + reviewer verdict + query + memory<br/>Produces BUY/HOLD/SELL + detailed rationale
 LLM-->>Orch: "BUY — Confidence 0.78. Strong quant, positive macro."
 Orch->>Guard: ⑪ Output guardrail check
 Note over Guard: ≥50 chars? ✓ | BUY/HOLD/SELL keyword? ✓<br/>Auto-retry up to 3× on failure

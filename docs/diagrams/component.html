@@ -61,6 +61,18 @@ MData("_collect_data_parallel()\n3-step: macro + peers + data")
 MCPWrap("MCPClientWrapper")
 MCrew("MarketContextCrew\n1 agent + 1 task → JSON")
 end
+subgraph AnalyticsComp["Analytics Agent (port 8005)"]
+AExec("AnalyticsAgent\nanalyze()")
+ANodes("Analytics Nodes\ntrend, forecast, stats, anomaly, chart")
+end
+subgraph ReviewerComp["Reviewer Agent (port 8006)"]
+RExec("ReviewerAgent\nreview(session_id)")
+RTools("Deterministic Tools\ncontradictions, sources,\nconfidence, validation")
+RSynth("LLM Synthesis\ncross_validation_verdict")
+end
+subgraph AgentStore["Agent Output Store (v2.7)"]
+AOStore("agent_output_store\nSQLite table\n(session_id, agent_name)")
+end
 subgraph MCPComp["MCP Server (port 8010)"]
 Tools("18 MCP Tools")
 TTL("TTL Caches\nPrices: 60s / Financials: 1h\nFilings: perm / Peers: 24h")
@@ -87,6 +99,10 @@ end
 SubClient -- "A2A" --> RAGExec
 SubClient -- "A2A" --> QExec
 SubClient -- "A2A" --> MExec
+SubClient -- "A2A" --> AExec
+SubClient -- "A2A" --> RExec
+SubClient -- "store" --> AOStore
+AOStore -- "fetch" --> RExec
 RAGExec -- "MCP" --> Tools
 QExec -- "MCP" --> Tools
 MExec -- "MCP" --> Tools
@@ -149,6 +165,12 @@ style MExec fill:#fadbd8,stroke:#c0392b,color:#1a1a1a
 style MData fill:#fadbd8,stroke:#c0392b,color:#1a1a1a
 style MCPWrap fill:#fadbd8,stroke:#c0392b,color:#1a1a1a
 style MCrew fill:#fadbd8,stroke:#c0392b,color:#1a1a1a
+style AExec fill:#abebc6,stroke:#1e8449,color:#1a1a1a
+style ANodes fill:#abebc6,stroke:#1e8449,color:#1a1a1a
+style RExec fill:#f5b7b1,stroke:#c0392b,color:#1a1a1a
+style RTools fill:#f5b7b1,stroke:#c0392b,color:#1a1a1a
+style RSynth fill:#f5b7b1,stroke:#c0392b,color:#1a1a1a
+style AOStore fill:#f9e79f,stroke:#f39c12,color:#1a1a1a
 style Tools fill:#f9e79f,stroke:#f39c12,color:#1a1a1a
 style TTL fill:#f9e79f,stroke:#f39c12,color:#1a1a1a
 style RL fill:#f9e79f,stroke:#f39c12,color:#1a1a1a

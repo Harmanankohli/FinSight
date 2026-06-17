@@ -35,6 +35,8 @@ Orch("Orchestrator\nADK LlmAgent\nPort 8080")
 RAG("RAG Agent\nLlamaIndex\nPort 8002")
 Quant("Quant Agent\nLangGraph\nPort 8003")
 MktCtx("Market Context Agent\nCrewAI\nPort 8004")
+Analytics("Analytics Agent\nPydanticAI\nPort 8005")
+Reviewer("Reviewer Agent\nOpenAI Agents SDK\nPort 8006")
 end
 subgraph Data["Data Layer"]
 
@@ -54,6 +56,9 @@ ADKWeb --> Orch
 Orch -- "A2A" --> RAG
 Orch -- "A2A" --> Quant
 Orch -- "A2A" --> MktCtx
+Orch -- "A2A" --> Analytics
+Orch -- "A2A" --> Reviewer
+Reviewer -- "SQLite" --> SQLite
 RAG -- "MCP" --> MCP
 Quant -- "MCP" --> MCP
 MktCtx -- "MCP" --> MCP
@@ -75,6 +80,8 @@ style Orch fill:#d5f5e3,stroke:#27ae60,stroke-width:2px,color:#1a1a1a
 style RAG fill:#d5f5e3,stroke:#27ae60,stroke-width:2px,color:#1a1a1a
 style Quant fill:#d5f5e3,stroke:#27ae60,stroke-width:2px,color:#1a1a1a
 style MktCtx fill:#d5f5e3,stroke:#27ae60,stroke-width:2px,color:#1a1a1a
+style Analytics fill:#d5f5e3,stroke:#27ae60,stroke-width:2px,color:#1a1a1a
+style Reviewer fill:#d5f5e3,stroke:#27ae60,stroke-width:2px,color:#1a1a1a
 style MCP fill:#fdebd0,stroke:#e67e22,stroke-width:2px,color:#1a1a1a
 style Chroma fill:#fadbd8,stroke:#c0392b,stroke-width:2px,color:#1a1a1a
 style SQLite fill:#fadbd8,stroke:#c0392b,stroke-width:2px,color:#1a1a1a
@@ -91,7 +98,9 @@ style Yahoo fill:#e8daef,stroke:#8e44ad,stroke-width:2px,color:#1a1a1a
 <tr><td>RAG Agent</td><td>LlamaIndex</td><td>8002</td><td>2</td><td>A2A + MCP</td></tr>
 <tr><td>Quant Agent</td><td>LangGraph</td><td>8003</td><td>3</td><td>A2A + MCP</td></tr>
 <tr><td>Market Context Agent</td><td>CrewAI</td><td>8004</td><td>4</td><td>A2A + MCP</td></tr>
-<tr><td>Orchestrator</td><td>ADK LlmAgent</td><td>8080</td><td>5</td><td>A2A + MCP</td></tr>
+<tr><td>Analytics Agent</td><td>PydanticAI</td><td>8005</td><td>5</td><td>A2A</td></tr>
+<tr><td>Reviewer Agent</td><td>OpenAI Agents SDK</td><td>8006</td><td>6</td><td>A2A + SQLite</td></tr>
+<tr><td>Orchestrator</td><td>ADK LlmAgent</td><td>8080</td><td>7</td><td>A2A + MCP</td></tr>
 <tr><td>Next.js UI</td><td>Next.js 16 / React 19</td><td>3000</td><td>6</td><td>HTTP + SSE</td></tr>
 <tr><td>ADK Web UI</td><td>Google ADK</td><td>8080</td><td>6</td><td>HTTP + SSE</td></tr>
 </table>

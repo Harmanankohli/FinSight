@@ -1,5 +1,65 @@
 # Changelog
 
+## v2.7 — Shared Agent Output Store, Rich HTML Report Sections, Reviewer Refactor, Auth Bypass (dc6ec77)
+
+### Shared SQLite Agent Output Store (dc6ec77)
+
+- **`src/shared/memory/agent_output_store.py` (new, 75 lines)**: SQLite table `agent_output_store` keyed by `(session_id, agent_name)`. Three functions: `store_agent_output(session_id, agent_name, output)` persists full structured agent output, `get_agent_outputs(session_id)` returns all outputs for a session as a dict keyed by agent_name, `prune_stale_outputs(max_age=600)` deletes rows older than TTL and returns count removed.
+- **`src/shared/memory/store.py`**: Schema v5→v6 migration adds `agent_output_store` table. `init_db()` now runs v6 migration.
+- **`src/shared/memory/__init__.py`**: Lazy imports for `store_agent_output`, `get_agent_outputs`, `prune_stale_outputs`.
+- **`src/orchestrator/agent.py`**: `send_message` callback now calls `store_agent_output()` to persist sub-agent responses before returning. Reviewer payload changed from inline JSON to `{"ticker": "...", "session_id": "..."}` only.
+- **`src/orchestrator/main.py`**: Startup calls `prune_stale_outputs(600)` to clean expired outputs.
+- **Why**: Eliminates inline JSON payload bloat in A2A messages (agent outputs could exceed 50 KB). Provides cross-process persistence so reviewer and orchestrator share data without per-process coupling.
+
+### Reviewer Synthesis-Only Refactor (dc6ec77)
+
+- **`src/reviewer/executor.py`**: Tools called directly in Python instead of OpenAI Agents SDK `Runner.run()`: `check_contradictions()`, `verify_sources()`, `score_confidence()`, `validate_recommendation()`. These run in ~4 ms total — no LLM round-trips. Only the final synthesis step uses the LLM, receiving compressed agent summaries.
+- **`src/reviewer/agent.py`**: System prompt simplified — no longer receives full agent output payloads. Receives only `agent_summaries` dict with condensed findings from each sub-agent.
+- **Why**: SDK Runner introduced ~20s overhead for handshake + context setup. The reviewer is a batch verification pipeline, not an interactive agent. Direct Python calls are simpler, faster, and have no SDK versioning risks.
+
+### 10+ New HTML Report Sections with Chart.js (dc6ec77)
+
+- **`src/shared/reports/deck_model.py`**: 14 new `DeckData` fields: `technicals_table`, `signals_table`, `forecast_chart`, `monte_carlo_summary`, `stress_scenarios`, `dcf_breakdown`, `stats_table`, `anomaly_alerts`, `trend_data`, `reviewer_contradictions`, `reviewer_verifications`, `reviewer_confidence`, `reviewer_validation`, `macro_regime`.
+- **`src/shared/reports/extraction.py`**: New extraction logic for each section — trend analysis, forecast distribution data, Monte Carlo percentiles (p10/p50/p75/p90), stress scenario cards, DCF sensitivity breakdown, anomaly detection, statistical metrics table, and cross-validation verdict fields.
+- **`src/shared/templates/investment_deck.html`**: 768→1609 lines. Chart.js 4.4.4 from CDN embedded in Jinja2 template. Interactive charts: forecast distribution (bar+line mixed), Monte Carlo histogram, trend overlay (price + SMA 20/50), stress scenario bars, DCF breakdown doughnut, anomaly alert badges, signals table with color coding.
+- **Why**: Chart.js from CDN enables interactive charts without bundler, build step, or server-side rendering. Reports are self-contained HTML files.
+
+### Frontend Auth Bypass (dc6ec77)
+
+- **`src/web/nextjs-app/contexts/AuthContext.tsx`**: `NEXT_PUBLIC_AUTH_ENABLED=false` short-circuits all auth checks (no token validation, no login redirect, no HTTP calls to auth endpoints).
+- **`.env.example`**: Added `NEXT_PUBLIC_AUTH_ENABLED=false` commented-out entry.
+- **Why**: Independent frontend auth toggle from backend `AUTH_ENABLED`. Single env var would require Next.js rebuild on every auth config change.
+
+### Test Fixes (dc6ec77)
+
+- **Windows file locking fix**: `test_auth_routes.py` uses `tmp_path` per-test database files to avoid SQLite locking on Windows where `NamedTemporaryFile` cannot be reopened while open.
+- **DDG mock pattern**: `test_web_search_tool.py` mocks DuckDuckGo at the `aiohttp.ClientSession` level instead of `DDGS` to avoid real HTTP calls during CI.
+- **New test file**: `src/tests/unit/memory/test_agent_output_store.py` (10 tests) — store/get/prune, cross-agent isolation, TTL expiry, session scoping.
+
+### Config Changes (dc6ec77)
+
+- `.env.example`: Default model changed to `ministral-3-14b-reasoning` for all agent configs.
+- `AGENT_SEED_URLS` default expanded to include `:8005` (Analytics) and `:8006` (Reviewer).
+- CI test job count updated to include analytics/reviewer agent contract tests.
+
+## v2.6 — Analytics & Reviewer Agents, Two-Phase Orchestration
+
+### New Agents (2 agents, 5 new test files)
+
+- **Analytics Agent** (`src/analytics/`, PydanticAI, port 8005): Trend analysis, forecast computation, anomaly detection, statistical metrics. Graph node functions in `src/analytics/nodes.py`: `trend_node` (linear regression, moving averages), `forecast_node` (ARIMA-like projection), `stats_node` (mean, std, skew, kurtosis), `anomaly_node` (z-score based outlier detection), `chart_node` (chart-ready data formatting).
+- **Reviewer Agent** (`src/reviewer/`, OpenAI Agents SDK, port 8006): Cross-validation of Phase 1 agent outputs. Deterministic tools: `check_contradictions()` (flags conflicting recommendations across agents), `verify_sources()` (checks source citation completeness), `score_confidence()` (aggregates confidence scores with weighted averaging), `validate_recommendation()` (checks BUY/HOLD/SELL consistency with underlying data).
+- **New model** (`src/shared/agent_models.py`): `AnalyticsAgentOutput`, `ReviewerAgentOutput` Pydantic models.
+- **5 new test files**: `test_analytics_nodes.py` (10 tests), `test_reviewer_tools.py` (8 tests), `test_new_agent_models.py` (4 tests), `test_analytics_smoke.py` (2 integration), `test_reviewer_smoke.py` (2 integration).
+
+### Two-Phase Orchestration (Phase 1 + Phase 2 + Synthesis)
+
+- **Review phase added** (`src/orchestrator/agent.py`): After all Phase 1 responses collected, orchestrator calls `send_message` for Reviewer Agent with JSON payload containing all agent outputs. Reviewer runs 4 deterministic tools, produces cross-validation verdict.
+- **Synthesis enhanced**: LLM receives Phase 1 outputs + Reviewer's cross-validation verdict before producing final BUY/HOLD/SELL recommendation.
+
+### AG-UI Eval Hook
+
+- **`src/orchestrator/agui_bridge.py`**: `_stream` now fires `score_response()` and `_release_sub_agent_evals()` after synthesis completes. Previously evals only ran through the A2A executor and ADK Web paths — the most common user-facing path (CopilotKit) silently skipped all runtime scoring.
+
 ## v2.5 — Pydantic Agent Models, Scrollable HTML Reports, Fan-In Fix, AG-UI Eval Hook (9664a84–5b57c3e)
 
 ### Pydantic Output Models for All Agents (f543de8)

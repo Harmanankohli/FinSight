@@ -1,6 +1,6 @@
 # Test Coverage
 
-**~260 test functions (~330 parametrized cases) across 28 test files + offline evaluation driver. v1.39 added DOCX/HTML/PPTX regression tests. Phase 0 added 45 characterization tests (4 files). Phase 3 added auth contract tests (3 files). Phase R added corpus regression harness (1 file). v2.2 added agent output extraction tests (1 file). All tests now live under `src/tests/`.**
+**~275 test functions (~355 parametrized cases) across 34 test files + offline evaluation driver. v1.39 added DOCX/HTML/PPTX regression tests. Phase 0 added 45 characterization tests (4 files). Phase 3 added auth contract tests (3 files). Phase R added corpus regression harness (1 file). v2.2 added agent output extraction tests (1 file). v2.6 added 5 new test files for Analytics Agent, Reviewer Agent, and new agent models. v2.7 added agent_output_store memory test and Windows/locking fixes. All tests now live under `src/tests/`.**
 
 ## Running Tests
 
@@ -69,8 +69,9 @@ src/tests/
         ├── test_memory_store.py         #   5 - tables, indexes, WAL
         ├── test_ticker_memory.py        #   7 - store/get_latest, flip detection
         └── test_save_brief_persists_synthesis.py  # 2 - synthesis wins, rationale fallback
+    └── test_agent_output_store.py   # 10 - v2.7: store/get/prune, cross-agent isolation, TTL expiry
 
-**Total: ~330 parametrized test cases across 28 test files.**
+**Total: ~355 parametrized test cases across 34 test files.**
 ```
 
 ## Key Patterns
@@ -79,6 +80,8 @@ src/tests/
 - **Isolated SQLite**: `memory_db` fixture resets the `shared.memory.store` module-level connection singleton per test, using `tmp_path` for unique DB files.
 - **No network calls**: Quant graph tests call LangGraph nodes directly with synthetic `numpy` price data. `mcp_client=None` forces beta to `1.0`.
 - **Asyncio**: All tests use `pytest-asyncio` with `asyncio_mode = "auto"` and `asyncio_default_fixture_loop_scope = "function"`.
+- **Windows file locking fix (v2.7)**: `test_auth_routes.py` uses `tmp_path` per-test database files to avoid SQLite locking on Windows where `NamedTemporaryFile` cannot be reopened while open.
+- **DDG mock pattern (v2.7)**: `test_web_search_tool.py` mocks DuckDuckGo at the `aiohttp.ClientSession` level (not `DDGS`) to avoid real HTTP calls during CI.
 
 ## Integration Tests
 

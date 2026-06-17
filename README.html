@@ -39,23 +39,24 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 
 <h1>FinSight &mdash; Multi-Agent Investment Research System</h1>
 
-<p>An autonomous multi-agent system that answers investment queries like <em>&ldquo;Should I invest in NVIDIA?&rdquo;</em> by coordinating <strong>four specialized agents</strong> across different frameworks, communicating via the <strong>Agent-to-Agent (A2A)</strong> protocol, and using <strong>MCP (Model Context Protocol)</strong> servers for external tool access.</p>
+<p>An autonomous multi-agent system that answers investment queries like <em>&ldquo;Should I invest in NVIDIA?&rdquo;</em> by coordinating <strong>six specialized agents</strong> across different frameworks, communicating via the <strong>Agent-to-Agent (A2A)</strong> protocol, and using <strong>MCP (Model Context Protocol)</strong> servers for external tool access.</p>
 
 <h2>Key Features</h2>
 <ul>
-<li><strong>Multi-framework orchestration</strong>: Google ADK orchestrator delegates to LlamaIndex (RAG), LangGraph (Quant), and CrewAI (Market Context) agents</li>
+<li><strong>Multi-framework orchestration</strong>: Google ADK orchestrator delegates to LlamaIndex (RAG), LangGraph (Quant), CrewAI (Market Context), PydanticAI (Analytics), and OpenAI Agents SDK (Reviewer)</li>
 <li><strong>A2A protocol</strong>: Standard-compliant agent discovery and streaming communication via JSON-RPC over HTTP</li>
 <li><strong>Multi-tier caching + LLM priority queue</strong>: TTL-based tool-result cache in the MCP server (1 min prices, 1 h financials, 5 min news, permanent filings, 24h peers, 7d scenario shocks), LangChain SQLiteCache for LLM responses, semantic cache using ChromaDB cosine similarity, and a priority semaphore (<code>CRITICAL &gt; NORMAL &gt; LOW</code>) to prevent RAGAS eval from starving production inference</li>
-<li><strong>Investment deck generation</strong>: PPTX, DOCX, and self-contained HTML reports generated from any stored brief via <code>generate_pptx()</code>, <code>generate_docx()</code>, <code>generate_html()</code> &mdash; served at <code>/api/reports/{brief_id}/{format}</code> and <code>/api/reports/ticker/{symbol}/latest/{format}</code></li>
+<li><strong>Investment deck generation</strong>: PPTX, DOCX, and self-contained HTML reports generated from any stored brief via <code>generate_pptx()</code>, <code>generate_docx()</code>, <code>generate_html()</code> &mdash; served at <code>/api/reports/{brief_id}/{format}</code> and <code>/api/reports/ticker/{symbol}/latest/{format}</code>. v2.7 adds 10+ new report sections with Chart.js interactive charts (forecast distribution, Monte Carlo, trend overlays, stress scenarios, DCF breakdown, anomaly alerts, signals table, technicals table, stats table, cross-validation verdict).</li>
 <li><strong>AG-UI / CopilotKit frontend</strong>: Next.js 16 + CopilotKit 1.59 streaming chat interface (<code>src/web/nextjs-app/</code>) via <code>POST /a2a-agui</code>; AG-UI bridge with off-topic guardrail, brief auto-save, and <code>active_agents</code> state tracking</li>
 <li><strong>Input/output guardrails</strong>: Off-topic filter, pre-flight ticker validation, empty-response guard, and BUY/HOLD/SELL signal enforcement with auto-retry</li>
-<li><strong>Persistent memory layer</strong>: SQLite-backed session storage, cross-session memory search, ticker brief history, portfolio persistence, and recommendation tracking with live price snapshots</li>
+<li><strong>Persistent memory layer</strong>: SQLite-backed session storage, cross-session memory search, ticker brief history, portfolio persistence, recommendation tracking with live price snapshots, and shared agent output store for cross-process data sharing between orchestrator and reviewer</li>
 <li><strong>Incremental RAG ingestion</strong>: Tracks ingested filing URLs in SQLite &mdash; restarts never re-ingest already-indexed documents</li>
 <li><strong>RAGAS evaluation pipeline</strong>: Offline batch evaluation (Faithfulness, ResponseRelevancy, ContextPrecision, ContextRecall, ToolCallAccuracy, AgentGoalAccuracy) + runtime per-query eval with per-metric streaming, client caching, and 180s LLM timeout</li>
 <li><strong>Structured logging</strong>: <code>@logged</code>/<code>@logged_sync</code> timing decorators emit <code>Enter</code>/<code>Exit</code>/<code>Fail</code> with <code>latency_ms</code>; operational log statements at cache, DB, sandbox, and report-generation boundaries; noisy third-party loggers suppressed by default, overridable via <code>LOG_LEVEL_&lt;LIB&gt;</code> env vars</li>
 <li><strong>Portfolio correlation analysis</strong>: When you explicitly mention portfolio holdings (e.g. &ldquo;My portfolio holds AAPL, MSFT&rdquo;), the quant agent computes cross-stock correlation matrices alongside the primary analysis</li>
 <li><strong>Distributed tracing</strong>: Langfuse traces span all four agent processes in a single trace tree via text-based context propagation, with automatic filtering of noisy A2A internal spans</li>
-<li><strong>Health monitoring</strong>: <code>/health</code> endpoints on all five services with docker-compose healthcheck integration</li>
+<li><strong>Health monitoring</strong>: <code>/health</code> endpoints on all seven services with docker-compose healthcheck integration</li>
+<li><strong>Frontend auth bypass</strong>: <code>NEXT_PUBLIC_AUTH_ENABLED=false</code> short-circuits all frontend auth checks for local development, independently togglable from backend <code>AUTH_ENABLED</code></li>
 <li><strong>Local LLM inference</strong>: All agents use LM Studio (OpenAI-compatible API) &mdash; no cloud dependencies</li>
 <li><strong>MCP data tools</strong>: Unified server providing SEC filings, price data, financials, news sentiment, insider transactions, peer discovery, scenario shocks, and more</li>
 </ul>
@@ -69,11 +70,13 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 +--------------------------------------------------------------+
                        │ A2A Protocol (JSON-RPC over HTTP, streaming)
                        &darr;
-+--------------------------------------------------------------+
-│  Agent Pool                                                   │
-│  RAG (:8002)    Quant (:8003)    Market Context (:8004)      │
-│  (LlamaIndex)   (LangGraph)      (CrewAI)                    │
-+--------------------------------------------------------------+
++--------------------------------------------------------------------+
+│  Agent Pool                                                         │
+│  RAG (:8002)   Quant (:8003)   Market Context (:8004)              │
+│  (LlamaIndex)  (LangGraph)     (CrewAI)                            │
+│  Analytics (:8005)            Reviewer (:8006)                      │
+│  (PydanticAI)                 (OpenAI Agents SDK)                  │
++--------------------------------------------------------------------+
          │            │                │
          &darr;            &darr;                &darr;
 +--------------------------------------------------------------+
@@ -106,12 +109,14 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <tr><td>Agent Communication</td><td>Google A2A Protocol (JSON-RPC over HTTP, streaming)</td></tr>
 <tr><td>Orchestrator</td><td>Google ADK <code>LlmAgent</code> with <code>send_message</code> tool</td></tr>
 <tr><td>Sub-agent Executor</td><td><code>GenericAgentExecutor</code> + <code>BaseAgent</code> pattern</td></tr>
-<tr><td>Memory Layer</td><td>SQLite (<code>aiosqlite</code>) &mdash; sessions, ticker briefs, portfolio, performance, ingested filings</td></tr>
+<tr><td>Memory Layer</td><td>SQLite (<code>aiosqlite</code>) &mdash; sessions, ticker briefs, portfolio, performance, ingested filings, agent output store (v2.7)</td></tr>
 <tr><td>Caching</td><td><code>_TTLCache</code> (MCP tools), LangChain <code>SQLiteCache</code> (LLM), ChromaDB semantic cache, <code>LLMPriorityQueue</code> (3 tiers)</td></tr>
 <tr><td>Guardrails</td><td>Regex off-topic filter + MCP ticker pre-check (input), signal check + retry (output)</td></tr>
 <tr><td>RAG</td><td>LlamaIndex + ChromaDB (local) + HuggingFace embeddings, incremental ingestion</td></tr>
 <tr><td>Quant</td><td>LangChain + LangGraph (state machine, MCP data) + LangChain SQLiteCache</td></tr>
 <tr><td>Market Context</td><td>CrewAI (macro regime + peer landscape synthesis)</td></tr>
+<tr><td>Analytics</td><td>PydanticAI (trend analysis, forecast, anomaly detection, statistical metrics)</td></tr>
+<tr><td>Reviewer</td><td>OpenAI Agents SDK + deterministic Python tools (contradiction check, source verification, confidence scoring, recommendation validation)</td></tr>
 <tr><td>MCP Server</td><td>FastMCP (agent registry + data tools + TTL caching)</td></tr>
 <tr><td>Report Generator</td><td><code>src/shared/reports/</code> package &mdash; python-pptx (PPTX), python-docx (DOCX), Jinja2 (HTML)</td></tr>
 <tr><td>Frontend</td><td>Next.js 16 + CopilotKit 1.59 + @ag-ui/client (<code>src/web/nextjs-app/</code>) via <code>POST /a2a-agui</code></td></tr>
@@ -180,7 +185,7 @@ uv run adk web --port 8080 --session_service_uri sqlite://./db/adk_sessions.db -
 <table>
 <tr><th>Variable</th><th>Default</th><th>Description</th></tr>
 <tr><td><code>ADK_MODEL</code></td><td><code>openai/mistralai/ministral-3-14b-reasoning</code></td><td>LLM model for the orchestrator</td></tr>
-<tr><td><code>AGENT_SEED_URLS</code></td><td><code>http://localhost:8002,http://localhost:8003,http://localhost:8004</code></td><td>A2A agent discovery URLs</td></tr>
+<tr><td><code>AGENT_SEED_URLS</code></td><td><code>http://localhost:8002,http://localhost:8003,http://localhost:8004,http://localhost:8005,http://localhost:8006</code></td><td>A2A agent discovery URLs (5 sub-agents)</td></tr>
 <tr><td><code>A2A_TIMEOUT</code></td><td><code>680.0</code></td><td>Timeout for A2A communication (seconds)</td></tr>
 <tr><td><code>LLM_BASE_URL</code></td><td><code>http://localhost:1234/v1</code></td><td>LM Studio OpenAI-compatible endpoint</td></tr>
 <tr><td><code>LLM_API_KEY</code></td><td><code>lmstudio</code></td><td>API key for LLM provider (LM Studio dummy value; replace for OpenAI/Anthropic)</td></tr>
@@ -207,7 +212,7 @@ uv run adk web --port 8080 --session_service_uri sqlite://./db/adk_sessions.db -
 </table>
 
 <h2>Testing</h2>
-<p><strong>~300 parametrized test cases</strong> across 27 test files &mdash; see <a href="docs/TESTS.html">TESTS.html</a> for details.</p>
+<p><strong>~355 parametrized test cases</strong> across 34 test files &mdash; see <a href="docs/TESTS.html">TESTS.html</a> for details.</p>
 
 <hr>
 <p style="font-size:.85rem;color:#888">Apache 2.0 License</p>

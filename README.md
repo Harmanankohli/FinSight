@@ -1,23 +1,24 @@
 # FinSight — Multi-Agent Investment Research System
 
-An autonomous multi-agent system that answers investment queries like *"Should I invest in NVIDIA?"* by coordinating four specialized agents across different frameworks, communicating via the **Agent-to-Agent (A2A)** protocol, and using **MCP (Model Context Protocol)** servers for external tool access.
+An autonomous multi-agent system that answers investment queries like *"Should I invest in NVIDIA?"* by coordinating **six specialized agents** across different frameworks, communicating via the **Agent-to-Agent (A2A)** protocol, and using **MCP (Model Context Protocol)** servers for external tool access.
 
 ## Key Features
 
-- **Multi-framework orchestration**: Google ADK orchestrator delegates to LlamaIndex (RAG), LangGraph (Quant), and CrewAI (Market Context) agents
+- **Multi-framework orchestration**: Google ADK orchestrator delegates to LlamaIndex (RAG), LangGraph (Quant), CrewAI (Market Context), PydanticAI (Analytics), and OpenAI Agents SDK (Reviewer)
 - **A2A protocol**: Standard-compliant agent discovery and streaming communication via JSON-RPC over HTTP
 - **Multi-tier caching**: TTL-based tool-result cache in the MCP server (1 min prices, 1 h financials, 5 min news, permanent filings, 24h peers, 7d scenario shocks), LangChain SQLiteCache for LLM responses, semantic cache using ChromaDB cosine similarity, and LLM priority queue (`CRITICAL`/`NORMAL`/`LOW`) to prevent eval starvation of production inference
-- **Investment deck generation**: PPTX, DOCX, self-contained HTML, and PDF reports generated from any stored brief via `generate_pptx()`, `generate_docx()`, `generate_html()`, `generate_pdf_async()` — served at `/api/reports/{brief_id}/{format}` and `/api/reports/ticker/{symbol}/latest/{format}`. PPTX generation tries Playwright first (screenshot-based) before falling back to python-pptx.
+- **Investment deck generation**: PPTX, DOCX, self-contained HTML, and PDF reports generated from any stored brief via `generate_pptx()`, `generate_docx()`, `generate_html()`, `generate_pdf_async()` — served at `/api/reports/{brief_id}/{format}` and `/api/reports/ticker/{symbol}/latest/{format}`. PPTX generation tries Playwright first (screenshot-based) before falling back to python-pptx. v2.7 adds 10+ new report sections with Chart.js interactive charts (forecast distribution, Monte Carlo, trend overlays, stress scenarios, DCF breakdown, anomaly alerts, signals table, technicals table, stats table, cross-validation verdict).
 - **AG-UI / CopilotKit frontend**: Next.js 16 + CopilotKit 1.59 streaming chat interface (`src/web/nextjs-app/`) via `POST /a2a-agui`; AG-UI bridge with off-topic guardrail, brief auto-save, per-event timeout, and `active_agents` state tracking
 - **Input/output guardrails**: Off-topic filter, pre-flight ticker validation, empty-response guard, and BUY/HOLD/SELL signal enforcement with auto-retry
-- **Persistent memory layer**: SQLite-backed session storage, cross-session memory search, ticker brief history, portfolio persistence, and recommendation tracking with live price snapshots
+- **Persistent memory layer**: SQLite-backed session storage, cross-session memory search, ticker brief history, portfolio persistence, recommendation tracking with live price snapshots, and shared agent output store for cross-process data sharing between orchestrator and reviewer
 - **Incremental RAG ingestion**: Tracks ingested filing URLs in SQLite — restarts never re-ingest already-indexed documents
 - **RAGAS evaluation pipeline**: Offline batch evaluation (Faithfulness, ResponseRelevancy, ContextPrecision, ContextRecall, ToolCallAccuracy, AgentGoalAccuracy) with Langfuse score push. Runtime per-query evaluation on live production responses with per-metric streaming, client caching, and 180s LLM timeout
 - **Structured logging**: `@logged`/`@logged_sync` timing decorators emit `Enter`/`Exit`/`Fail` with `latency_ms`; operational log statements at cache, DB, sandbox, and report-generation boundaries; noisy third-party loggers suppressed by default, overridable via `LOG_LEVEL_<LIB>` env vars
 - **Portfolio correlation analysis**: When you explicitly mention portfolio holdings (e.g. "My portfolio holds AAPL, MSFT"), the quant agent computes cross-stock correlation matrices alongside the primary analysis
 - **Distributed tracing**: Langfuse traces span all four agent processes in a single trace tree via text-based context propagation, with automatic filtering of noisy A2A internal spans
-- **Health monitoring**: `/health` endpoints on all five services with docker-compose healthcheck integration
+- **Health monitoring**: `/health` endpoints on all seven services with docker-compose healthcheck integration
 - **Local LLM inference**: All agents use LM Studio (OpenAI-compatible API) — no cloud dependencies
+- **Frontend auth bypass**: `NEXT_PUBLIC_AUTH_ENABLED=false` short-circuits all frontend auth checks for local development, independently togglable from backend `AUTH_ENABLED`
 - **MCP data tools**: Unified server providing SEC filings, price data, financials, news sentiment, insider transactions, peer discovery, scenario shocks, and more
 
 ## Architecture
@@ -31,11 +32,13 @@ An autonomous multi-agent system that answers investment queries like *"Should I
 +--------------------------------------------------------------+
                        │ A2A Protocol (JSON-RPC over HTTP, streaming)
                        ?
-+--------------------------------------------------------------+
-│  Agent Pool                                                   │
-│  RAG (:8002)    Quant (:8003)    Market Context (:8004)      │
-│  (LlamaIndex)   (LangGraph)      (CrewAI)                    │
-+--------------------------------------------------------------+
++--------------------------------------------------------------------+
+│  Agent Pool                                                         │
+│  RAG (:8002)   Quant (:8003)   Market Context (:8004)              │
+│  (LlamaIndex)  (LangGraph)     (CrewAI)                            │
+│  Analytics (:8005)            Reviewer (:8006)                      │
+│  (PydanticAI)                 (OpenAI Agents SDK)                  │
++--------------------------------------------------------------------+
          │            │                │
          ?            ?                ?
 +--------------------------------------------------------------+
@@ -70,12 +73,14 @@ All A2A communication uses `A2ACardResolver` for standard discovery and `ClientF
 | Agent Communication | Google A2A Protocol (JSON-RPC over HTTP, streaming) |
 | Orchestrator | Google ADK `LlmAgent` with `send_message` tool |
 | Sub-agent Executor | `GenericAgentExecutor` + `BaseAgent` pattern |
-| Memory Layer | SQLite (`aiosqlite`) — sessions, ticker briefs, portfolio, performance, ingested filings |
+| Memory Layer | SQLite (`aiosqlite`) — sessions, ticker briefs, portfolio, performance, ingested filings, agent output store (v2.7) |
 | Caching | `_TTLCache` (MCP tools), LangChain `SQLiteCache` (LLM), ChromaDB semantic cache, `LLMPriorityQueue` (async semaphore, 3 tiers) |
 | Guardrails | Regex off-topic filter + MCP ticker pre-check (input), signal check + retry (output) |
 | RAG | LlamaIndex + ChromaDB (local) + HuggingFace embeddings, incremental ingestion |
 | Quant | LangChain + LangGraph (state machine, MCP data) + LangChain SQLiteCache |
 | Market Context | CrewAI (macro regime + peer landscape synthesis) |
+| Analytics | PydanticAI (trend analysis, forecast, anomaly detection, statistical metrics) |
+| Reviewer | OpenAI Agents SDK + deterministic Python tools (contradiction check, source verification, confidence scoring, recommendation validation) |
 | MCP Server | FastMCP (agent registry + data tools + TTL caching) |
 | Report Generator | `src/shared/reports/` package — python-pptx (PPTX), python-docx (DOCX), Jinja2 (HTML), Playwright (PDF + screenshot PPTX) |
 | Frontend | Next.js 16 + CopilotKit 1.59 + @ag-ui/client (`src/web/nextjs-app/`) via `POST /a2a-agui` |
@@ -222,7 +227,7 @@ Key environment variables in `.env`:
 | Variable | Default | Description |
 |---|---|---|
 | `ADK_MODEL` | `openai/mistralai/ministral-3-14b-reasoning` | LLM model for the orchestrator |
-| `AGENT_SEED_URLS` | `http://localhost:8002,http://localhost:8003,http://localhost:8004` | A2A agent discovery URLs |
+| `AGENT_SEED_URLS` | `http://localhost:8002,http://localhost:8003,http://localhost:8004,http://localhost:8005,http://localhost:8006` | A2A agent discovery URLs (5 sub-agents) |
 | `A2A_TIMEOUT` | `680.0` | Timeout for A2A communication (seconds) |
 | `LLM_BASE_URL` | `http://localhost:1234/v1` | LM Studio OpenAI-compatible endpoint |
 | `LLM_API_KEY` | `lmstudio` | API key for LLM provider (LM Studio dummy value; replace for OpenAI/Anthropic) |
@@ -249,7 +254,7 @@ Key environment variables in `.env`:
 
 ## Testing
 
-**~317 parametrized test cases** across 28 test files — see [TESTS.md](docs/TESTS.md) for details.
+**~355 parametrized test cases** across 34 test files — see [TESTS.md](docs/TESTS.md) for details.
 
 ## License
 

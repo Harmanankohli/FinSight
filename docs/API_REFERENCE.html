@@ -283,6 +283,9 @@ Content-Disposition: attachment; filename="FinSight_{ticker}_{date}.pdf"  (pdf o
 <h3>Auth Disabled (<code>AUTH_ENABLED=false</code>, default)</h3>
 <p>User identity is read from the <code>X-FinSight-User-Id</code> request header &mdash; a convention for multi-user differentiation without security. Falls back to <code>forwarded_props.user_id</code> in AG-UI requests, then auto-generated <code>anon-{uuid}</code>. Suitable for local/single-user deployment.</p>
 
+<h4>Frontend Auth Bypass (<code>NEXT_PUBLIC_AUTH_ENABLED=false</code>)</h4>
+<p>When <code>NEXT_PUBLIC_AUTH_ENABLED=false</code> (default), the Next.js <code>AuthProvider</code> bypasses all auth guards — instantly sets an anonymous user, never hits the login page, and avoids refresh token calls. Set <code>NEXT_PUBLIC_AUTH_ENABLED=true</code> for production deployments requiring the full login flow. This is separate from the backend <code>AUTH_ENABLED</code> env var; both should be set consistently.</p>
+
 <h3>Auth Enabled (<code>AUTH_ENABLED=true</code>)</h3>
 <p>Full bearer JWT authentication with three principal kinds:</p>
 <table>

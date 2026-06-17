@@ -240,14 +240,14 @@ Serves generated report files (PPTX/DOCX) from `db/reports/` as static downloads
 
 Each sub-agent exposes the same endpoint pattern.
 
-### Endpoints (ports 8002–8004)
+### Endpoints (ports 8002–8006)
 
-| Endpoint | Port 8002 (RAG) | Port 8003 (Quant) | Port 8004 (Market Context) |
-|---|---|---|---|
-| `GET /health` | `{"status":"ok","agent":"rag"}` | `{"status":"ok","agent":"quant"}` | `{"status":"ok","agent":"market_context"}` |
-| `POST /a2a` | A2A JSON-RPC | A2A JSON-RPC | A2A JSON-RPC |
-| `GET /.well-known/agent-card.json` | Agent card | Agent card | Agent card |
-| `POST /release-evals` | `{"released": N}` | `{"released": N}` | `{"released": N}` |
+| Endpoint | Port 8002 (RAG) | Port 8003 (Quant) | Port 8004 (Market Context) | Port 8005 (Analytics) | Port 8006 (Reviewer) |
+|---|---|---|---|---|---|
+| `GET /health` | `{"status":"ok","agent":"rag"}` | `{"status":"ok","agent":"quant"}` | `{"status":"ok","agent":"market_context"}` | `{"status":"ok","agent":"analytics"}` | `{"status":"ok","agent":"reviewer"}` |
+| `POST /a2a` | A2A JSON-RPC | A2A JSON-RPC | A2A JSON-RPC | A2A JSON-RPC | A2A JSON-RPC |
+| `GET /.well-known/agent-card.json` | Agent card | Agent card | Agent card | Agent card | Agent card |
+| `POST /release-evals` | `{"released": N}` | `{"released": N}` | `{"released": N}` | `{"released": N}` | `{"released": N}` |
 
 #### Release Evals
 
@@ -301,7 +301,7 @@ The MCP server exposes tools via SSE transport at `/sse`. Tools are consumed by 
 |---|---|---|
 | `/api/copilotkit` | POST | CopilotKit runtime — proxies to orchestrator `/a2a-agui` via AG-UI protocol |
 | `/api/traces` | GET | Langfuse trace proxy — `?traceId=X` for single trace, omit for list |
-| `/api/health` | GET | Backend health proxy — `?svc=orchestrator\|rag\|quant\|market\|mcp` |
+| `/api/health` | GET | Backend health proxy — `?svc=orchestrator\|rag\|quant\|market\|analytics\|reviewer\|mcp` |
 
 ### Rewrites
 
@@ -334,6 +334,14 @@ Standard HTTP status codes:
 ## Authentication
 
 FinSight implements two authentication modes, controlled by `AUTH_ENABLED` in `.env`:
+
+### Frontend Auth Bypass (`NEXT_PUBLIC_AUTH_ENABLED=false`, v2.7)
+
+Independent frontend auth toggle that short-circuits all auth checks in `AuthContext.tsx` — no token validation, no login redirect, no HTTP calls to auth endpoints. Useful for local development alongside `AUTH_ENABLED=false` on the backend.
+
+| Variable | Default | Description |
+|---|---|---|
+| `NEXT_PUBLIC_AUTH_ENABLED` | `true` | Frontend-only toggle. When `false`, the frontend behaves as if always authenticated. Independent from backend `AUTH_ENABLED`. |
 
 ### Auth Disabled (`AUTH_ENABLED=false`, default)
 
