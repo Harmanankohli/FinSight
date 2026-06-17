@@ -23,7 +23,7 @@ try:
 except Exception:
     DB_PATH = Path(__file__).resolve().parent.parent.parent.parent / "db" / "finsight_memory.db"
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 CREATE_TABLES_SQL = """
 -- Stores structured InvestmentBrief objects. Written by TickerMemory, read by agent prompt builders.  # noqa: E501
@@ -100,6 +100,16 @@ CREATE TABLE IF NOT EXISTS a2a_tasks (
 );
 
 CREATE INDEX IF NOT EXISTS idx_a2a_tasks_owner ON a2a_tasks(owner);
+
+-- Stores full agent output JSON keyed by session + agent name. Written by send_message, read by reviewer executor.  # noqa: E501
+CREATE TABLE IF NOT EXISTS agent_output_store (
+    session_id TEXT NOT NULL,
+    agent_name TEXT NOT NULL,
+    output_json TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL,
+    PRIMARY KEY (session_id, agent_name)
+);
+CREATE INDEX IF NOT EXISTS idx_aos_session ON agent_output_store(session_id);
 """
 
 
@@ -201,6 +211,20 @@ async def init_db(conn: aiosqlite.Connection) -> None:
     except Exception:
         logger.debug("Migration v5: table/column already exists, skipping")
 
+    # Migration v5→v6: creates agent_output_store table for shared agent output persistence.
+    try:
+        await conn.execute("""CREATE TABLE IF NOT EXISTS agent_output_store (
+            session_id TEXT NOT NULL,
+            agent_name TEXT NOT NULL,
+            output_json TEXT NOT NULL,
+            created_at TIMESTAMP NOT NULL,
+            PRIMARY KEY (session_id, agent_name)
+        )""")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_aos_session ON agent_output_store(session_id)")
+        await conn.commit()
+    except Exception:
+        logger.debug("Migration v6: table/column already exists, skipping")
+
 
 async def prune_old_records(days: int | None = None) -> dict[str, int]:
     """Delete records older than `days` from the three main memory tables.
@@ -218,6 +242,7 @@ async def prune_old_records(days: int | None = None) -> dict[str, int]:
             "ticker_briefs",
             "recommendation_records",
             "memory_entries",
+            "agent_output_store",
         }
     )
     async with write_lock():

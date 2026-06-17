@@ -416,7 +416,7 @@ Process-level side-effects centralized in `src/shared/bootstrap.py`:
 
 ## LLM Configuration
 
-All agents use LM Studio (OpenAI-compatible local API). The `src/shared/settings.py` default is `qwen/qwen3-30b-a3b-2507`; developers commonly override to `mistralai/ministral-3-14b-reasoning` via `.env` for faster local inference. All LLM calls are throttled by `LLMPriorityQueue` (3 priority tiers) to prevent eval scoring from starving production inference; concurrency controlled by `LLM_MAX_CONCURRENT` env var (default 2).
+All agents use LM Studio (OpenAI-compatible local API). The `src/shared/settings.py` default is `mistralai/ministral-3-14b-reasoning`. All LLM calls are throttled by `LLMPriorityQueue` (3 priority tiers) to prevent eval scoring from starving production inference; concurrency controlled by `LLM_MAX_CONCURRENT` env var (default 2).
 
 ### Cross-Process Eval Coordination
 
@@ -424,10 +424,10 @@ Sub-agent evals are deferred via `src/shared/eval_gate.py` to prevent three sub-
 
 | Agent | Model (default) | Provider |
 |---|---|---|
-| Orchestrator (ADK) | `qwen/qwen3-30b-a3b-2507` | `openai/` prefix (LM Studio endpoint) |
-| RAG (LlamaIndex) | `qwen/qwen3-30b-a3b-2507` | `llama-index-llms-openai-like` |
-| Quant (LangGraph) | `qwen/qwen3-30b-a3b-2507` | `langchain-openai` |
-| Market Context (CrewAI) | `qwen/qwen3-30b-a3b-2507` | CrewLLM (OpenAI-compatible) |
+| Orchestrator (ADK) | `mistralai/ministral-3-14b-reasoning` | `openai/` prefix (LM Studio endpoint) |
+| RAG (LlamaIndex) | `mistralai/ministral-3-14b-reasoning` | `llama-index-llms-openai-like` |
+| Quant (LangGraph) | `mistralai/ministral-3-14b-reasoning` | `langchain-openai` |
+| Market Context (CrewAI) | `mistralai/ministral-3-14b-reasoning` | CrewLLM (OpenAI-compatible) |
 
 ## Observability & Tracing
 

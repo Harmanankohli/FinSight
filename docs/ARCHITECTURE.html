@@ -402,15 +402,15 @@ RAGAgent._ensure_ingested(ticker) [background]:
 </ul>
 
 <h2>LLM Configuration</h2>
-<p>All agents use LM Studio (OpenAI-compatible local API). The <code>src/shared/settings.py</code> default is <code>qwen/qwen3-30b-a3b-2507</code>; developers commonly override to <code>mistralai/ministral-3-14b-reasoning</code> via <code>.env</code> for faster local inference. All LLM calls are throttled by <code>LLMPriorityQueue</code> (3 priority tiers) to prevent eval scoring from starving production inference; concurrency controlled by <code>LLM_MAX_CONCURRENT</code> env var (default 2).</p>
+<p>All agents use LM Studio (OpenAI-compatible local API). The <code>src/shared/settings.py</code> default is <code>mistralai/ministral-3-14b-reasoning</code>. All LLM calls are throttled by <code>LLMPriorityQueue</code> (3 priority tiers) to prevent eval scoring from starving production inference; concurrency controlled by <code>LLM_MAX_CONCURRENT</code> env var (default 2).</p>
 <table>
 <tr><th>Agent</th><th>Model (default)</th><th>Provider</th></tr>
-<tr><td>Orchestrator (ADK)</td><td><code>qwen/qwen3-30b-a3b-2507</code></td><td><code>openai/</code> prefix (LM Studio endpoint)</td></tr>
-<tr><td>RAG (LlamaIndex)</td><td><code>qwen/qwen3-30b-a3b-2507</code></td><td><code>llama-index-llms-openai-like</code></td></tr>
-<tr><td>Quant (LangGraph)</td><td><code>qwen/qwen3-30b-a3b-2507</code></td><td><code>langchain-openai</code></td></tr>
-<tr><td>Market Context (CrewAI)</td><td><code>qwen/qwen3-30b-a3b-2507</code></td><td>CrewLLM (OpenAI-compatible)</td></tr>
-<tr><td>Analytics (PydanticAI)</td><td><code>qwen/qwen3-30b-a3b-2507</code></td><td>PydanticAI <code>OpenAIModel</code></td></tr>
-<tr><td>Reviewer (OpenAI Agents SDK)</td><td><code>qwen/qwen3-30b-a3b-2507</code></td><td>OpenAI Agents SDK <code>OpenAIChatCompletionsModel</code></td></tr>
+<tr><td>Orchestrator (ADK)</td><td><code>mistralai/ministral-3-14b-reasoning</code></td><td><code>openai/</code> prefix (LM Studio endpoint)</td></tr>
+<tr><td>RAG (LlamaIndex)</td><td><code>mistralai/ministral-3-14b-reasoning</code></td><td><code>llama-index-llms-openai-like</code></td></tr>
+<tr><td>Quant (LangGraph)</td><td><code>mistralai/ministral-3-14b-reasoning</code></td><td><code>langchain-openai</code></td></tr>
+<tr><td>Market Context (CrewAI)</td><td><code>mistralai/ministral-3-14b-reasoning</code></td><td>CrewLLM (OpenAI-compatible)</td></tr>
+<tr><td>Analytics (PydanticAI)</td><td><code>mistralai/ministral-3-14b-reasoning</code></td><td>PydanticAI <code>OpenAIModel</code></td></tr>
+<tr><td>Reviewer (OpenAI Agents SDK)</td><td><code>mistralai/ministral-3-14b-reasoning</code></td><td>OpenAI Agents SDK <code>OpenAIChatCompletionsModel</code></td></tr>
 </table>
 
 <h2>Observability &amp; Tracing</h2>

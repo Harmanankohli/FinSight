@@ -12,6 +12,7 @@ async def test_init_db_creates_tables(memory_db):
         "memory_entries",
         "ingested_filings",
         "a2a_tasks",
+        "agent_output_store",
         "schema_version",
     }
     missing = required - tables
@@ -53,6 +54,7 @@ async def test_indexes_created(memory_db):
         "idx_memory_user",
         "idx_memory_session",
         "idx_ingested_ticker",
+        "idx_aos_session",
     }
     missing = required_indexes - indexes
     assert not missing, f"Indexes not created: {missing}"

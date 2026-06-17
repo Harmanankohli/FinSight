@@ -30,10 +30,10 @@ class Settings(BaseSettings):
     env: str = "development"
 
     # ── LLM ───────────────────────────────────────────────────────────────
-    llm_model: str = "qwen/qwen3-30b-a3b-2507"
+    llm_model: str = "mistralai/ministral-3-14b-reasoning"
     llm_base_url: str = "http://localhost:1234/v1"
     llm_api_key: str = "lmstudio"
-    adk_model: str = "openai/qwen/qwen3-30b-a3b-2507"
+    adk_model: str = "openai/mistralai/ministral-3-14b-reasoning"
     llm_summary_model: str = ""  # falls back to llm_model via validator
     llm_eval_model: str = ""  # falls back to llm_model via validator
     llm_max_concurrent: int = 2

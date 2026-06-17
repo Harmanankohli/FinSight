@@ -201,6 +201,15 @@ async def start_server(host: str, port: int) -> None:
     except Exception:
         logger.warning("Memory pruning failed (non-fatal)", exc_info=True)
 
+    # Prune stale agent outputs from the shared store (TTL-based cleanup)
+    try:
+        from shared.memory.agent_output_store import prune_stale_outputs
+        stale_count = await prune_stale_outputs(max_age_seconds=600)
+        if stale_count:
+            logger.info("Pruned %d stale agent outputs", stale_count)
+    except Exception:
+        logger.warning("Agent output pruning failed (non-fatal)", exc_info=True)
+
     config = uvicorn.Config(app, host=host, port=port, log_level="info")
     server = uvicorn.Server(config)
     await server.serve()

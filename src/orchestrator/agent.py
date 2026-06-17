@@ -26,6 +26,70 @@ _session_locks_lock = threading.Lock()
 
 
 # ADK tool function: delegates tasks to sub-agents via A2A
+def _trim_for_llm(agent_name: str, data: dict) -> dict:
+    """Return a condensed copy of agent output for the orchestrator LLM.
+
+    Keeps fields needed by the reviewer tools and key signals for synthesis.
+    Full output is preserved in _agent_responses for storage/reports.
+    """
+    lower = agent_name.lower()
+
+    if "quant" in lower:
+        metrics = data.get("metrics") or {}
+        dcf = data.get("dcf_valuation") or {}
+        return {
+            "ticker": data.get("ticker"),
+            "recommendation": data.get("recommendation"),
+            "reasoning": (data.get("reasoning") or "")[:300],
+            "metrics": {
+                "sharpe_ratio": metrics.get("sharpe_ratio"),
+                "var_95_daily": metrics.get("var_95_daily"),
+                "quant_confidence": metrics.get("quant_confidence"),
+                "quant_signal": metrics.get("quant_signal"),
+            },
+            "dcf_valuation": {
+                "intrinsic_value": dcf.get("intrinsic_value"),
+                "current_price": dcf.get("current_price"),
+                "upside_pct": dcf.get("upside_pct"),
+            } if dcf else None,
+        }
+
+    if "rag" in lower:
+        return {
+            "ticker": data.get("ticker"),
+            "summary": (data.get("summary") or "")[:500],
+            "confidence_score": data.get("confidence_score"),
+            "sources": data.get("sources", [])[:5],
+        }
+
+    if "market" in lower:
+        return {
+            "overall_signal": data.get("overall_signal"),
+            "confidence_score": data.get("confidence_score"),
+            "narrative": (data.get("narrative") or "")[:300],
+            "key_tailwinds": data.get("key_tailwinds", [])[:3],
+            "key_headwinds": data.get("key_headwinds", [])[:3],
+        }
+
+    if "analytics" in lower:
+        return {
+            "ticker": data.get("ticker"),
+            "trend_analysis": data.get("trend_analysis"),
+            "anomalies": {
+                "severity": (data.get("anomalies") or {}).get("severity"),
+                "anomaly_count": (data.get("anomalies") or {}).get("anomaly_count"),
+            } if data.get("anomalies") else None,
+            "analytics_confidence": data.get("analytics_confidence"),
+            "analytics_signal": data.get("analytics_signal"),
+            "forecast": {
+                "method": (data.get("forecast") or {}).get("method"),
+                "forecast_dates": (data.get("forecast") or {}).get("forecast_dates", [])[:3],
+            } if data.get("forecast") else None,
+        }
+
+    return data
+
+
 async def send_message(agent_name: str, task: str, tool_context: ToolContext) -> str:
     """Delegate a task to a specialized remote investment agent.
 
@@ -62,14 +126,24 @@ async def send_message(agent_name: str, task: str, tool_context: ToolContext) ->
                 "Use one of these exact names and retry."
             }
         )
-    result = await _client.send_message(resolved, task)
-
-    # Capture parsed agent response for structured storage
+    # Capture session_id from tool context for storing outputs
     session_id = tool_context.session.id if tool_context and tool_context.session else None
+
+    # Inject actual session_id into reviewer query so it can fetch agent outputs
+    if session_id and "reviewer" in resolved.lower():
+        try:
+            payload = json.loads(task)
+            payload["session_id"] = session_id
+            task = json.dumps(payload)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    result = await _client.send_message(resolved, task)
     logger.info(
         "send_message capture: agent=%s session_id=%s has_result=%s",
         resolved, session_id, bool(result),
     )
+    parsed = None
     if session_id and result:
         with _session_locks_lock:
             if session_id not in _session_locks:
@@ -82,10 +156,20 @@ async def send_message(agent_name: str, task: str, tool_context: ToolContext) ->
                 parsed = {"_raw_text": result[:5000]}
             bucket[resolved] = parsed
             _agent_responses[session_id] = (ts, bucket)
+
+        # Persist full output to shared SQLite store for reviewer to fetch directly
+        if parsed:
+            from shared.memory.agent_output_store import store_agent_output
+            await store_agent_output(session_id, resolved, parsed)
+
         logger.info(
             "send_message captured: session=%s agents_so_far=%s is_json=%s",
             session_id, list(bucket.keys()), "_raw_text" not in parsed,
         )
+
+    # Return condensed output to the LLM to reduce token processing time
+    if parsed and not parsed.get("_raw_text") and not parsed.get("error"):
+        return json.dumps(_trim_for_llm(resolved, parsed))
 
     return result
 
@@ -277,8 +361,9 @@ PHASE 1 — Parallel Analysis:
 PHASE 2 — Review:
 5.  After ALL Phase 1 agents have responded (you will receive their results
     together in the next turn), call `send_message` for the Reviewer Agent.
-    Pass a JSON payload: {"ticker": "AAPL", "agent_outputs": {"quant": <result>, "rag": <result>, "market_context": <result>, "analytics": <result>}}
-    Include each agent's full result as a JSON object in the agent_outputs map.
+    Pass a JSON payload: {"ticker": "AAPL", "session_id": "<your_session_id>"}
+    Do NOT include agent_outputs — the reviewer will fetch the full data
+    from the shared store using the session_id.
 
 PHASE 3 — Synthesis:
 6.  After the Reviewer Agent responds, synthesize ALL findings including the
@@ -331,7 +416,7 @@ For general chat or non-stock queries, respond conversationally.\
 
 
 # Dynamically inject available sub-agents into the LLM system prompt
-def _build_instruction() -> str:
+def _build_instruction(session_id: str | None = None) -> str:
     today = datetime.now(IST).date().isoformat()
     agent_list = _client.list_agents()
     if agent_list:
@@ -354,10 +439,11 @@ def _build_instruction() -> str:
     else:
         preamble = _STATIC_PREAMBLE_FALLBACK
         skill_lines = "  (none discovered yet — agents may still be starting up)"
+    session_line = f"\n\nYour current session_id is: {session_id}" if session_id else ""
     return (
         f"Today's date is {today}. Use this as the reference date for all analysis.\n\n"
         f"{preamble}\n\n"
-        f"Available agents:\n{skill_lines}\n"
+        f"Available agents:\n{skill_lines}{session_line}\n"
     )
 
 
@@ -372,8 +458,11 @@ async def discover_background() -> None:
     )
 
 
-def _instruction_provider(_ctx=None) -> str:
-    return _build_instruction()
+def _instruction_provider(ctx=None) -> str:
+    session_id = None
+    if ctx and hasattr(ctx, "session") and ctx.session and hasattr(ctx.session, "id"):
+        session_id = ctx.session.id
+    return _build_instruction(session_id=session_id)
 
 
 root_agent = LlmAgent(

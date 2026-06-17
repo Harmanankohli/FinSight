@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Investment Recommendation | {{ deck.company_name }} ({{ deck.ticker }})</title>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;0,9..40,800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <style>
   :root {
     --navy: #0c1425;
@@ -416,6 +417,227 @@
     .thesis-block { padding: 24px 28px; }
   }
 
+  /* ── Trend dashboard ─── */
+  .trend-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+  .trend-card {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 24px 20px;
+    text-align: center;
+  }
+  .trend-card .trend-label {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--text-light);
+    margin-bottom: 8px;
+  }
+  .trend-card .trend-value {
+    font-family: 'DM Mono', monospace;
+    font-size: 24px;
+    font-weight: 500;
+  }
+  .trend-bullish { color: var(--green-dark); }
+  .trend-bearish { color: var(--red); }
+  .trend-neutral { color: var(--text-mid); }
+
+  /* ── Chart container ─── */
+  .chart-container {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 32px;
+    margin-bottom: 24px;
+  }
+  .chart-container canvas {
+    max-height: 400px;
+  }
+  .chart-meta {
+    display: flex;
+    gap: 24px;
+    margin-top: 16px;
+    font-size: 13px;
+    color: var(--text-light);
+  }
+  .chart-meta span { font-family: 'DM Mono', monospace; }
+
+  /* ── Monte Carlo cards ─── */
+  .mc-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+  .mc-card {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 20px 16px;
+    text-align: center;
+  }
+  .mc-card .mc-label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--text-light);
+    margin-bottom: 6px;
+  }
+  .mc-card .mc-value {
+    font-family: 'DM Mono', monospace;
+    font-size: 22px;
+    font-weight: 500;
+    color: var(--text);
+  }
+
+  /* ── Anomaly alerts ─── */
+  .anomaly-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .anomaly-item {
+    background: #fff;
+    border-radius: 12px;
+    padding: 16px 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    font-size: 14px;
+  }
+  .anomaly-item.severity-high {
+    border: 1.5px solid #fecaca;
+    background: #fef2f2;
+  }
+  .anomaly-item.severity-medium {
+    border: 1.5px solid #fde68a;
+    background: #fefce8;
+  }
+  .anomaly-item.severity-low, .anomaly-item.severity-none, .anomaly-item.severity-info {
+    border: 1px solid var(--border);
+  }
+  .anomaly-badge {
+    font-size: 11px;
+    font-weight: 700;
+    padding: 4px 10px;
+    border-radius: 6px;
+    white-space: nowrap;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  .anomaly-badge.type-Price { background: #dbeafe; color: #1d4ed8; }
+  .anomaly-badge.type-Volume { background: #f3e8ff; color: #7c3aed; }
+  .anomaly-badge.type-Fundamental { background: #fef3c7; color: #92400e; }
+  .anomaly-badge.type-Catalyst { background: #f0fdf4; color: var(--green-dark); }
+
+  /* ── Reviewer cards ─── */
+  .reviewer-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+  }
+  .reviewer-card {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 28px 24px;
+  }
+  .reviewer-card h3 {
+    font-size: 16px;
+    font-weight: 700;
+    margin-bottom: 16px;
+    color: var(--text);
+  }
+  .confidence-bar-container {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 10px;
+  }
+  .confidence-bar-label {
+    font-size: 13px;
+    color: var(--text-mid);
+    min-width: 100px;
+  }
+  .confidence-bar {
+    flex: 1;
+    height: 8px;
+    background: var(--surface);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .confidence-bar-fill {
+    height: 100%;
+    border-radius: 4px;
+    background: var(--blue);
+    transition: width 0.3s ease;
+  }
+  .confidence-bar-value {
+    font-family: 'DM Mono', monospace;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text);
+    min-width: 40px;
+    text-align: right;
+  }
+  .contradiction-item {
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .contradiction-item:last-child { border-bottom: none; }
+  .contradiction-severity {
+    font-size: 11px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-right: 8px;
+  }
+  .severity-high { background: #fecaca; color: #b91c1c; }
+  .severity-medium { background: #fde68a; color: #92400e; }
+  .severity-low { background: #e2e8f0; color: #475569; }
+  .evidence-item {
+    font-size: 14px;
+    padding: 6px 0;
+    padding-left: 20px;
+    position: relative;
+    color: var(--text);
+  }
+  .evidence-item::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 11px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+  }
+  .evidence-item.supporting::before { background: var(--green); }
+  .evidence-item.contradicting::before { background: var(--red); }
+
+  /* ── Signals table ─── */
+  .signals-category {
+    font-size: 11px;
+    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 6px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    white-space: nowrap;
+  }
+  .cat-Insider { background: #dbeafe; color: #1d4ed8; }
+  .cat-Options { background: #f3e8ff; color: #7c3aed; }
+  .cat-Analyst { background: #fef3c7; color: #92400e; }
+  .cat-Signal { background: #f0fdf4; color: var(--green-dark); }
+
   /* ── Print / PDF ─── */
   @media print {
     *, *::before, *::after {
@@ -550,6 +772,19 @@
     /* ── Peer table ─── */
     .peer-table { page-break-inside: avoid; break-inside: avoid; }
 
+    /* ── New sections ─── */
+    .trend-grid { grid-template-columns: repeat(4, 1fr) !important; gap: 3mm !important; }
+    .trend-card { padding: 4mm !important; }
+    .trend-card .trend-value { font-size: 14pt !important; }
+    .chart-container { padding: 5mm !important; page-break-inside: avoid; break-inside: avoid; }
+    .chart-container canvas { max-height: 250px !important; }
+    .mc-grid { grid-template-columns: repeat(5, 1fr) !important; gap: 3mm !important; }
+    .mc-card { padding: 3mm !important; }
+    .mc-card .mc-value { font-size: 14pt !important; }
+    .anomaly-item { padding: 3mm 4mm !important; font-size: 9pt !important; }
+    .reviewer-grid { gap: 5mm !important; page-break-inside: avoid; break-inside: avoid; }
+    .reviewer-card { padding: 4mm !important; }
+
     /* ── Conclusion ─── */
     .conclusion {
       background: var(--navy) !important;
@@ -680,6 +915,72 @@
 </div>
 {% endif %}
 
+<!-- ─── TECHNICAL ANALYSIS ─── -->
+{% if deck.technicals_table %}
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Technical Analysis</div>
+    <h2 class="section-title">Price Indicators</h2>
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th style="width:35%;">Indicator</th>
+          <th style="width:30%;">Value</th>
+          <th style="width:35%;">Signal</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for indicator, value, signal in deck.technicals_table %}
+        <tr>
+          <td class="metric-name">{{ indicator }}</td>
+          <td class="mono">{{ value }}</td>
+          <td class="mono" {% if 'bullish' in signal.lower() or signal == 'Yes' %}style="color:var(--green-dark);"{% elif 'bearish' in signal.lower() %}style="color:var(--red);"{% endif %}>{{ signal }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<!-- ─── TREND & MOMENTUM ─── -->
+{% if deck.trend_data %}
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Trend Analysis</div>
+    <h2 class="section-title">Momentum Dashboard</h2>
+    <div class="trend-grid">
+      <div class="trend-card">
+        <div class="trend-label">Trend</div>
+        <div class="trend-value {% if 'bullish' in deck.trend_data.direction.lower() %}trend-bullish{% elif 'bearish' in deck.trend_data.direction.lower() %}trend-bearish{% else %}trend-neutral{% endif %}">{{ deck.trend_data.direction }}</div>
+      </div>
+      <div class="trend-card">
+        <div class="trend-label">Strength</div>
+        <div class="trend-value">{{ deck.trend_data.strength }}</div>
+      </div>
+      <div class="trend-card">
+        <div class="trend-label">MA Crossover</div>
+        <div class="trend-value {% if 'golden' in deck.trend_data.crossover.lower() %}trend-bullish{% elif 'death' in deck.trend_data.crossover.lower() %}trend-bearish{% else %}trend-neutral{% endif %}">{{ deck.trend_data.crossover }}</div>
+      </div>
+      <div class="trend-card">
+        <div class="trend-label">Momentum</div>
+        <div class="trend-value">{{ deck.trend_data.momentum }}</div>
+      </div>
+    </div>
+    {% if deck.trend_data.indicators %}
+    <div style="margin-top: 16px;">
+      <div style="font-size: 13px; font-weight: 600; color: var(--text-mid); margin-bottom: 8px;">Supporting Indicators</div>
+      <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+        {% for ind in deck.trend_data.indicators %}
+        <span style="background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 6px 14px; font-size: 13px; color: var(--text);">{{ ind }}</span>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
 <!-- ─── VALUATION ─── -->
 {% if deck.valuation_table or deck.scenarios %}
 <div class="report-section">
@@ -718,6 +1019,145 @@
         {% endfor %}
       </div>
       {% endif %}
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<!-- ─── DCF BREAKDOWN ─── -->
+{% if deck.dcf_breakdown %}
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">DCF Model</div>
+    <h2 class="section-title">Discounted Cash Flow Breakdown</h2>
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th style="width:50%;">Parameter</th>
+          <th style="width:50%;">Value</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for label, value in deck.dcf_breakdown %}
+        <tr>
+          <td class="metric-name">{{ label }}</td>
+          <td class="mono">{{ value }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<!-- ─── MONTE CARLO ─── -->
+{% if deck.monte_carlo_summary %}
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Monte Carlo Simulation</div>
+    <h2 class="section-title">Price Distribution</h2>
+    <div class="mc-grid">
+      {% if deck.monte_carlo_summary.p10 %}
+      <div class="mc-card">
+        <div class="mc-label">P10 (Bear)</div>
+        <div class="mc-value" style="color:var(--red);">{{ deck.monte_carlo_summary.p10 }}</div>
+      </div>
+      {% endif %}
+      {% if deck.monte_carlo_summary.p25 %}
+      <div class="mc-card">
+        <div class="mc-label">P25</div>
+        <div class="mc-value" style="color:var(--amber);">{{ deck.monte_carlo_summary.p25 }}</div>
+      </div>
+      {% endif %}
+      {% if deck.monte_carlo_summary.p50 %}
+      <div class="mc-card">
+        <div class="mc-label">P50 (Base)</div>
+        <div class="mc-value" style="color:var(--blue);">{{ deck.monte_carlo_summary.p50 }}</div>
+      </div>
+      {% endif %}
+      {% if deck.monte_carlo_summary.p75 %}
+      <div class="mc-card">
+        <div class="mc-label">P75</div>
+        <div class="mc-value" style="color:var(--green);">{{ deck.monte_carlo_summary.p75 }}</div>
+      </div>
+      {% endif %}
+      {% if deck.monte_carlo_summary.p90 %}
+      <div class="mc-card">
+        <div class="mc-label">P90 (Bull)</div>
+        <div class="mc-value" style="color:var(--green-dark);">{{ deck.monte_carlo_summary.p90 }}</div>
+      </div>
+      {% endif %}
+    </div>
+
+    {% if deck.monte_carlo_summary.p10_raw and deck.monte_carlo_summary.p90_raw %}
+    <div class="chart-container">
+      <canvas id="mcChart"></canvas>
+    </div>
+    {% endif %}
+
+    <div style="display: flex; gap: 32px; flex-wrap: wrap; margin-top: 8px;">
+      {% if deck.monte_carlo_summary.prob_profit %}
+      <div><span style="font-size: 13px; color: var(--text-light);">Prob. of Profit:</span> <span style="font-family: 'DM Mono', monospace; font-weight: 500;">{{ deck.monte_carlo_summary.prob_profit }}</span></div>
+      {% endif %}
+      {% if deck.monte_carlo_summary.expected_return %}
+      <div><span style="font-size: 13px; color: var(--text-light);">Expected Return:</span> <span style="font-family: 'DM Mono', monospace; font-weight: 500;">{{ deck.monte_carlo_summary.expected_return }}</span></div>
+      {% endif %}
+      {% if deck.monte_carlo_summary.mc_var_95 %}
+      <div><span style="font-size: 13px; color: var(--text-light);">MC VaR (95%):</span> <span style="font-family: 'DM Mono', monospace; font-weight: 500;">{{ deck.monte_carlo_summary.mc_var_95 }}</span></div>
+      {% endif %}
+      {% if deck.monte_carlo_summary.n_simulations %}
+      <div><span style="font-size: 13px; color: var(--text-light);">Simulations:</span> <span style="font-family: 'DM Mono', monospace; font-weight: 500;">{{ deck.monte_carlo_summary.n_simulations }}</span></div>
+      {% endif %}
+      {% if deck.monte_carlo_summary.horizon_days %}
+      <div><span style="font-size: 13px; color: var(--text-light);">Horizon:</span> <span style="font-family: 'DM Mono', monospace; font-weight: 500;">{{ deck.monte_carlo_summary.horizon_days }} days</span></div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<!-- ─── STRESS TEST ─── -->
+{% if deck.stress_scenarios %}
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Stress Test</div>
+    <h2 class="section-title">Scenario Impact Analysis</h2>
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th style="width:40%;">Scenario</th>
+          <th style="width:30%;">Market Decline</th>
+          <th style="width:30%;">Projected Price</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for name, decline, price in deck.stress_scenarios %}
+        <tr>
+          <td class="metric-name">{{ name }}</td>
+          <td class="mono" style="color:var(--red);">{{ decline }}</td>
+          <td class="mono">{{ price }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<!-- ─── PRICE FORECAST ─── -->
+{% if deck.forecast_chart and deck.forecast_chart.dates %}
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Price Forecast</div>
+    <h2 class="section-title">{{ deck.forecast_chart.method }} — {{ deck.forecast_chart.horizon }}d Horizon</h2>
+    <div class="chart-container">
+      <canvas id="forecastChart"></canvas>
+      <div class="chart-meta">
+        {% if deck.forecast_chart.mape %}
+        <div>MAPE: <span>{{ deck.forecast_chart.mape }}</span></div>
+        {% endif %}
+        <div>Method: <span>{{ deck.forecast_chart.method }}</span></div>
+      </div>
     </div>
   </div>
 </div>
@@ -770,6 +1210,208 @@
         {% endfor %}
       </tbody>
     </table>
+  </div>
+</div>
+{% endif %}
+
+<!-- ─── BEHAVIORAL SIGNALS ─── -->
+{% if deck.signals_table %}
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Behavioral Signals</div>
+    <h2 class="section-title">Insider, Options &amp; Analyst Activity</h2>
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th style="width:20%;">Source</th>
+          <th style="width:40%;">Metric</th>
+          <th style="width:40%;">Value</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for category, metric, value in deck.signals_table %}
+        <tr>
+          <td><span class="signals-category cat-{{ category }}">{{ category }}</span></td>
+          <td class="metric-name">{{ metric }}</td>
+          <td class="mono">{{ value }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<!-- ─── MACRO REGIME ─── -->
+{% if deck.macro_regime %}
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Market Environment</div>
+    <h2 class="section-title">Macro Regime</h2>
+    <div class="thesis-block">{{ deck.macro_regime }}</div>
+  </div>
+</div>
+{% endif %}
+
+<!-- ─── ANOMALY ALERTS ─── -->
+{% if deck.anomaly_alerts %}
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Anomaly Detection</div>
+    <h2 class="section-title">Detected Anomalies</h2>
+    <div class="anomaly-list">
+      {% for alert in deck.anomaly_alerts %}
+      <div class="anomaly-item severity-{{ alert.severity }}">
+        <span class="anomaly-badge type-{{ alert.type }}">{{ alert.type }}</span>
+        <span>{{ alert.description }}</span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<!-- ─── STATISTICAL ANALYSIS ─── -->
+{% if deck.stats_table %}
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Statistical Analysis</div>
+    <h2 class="section-title">Return Distribution &amp; Correlations</h2>
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th style="width:30%;">Metric</th>
+          <th style="width:30%;">Value</th>
+          <th style="width:40%;">Interpretation</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for metric, value, interp in deck.stats_table %}
+        <tr>
+          <td class="metric-name">{{ metric }}</td>
+          <td class="mono">{{ value }}</td>
+          <td style="color:var(--text-mid);">{{ interp }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<!-- ─── CROSS-VALIDATION REPORT ─── -->
+{% if deck.reviewer_confidence or deck.reviewer_contradictions or deck.reviewer_verifications %}
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Cross-Validation</div>
+    <h2 class="section-title">Reviewer Analysis</h2>
+    <div class="reviewer-grid">
+
+      {% if deck.reviewer_confidence %}
+      <div class="reviewer-card">
+        <h3>Agent Confidence Scores</h3>
+        {% for label, key in [("Quant Agent", "quant"), ("RAG Agent", "rag"), ("Market Context", "market_context"), ("Analytics", "analytics")] %}
+        {% if deck.reviewer_confidence.get(key) %}
+        <div class="confidence-bar-container">
+          <span class="confidence-bar-label">{{ label }}</span>
+          <div class="confidence-bar"><div class="confidence-bar-fill" style="width: {{ (deck.reviewer_confidence.get(key ~ '_raw', 0) * 100)|int }}%;"></div></div>
+          <span class="confidence-bar-value">{{ deck.reviewer_confidence[key] }}</span>
+        </div>
+        {% endif %}
+        {% endfor %}
+        <div style="margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border);">
+          {% if deck.reviewer_confidence.get('agreement') %}
+          <div class="confidence-bar-container">
+            <span class="confidence-bar-label">Agreement</span>
+            <div class="confidence-bar"><div class="confidence-bar-fill" style="width: {{ deck.reviewer_confidence.agreement }}; background: var(--green);"></div></div>
+            <span class="confidence-bar-value">{{ deck.reviewer_confidence.agreement }}</span>
+          </div>
+          {% endif %}
+          {% if deck.reviewer_confidence.get('data_quality') %}
+          <div class="confidence-bar-container">
+            <span class="confidence-bar-label">Data Quality</span>
+            <div class="confidence-bar"><div class="confidence-bar-fill" style="width: {{ deck.reviewer_confidence.data_quality }}; background: var(--amber);"></div></div>
+            <span class="confidence-bar-value">{{ deck.reviewer_confidence.data_quality }}</span>
+          </div>
+          {% endif %}
+          {% if deck.reviewer_confidence.get('meta') %}
+          <div class="confidence-bar-container">
+            <span class="confidence-bar-label" style="font-weight: 700;">Meta Score</span>
+            <div class="confidence-bar"><div class="confidence-bar-fill" style="width: {{ deck.reviewer_confidence.meta }}; background: var(--navy);"></div></div>
+            <span class="confidence-bar-value" style="font-weight: 700;">{{ deck.reviewer_confidence.meta }}</span>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
+
+      {% if deck.reviewer_validation %}
+      <div class="reviewer-card">
+        <h3>Recommendation Validation</h3>
+        <div style="margin-bottom: 16px;">
+          <span style="font-size: 14px; color: var(--text-mid);">Evidence Strength: </span>
+          <span class="rating-badge {% if deck.reviewer_validation.strength == 'Strong' %}badge-strong{% elif deck.reviewer_validation.strength == 'Moderate' %}badge-moderate{% else %}badge-expensive{% endif %}">{{ deck.reviewer_validation.strength }}</span>
+        </div>
+        {% if deck.reviewer_validation.supporting %}
+        <div style="margin-bottom: 12px;">
+          <div style="font-size: 13px; font-weight: 600; color: var(--green-dark); margin-bottom: 6px;">Supporting Evidence</div>
+          {% for ev in deck.reviewer_validation.supporting %}
+          <div class="evidence-item supporting">{{ ev }}</div>
+          {% endfor %}
+        </div>
+        {% endif %}
+        {% if deck.reviewer_validation.contradicting %}
+        <div>
+          <div style="font-size: 13px; font-weight: 600; color: var(--red); margin-bottom: 6px;">Contradicting Evidence</div>
+          {% for ev in deck.reviewer_validation.contradicting %}
+          <div class="evidence-item contradicting">{{ ev }}</div>
+          {% endfor %}
+        </div>
+        {% endif %}
+      </div>
+      {% endif %}
+
+    </div>
+
+    {% if deck.reviewer_contradictions %}
+    <div style="margin-top: 24px;">
+      <h3 style="font-size: 16px; font-weight: 700; margin-bottom: 12px;">Contradictions Found</h3>
+      {% for c in deck.reviewer_contradictions %}
+      <div class="contradiction-item">
+        <span class="contradiction-severity severity-{{ c.severity }}">{{ c.severity }}</span>
+        <strong>{{ c.field }}</strong> — {{ c.description }}
+        <span style="font-size: 12px; color: var(--text-light); margin-left: 8px;">({{ c.agents }})</span>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if deck.reviewer_verifications %}
+    <div style="margin-top: 24px;">
+      <h3 style="font-size: 16px; font-weight: 700; margin-bottom: 12px;">Source Verification</h3>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Agent</th>
+            <th>Claims Checked</th>
+            <th>Verified</th>
+            <th>Rate</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for v in deck.reviewer_verifications %}
+          <tr>
+            <td class="metric-name">{{ v.agent }}</td>
+            <td class="mono">{{ v.checked }}</td>
+            <td class="mono">{{ v.verified }}</td>
+            <td class="mono" {% if v.rate and v.rate.replace('%','') | float > 70 %}style="color:var(--green-dark);"{% elif v.rate and v.rate.replace('%','') | float < 50 %}style="color:var(--red);"{% endif %}>{{ v.rate }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+
   </div>
 </div>
 {% endif %}
@@ -837,6 +1479,131 @@
     <span>For informational purposes only</span>
   </div>
 </footer>
+
+<!-- ─── Chart.js Rendering ─── -->
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  if (typeof Chart === 'undefined') return;
+
+  {% if deck.forecast_chart and deck.forecast_chart.dates %}
+  (function() {
+    var ctx = document.getElementById('forecastChart');
+    if (!ctx) return;
+    var dates = {{ deck.forecast_chart.dates | tojson }};
+    var prices = {{ deck.forecast_chart.prices | tojson }};
+    var lower = {{ deck.forecast_chart.lower | tojson }};
+    var upper = {{ deck.forecast_chart.upper | tojson }};
+
+    var datasets = [{
+      label: 'Forecast Price',
+      data: prices,
+      borderColor: '#3b7dfa',
+      backgroundColor: 'rgba(59,125,250,0.08)',
+      borderWidth: 2,
+      pointRadius: 2,
+      fill: false,
+      tension: 0.3
+    }];
+
+    if (upper.length && lower.length) {
+      datasets.push({
+        label: 'Upper Band',
+        data: upper,
+        borderColor: 'rgba(34,197,94,0.4)',
+        backgroundColor: 'rgba(34,197,94,0.08)',
+        borderWidth: 1,
+        borderDash: [4, 4],
+        pointRadius: 0,
+        fill: false
+      });
+      datasets.push({
+        label: 'Lower Band',
+        data: lower,
+        borderColor: 'rgba(239,68,68,0.4)',
+        backgroundColor: 'rgba(239,68,68,0.08)',
+        borderWidth: 1,
+        borderDash: [4, 4],
+        pointRadius: 0,
+        fill: '-1'
+      });
+    }
+
+    new Chart(ctx, {
+      type: 'line',
+      data: { labels: dates, datasets: datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: true,
+        aspectRatio: 2.5,
+        plugins: {
+          legend: { position: 'bottom', labels: { font: { family: 'DM Sans', size: 12 } } },
+          tooltip: { mode: 'index', intersect: false }
+        },
+        scales: {
+          x: {
+            display: true,
+            ticks: { maxRotation: 45, maxTicksLimit: 10, font: { family: 'DM Mono', size: 11 } },
+            grid: { display: false }
+          },
+          y: {
+            display: true,
+            ticks: { callback: function(v) { return '$' + v.toFixed(0); }, font: { family: 'DM Mono', size: 11 } },
+            grid: { color: 'rgba(0,0,0,0.05)' }
+          }
+        }
+      }
+    });
+  })();
+  {% endif %}
+
+  {% if deck.monte_carlo_summary and deck.monte_carlo_summary.p10_raw and deck.monte_carlo_summary.p90_raw %}
+  (function() {
+    var ctx = document.getElementById('mcChart');
+    if (!ctx) return;
+    var labels = ['P10', 'P25', 'P50', 'P75', 'P90'];
+    var values = [
+      {{ deck.monte_carlo_summary.p10_raw or 0 }},
+      {{ deck.monte_carlo_summary.p25_raw or 0 }},
+      {{ deck.monte_carlo_summary.p50_raw or 0 }},
+      {{ deck.monte_carlo_summary.p75_raw or 0 }},
+      {{ deck.monte_carlo_summary.p90_raw or 0 }}
+    ];
+    var colors = ['#ef4444', '#f59e0b', '#3b7dfa', '#22c55e', '#15803d'];
+
+    new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: 'Price at Percentile',
+          data: values,
+          backgroundColor: colors.map(function(c) { return c + '33'; }),
+          borderColor: colors,
+          borderWidth: 2,
+          borderRadius: 8
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: true,
+        aspectRatio: 3,
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: function(ctx) { return '$' + ctx.parsed.y.toFixed(2); } } }
+        },
+        scales: {
+          x: { grid: { display: false }, ticks: { font: { family: 'DM Mono', size: 12, weight: 'bold' } } },
+          y: {
+            ticks: { callback: function(v) { return '$' + v.toFixed(0); }, font: { family: 'DM Mono', size: 11 } },
+            grid: { color: 'rgba(0,0,0,0.05)' }
+          }
+        }
+      }
+    });
+  })();
+  {% endif %}
+});
+</script>
 
 </body>
 </html>

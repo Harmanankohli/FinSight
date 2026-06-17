@@ -1497,7 +1497,7 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
                          _FIN_CONTEXT.get(label, ""))
                     )
 
-        # Technicals → scorecard + KPI
+        # Technicals → scorecard + KPI + technicals_table
         if quant.technicals:
             t = quant.technicals
             rsi = t.rsi_value
@@ -1509,6 +1509,7 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
                 signal = "Overbought" if rsi > 70 else "Bullish" if rsi >= 50 else "Neutral" if rsi >= 30 else "Oversold"
                 badge = "expensive" if rsi > 70 else "bullish" if rsi >= 50 else "moderate" if rsi >= 30 else "strong"
                 data.scorecard.append(("Momentum", signal, badge))
+                data.technicals_table.append(("RSI (14)", f"{rsi:.1f}", signal))
             if t.macd_signal is not None:
                 macd = t.macd_signal
                 if isinstance(macd, (int, float)):
@@ -1522,6 +1523,136 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
             elif t.trend:
                 trend_badge = "bullish" if "bull" in t.trend.lower() else "expensive" if "bear" in t.trend.lower() else "moderate"
                 data.scorecard.append(("Technical Outlook", t.trend.capitalize(), trend_badge))
+
+            # Full technicals table
+            if t.sma_20 is not None:
+                data.technicals_table.append(("SMA 20", f"${t.sma_20:,.2f}", "Short-term trend"))
+            if t.sma_50 is not None:
+                data.technicals_table.append(("SMA 50", f"${t.sma_50:,.2f}", "Medium-term trend"))
+            if t.sma_200 is not None:
+                data.technicals_table.append(("SMA 200", f"${t.sma_200:,.2f}", "Long-term trend"))
+            if t.ema_12 is not None:
+                data.technicals_table.append(("EMA 12", f"${t.ema_12:,.2f}", "Short-term EMA"))
+            if t.ema_26 is not None:
+                data.technicals_table.append(("EMA 26", f"${t.ema_26:,.2f}", "Long-term EMA"))
+            if t.macd is not None:
+                data.technicals_table.append(("MACD", f"{t.macd:.4f}", "Bullish" if t.macd > 0 else "Bearish"))
+            if t.macd_signal is not None and isinstance(t.macd_signal, (int, float)):
+                data.technicals_table.append(("MACD Signal", f"{t.macd_signal:.4f}", ""))
+            if t.macd_histogram is not None:
+                data.technicals_table.append(("MACD Histogram", f"{t.macd_histogram:.4f}", "Expanding" if abs(t.macd_histogram) > 0 else "Flat"))
+            if t.bb_upper is not None:
+                data.technicals_table.append(("Bollinger Upper", f"${t.bb_upper:,.2f}", ""))
+            if t.bb_lower is not None:
+                data.technicals_table.append(("Bollinger Lower", f"${t.bb_lower:,.2f}", ""))
+            if t.bb_position is not None:
+                pos_label = "Near Upper" if t.bb_position > 0.8 else "Near Lower" if t.bb_position < 0.2 else "Mid-Band"
+                data.technicals_table.append(("BB Position", f"{t.bb_position:.2f}", pos_label))
+            if t.support is not None:
+                data.technicals_table.append(("Support Level", f"${t.support:,.2f}", ""))
+            if t.resistance is not None:
+                data.technicals_table.append(("Resistance Level", f"${t.resistance:,.2f}", ""))
+            if t.momentum_20d is not None:
+                data.technicals_table.append(("Momentum (20d)", _fmt_pct(t.momentum_20d, True), "Short-term"))
+            if t.momentum_60d is not None:
+                data.technicals_table.append(("Momentum (60d)", _fmt_pct(t.momentum_60d, True), "Medium-term"))
+            if t.golden_cross is not None:
+                data.technicals_table.append(("Golden Cross", "Yes" if t.golden_cross else "No", "Bullish" if t.golden_cross else ""))
+            if t.above_50d_ma is not None:
+                data.technicals_table.append(("Above 50d MA", "Yes" if t.above_50d_ma else "No", ""))
+            if t.above_200d_ma is not None:
+                data.technicals_table.append(("Above 200d MA", "Yes" if t.above_200d_ma else "No", ""))
+
+        # DCF breakdown
+        if quant.dcf_valuation:
+            dcf = quant.dcf_valuation
+            data.dcf_breakdown.append(("Intrinsic Value", _fmt_dollar(dcf.intrinsic_value)))
+            data.dcf_breakdown.append(("Current Price", _fmt_dollar(dcf.current_price)))
+            data.dcf_breakdown.append(("Upside", _fmt_pct(dcf.upside_pct / 100 if abs(dcf.upside_pct) > 1 else dcf.upside_pct, True)))
+            data.dcf_breakdown.append(("WACC", _fmt_pct(dcf.wacc, True)))
+            data.dcf_breakdown.append(("Growth Rate", _fmt_pct(dcf.growth_rate, True)))
+            data.dcf_breakdown.append(("Terminal Growth", _fmt_pct(dcf.terminal_growth, True)))
+            data.dcf_breakdown.append(("Enterprise Value", _fmt_dollar(dcf.enterprise_value)))
+            data.dcf_breakdown.append(("FCF Used", _fmt_dollar(dcf.fcf_used)))
+
+        # Monte Carlo summary
+        if quant.monte_carlo:
+            mc = quant.monte_carlo
+            data.monte_carlo_summary = {
+                "p10": _fmt_dollar(mc.p10) if mc.p10 else None,
+                "p25": _fmt_dollar(mc.p25) if mc.p25 else None,
+                "p50": _fmt_dollar(mc.p50) if mc.p50 else None,
+                "p75": _fmt_dollar(mc.p75) if mc.p75 else None,
+                "p90": _fmt_dollar(mc.p90) if mc.p90 else None,
+                "prob_profit": f"{mc.prob_profit:.1%}" if mc.prob_profit else None,
+                "expected_return": _fmt_pct(mc.expected_return_pct / 100, True) if mc.expected_return_pct else None,
+                "mc_var_95": _fmt_pct(mc.mc_var_95, True) if mc.mc_var_95 else None,
+                "current_price": _fmt_dollar(mc.current_price) if mc.current_price else None,
+                "n_simulations": f"{mc.n_simulations:,}" if mc.n_simulations else None,
+                "horizon_days": str(mc.horizon_days) if mc.horizon_days else None,
+                "p10_raw": mc.p10,
+                "p25_raw": mc.p25,
+                "p50_raw": mc.p50,
+                "p75_raw": mc.p75,
+                "p90_raw": mc.p90,
+            }
+
+        # Stress test scenarios
+        if quant.stress_test and quant.stress_test.scenarios:
+            for name, sc in quant.stress_test.scenarios.items():
+                decline = _fmt_pct(sc.market_decline_pct / 100, True) if sc.market_decline_pct else "N/A"
+                price = _fmt_dollar(sc.projected_price) if sc.projected_price else "N/A"
+                data.stress_scenarios.append((name.replace("_", " ").title(), decline, price))
+
+        # Insider signals
+        if quant.insider_signals:
+            ins = quant.insider_signals
+            data.signals_table.append(("Insider", "Activity Level", ins.activity_level.capitalize()))
+            data.signals_table.append(("Insider", "Direction", ins.direction.capitalize()))
+            data.signals_table.append(("Insider", "Buy Signals", str(ins.buy_signals)))
+            data.signals_table.append(("Insider", "Sell Signals", str(ins.sell_signals)))
+            if ins.net_shares is not None:
+                data.signals_table.append(("Insider", "Net Shares", f"{ins.net_shares:,.0f}"))
+            if ins.net_value is not None:
+                data.signals_table.append(("Insider", "Net Value", _fmt_dollar(ins.net_value)))
+            if ins.insider_pct_held is not None:
+                data.signals_table.append(("Insider", "Insider Ownership", _fmt_pct(ins.insider_pct_held, True)))
+
+        # Options signals
+        if quant.options_signals:
+            opt = quant.options_signals
+            data.signals_table.append(("Options", "Flow Signal", opt.flow_signal.replace("_", " ").title()))
+            if opt.put_call_volume_ratio is not None:
+                data.signals_table.append(("Options", "P/C Volume Ratio", f"{opt.put_call_volume_ratio:.2f}"))
+            if opt.put_call_oi_ratio is not None:
+                data.signals_table.append(("Options", "P/C OI Ratio", f"{opt.put_call_oi_ratio:.2f}"))
+            if opt.call_volume:
+                data.signals_table.append(("Options", "Call Volume", f"{opt.call_volume:,}"))
+            if opt.put_volume:
+                data.signals_table.append(("Options", "Put Volume", f"{opt.put_volume:,}"))
+
+        # Analyst positioning
+        if quant.positioning:
+            pos = quant.positioning
+            if pos.recommendation_key:
+                data.signals_table.append(("Analyst", "Consensus", pos.recommendation_key.replace("_", " ").title()))
+            if pos.n_analysts:
+                data.signals_table.append(("Analyst", "# Analysts", str(pos.n_analysts)))
+            if pos.analyst_target_price is not None:
+                data.signals_table.append(("Analyst", "Target Price", _fmt_dollar(pos.analyst_target_price)))
+            if pos.analyst_upside_pct is not None:
+                data.signals_table.append(("Analyst", "Target Upside", _fmt_pct(pos.analyst_upside_pct / 100 if abs(pos.analyst_upside_pct) > 1 else pos.analyst_upside_pct, True)))
+            if pos.short_ratio is not None:
+                data.signals_table.append(("Analyst", "Short Ratio", f"{pos.short_ratio:.1f}"))
+            if pos.short_pct_float is not None:
+                data.signals_table.append(("Analyst", "Short % Float", _fmt_pct(pos.short_pct_float, True)))
+            if pos.short_squeeze_risk:
+                data.signals_table.append(("Analyst", "Short Squeeze Risk", "Yes"))
+
+        # Quant signal scores
+        if quant.metrics.signal_scores:
+            for sig_name, sig_val in quant.metrics.signal_scores.items():
+                data.signals_table.append(("Signal", sig_name.replace("_", " ").title(), f"{sig_val:.2f}"))
 
         # Peer comparison from quant
         if quant.peer_comparison:
@@ -1600,6 +1731,9 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
             sig_badge = "bullish" if "bull" in sig.lower() or sig.upper() == "BUY" else "expensive" if "bear" in sig.lower() or sig.upper() == "SELL" else "moderate"
             data.scorecard.append(("Market Sentiment", sig.capitalize(), sig_badge))
 
+        if sentiment.macro_regime:
+            data.macro_regime = sentiment.macro_regime
+
     # ── Analytics (validated path) ──────────────────────────────────────────────
     if analytics:
         trend = analytics.trend_analysis
@@ -1611,27 +1745,72 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
                 badge = "bullish" if trend.ma_crossover_signal == "golden_cross" else "expensive"
                 data.scorecard.append(("MA Crossover", trend.ma_crossover_signal.replace("_", " ").title(), badge))
 
+            data.trend_data = {
+                "direction": td.capitalize(),
+                "strength": f"{trend.trend_strength:.0%}" if trend.trend_strength else "N/A",
+                "crossover": trend.ma_crossover_signal.replace("_", " ").title() if trend.ma_crossover_signal else "None",
+                "momentum": trend.momentum_shift.replace("_", " ").title() if trend.momentum_shift else "Stable",
+                "indicators": trend.supporting_indicators[:6] if trend.supporting_indicators else [],
+            }
+
         forecast = analytics.forecast
         if forecast and forecast.forecast_prices:
             data.valuation_table.append(("30d Forecast", _fmt_dollar(forecast.forecast_prices[-1])))
+            data.forecast_chart = {
+                "dates": forecast.forecast_dates,
+                "prices": forecast.forecast_prices,
+                "lower": forecast.confidence_lower,
+                "upper": forecast.confidence_upper,
+                "method": forecast.method.replace("_", " ").title(),
+                "mape": f"{forecast.mape:.2%}" if forecast.mape else None,
+                "horizon": forecast.horizon_days,
+            }
 
         anomalies = analytics.anomalies
-        if anomalies and anomalies.severity in ("medium", "high"):
+        if anomalies:
+            if anomalies.severity in ("medium", "high"):
+                for a in anomalies.price_anomalies:
+                    desc = a.get("date", "") + " " + a.get("type", "anomaly")
+                    data.risks.append(desc)
+                for a in anomalies.volume_anomalies:
+                    desc = a.get("date", "") + " " + a.get("type", "anomaly")
+                    data.risks.append(desc)
+                for fa in anomalies.fundamental_anomalies:
+                    data.risks.append(fa)
+
             for a in anomalies.price_anomalies:
-                desc = a.get("date", "") + " " + a.get("type", "anomaly")
-                data.risks.append(desc)
+                data.anomaly_alerts.append({"type": "Price", "description": f"{a.get('date', 'N/A')}: {a.get('type', 'anomaly')}", "severity": anomalies.severity})
             for a in anomalies.volume_anomalies:
-                desc = a.get("date", "") + " " + a.get("type", "anomaly")
-                data.risks.append(desc)
+                data.anomaly_alerts.append({"type": "Volume", "description": f"{a.get('date', 'N/A')}: {a.get('type', 'anomaly')}", "severity": anomalies.severity})
             for fa in anomalies.fundamental_anomalies:
-                data.risks.append(fa)
+                data.anomaly_alerts.append({"type": "Fundamental", "description": fa, "severity": anomalies.severity})
+            if anomalies.catalyst_context:
+                for ctx_item in anomalies.catalyst_context[:3]:
+                    data.anomaly_alerts.append({"type": "Catalyst", "description": ctx_item, "severity": "info"})
 
         stats = analytics.statistical_summary
         if stats:
             if stats.skewness is not None:
                 data.financials.append(("Skewness", f"{stats.skewness:.3f}", "Return Distribution"))
+                interp = "Left-skewed (more downside risk)" if stats.skewness < -0.5 else "Right-skewed (positive bias)" if stats.skewness > 0.5 else "Near symmetric"
+                data.stats_table.append(("Skewness", f"{stats.skewness:.3f}", interp))
             if stats.kurtosis is not None:
                 data.financials.append(("Kurtosis", f"{stats.kurtosis:.3f}", "Return Distribution"))
+                interp = "Heavy tails (extreme moves likely)" if stats.kurtosis > 3 else "Light tails" if stats.kurtosis < 3 else "Normal"
+                data.stats_table.append(("Kurtosis", f"{stats.kurtosis:.3f}", interp))
+            if stats.jarque_bera_pvalue is not None:
+                interp = "Non-normal distribution" if stats.jarque_bera_pvalue < 0.05 else "Approximately normal"
+                data.stats_table.append(("Jarque-Bera p-value", f"{stats.jarque_bera_pvalue:.4f}", interp))
+            if stats.return_distribution:
+                data.stats_table.append(("Distribution", stats.return_distribution, ""))
+            if stats.regression_beta is not None:
+                data.stats_table.append(("Regression Beta", f"{stats.regression_beta:.3f}", "Market sensitivity"))
+            if stats.regression_r_squared is not None:
+                interp = "Strong fit" if stats.regression_r_squared > 0.7 else "Moderate fit" if stats.regression_r_squared > 0.3 else "Weak fit"
+                data.stats_table.append(("R-Squared", f"{stats.regression_r_squared:.3f}", interp))
+            if stats.correlations:
+                for corr_name, corr_val in list(stats.correlations.items())[:5]:
+                    data.stats_table.append((f"Corr: {corr_name}", f"{corr_val:.3f}", "Strong" if abs(corr_val) > 0.7 else "Moderate" if abs(corr_val) > 0.3 else "Weak"))
 
         if analytics.charts:
             data.charts = [c.model_dump() if hasattr(c, "model_dump") else c for c in analytics.charts]
@@ -1641,14 +1820,50 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
         for c in reviewer.contradictions:
             if c.severity == "high":
                 data.risks.append(f"Contradiction: {c.description}")
+            data.reviewer_contradictions.append({
+                "agents": ", ".join(c.agents),
+                "field": c.field,
+                "description": c.description,
+                "severity": c.severity,
+            })
 
         cb = reviewer.confidence_breakdown
         if cb and cb.meta_confidence is not None:
             data.confidence = cb.meta_confidence
+            data.reviewer_confidence = {
+                "quant": f"{cb.agent_scores.quant:.0%}",
+                "rag": f"{cb.agent_scores.rag:.0%}",
+                "market_context": f"{cb.agent_scores.market_context:.0%}",
+                "analytics": f"{cb.agent_scores.analytics:.0%}",
+                "agreement": f"{cb.agreement_score:.0%}",
+                "data_quality": f"{cb.data_quality_score:.0%}",
+                "meta": f"{cb.meta_confidence:.0%}",
+                "quant_raw": cb.agent_scores.quant,
+                "rag_raw": cb.agent_scores.rag,
+                "market_raw": cb.agent_scores.market_context,
+                "analytics_raw": cb.agent_scores.analytics,
+            }
+
+        for sv in reviewer.source_verifications:
+            data.reviewer_verifications.append({
+                "agent": sv.agent_name,
+                "checked": sv.claims_checked,
+                "verified": sv.claims_verified,
+                "rate": f"{sv.verification_rate:.0%}",
+                "unverified": sv.unverified_claims[:3],
+            })
 
         rv = reviewer.recommendation_validation
-        if rv and rv.evidence_strength == "strong":
-            data.sections.append(Section("Evidence Strength", "Strong evidence supports the recommendation."))
+        if rv:
+            data.reviewer_validation = {
+                "recommendation": rv.recommendation,
+                "supports": rv.evidence_supports,
+                "strength": rv.evidence_strength.capitalize(),
+                "supporting": rv.supporting_evidence[:5],
+                "contradicting": rv.contradicting_evidence[:5],
+            }
+            if rv.evidence_strength == "strong":
+                data.sections.append(Section("Evidence Strength", "Strong evidence supports the recommendation."))
 
         for flag in reviewer.flags:
             data.risks.append(flag)

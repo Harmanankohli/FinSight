@@ -27,7 +27,10 @@ async def _clean_env(monkeypatch):
     for suffix in ("", "-wal", "-shm"):
         p = Path(str(db_path) + suffix)
         if p.exists():
-            p.unlink(missing_ok=True)
+            try:
+                p.unlink(missing_ok=True)
+            except PermissionError:
+                pass
     import shared.memory.user_store as us_mod
     us_mod._schema_v4_ensured = False
     yield

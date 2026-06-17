@@ -18,14 +18,19 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+const AUTH_ENABLED = process.env.NEXT_PUBLIC_AUTH_ENABLED !== "false";
+
+const ANONYMOUS_USER: AuthUser = { id: "anonymous", username: "anonymous", role: "user" };
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
-  const [user, setUser] = useState<AuthUser | null>(null);
-  const [accessToken, setAccessToken] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [user, setUser] = useState<AuthUser | null>(AUTH_ENABLED ? null : ANONYMOUS_USER);
+  const [accessToken, setAccessToken] = useState<string | null>(AUTH_ENABLED ? null : "disabled");
+  const [isLoading, setIsLoading] = useState(AUTH_ENABLED);
 
   useEffect(() => {
+    if (!AUTH_ENABLED) return;
     const controller = new AbortController();
     const restore = async () => {
       const refreshed = await refreshTokenAPI();
@@ -41,7 +46,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (isLoading) return;
+    if (!AUTH_ENABLED || isLoading) return;
     if (!user && pathname !== "/login") {
       router.replace(`/login?redirect=${encodeURIComponent(pathname)}`);
     } else if (user && pathname === "/login") {

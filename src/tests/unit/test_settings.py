@@ -20,7 +20,7 @@ def test_default_values(monkeypatch):
     monkeypatch.delenv("LLM_MODEL", raising=False)
     monkeypatch.setenv("_ENV_FILE", "")  # prevent .env file from being read
     s = Settings(_env_file=None)
-    assert s.llm_model == "qwen/qwen3-30b-a3b-2507"
+    assert s.llm_model == "mistralai/ministral-3-14b-reasoning"
     assert s.env == "development"
     assert s.auth_enabled is False
     assert s.agent_port_rag == 8002

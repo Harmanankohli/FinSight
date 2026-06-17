@@ -22,6 +22,13 @@ def __getattr__(name: str):
     if name == "PortfolioStore":
         from shared.memory.portfolio_store import PortfolioStore
         return PortfolioStore
+    if name in ("store_agent_output", "get_agent_outputs", "prune_stale_outputs"):
+        from shared.memory.agent_output_store import (
+            get_agent_outputs,
+            prune_stale_outputs,
+            store_agent_output,
+        )
+        return locals()[name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -33,4 +40,7 @@ __all__ = [
     "TickerMemory",
     "PortfolioStore",
     "PerformanceTracker",
+    "store_agent_output",
+    "get_agent_outputs",
+    "prune_stale_outputs",
 ]

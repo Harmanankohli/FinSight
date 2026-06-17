@@ -73,4 +73,29 @@ class DeckData:
     sections: list[Section] = field(default_factory=list)
     # Analytics Agent chart payloads (candlestick, line, area)
     charts: list[dict] = field(default_factory=list)
+    # Technical indicators table [(indicator, value, signal)]
+    technicals_table: list[tuple[str, str, str]] = field(default_factory=list)
+    # Behavioral signals — insider, options, analyst [(category, metric, value)]
+    signals_table: list[tuple[str, str, str]] = field(default_factory=list)
+    # Forecast chart data for Chart.js
+    forecast_chart: dict = field(default_factory=dict)
+    # Monte Carlo summary
+    monte_carlo_summary: dict = field(default_factory=dict)
+    # Stress test scenarios [(scenario_name, decline_pct, projected_price)]
+    stress_scenarios: list[tuple[str, str, str]] = field(default_factory=list)
+    # DCF valuation breakdown [(metric, value)]
+    dcf_breakdown: list[tuple[str, str]] = field(default_factory=list)
+    # Statistical summary [(metric, value, interpretation)]
+    stats_table: list[tuple[str, str, str]] = field(default_factory=list)
+    # Anomaly alerts [{type, description, severity}]
+    anomaly_alerts: list[dict] = field(default_factory=list)
+    # Trend analysis dashboard
+    trend_data: dict = field(default_factory=dict)
+    # Reviewer cross-validation
+    reviewer_contradictions: list[dict] = field(default_factory=list)
+    reviewer_verifications: list[dict] = field(default_factory=list)
+    reviewer_confidence: dict = field(default_factory=dict)
+    reviewer_validation: dict = field(default_factory=dict)
+    # Market macro context
+    macro_regime: str = ""
     disclaimer: str = _DEFAULT_DISCLAIMER

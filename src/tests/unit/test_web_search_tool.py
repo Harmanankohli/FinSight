@@ -2,6 +2,7 @@
 # ruff: noqa: S101 — assert used extensively in tests
 
 import sys
+import types
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -10,7 +11,9 @@ import pytest
 # Ensure ddgs is importable even when not installed, so that
 # patch("ddgs.DDGS", ...) can resolve the target module.
 if "ddgs" not in sys.modules:
-    sys.modules["ddgs"] = MagicMock()
+    _fake_ddgs_mod = types.ModuleType("ddgs")
+    _fake_ddgs_mod.DDGS = MagicMock  # type: ignore[attr-defined]
+    sys.modules["ddgs"] = _fake_ddgs_mod
 
 
 @pytest.fixture
@@ -25,8 +28,7 @@ def fake_ddgs():
     def _make(results):
         ddgs_instance = MagicMock()
         ddgs_instance.text.return_value = results
-        ddgs_cls = MagicMock(
-            return_value=MagicMock(__enter__=MagicMock(return_value=ddgs_instance)))
+        ddgs_cls = MagicMock(return_value=ddgs_instance)
 
         patcher = patch("ddgs.DDGS", ddgs_cls)
         return patcher, ddgs_instance
