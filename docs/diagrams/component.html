@@ -34,12 +34,14 @@ Guard("Guardrails (off-topic + validate)")
 SCache("SemanticCache (ChromaDB)")
 SubClient("SubAgentClient (A2A dispatch)")
 MemCtx("Memory Context Injection")
-ADKEngine("ADK LlmAgent\nTools: send_message, load_memory")
+ADKEngine("ADK LlmAgent\nTools: send_message(SendMessageInput)\nload_memory")
 BriefCache("Today Brief Cache (SQLite)")
 OutGuard("Output Guardrails (≥50 chars + signal)")
 MemPersist("Memory Persist\nTickerMemory + Portfolio + Perf")
 EvalFire("Background Evals\nRAGAS + /release-evals")
 ReportGen("Report Generator\nhtml · pdf\nJinja2 + DeckData pipeline")
+
+Dashboard("Observability Dashboard\nReplaces Trace page\nMetrics + evals UI")
 end
 subgraph RAGComp["RAG Agent (port 8002)"]
 RAGExec("RAGAgent")
@@ -67,8 +69,9 @@ ANodes("Analytics Nodes\ntrend, forecast, stats, anomaly, chart")
 end
 subgraph ReviewerComp["Reviewer Agent (port 8006)"]
 RExec("ReviewerAgent\nreview(session_id)")
+RIGate("validate_metric_integrity()\n(pre-reviewer gate)\nSharpe/VaR/RSI/MC bounds")
 RTools("Deterministic Tools\ncontradictions, sources,\nconfidence, validation")
-RSynth("LLM Synthesis\ncross_validation_verdict")
+RSynth("LLM Synthesis\ncross_validation_verdict\n(richer condensed metrics)")
 end
 subgraph AgentStore["Agent Output Store (v2.7)"]
 AOStore("agent_output_store\nSQLite table\n(session_id, agent_name)")
@@ -96,13 +99,18 @@ PStore("PortfolioStore\nupsert / get_holdings")
 PTrack("PerformanceTracker\nevaluate / accuracy")
 SMem("SQLiteMemoryService\nBM25 + embedding RRF")
 end
-SubClient -- "A2A" --> RAGExec
-SubClient -- "A2A" --> QExec
-SubClient -- "A2A" --> MExec
-SubClient -- "A2A" --> AExec
-SubClient -- "A2A" --> RExec
+SubClient -- "A2A SendMessageInput" --> RAGExec
+SubClient -- "A2A SendMessageInput" --> QExec
+SubClient -- "A2A SendMessageInput" --> MExec
+SubClient -- "A2A SendMessageInput" --> AExec
+SubClient -- "A2A SendMessageInput" --> RExec
 SubClient -- "store" --> AOStore
+EvalFire -- "feeds" --> Dashboard
+MemPersist -- "data" --> Dashboard
 AOStore -- "fetch" --> RExec
+RExec --> RIGate
+RIGate --> RTools
+RTools --> RSynth
 RAGExec -- "MCP" --> Tools
 QExec -- "MCP" --> Tools
 MExec -- "MCP" --> Tools
@@ -150,6 +158,7 @@ style OutGuard fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
 style MemPersist fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
 style EvalFire fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
 style AGUIBridge fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
+style Dashboard fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
 style ReportGen fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
 style RAGExec fill:#d4e6f1,stroke:#2980b9,color:#1a1a1a
 style IndexMgr fill:#d4e6f1,stroke:#2980b9,color:#1a1a1a
@@ -168,6 +177,7 @@ style MCrew fill:#fadbd8,stroke:#c0392b,color:#1a1a1a
 style AExec fill:#abebc6,stroke:#1e8449,color:#1a1a1a
 style ANodes fill:#abebc6,stroke:#1e8449,color:#1a1a1a
 style RExec fill:#f5b7b1,stroke:#c0392b,color:#1a1a1a
+style RIGate fill:#f5b7b1,stroke:#c0392b,color:#1a1a1a
 style RTools fill:#f5b7b1,stroke:#c0392b,color:#1a1a1a
 style RSynth fill:#f5b7b1,stroke:#c0392b,color:#1a1a1a
 style AOStore fill:#f9e79f,stroke:#f39c12,color:#1a1a1a

@@ -40,8 +40,8 @@ participant SEC as SEC EDGAR
 participant YF as Yahoo Finance
 Note over Orch,YF: ══════ Phase 2a: Parallel A2A Dispatch ══════
 
-par ⑧ All 4 agents fire simultaneously
-Orch->>RAG: A2A SendMessage("Analyze NVDA")
+par ⑧ All 4 agents fire simultaneously (SendMessageInput)
+Orch->>RAG: A2A SendMessageInput("Financial RAG Agent", "NVDA")
 activate RAG
 RAG->>MCP: get_financial_filings("NVDA")
 MCP->>SEC: EDGAR lookup
@@ -54,7 +54,7 @@ RAG->>LLM: Synthesize (NORMAL)
 LLM-->>RAG: Revenue growth, risks
 RAG-->>Orch: RAG analysis
 deactivate RAG
-Orch->>Quant: A2A SendMessage("Quant NVDA")
+Orch->>Quant: A2A SendMessageInput("Quant Analysis Agent", "NVDA")
 activate Quant
 Quant->>MCP: get_prices + get_financials
 MCP->>YF: OHLCV + statements
@@ -65,7 +65,7 @@ Quant->>LLM: Summary (CRITICAL)
 LLM-->>Quant: BUY (+0.31)
 Quant-->>Orch: Quant analysis
 deactivate Quant
-Orch->>Mkt: A2A SendMessage("Market NVDA")
+Orch->>Mkt: A2A SendMessageInput("Market Context Agent", "NVDA")
 activate Mkt
 Mkt->>MCP: get_macro_indicators + get_peers
 MCP->>YF: Macro + peer data
@@ -75,7 +75,7 @@ Mkt->>LLM: Narrative (CRITICAL)
 LLM-->>Mkt: Bullish macro, leads peers
 Mkt-->>Orch: Market context
 deactivate Mkt
-Orch->>Analytics: A2A SendMessage("Analytics NVDA")
+Orch->>Analytics: A2A SendMessageInput("Analytics Agent", "NVDA")
 activate Analytics
 Analytics->>Analytics: Trend + forecast + stats + anomaly
 Analytics-->>Orch: Analytics report
@@ -83,11 +83,12 @@ deactivate Analytics
 end
 Note over Orch,YF: ══════ Phase 2b: Store + Review ══════
 Orch->>Orch: Store agent outputs in SQLite
-Orch->>Reviewer: A2A SendMessage(session_id)
+Orch->>Reviewer: A2A SendMessageInput("Reviewer Agent", "NVDA")
 activate Reviewer
-Reviewer->>Orch: Fetch outputs from SQLite
+Reviewer->>Reviewer: validate_metric_integrity()\n(pre-reviewer gate: Sharpe, VaR, DCF, MC ranges)
+Reviewer->>Orch: Fetch outputs (inline preferred over SQLite)
 Reviewer->>Reviewer: check_contradictions()\nverify_sources()\nscore_confidence()\nvalidate_recommendation()
-Reviewer->>LLM: Summarize (agent summaries)
+Reviewer->>LLM: Synthesize (richer condensed metrics)
 LLM-->>Reviewer: Cross-validation verdict
 Reviewer-->>Orch: Reviewer verdict
 deactivate Reviewer

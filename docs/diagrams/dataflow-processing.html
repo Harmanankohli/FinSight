@@ -47,7 +47,8 @@ M6("Insider\nget_insider_transactions")
 M7("Discovery\nget_peers, shocks\nvalidate, resolve")
 end
 StoreAgentOutputs("Agent Output Store\nSQLite (session_id, agent_name)")
-Reviewer("Reviewer Agent\n1. Fetch outputs from SQLite\n2. check_contradictions()\n3. verify_sources()\n4. score_confidence()\n5. validate_recommendation()\n6. LLM synthesis → verdict")
+IntegrityGate("Pre-Reviewer Integrity Gate\nvalidate_metric_integrity()\nSharpe, VaR, RSI, MC bounds\nDCF consistency, anomaly checks")
+Reviewer("Reviewer Agent\n1. Fetch outputs (inline preferred)\n2. check_contradictions()\n3. verify_sources()\n4. score_confidence()\n5. validate_recommendation()\n6. LLM synthesis (richer metrics) → verdict")
 Synth("LLM Synthesis\nADK LlmAgent merges\nRAG + Quant + Market + Analytics + Reviewer\n→ BUY/HOLD/SELL + rationale")
 OutGuard("Output Guardrails\n≥50 chars + signal\nAuto-retry × 3")
 MemStore("Memory Persistence\nSQLite:\nTickerMemory\nPerformanceTracker\nPortfolioStore")
@@ -72,7 +73,8 @@ RAG --> StoreAgentOutputs
 Quant --> StoreAgentOutputs
 Mkt --> StoreAgentOutputs
 Analytics --> StoreAgentOutputs
-StoreAgentOutputs --> Reviewer
+StoreAgentOutputs --> IntegrityGate
+IntegrityGate --> Reviewer
 Reviewer --> Synth
 Synth --> OutGuard
 OutGuard --> MemStore
@@ -86,6 +88,7 @@ style Quant fill:#fdebd0,stroke:#e67e22,color:#1a1a1a
 style Mkt fill:#fadbd8,stroke:#c0392b,color:#1a1a1a
 style Analytics fill:#abebc6,stroke:#1e8449,color:#1a1a1a
 style Reviewer fill:#f5b7b1,stroke:#c0392b,color:#1a1a1a
+style IntegrityGate fill:#f9e79f,stroke:#f39c12,color:#1a1a1a
 style StoreAgentOutputs fill:#f9e79f,stroke:#f39c12,color:#1a1a1a
 style M1 fill:#f0ebe3,stroke:#888,color:#1a1a1a
 style M2 fill:#f0ebe3,stroke:#888,color:#1a1a1a

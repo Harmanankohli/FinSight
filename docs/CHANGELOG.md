@@ -1,5 +1,89 @@
 # Changelog
 
+## v2.8 — SendMessageInput Model, Pre-Reviewer Integrity Gate, Observability Dashboard, Report Calculation Fixes (1dda8cc–b3a259d)
+
+### SendMessageInput Pydantic Model Eliminates Ticker Hallucination (7859ccc)
+
+- **`src/orchestrator/agent.py`**: `send_message` tool signature changed from free-text `task: str` to `SendMessageInput(agent_name: str, ticker: str)` Pydantic model. Task templates code-built from `_AGENT_TASK_TEMPLATES` dict — the LLM no longer invents different tickers for different agents. Fixes a whole class of bugs where the orchestrator would analyze "NVDA" with the quant agent but "AAPL" with the RAG agent.
+- **`src/shared/ticker_utils.py`**: Added "TASK" to `_FINANCIAL_STOP_WORDS` to prevent `<<<TASK>>>` separator from being extracted as a ticker.
+- **AG-UI bridge**: `asyncio.wait` replaces `asyncio.wait_for` to prevent `CancelledError` propagating into ADK runner. LLM timeout increased to 600s.
+- **Why**: The free-text `task` field gave the LLM unbounded freedom to specify tickers per agent call. The Pydantic model constrains the LLM to a single ticker input, making cross-agent ticker consistency the path of least resistance.
+
+### Pre-Reviewer Metric Integrity Gate (0ca4a48)
+
+- **`src/reviewer/tools/integrity.py` (new, 208 lines)**: `validate_metric_integrity()` checks mathematical invariants before the reviewer's synthesis step:
+  - DCF upside consistency (intrinsic > market implies upside > 0)
+  - MC prob_profit must be in [0,1], Sharpe in [-5,5], VaR in [0,1], RSI in [0,100], MAPE ≥ 0
+  - Beta in [-3,6], momentum shift bounds, anomaly count ≥ 0
+- **`src/reviewer/executor.py`**: Integrity alerts surfaced in synthesis prompt as `integrity_alerts` dict. Inline `agent_outputs` now preferred over SQLite store fetch (avoids race condition when outputs haven't been flushed yet).
+- **Richer agent summaries**: LLM now receives condensed metrics per agent (beta, VaR, DCF intrinsic/value, PE, ROE, growth, D/E, RSI, golden cross, trend, MC p50/prob_profit, macro_regime, trend_strength, anomaly_count) instead of raw full outputs.
+
+### Report Calculation Fixes (1dda8cc)
+
+- **Sharpe ratio**: Now subtracts risk-free rate (4.3% annual / 252 daily). Previously assumed 0% risk-free rate, inflating positive-Sharpe stocks.
+- **Momentum**: 20d/60d momentum values no longer double-multiplied by 100 (was showing 777% instead of 7.77%).
+- **MAPE format**: Changed from `:.2%` to `:.2f%` to avoid double-percentage formatting (was showing "328.00%%").
+- **Stress test**: Market decline division by 100 removed (was applying 0.5% decline instead of 50%).
+- **Beta label**: Changed to `"Regression Beta (1Y)"` to distinguish from quant's 5Y covariance beta.
+- **MC BUY→HOLD downgrade**: Recommendation auto-downgraded from BUY to HOLD when Monte Carlo `prob_profit < 50%` — preventing BUY signals with negative expected returns.
+- **Forecast MAPE holdout**: Capped at 30 days to match forecast horizon (was 252 days, comparing against wrong timeframe).
+- **Extraction key fix**: `market_context_raw` corrected from `market_raw` in extraction output.
+
+### Unified Ticker Validation Across All Agents (b2b5f25)
+
+- **`src/shared/ticker_utils.py`**: `resolve_and_validate_ticker()` helper extracted, replacing per-agent `_resolve_ticker`/`_validate_ticker` private methods. RAG, Quant, Market Context, Analytics, and Reviewer all call the same shared function. Eliminates 5 near-duplicate ticker resolution code paths.
+- **Trace context nesting fix**: `parent_span_id=span.id` set in RAG, MarketContext, and Reviewer executors — Langfuse traces now correctly nest sub-agent spans under the orchestrator's parent span instead of appearing as disconnected root traces.
+- **RAG stream simplification**: Intermediate "Index is warming for {ticker}..." WORKING event yield removed. RAG now follows the same single-yield pattern as all other agents (one data response on completion).
+- **Reviewer response shape fixed**: Error responses now include `response_type`, `is_error`, `require_user_input` fields for proper A2A protocol compliance.
+- **Confidence tool rewritten**: `score_confidence()` uses `_derive_narrative_bullishness`, `_derive_narrative_clarity`, `_derive_data_quality`, `_derive_agreement` helpers instead of monolithic regex parsing.
+- **Contradiction tool expanded**: New cross-checks: SELL+bullish technicals, DCF vs market price misalignment, Monte Carlo vs recommendation inconsistency, analytics trend vs quant trend disagreement.
+- **Validation tool expanded**: Checks fundamentals (ROE > 0, D/E < 10, growth within bounds), RSI vs trend consistency, golden cross validity, Sharpe sign vs recommendation, anomaly count plausibility, tailwind/headwind balance.
+- **Eval gate timer**: Timer reset on each `defer_eval()` call (was cumulative from first call). Timeout exposed via `settings.eval_defer_timeout`.
+- **`EVAL_TRACE_ENABLED` consolidated**: Canonical env var is now `EVAL_ENABLED` — `EVAL_TRACE_ENABLED` removed.
+
+### Observability Dashboard Replaces Trace Page (e65a7fa)
+
+- **`/dashboard` route** replaces `/trace`: KPIs, agent metrics, latency charts, RAGAS score visualizations. New `src/web/nextjs-app/app/dashboard/page.tsx`.
+- **New API routes**: `/api/dashboard` (aggregated metrics), `/api/dashboard/scores` (RAGAS score timeseries).
+- **`lib/traceFilter.ts` deleted**: Replaced by `lib/langfuse.ts` helper for Langfuse client queries.
+- **New `lib/agentColors.ts`**: Consistent color mapping across dashboard, sidebar, and research page.
+- **Sidebar**: Removed `traceOpen` from Zustand store. Nav updated to point to `/dashboard`.
+- **`plan.md` deleted**: Replaced by `dashboard-plan.md`.
+- **Bootstrap**: Log level resolution fixed for per-service `LOG_LEVEL_<SERVICE>` env vars.
+
+### Web UI Agent Response Capture (b3a259d)
+
+- **`src/orchestrator/web/agent.py`**: `_collect_agent_extra()` pops agent responses from `send_message` events and maps them into `brief_json` keys for the ADK web UI path. Previously, the web UI path never called `pop_agent_responses()` — structured agent data was silently lost on every ADK web query.
+- **`src/shared/memory/ticker_memory.py`**: `update_brief_json()` extended with optional `recommendation`/`confidence` params. Both web and A2A paths now consistently detect recommendation changes and update DB columns on same-day re-analysis.
+
+### Frontend: Analytics & Reviewer Agent Tiles (268fc8a)
+
+- **CSS**: Added teal (analytics) and crimson (reviewer) tile color rules and spinner animations.
+- **Research page**: 5-agent array with `phase` field (Phase 1 vs Phase 2). Phase-aware `tileStatus` with `running` param for stale-state safety.
+- **Overview flow diagram**: Now shows 4 Phase 1 agents + Reviewer in Phase 2.
+- **Operator page**: Analytics and Reviewer get correct capability card colors.
+- **Trace page**: Analytics/reviewer span color matchers and legend entries.
+
+### Refactoring: Seed User Path, Shared Re-exports, Lazy Import Reversal (9a3e14d)
+
+- **`seed_user.py` moved**: `src/seed_user.py` → `src/scripts/seed_user.py` (consistent with other scripts).
+- **`src/shared/__init__.py` (new)**: Explicit re-exports for commonly imported symbols (`get_shared_mcp`, `GenericAgentExecutor`, `BaseAgent`, `build_agent_app`, etc.).
+- **Lazy imports removed** (`src/shared/memory/__init__.py`): The `__getattr__`-based lazy import pattern (introduced in v2.1) replaced with explicit direct imports. The lazy pattern caused IDE resolution failures and obscured import errors at startup.
+- **Agent server debug logging**: Added `agent_card` debug log statements.
+- **Makefile**: Added `fmt` and `fmt-check` targets for ruff formatting.
+
+### Full Commit List (c51db16..b3a259d)
+
+- `1dda8cc` fix: correct report calculation bugs — momentum, MAPE, stress test, Sharpe, MC recommendation
+- `0ca4a48` feat: add pre-reviewer metric integrity gate
+- `b2b5f25` refactor: unify ticker validation, fix trace context nesting, clean up dead code
+- `268fc8a` feat: add Analytics & Reviewer agent tiles to frontend
+- `9a3e14d` Implement plan.md: seed_user move, shared re-exports, _build_response refactor, lazy imports, inline _extract, memory __getattr__ removal, agent_card comments, Makefile fmt targets
+- `3401189` Format entire codebase with ruff format
+- `7859ccc` fix: resolve orchestrator cancellation, reviewer data loss, and ticker hallucination
+- `e65a7fa` feat: replace trace page with observability dashboard, update docs and bootstrap logging
+- `b3a259d` fix: capture agent responses in web UI path and update stale recommendations
+
 ## v2.7 — Shared Agent Output Store, Rich HTML Report Sections, Reviewer Refactor, Auth Bypass (dc6ec77)
 
 ### Shared SQLite Agent Output Store (dc6ec77)

@@ -3023,6 +3023,54 @@ src/
 <li>&check; Default commented out in <code>.env.example</code> &mdash; opt-in for dev convenience</li>
 </ul>
 
+<hr>
+<h2>Why SendMessageInput Pydantic Model Instead of Free-Text Task (v2.8)</h2>
+<h3>Problem</h3>
+<p>The original <code>send_message</code> tool accepted a free-text <code>task: str</code> parameter. The LLM was instructed to construct agent-specific task descriptions including the ticker &mdash; e.g. <code>"Analyze NVDA fundamentals for ticker NVDA"</code>. Despite explicit instruction to use the same ticker for all agents, the LLM would occasionally hallucinate different tickers: <code>"Analyze NVDA with quant"</code> but <code>"Retrieve filings for AAPL"</code> in the same batch of parallel calls. This produced inconsistent analyses where different agents evaluated different securities.</p>
+<h3>Solution</h3>
+<p>Replace the free-text <code>task: str</code> parameter with <code>SendMessageInput(agent_name: str, ticker: str)</code> &mdash; a Pydantic model that separates agent routing from task construction. Task templates are code-built from <code>_AGENT_TASK_TEMPLATES</code> dict in <code>agent.py</code>, each templated with the single canonical ticker. The LLM must supply <code>agent_name</code> and <code>ticker</code> as structured fields; the full task text is assembled server-side.</p>
+<h3>Why not fix the prompt instead?</h3>
+<p>Prompt engineering alone could not eliminate a 1&ndash;3% ticker hallucination rate. The fundamental issue is that the LLM has unbounded freedom to construct arbitrary text strings &mdash; a Pydantic model constrains it to a valid two-field input. This is the same class of problem solved by structured output/JSON mode in other contexts: if you don&rsquo;t want the LLM to choose ticker values, don&rsquo;t give it a free-text field where tickers can be embedded.</p>
+<h3>Key properties</h3>
+<ul>
+<li>&check; Zero ticker hallucination &mdash; single ticker is code-injected into all task templates</li>
+<li>&check; Backward compatible &mdash; existing agent cards unchanged, only the tool input schema changed</li>
+<li>&check; Simpler LLM prompt &mdash; no multi-sentence task construction, just agent_name + ticker</li>
+<li>&check; Verified in production &mdash; no cross-agent ticker mismatches since deployment</li>
+</ul>
+
+<hr>
+<h2>Why Pre-Reviewer Metric Integrity Gate (v2.8)</h2>
+<h3>Problem</h3>
+<p>The reviewer&rsquo;s deterministic tools (contradiction, verification, confidence, validation) operated on agent outputs without any sanity checks. If the quant agent returned a Sharpe ratio of 100, a VaR of -5, or a Monte Carlo probability of profit outside [0,1], the reviewer would process these as-is and potentially produce a flawed cross-validation verdict. These were not LLM hallucinations &mdash; they were computation bugs or edge cases in the quant graph &mdash; but they still polluted the synthesis.</p>
+<h3>Solution</h3>
+<p>Add <code>validate_metric_integrity()</code> as a pre-reviewer gate that runs before contradiction/confidence/validation tools. It checks mathematical invariants: DCF upside consistency (intrinsic &gt; market implies upside &gt; 0), MC prob_profit in [0,1], Sharpe in [-5,5], VaR in [0,1], RSI in [0,100], MAPE &ge; 0, beta in [-3,6], anomaly count &ge; 0. Violations are surfaced as <code>integrity_alerts</code> in the synthesis prompt so the LLM can discount suspect metrics.</p>
+<h3>Why not fix the computation bugs at source?</h3>
+<p>Most are already fixed (Sharpe risk-free rate, momentum double-multiply, stress test division). But the integrity gate is defense-in-depth: it catches regressions, edge cases in new tickers, and any future computation bugs regardless of which agent produces them. A 50-line schema validator is cheaper than debugging corrupted reports at 3 AM.</p>
+<h3>Key properties</h3>
+<ul>
+<li>&check; Zero LLM cost &mdash; pure Python validation, no model calls</li>
+<li>&check; Covers all 5 agents (quant metrics, analytics metrics, etc.)</li>
+<li>&check; Alerts are advisory &mdash; the LLM can still override if context warrants</li>
+<li>&check; Inline agent_outputs preferred over SQLite fetch &mdash; avoids race condition when flush hasn&rsquo;t happened</li>
+</ul>
+
+<hr>
+<h2>Why Lazy Imports Were Removed (v2.8)</h2>
+<h3>Problem</h3>
+<p><code>src/shared/memory/__init__.py</code> used Python&rsquo;s <code>__getattr__</code> module-level fallback pattern (introduced in v2.1) to defer importing heavy modules until first use. This caused IDE resolution failures (PyCharm/VSCode could not resolve symbols imported via <code>__getattr__</code>), obscured import errors at startup (broken imports only surfaced when the symbol was first accessed), and created cognitive overhead &mdash; developers had to know which module each symbol came from.</p>
+<h3>Solution</h3>
+<p>Replace <code>__getattr__</code> with explicit direct imports in <code>src/shared/__init__.py</code>. The startup cost is negligible (~5ms for all shared modules) and the developer experience is dramatically better: IDE autocomplete works, import errors fail fast at startup, and symbol origin is obvious from the import statement.</p>
+<h3>Why was <code>__getattr__</code> chosen in v2.1?</h3>
+<p>The original concern was startup latency &mdash; importing all shared modules (ChromaDB, LangChain, etc.) on every CLI command. In practice, CLI commands already import most of these modules through transitive dependencies, so the deferred import saved nothing measurable. The tradeoff (obscured errors + broken IDE support) was not worth it.</p>
+<h3>Key properties</h3>
+<ul>
+<li>&check; IDE autocomplete works for all shared symbols</li>
+<li>&check; Import errors fail fast at startup, not on first use</li>
+<li>&check; ~5ms startup cost &mdash; negligible</li>
+<li>&check; Source of truth: <code>src/shared/__init__.py</code> with explicit re-exports</li>
+</ul>
+
 <p style="font-size:.85rem;color:#888"><a href="index.html">Back to docs hub</a></p>
 </div>
 </body>

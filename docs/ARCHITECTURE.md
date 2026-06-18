@@ -144,10 +144,7 @@ A2A Request ? DefaultRequestHandler ? GenericAgentExecutor(RAGAgent)
         +-- _classify_query_intent() ? sec_filings ? news ? earnings
         +-- Multi-collection retrieval with score-sorted dedup
         +-- LlamaIndex response synthesizer (response_mode="compact")
-      ? If index has no data for this ticker (first query):
-        +-- Returns A2A WORKING event with "Index is warming for {ticker}..." message
-        +-- Awaits background ingestion to complete
-        +-- Re-queries index and returns actual data on COMPLETED
+      ? No intermediate WORKING yield — follows single-yield pattern (one data response on completion)
   ? Yields data response with summary + sources
 
 RAGAgent._ensure_ingested(ticker) [background]:
@@ -796,7 +793,7 @@ shared/reports/
 
 Back-compat shim `src/shared/report_generator.py` was removed in v2.0 (Phase 3.5).
 
-### API Routes
+### API Routes — Backend (Starlette App)
 
 | Route | Method | Format | Description |
 |---|---|---|---|
@@ -804,6 +801,18 @@ Back-compat shim `src/shared/report_generator.py` was removed in v2.0 (Phase 3.5
 | `/api/reports/{brief_id}/{format}` | GET | html, pdf | Generate report from a specific brief by ID |
 
 Route ordering is significant: `/ticker/{symbol}/latest/{format}` must be declared before `/{brief_id}/{format}` in the Starlette route list. Otherwise `/{brief_id}` captures `"ticker"` and `{format}` captures `"{symbol}"`.
+
+### API Routes — Frontend (Next.js)
+
+| Route | Method | Description |
+|---|---|---|
+| `/api/copilotkit` | POST | Main chat interface — proxies to orchestrator's AG-UI bridge at `/a2a-agui` |
+| `/api/dashboard` | GET | Dashboard metrics — KPIs, agent breakdown, latency timeseries (`?hours=24`) |
+| `/api/dashboard/scores` | GET | RAGAS quality scores per agent (timeseries for chart rendering) |
+| `/api/reports/ticker/{symbol}/latest/{format}` | GET | Generate report for ticker's latest brief (proxied to backend) |
+| `/api/auth/login` | POST | User login — JWT returned as `finsight_session` cookie |
+| `/api/auth/logout` | POST | Clear session cookie |
+| `/api/health` | GET | Health proxy — `?svc=orchestrator\|rag\|quant\|market\|analytics\|reviewer\|mcp` |
 
 ### Data Flow
 
@@ -849,14 +858,22 @@ HTTP Request ? api_routes.py handler
 
 ### Agent Output Capture
 
-The orchestrator captures parsed sub-agent responses at the `send_message` tool level and stores them in brief metadata for structured report generation:
+The orchestrator captures parsed sub-agent responses at the `send_message` tool level and stores them in brief metadata for structured report generation. Both A2A and ADK Web UI paths now capture agent responses consistently:
 
 ```
-send_message tool callback
-  ? Extract response text from A2A artifact
-  ? Parse into structured fields (quant metrics, RAG summary, sentiment narrative)
-  ? Store in session event metadata via extra_data parameter
-  ? store_minimal() persists extra_data as JSON in brief record
+A2A path (agent_executor.py):
+  send_message tool callback
+    ? Extract response text from A2A artifact
+    ? Parse into structured fields (quant metrics, RAG summary, sentiment narrative)
+    ? Store in session event metadata via extra_data parameter
+    ? store_minimal() persists extra_data as JSON in brief record
+
+ADK Web UI path (web/agent.py):
+  after_agent_callback
+    ? _collect_agent_extra() — pop agent responses from send_message events
+    ? Map into brief_json keys via update_brief_json()
+    ? Recommendation/confidence columns updated on same-day re-analysis
+    ? Previously, structured agent data was silently lost on every ADK web query
 ```
 
 This enables `_populate_from_agent_outputs()` in the extraction pipeline to build report sections from structured data instead of parsing prose, improving extraction accuracy for metrics, scorecards, and peer comparisons.

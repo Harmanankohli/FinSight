@@ -113,10 +113,7 @@ ADK Web UI (src/orchestrator/services.py fires memory service registration):
         &#x251C;&#x2500;&#x2500; _classify_query_intent() &rarr; sec_filings &#x222A; news &#x222A; earnings
         &#x251C;&#x2500;&#x2500; Multi-collection retrieval with score-sorted dedup
         &#x2514;&#x2500;&#x2500; LlamaIndex response synthesizer (response_mode="compact")
-      &rarr; If index has no data for this ticker (first query):
-        &#x251C;&#x2500;&#x2500; Returns A2A WORKING event with "Index is warming for {ticker}..." message
-        &#x251C;&#x2500;&#x2500; Awaits background ingestion to complete
-        &#x2514;&#x2500;&#x2500; Re-queries index and returns actual data on COMPLETED
+      &rarr; No intermediate WORKING yield &mdash; follows single-yield pattern (one data response on completion)
   &rarr; Yields data response with summary + sources
 
 RAGAgent._ensure_ingested(ticker) [background]:
@@ -725,12 +722,20 @@ ingested_filings (edgar_url PRIMARY KEY, ticker, ingested_at)  -- v1.18</pre>
 </ul>
 
 <h3>Agent Output Capture</h3>
-<p>The orchestrator captures parsed sub-agent responses at the <code>send_message</code> tool level and stores them in brief metadata for structured report generation:</p>
-<pre>send_message tool callback
-  &rarr; Extract response text from A2A artifact
-  &rarr; Parse into structured fields (quant metrics, RAG summary, sentiment narrative)
-  &rarr; Store in session event metadata via extra_data parameter
-  &rarr; store_minimal() persists extra_data as JSON in brief record</pre>
+<p>The orchestrator captures parsed sub-agent responses at the <code>send_message</code> tool level and stores them in brief metadata for structured report generation. Both A2A and ADK Web UI paths now capture agent responses consistently:</p>
+<pre>A2A path (agent_executor.py):
+  send_message tool callback
+    &rarr; Extract response text from A2A artifact
+    &rarr; Parse into structured fields (quant metrics, RAG summary, sentiment narrative)
+    &rarr; Store in session event metadata via extra_data parameter
+    &rarr; store_minimal() persists extra_data as JSON in brief record
+
+ADK Web UI path (web/agent.py):
+  after_agent_callback
+    &rarr; _collect_agent_extra() &mdash; pop agent responses from send_message events
+    &rarr; Map into brief_json keys via update_brief_json()
+    &rarr; Recommendation/confidence columns updated on same-day re-analysis
+    &rarr; Previously, structured agent data was silently lost on every ADK web query</pre>
 <p>This enables <code>_populate_from_agent_outputs()</code> in the extraction pipeline to build report sections from structured data instead of parsing prose, improving extraction accuracy for metrics, scorecards, and peer comparisons.</p>
 
 <h3>Shared Components</h3>
