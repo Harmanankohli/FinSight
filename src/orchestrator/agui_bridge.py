@@ -118,7 +118,14 @@ async def _get_today_cached_text(ticker: str, *, user_id: str | None = None) -> 
         data = {}
         response_text = ""
     has_agent_data = any(
-        k in data for k in ("quant_response", "rag_response", "sentiment_response", "analytics_response", "reviewer_response")
+        k in data
+        for k in (
+            "quant_response",
+            "rag_response",
+            "sentiment_response",
+            "analytics_response",
+            "reviewer_response",
+        )
     )
     if not has_agent_data:
         logger.info("Cache SKIP for %s — missing agent outputs, allowing re-run", ticker)
@@ -155,7 +162,14 @@ async def _build_memory_context(user_input: str, user_id: str) -> str:
                 try:
                     bj = json.loads(latest.get("brief_json", "{}"))
                     has_agent_data = any(
-                        k in bj for k in ("quant_response", "rag_response", "sentiment_response", "analytics_response", "reviewer_response")
+                        k in bj
+                        for k in (
+                            "quant_response",
+                            "rag_response",
+                            "sentiment_response",
+                            "analytics_response",
+                            "reviewer_response",
+                        )
                     )
                 except Exception:
                     pass
@@ -232,7 +246,14 @@ async def _auto_save_brief(
                     logger.debug("Could not parse brief_json", exc_info=True)
                 needs_update = len(response_text) > len(stored)
                 has_new_agent_data = extra and not any(
-                    k in bj for k in ("quant_response", "rag_response", "sentiment_response", "analytics_response", "reviewer_response")
+                    k in bj
+                    for k in (
+                        "quant_response",
+                        "rag_response",
+                        "sentiment_response",
+                        "analytics_response",
+                        "reviewer_response",
+                    )
                 )
                 if needs_update or has_new_agent_data:
                     if has_new_agent_data:
@@ -242,7 +263,9 @@ async def _auto_save_brief(
                     await tm.update_brief_json(existing["id"], json.dumps(bj))
                     logger.info(
                         "Updated existing brief %s (text=%s, agents=%s)",
-                        existing["id"], needs_update, has_new_agent_data,
+                        existing["id"],
+                        needs_update,
+                        has_new_agent_data,
                     )
                 return
 
@@ -272,7 +295,13 @@ async def _auto_save_brief(
             recommendation=rec,
             confidence=round(conf, 2),
         )
-        logger.info("Auto-saved brief: %s %s (%.0f%%) agents=%s", ticker, rec, conf * 100, list(extra.keys()))
+        logger.info(
+            "Auto-saved brief: %s %s (%.0f%%) agents=%s",
+            ticker,
+            rec,
+            conf * 100,
+            list(extra.keys()),
+        )
     except Exception:
         logger.debug("Auto-save brief failed", exc_info=True)
 
@@ -385,6 +414,7 @@ async def _stream(
     # Per-event timeout prevents infinite hangs when the LLM is unavailable.
     # Short timeout for LLM thinking; long timeout while tools (sub-agents) run.
     from shared.settings import A2A_TIMEOUT
+
     _LLM_TIMEOUT = 120
     _TOOL_TIMEOUT = A2A_TIMEOUT + 30
     _awaiting_tool_response = 0
@@ -415,13 +445,16 @@ async def _stream(
             if event is None:
                 logger.error(
                     "Orchestrator timed out after %ds (awaiting_tools=%d, model may be unavailable)",
-                    deadline, _awaiting_tool_response,
+                    deadline,
+                    _awaiting_tool_response,
                 )
-                yield sse(RunErrorEvent(
-                    type=EventType.RUN_ERROR,
-                    message="Orchestrator timed out — the LLM model may be unavailable. Check that the model is loaded.",
-                    code=None,
-                ))
+                yield sse(
+                    RunErrorEvent(
+                        type=EventType.RUN_ERROR,
+                        message="Orchestrator timed out — the LLM model may be unavailable. Check that the model is loaded.",
+                        code=None,
+                    )
+                )
                 break
 
             # Function calls → sub-agent delegations
@@ -534,9 +567,7 @@ async def _stream(
 
         if had_send_message and synthesis_parts:
             response_text = "".join(synthesis_parts)
-            asyncio.create_task(
-                _auto_save_brief(user_text, response_text, session_id, user_id)
-            )
+            asyncio.create_task(_auto_save_brief(user_text, response_text, session_id, user_id))
 
             from shared.settings import EVAL_ENABLED
 
@@ -546,6 +577,7 @@ async def _stream(
                 trace_id = None
                 try:
                     from shared.observability import get_langfuse_client
+
                     trace_id = get_langfuse_client().get_current_trace_id()
                 except Exception:
                     pass

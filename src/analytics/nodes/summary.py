@@ -57,7 +57,11 @@ class FormatOutputNode(BaseNode[AnalyticsState, AnalyticsDeps]):
             ctx.state.analytics_signal = "neutral"
         ctx.state.analytics_confidence = round(abs(avg_signal), 2)
 
-        logger.info("FormatOutputNode: signal=%s confidence=%.2f", ctx.state.analytics_signal, ctx.state.analytics_confidence)
+        logger.info(
+            "FormatOutputNode: signal=%s confidence=%.2f",
+            ctx.state.analytics_signal,
+            ctx.state.analytics_confidence,
+        )
         return LLMSummaryNode()
 
 

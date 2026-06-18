@@ -52,7 +52,9 @@ def _trim_for_llm(agent_name: str, data: dict) -> dict:
                 "intrinsic_value": dcf.get("intrinsic_value"),
                 "current_price": dcf.get("current_price"),
                 "upside_pct": dcf.get("upside_pct"),
-            } if dcf else None,
+            }
+            if dcf
+            else None,
         }
 
     if "rag" in lower:
@@ -79,13 +81,17 @@ def _trim_for_llm(agent_name: str, data: dict) -> dict:
             "anomalies": {
                 "severity": (data.get("anomalies") or {}).get("severity"),
                 "anomaly_count": (data.get("anomalies") or {}).get("anomaly_count"),
-            } if data.get("anomalies") else None,
+            }
+            if data.get("anomalies")
+            else None,
             "analytics_confidence": data.get("analytics_confidence"),
             "analytics_signal": data.get("analytics_signal"),
             "forecast": {
                 "method": (data.get("forecast") or {}).get("method"),
                 "forecast_dates": (data.get("forecast") or {}).get("forecast_dates", [])[:3],
-            } if data.get("forecast") else None,
+            }
+            if data.get("forecast")
+            else None,
         }
 
     return data
@@ -144,15 +150,16 @@ async def send_message(agent_name: str, task: str, tool_context: ToolContext) ->
         entry = _agent_responses.get(session_id)
         if entry:
             from shared.memory.agent_output_store import _normalize_agent_key
-            payload["agent_outputs"] = {
-                _normalize_agent_key(k): v for k, v in entry[1].items()
-            }
+
+            payload["agent_outputs"] = {_normalize_agent_key(k): v for k, v in entry[1].items()}
         task = json.dumps(payload)
 
     result = await _client.send_message(resolved, task)
     logger.info(
         "send_message capture: agent=%s session_id=%s has_result=%s",
-        resolved, session_id, bool(result),
+        resolved,
+        session_id,
+        bool(result),
     )
     parsed = None
     if session_id and result:
@@ -171,11 +178,14 @@ async def send_message(agent_name: str, task: str, tool_context: ToolContext) ->
         # Persist full output to shared SQLite store for reviewer to fetch directly
         if parsed:
             from shared.memory.agent_output_store import store_agent_output
+
             await store_agent_output(session_id, resolved, parsed)
 
         logger.info(
             "send_message captured: session=%s agents_so_far=%s is_json=%s",
-            session_id, list(bucket.keys()), "_raw_text" not in parsed,
+            session_id,
+            list(bucket.keys()),
+            "_raw_text" not in parsed,
         )
 
     # Return condensed output to the LLM to reduce token processing time
@@ -202,7 +212,8 @@ def pop_agent_responses(session_id: str) -> dict[str, dict]:
             _agent_responses.pop(k, None)
     logger.info(
         "pop_agent_responses: session=%s stored_keys=%s",
-        session_id, list(_agent_responses.keys()),
+        session_id,
+        list(_agent_responses.keys()),
     )
     with _session_locks_lock:
         _session_locks.pop(session_id, None)
@@ -210,7 +221,9 @@ def pop_agent_responses(session_id: str) -> dict[str, dict]:
     result = entry[1] if entry else {}
     logger.info(
         "pop_agent_responses: session=%s found=%s agents=%s",
-        session_id, entry is not None, list(result.keys()),
+        session_id,
+        entry is not None,
+        list(result.keys()),
     )
     return result
 
@@ -299,13 +312,24 @@ async def save_brief(
                 try:
                     bj = json.loads(existing.get("brief_json", "{}"))
                     missing_agent = not any(
-                        k in bj for k in ("quant_response", "rag_response", "sentiment_response", "analytics_response", "reviewer_response")
+                        k in bj
+                        for k in (
+                            "quant_response",
+                            "rag_response",
+                            "sentiment_response",
+                            "analytics_response",
+                            "reviewer_response",
+                        )
                     )
                     if missing_agent:
                         bj.update(agent_extra)
                         await tm.update_brief_json(existing["id"], json.dumps(bj))
                 except Exception:
-                    logger.debug("Could not patch agent data into existing brief for %s", ticker, exc_info=True)
+                    logger.debug(
+                        "Could not patch agent data into existing brief for %s",
+                        ticker,
+                        exc_info=True,
+                    )
             return (
                 f"Brief already saved today for {ticker}: "
                 f"{existing['recommendation']} (confidence: {existing['confidence']:.2f})"
@@ -523,6 +547,7 @@ root_agent = LlmAgent(
     ),
 )
 root_agent._sub_agent_client = _client
+
 
 async def start_background_discovery():
     """Called from Starlette lifespan to avoid import-time side effects."""

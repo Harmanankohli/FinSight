@@ -128,9 +128,7 @@ async def dcf_valuation_node(state: QuantAnalysisState) -> dict:
             projected_fcf *= 1 + yr_growth
             pv_fcf += projected_fcf / (1 + wacc) ** year
 
-        terminal_value = (projected_fcf * (1 + terminal_growth)) / (
-            wacc - terminal_growth
-        )
+        terminal_value = (projected_fcf * (1 + terminal_growth)) / (wacc - terminal_growth)
         pv_terminal = terminal_value / (1 + wacc) ** 5
         enterprise_value = pv_fcf + pv_terminal
 

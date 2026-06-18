@@ -20,8 +20,10 @@ def test_resolve_ticker_yfinance_success():
     """yfinance returns valid data → use it, map exchange code."""
     import shared.reports.extraction as ext
 
-    with patch("yfinance.Ticker", _make_yf_mock("NVIDIA Corporation", "Technology", "NMS")), \
-         patch.object(ext, "_REPORTS_OFFLINE", False):
+    with (
+        patch("yfinance.Ticker", _make_yf_mock("NVIDIA Corporation", "Technology", "NMS")),
+        patch.object(ext, "_REPORTS_OFFLINE", False),
+    ):
         ext._ticker_cache.clear()
         name, sector, exchange = ext._resolve_ticker_info("NVDA", "")
     assert name == "NVIDIA Corporation"
@@ -33,8 +35,10 @@ def test_resolve_ticker_yfinance_fails():
     """yfinance raises → regex fallback extracts name from text."""
     import shared.reports.extraction as ext
 
-    with patch("yfinance.Ticker", side_effect=Exception("network error")), \
-         patch.object(ext, "_REPORTS_OFFLINE", False):
+    with (
+        patch("yfinance.Ticker", side_effect=Exception("network error")),
+        patch.object(ext, "_REPORTS_OFFLINE", False),
+    ):
         ext._ticker_cache.clear()
         name, sector, exchange = ext._resolve_ticker_info(
             "WMT", "Analysis of Walmart Inc. (WMT) shows strong performance."
@@ -48,8 +52,10 @@ def test_resolve_ticker_total_fallback():
     """Both yfinance and regex fail → return raw ticker symbol."""
     import shared.reports.extraction as ext
 
-    with patch("yfinance.Ticker", side_effect=Exception("fail")), \
-         patch.object(ext, "_REPORTS_OFFLINE", False):
+    with (
+        patch("yfinance.Ticker", side_effect=Exception("fail")),
+        patch.object(ext, "_REPORTS_OFFLINE", False),
+    ):
         ext._ticker_cache.clear()
         name, sector, exchange = ext._resolve_ticker_info("XYZ", "some random text")
     assert name == "XYZ"
@@ -67,8 +73,10 @@ def test_resolve_ticker_any_stock(ticker, long_name, sector, exchange, expected_
     """Any ticker resolves via yfinance — not a hardcoded dict."""
     import shared.reports.extraction as ext
 
-    with patch("yfinance.Ticker", _make_yf_mock(long_name, sector, exchange)), \
-         patch.object(ext, "_REPORTS_OFFLINE", False):
+    with (
+        patch("yfinance.Ticker", _make_yf_mock(long_name, sector, exchange)),
+        patch.object(ext, "_REPORTS_OFFLINE", False),
+    ):
         ext._ticker_cache.clear()
         name, sec, exch = ext._resolve_ticker_info(ticker, "")
     assert name == long_name
@@ -97,8 +105,10 @@ def test_extract_response_text_wmt():
             "- Competitive pressure from Costco (COST)\n"
         )
     }
-    with patch("yfinance.Ticker", _make_yf_mock("Walmart Inc.", "Consumer Defensive", "NYQ")), \
-         patch.object(ext, "_REPORTS_OFFLINE", False):
+    with (
+        patch("yfinance.Ticker", _make_yf_mock("Walmart Inc.", "Consumer Defensive", "NYQ")),
+        patch.object(ext, "_REPORTS_OFFLINE", False),
+    ):
         ext._ticker_cache.clear()
         ext._extract_deck_data(brief, "WMT", "HOLD", 0.58, "2026-06-06")
 
@@ -118,8 +128,7 @@ def test_extract_response_text_tgt():
         )
     }
     yf_mock = _make_yf_mock("Target Corporation", "Consumer Defensive", "NYQ")
-    with patch("yfinance.Ticker", yf_mock), \
-         patch.object(ext, "_REPORTS_OFFLINE", False):
+    with patch("yfinance.Ticker", yf_mock), patch.object(ext, "_REPORTS_OFFLINE", False):
         ext._ticker_cache.clear()
         ext._extract_deck_data(brief, "TGT", "HOLD", 0.55, "2026-06-06")
 
@@ -128,8 +137,10 @@ def test_extract_empty_data():
     """Empty brief → minimal deck, no crash."""
     import shared.reports.extraction as ext
 
-    with patch("yfinance.Ticker", side_effect=Exception("fail")), \
-         patch.object(ext, "_REPORTS_OFFLINE", False):
+    with (
+        patch("yfinance.Ticker", side_effect=Exception("fail")),
+        patch.object(ext, "_REPORTS_OFFLINE", False),
+    ):
         ext._ticker_cache.clear()
         deck = ext._extract_deck_data({}, "XYZ", "UNKNOWN", 0.0, "2026-01-01")
     assert deck.company_name == "XYZ"

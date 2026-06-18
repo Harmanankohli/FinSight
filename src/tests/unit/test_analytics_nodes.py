@@ -10,6 +10,7 @@ from analytics.nodes.charts import _generate_charts
 
 def _make_price_data(close_values: list[float]) -> dict:
     import datetime
+
     start = datetime.date(2023, 1, 1)
     return {
         (start + datetime.timedelta(days=i)).strftime("%Y-%m-%d"): float(v)
@@ -43,6 +44,7 @@ async def test_forecast_insufficient_data():
 @pytest.mark.asyncio
 async def test_forecast_sufficient_data():
     import math
+
     prices = [100.0 * (1 + 0.001 * i + 0.01 * math.sin(i / 5)) for i in range(200)]
     price_data = _make_price_data(prices)
     result = await _run_forecast(price_data)
@@ -56,7 +58,10 @@ async def test_forecast_sufficient_data():
 async def test_anomaly_detection_no_anomalies():
     closes = [100.0 + i * 0.1 for i in range(100)]
     price_data = _make_price_data(closes)
-    ohlcv = [{"date": k, "open": 100, "high": 101, "low": 99, "close": 100, "volume": 1000000} for k in price_data.keys()]
+    ohlcv = [
+        {"date": k, "open": 100, "high": 101, "low": 99, "close": 100, "volume": 1000000}
+        for k in price_data.keys()
+    ]
     result = await _detect_anomalies(price_data, ohlcv, {})
     assert "anomaly_count" in result
     assert result["severity"] in ("none", "low")
@@ -66,7 +71,17 @@ async def test_anomaly_detection_no_anomalies():
 async def test_chart_generation():
     closes = [100.0 + i for i in range(100)]
     price_data = _make_price_data(closes)
-    ohlcv = [{"date": k, "open": float(v - 1), "high": float(v + 1), "low": float(v - 1), "close": float(v), "volume": 1000000} for k, v in price_data.items()]
+    ohlcv = [
+        {
+            "date": k,
+            "open": float(v - 1),
+            "high": float(v + 1),
+            "low": float(v - 1),
+            "close": float(v),
+            "volume": 1000000,
+        }
+        for k, v in price_data.items()
+    ]
     charts = await _generate_charts(ohlcv, price_data)
     assert len(charts) >= 1
     assert charts[0]["chart_type"] in ("candlestick", "line", "area")

@@ -100,7 +100,9 @@ def build_agent_app(
 
     logger.info(
         "Building agent app for %s (auth=%s, routes=%d)",
-        service_name, accept if accept else "user+service", len(routes),
+        service_name,
+        accept if accept else "user+service",
+        len(routes),
     )
     return Starlette(
         routes=routes,

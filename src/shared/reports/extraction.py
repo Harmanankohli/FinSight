@@ -1000,7 +1000,8 @@ def _stage_executive_summary(ctx: ExtractionCtx) -> None:
     if fund_metrics:
         summary_parts.append(f"{d.company_name} demonstrates {', '.join(fund_metrics)}")
     dcf_val = next(
-        (v for lbl, v in d.valuation_table if "dcf" in lbl.lower() or "intrinsic" in lbl.lower()), None
+        (v for lbl, v in d.valuation_table if "dcf" in lbl.lower() or "intrinsic" in lbl.lower()),
+        None,
     )
     cur_price = next((v for lbl, v in d.valuation_table if "current price" in lbl.lower()), None)
     if dcf_val and cur_price:
@@ -1110,8 +1111,12 @@ def _enrich_from_markdown(
         stage(ctx)
     logger.info(
         "Extraction complete: ticker=%s, kpis=%d, risks=%d, opps=%d, peers=%d, scorecard=%d",
-        data.ticker, len(data.kpi_chips), len(data.risks), len(data.opportunities),
-        len(data.peer_names), len(data.scorecard),
+        data.ticker,
+        len(data.kpi_chips),
+        len(data.risks),
+        len(data.opportunities),
+        len(data.peer_names),
+        len(data.scorecard),
     )
 
 
@@ -1135,7 +1140,11 @@ def _populate_from_agent_outputs(data: DeckData, brief_data: dict, response_text
     reviewer = _safe_parse(brief_data.get("reviewer_response"))
     logger.info(
         "Populating from agent outputs: quant=%s, rag=%s, sentiment=%s, analytics=%s, reviewer=%s",
-        bool(quant), bool(rag), bool(sentiment), bool(analytics), bool(reviewer),
+        bool(quant),
+        bool(rag),
+        bool(sentiment),
+        bool(analytics),
+        bool(reviewer),
     )
 
     # ── Quant response ─────────────────────────────────────────────────────
@@ -1148,22 +1157,39 @@ def _populate_from_agent_outputs(data: DeckData, brief_data: dict, response_text
         if metrics.get("sharpe_ratio"):
             sr = metrics["sharpe_ratio"]
             data.kpi_chips.append(
-                {"label": "Sharpe Ratio", "value": f"{sr:.2f}", "context": "Risk-adjusted return", "positive": sr > 0}
+                {
+                    "label": "Sharpe Ratio",
+                    "value": f"{sr:.2f}",
+                    "context": "Risk-adjusted return",
+                    "positive": sr > 0,
+                }
             )
             data.financials.append(("Sharpe Ratio", f"{sr:.2f}", "Risk-Adjusted"))
         if metrics.get("annual_volatility"):
             av = metrics["annual_volatility"]
             data.kpi_chips.append(
-                {"label": "Annual Volatility", "value": _fmt_pct(av, True), "context": "Annualized", "positive": av < 0.25}
+                {
+                    "label": "Annual Volatility",
+                    "value": _fmt_pct(av, True),
+                    "context": "Annualized",
+                    "positive": av < 0.25,
+                }
             )
             data.financials.append(("Volatility", _fmt_pct(av, True), "Annualized"))
         if metrics.get("beta"):
             data.kpi_chips.append(
-                {"label": "Beta", "value": f"{metrics['beta']:.2f}", "context": "Mkt sensitivity", "positive": metrics["beta"] < 1.0}
+                {
+                    "label": "Beta",
+                    "value": f"{metrics['beta']:.2f}",
+                    "context": "Mkt sensitivity",
+                    "positive": metrics["beta"] < 1.0,
+                }
             )
             data.financials.append(("Beta", f"{metrics['beta']:.2f}", "vs. S&P 500"))
         if metrics.get("var_95_daily"):
-            data.financials.append(("VaR (95%, daily)", _fmt_pct(metrics["var_95_daily"], True), "Daily"))
+            data.financials.append(
+                ("VaR (95%, daily)", _fmt_pct(metrics["var_95_daily"], True), "Daily")
+            )
 
         # Fall back to fundamentals for KPI chips when metrics are zeroed
         if not data.kpi_chips and fundamentals:
@@ -1215,16 +1241,43 @@ def _populate_from_agent_outputs(data: DeckData, brief_data: dict, response_text
         for key, (label, is_pct) in _FUND_MAP.items():
             if key in fundamentals and fundamentals[key] is not None:
                 val = fundamentals[key]
-                data.financials.append((label, _fmt_pct(val, is_pct) if is_pct else f"{val:.2f}", _FIN_CONTEXT.get(label, "")))
+                data.financials.append(
+                    (
+                        label,
+                        _fmt_pct(val, is_pct) if is_pct else f"{val:.2f}",
+                        _FIN_CONTEXT.get(label, ""),
+                    )
+                )
 
         technicals = quant.get("technicals") or {}
         if technicals.get("rsi") is not None:
             rsi = technicals["rsi"]
             data.kpi_chips.append(
-                {"label": "RSI", "value": f"{rsi:.0f}", "context": "Momentum (14-day)", "positive": 30 <= rsi <= 70}
+                {
+                    "label": "RSI",
+                    "value": f"{rsi:.0f}",
+                    "context": "Momentum (14-day)",
+                    "positive": 30 <= rsi <= 70,
+                }
             )
-            signal = "Overbought" if rsi > 70 else "Bullish" if rsi >= 50 else "Neutral" if rsi >= 30 else "Oversold"
-            badge = "expensive" if rsi > 70 else "bullish" if rsi >= 50 else "moderate" if rsi >= 30 else "strong"
+            signal = (
+                "Overbought"
+                if rsi > 70
+                else "Bullish"
+                if rsi >= 50
+                else "Neutral"
+                if rsi >= 30
+                else "Oversold"
+            )
+            badge = (
+                "expensive"
+                if rsi > 70
+                else "bullish"
+                if rsi >= 50
+                else "moderate"
+                if rsi >= 30
+                else "strong"
+            )
             data.scorecard.append(("Momentum", signal, badge))
         if technicals.get("macd_signal") is not None:
             macd = technicals["macd_signal"]
@@ -1234,11 +1287,23 @@ def _populate_from_agent_outputs(data: DeckData, brief_data: dict, response_text
             else:
                 macd = str(macd)
                 macd_label = macd.capitalize()
-                macd_badge = "bullish" if "bull" in macd.lower() else "expensive" if "bear" in macd.lower() else "moderate"
+                macd_badge = (
+                    "bullish"
+                    if "bull" in macd.lower()
+                    else "expensive"
+                    if "bear" in macd.lower()
+                    else "moderate"
+                )
             data.scorecard.append(("Technical Outlook", macd_label, macd_badge))
         elif technicals.get("trend"):
             trend = str(technicals["trend"])
-            trend_badge = "bullish" if "bull" in trend.lower() else "expensive" if "bear" in trend.lower() else "moderate"
+            trend_badge = (
+                "bullish"
+                if "bull" in trend.lower()
+                else "expensive"
+                if "bear" in trend.lower()
+                else "moderate"
+            )
             data.scorecard.append(("Technical Outlook", trend.capitalize(), trend_badge))
 
         peers = quant.get("peer_comparison") or {}
@@ -1246,14 +1311,32 @@ def _populate_from_agent_outputs(data: DeckData, brief_data: dict, response_text
             peer_tickers = [p for p in peers["peers"] if p != data.ticker][:2]
             data.peer_names = peer_tickers
             comparison = peers.get("comparison") or {}
-            for key, label in [("pe", "P/E Ratio"), ("ev_ebitda", "EV/EBITDA"), ("rev_growth", "Revenue Growth"), ("op_margin", "Operating Margin"), ("roe", "ROE")]:
+            for key, label in [
+                ("pe", "P/E Ratio"),
+                ("ev_ebitda", "EV/EBITDA"),
+                ("rev_growth", "Revenue Growth"),
+                ("op_margin", "Operating Margin"),
+                ("roe", "ROE"),
+            ]:
                 row = {"metric": label}
                 tv = comparison.get(data.ticker, {}).get(key)
                 is_pct_key = "growth" in key or "margin" in key or "roe" in key
-                row["col0"] = f"{tv * 100:.1f}%" if is_pct_key and isinstance(tv, (int, float)) else f"{tv:.1f}" if isinstance(tv, (int, float)) else "N/A"
+                row["col0"] = (
+                    f"{tv * 100:.1f}%"
+                    if is_pct_key and isinstance(tv, (int, float))
+                    else f"{tv:.1f}"
+                    if isinstance(tv, (int, float))
+                    else "N/A"
+                )
                 for ci, pt in enumerate(peer_tickers):
                     pv = comparison.get(pt, {}).get(key)
-                    row[f"col{ci + 1}"] = f"{pv * 100:.1f}%" if is_pct_key and isinstance(pv, (int, float)) else f"{pv:.1f}" if isinstance(pv, (int, float)) else "N/A"
+                    row[f"col{ci + 1}"] = (
+                        f"{pv * 100:.1f}%"
+                        if is_pct_key and isinstance(pv, (int, float))
+                        else f"{pv:.1f}"
+                        if isinstance(pv, (int, float))
+                        else "N/A"
+                    )
                 data.peers.append(row)
 
         stress = quant.get("stress_test") or {}
@@ -1274,7 +1357,10 @@ def _populate_from_agent_outputs(data: DeckData, brief_data: dict, response_text
             data.executive_summary = _strip_markdown(summary[:4000])
         sources = rag.get("sources") or []
         if sources:
-            source_text = "\n".join(f"- {s}" if isinstance(s, str) else f"- {s.get('title', s.get('url', ''))}" for s in sources[:5])
+            source_text = "\n".join(
+                f"- {s}" if isinstance(s, str) else f"- {s.get('title', s.get('url', ''))}"
+                for s in sources[:5]
+            )
             data.sections.append(Section("Cited Sources", source_text))
 
     # ── Sentiment response ─────────────────────────────────────────────────
@@ -1325,11 +1411,19 @@ def _populate_from_agent_outputs(data: DeckData, brief_data: dict, response_text
             except (json.JSONDecodeError, TypeError):
                 pass
         if narrative:
-            data.sections.append(Section("Market Narrative", _strip_markdown(str(narrative)[:4000])))
+            data.sections.append(
+                Section("Market Narrative", _strip_markdown(str(narrative)[:4000]))
+            )
 
         signal = str(sentiment.get("overall_signal") or "")
         if signal:
-            sig_badge = "bullish" if "bull" in signal.lower() or signal.upper() == "BUY" else "expensive" if "bear" in signal.lower() or signal.upper() == "SELL" else "moderate"
+            sig_badge = (
+                "bullish"
+                if "bull" in signal.lower() or signal.upper() == "BUY"
+                else "expensive"
+                if "bear" in signal.lower() or signal.upper() == "SELL"
+                else "moderate"
+            )
             data.scorecard.append(("Market Sentiment", signal.capitalize(), sig_badge))
 
     # ── Analytics response (legacy dict path) ─────────────────────────────
@@ -1381,7 +1475,9 @@ def _populate_from_agent_outputs(data: DeckData, brief_data: dict, response_text
 
         rv = reviewer.get("recommendation_validation") or {}
         if rv.get("evidence_strength") == "strong":
-            data.sections.append(Section("Evidence Strength", "Strong evidence supports the recommendation."))
+            data.sections.append(
+                Section("Evidence Strength", "Strong evidence supports the recommendation.")
+            )
 
         for flag in reviewer.get("flags", []):
             data.risks.append(flag)
@@ -1405,7 +1501,11 @@ def _populate_from_agent_outputs(data: DeckData, brief_data: dict, response_text
     # ── Final recommendation scorecard entry ───────────────────────────────
     rec = data.recommendation
     data.scorecard.append(
-        ("Recommendation", rec, "strong" if rec == "BUY" else "bullish" if rec == "HOLD" else "expensive")
+        (
+            "Recommendation",
+            rec,
+            "strong" if rec == "BUY" else "bullish" if rec == "HOLD" else "expensive",
+        )
     )
 
 
@@ -1428,21 +1528,33 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
         # 0.0 is falsy — this matches existing behaviour: zeroed metrics are skipped.
         if m.sharpe_ratio:
             data.kpi_chips.append(
-                {"label": "Sharpe Ratio", "value": f"{m.sharpe_ratio:.2f}",
-                 "context": "Risk-adjusted return", "positive": m.sharpe_ratio > 0}
+                {
+                    "label": "Sharpe Ratio",
+                    "value": f"{m.sharpe_ratio:.2f}",
+                    "context": "Risk-adjusted return",
+                    "positive": m.sharpe_ratio > 0,
+                }
             )
             data.financials.append(("Sharpe Ratio", f"{m.sharpe_ratio:.2f}", "Risk-Adjusted"))
         if m.annual_volatility:
             av = m.annual_volatility
             data.kpi_chips.append(
-                {"label": "Annual Volatility", "value": _fmt_pct(av, True),
-                 "context": "Annualized", "positive": av < 0.25}
+                {
+                    "label": "Annual Volatility",
+                    "value": _fmt_pct(av, True),
+                    "context": "Annualized",
+                    "positive": av < 0.25,
+                }
             )
             data.financials.append(("Volatility", _fmt_pct(av, True), "Annualized"))
         if m.beta:
             data.kpi_chips.append(
-                {"label": "Beta", "value": f"{m.beta:.2f}",
-                 "context": "Mkt sensitivity", "positive": m.beta < 1.0}
+                {
+                    "label": "Beta",
+                    "value": f"{m.beta:.2f}",
+                    "context": "Mkt sensitivity",
+                    "positive": m.beta < 1.0,
+                }
             )
             data.financials.append(("Beta", f"{m.beta:.2f}", "vs. S&P 500"))
         if m.var_95_daily:
@@ -1503,8 +1615,11 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
                 val = getattr(f, attr, None)
                 if val is not None and label not in existing:
                     data.financials.append(
-                        (label, _fmt_pct(val, is_pct) if is_pct else f"{val:.2f}",
-                         _FIN_CONTEXT.get(label, ""))
+                        (
+                            label,
+                            _fmt_pct(val, is_pct) if is_pct else f"{val:.2f}",
+                            _FIN_CONTEXT.get(label, ""),
+                        )
                     )
 
         # Technicals → scorecard + KPI + technicals_table
@@ -1513,11 +1628,31 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
             rsi = t.rsi_value
             if rsi is not None:
                 data.kpi_chips.append(
-                    {"label": "RSI", "value": f"{rsi:.0f}",
-                     "context": "Momentum (14-day)", "positive": 30 <= rsi <= 70}
+                    {
+                        "label": "RSI",
+                        "value": f"{rsi:.0f}",
+                        "context": "Momentum (14-day)",
+                        "positive": 30 <= rsi <= 70,
+                    }
                 )
-                signal = "Overbought" if rsi > 70 else "Bullish" if rsi >= 50 else "Neutral" if rsi >= 30 else "Oversold"
-                badge = "expensive" if rsi > 70 else "bullish" if rsi >= 50 else "moderate" if rsi >= 30 else "strong"
+                signal = (
+                    "Overbought"
+                    if rsi > 70
+                    else "Bullish"
+                    if rsi >= 50
+                    else "Neutral"
+                    if rsi >= 30
+                    else "Oversold"
+                )
+                badge = (
+                    "expensive"
+                    if rsi > 70
+                    else "bullish"
+                    if rsi >= 50
+                    else "moderate"
+                    if rsi >= 30
+                    else "strong"
+                )
                 data.scorecard.append(("Momentum", signal, badge))
                 data.technicals_table.append(("RSI (14)", f"{rsi:.1f}", signal))
             if t.macd_signal is not None:
@@ -1528,10 +1663,22 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
                 else:
                     macd_s = str(macd)
                     macd_label = macd_s.capitalize()
-                    macd_badge = "bullish" if "bull" in macd_s.lower() else "expensive" if "bear" in macd_s.lower() else "moderate"
+                    macd_badge = (
+                        "bullish"
+                        if "bull" in macd_s.lower()
+                        else "expensive"
+                        if "bear" in macd_s.lower()
+                        else "moderate"
+                    )
                 data.scorecard.append(("Technical Outlook", macd_label, macd_badge))
             elif t.trend:
-                trend_badge = "bullish" if "bull" in t.trend.lower() else "expensive" if "bear" in t.trend.lower() else "moderate"
+                trend_badge = (
+                    "bullish"
+                    if "bull" in t.trend.lower()
+                    else "expensive"
+                    if "bear" in t.trend.lower()
+                    else "moderate"
+                )
                 data.scorecard.append(("Technical Outlook", t.trend.capitalize(), trend_badge))
 
             # Full technicals table
@@ -1546,39 +1693,74 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
             if t.ema_26 is not None:
                 data.technicals_table.append(("EMA 26", f"${t.ema_26:,.2f}", "Long-term EMA"))
             if t.macd is not None:
-                data.technicals_table.append(("MACD", f"{t.macd:.4f}", "Bullish" if t.macd > 0 else "Bearish"))
+                data.technicals_table.append(
+                    ("MACD", f"{t.macd:.4f}", "Bullish" if t.macd > 0 else "Bearish")
+                )
             if t.macd_signal is not None and isinstance(t.macd_signal, (int, float)):
                 data.technicals_table.append(("MACD Signal", f"{t.macd_signal:.4f}", ""))
             if t.macd_histogram is not None:
-                data.technicals_table.append(("MACD Histogram", f"{t.macd_histogram:.4f}", "Expanding" if abs(t.macd_histogram) > 0 else "Flat"))
+                data.technicals_table.append(
+                    (
+                        "MACD Histogram",
+                        f"{t.macd_histogram:.4f}",
+                        "Expanding" if abs(t.macd_histogram) > 0 else "Flat",
+                    )
+                )
             if t.bb_upper is not None:
                 data.technicals_table.append(("Bollinger Upper", f"${t.bb_upper:,.2f}", ""))
             if t.bb_lower is not None:
                 data.technicals_table.append(("Bollinger Lower", f"${t.bb_lower:,.2f}", ""))
             if t.bb_position is not None:
-                pos_label = "Near Upper" if t.bb_position > 0.8 else "Near Lower" if t.bb_position < 0.2 else "Mid-Band"
+                pos_label = (
+                    "Near Upper"
+                    if t.bb_position > 0.8
+                    else "Near Lower"
+                    if t.bb_position < 0.2
+                    else "Mid-Band"
+                )
                 data.technicals_table.append(("BB Position", f"{t.bb_position:.2f}", pos_label))
             if t.support is not None:
                 data.technicals_table.append(("Support Level", f"${t.support:,.2f}", ""))
             if t.resistance is not None:
                 data.technicals_table.append(("Resistance Level", f"${t.resistance:,.2f}", ""))
             if t.momentum_20d is not None:
-                data.technicals_table.append(("Momentum (20d)", _fmt_pct(t.momentum_20d, False), "Short-term"))
+                data.technicals_table.append(
+                    ("Momentum (20d)", _fmt_pct(t.momentum_20d, False), "Short-term")
+                )
             if t.momentum_60d is not None:
-                data.technicals_table.append(("Momentum (60d)", _fmt_pct(t.momentum_60d, False), "Medium-term"))
+                data.technicals_table.append(
+                    ("Momentum (60d)", _fmt_pct(t.momentum_60d, False), "Medium-term")
+                )
             if t.golden_cross is not None:
-                data.technicals_table.append(("Golden Cross", "Yes" if t.golden_cross else "No", "Bullish" if t.golden_cross else ""))
+                data.technicals_table.append(
+                    (
+                        "Golden Cross",
+                        "Yes" if t.golden_cross else "No",
+                        "Bullish" if t.golden_cross else "",
+                    )
+                )
             if t.above_50d_ma is not None:
-                data.technicals_table.append(("Above 50d MA", "Yes" if t.above_50d_ma else "No", ""))
+                data.technicals_table.append(
+                    ("Above 50d MA", "Yes" if t.above_50d_ma else "No", "")
+                )
             if t.above_200d_ma is not None:
-                data.technicals_table.append(("Above 200d MA", "Yes" if t.above_200d_ma else "No", ""))
+                data.technicals_table.append(
+                    ("Above 200d MA", "Yes" if t.above_200d_ma else "No", "")
+                )
 
         # DCF breakdown
         if quant.dcf_valuation:
             dcf = quant.dcf_valuation
             data.dcf_breakdown.append(("Intrinsic Value", _fmt_dollar(dcf.intrinsic_value)))
             data.dcf_breakdown.append(("Current Price", _fmt_dollar(dcf.current_price)))
-            data.dcf_breakdown.append(("Upside", _fmt_pct(dcf.upside_pct / 100 if abs(dcf.upside_pct) > 1 else dcf.upside_pct, True)))
+            data.dcf_breakdown.append(
+                (
+                    "Upside",
+                    _fmt_pct(
+                        dcf.upside_pct / 100 if abs(dcf.upside_pct) > 1 else dcf.upside_pct, True
+                    ),
+                )
+            )
             data.dcf_breakdown.append(("WACC", _fmt_pct(dcf.wacc, True)))
             data.dcf_breakdown.append(("Growth Rate", _fmt_pct(dcf.growth_rate, True)))
             data.dcf_breakdown.append(("Terminal Growth", _fmt_pct(dcf.terminal_growth, True)))
@@ -1595,7 +1777,9 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
                 "p75": _fmt_dollar(mc.p75) if mc.p75 else None,
                 "p90": _fmt_dollar(mc.p90) if mc.p90 else None,
                 "prob_profit": f"{mc.prob_profit:.1%}" if mc.prob_profit else None,
-                "expected_return": _fmt_pct(mc.expected_return_pct / 100, True) if mc.expected_return_pct else None,
+                "expected_return": _fmt_pct(mc.expected_return_pct / 100, True)
+                if mc.expected_return_pct
+                else None,
                 "mc_var_95": _fmt_pct(mc.mc_var_95, True) if mc.mc_var_95 else None,
                 "current_price": _fmt_dollar(mc.current_price) if mc.current_price else None,
                 "n_simulations": f"{mc.n_simulations:,}" if mc.n_simulations else None,
@@ -1617,7 +1801,9 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
         # Insider signals
         if quant.insider_signals:
             ins = quant.insider_signals
-            data.signals_table.append(("Insider", "Activity Level", ins.activity_level.capitalize()))
+            data.signals_table.append(
+                ("Insider", "Activity Level", ins.activity_level.capitalize())
+            )
             data.signals_table.append(("Insider", "Direction", ins.direction.capitalize()))
             data.signals_table.append(("Insider", "Buy Signals", str(ins.buy_signals)))
             data.signals_table.append(("Insider", "Sell Signals", str(ins.sell_signals)))
@@ -1626,16 +1812,24 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
             if ins.net_value is not None:
                 data.signals_table.append(("Insider", "Net Value", _fmt_dollar(ins.net_value)))
             if ins.insider_pct_held is not None:
-                data.signals_table.append(("Insider", "Insider Ownership", _fmt_pct(ins.insider_pct_held, True)))
+                data.signals_table.append(
+                    ("Insider", "Insider Ownership", _fmt_pct(ins.insider_pct_held, True))
+                )
 
         # Options signals
         if quant.options_signals:
             opt = quant.options_signals
-            data.signals_table.append(("Options", "Flow Signal", opt.flow_signal.replace("_", " ").title()))
+            data.signals_table.append(
+                ("Options", "Flow Signal", opt.flow_signal.replace("_", " ").title())
+            )
             if opt.put_call_volume_ratio is not None:
-                data.signals_table.append(("Options", "P/C Volume Ratio", f"{opt.put_call_volume_ratio:.2f}"))
+                data.signals_table.append(
+                    ("Options", "P/C Volume Ratio", f"{opt.put_call_volume_ratio:.2f}")
+                )
             if opt.put_call_oi_ratio is not None:
-                data.signals_table.append(("Options", "P/C OI Ratio", f"{opt.put_call_oi_ratio:.2f}"))
+                data.signals_table.append(
+                    ("Options", "P/C OI Ratio", f"{opt.put_call_oi_ratio:.2f}")
+                )
             if opt.call_volume:
                 data.signals_table.append(("Options", "Call Volume", f"{opt.call_volume:,}"))
             if opt.put_volume:
@@ -1645,40 +1839,75 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
         if quant.positioning:
             pos = quant.positioning
             if pos.recommendation_key:
-                data.signals_table.append(("Analyst", "Consensus", pos.recommendation_key.replace("_", " ").title()))
+                data.signals_table.append(
+                    ("Analyst", "Consensus", pos.recommendation_key.replace("_", " ").title())
+                )
             if pos.n_analysts:
                 data.signals_table.append(("Analyst", "# Analysts", str(pos.n_analysts)))
             if pos.analyst_target_price is not None:
-                data.signals_table.append(("Analyst", "Target Price", _fmt_dollar(pos.analyst_target_price)))
+                data.signals_table.append(
+                    ("Analyst", "Target Price", _fmt_dollar(pos.analyst_target_price))
+                )
             if pos.analyst_upside_pct is not None:
-                data.signals_table.append(("Analyst", "Target Upside", _fmt_pct(pos.analyst_upside_pct / 100 if abs(pos.analyst_upside_pct) > 1 else pos.analyst_upside_pct, True)))
+                data.signals_table.append(
+                    (
+                        "Analyst",
+                        "Target Upside",
+                        _fmt_pct(
+                            pos.analyst_upside_pct / 100
+                            if abs(pos.analyst_upside_pct) > 1
+                            else pos.analyst_upside_pct,
+                            True,
+                        ),
+                    )
+                )
             if pos.short_ratio is not None:
                 data.signals_table.append(("Analyst", "Short Ratio", f"{pos.short_ratio:.1f}"))
             if pos.short_pct_float is not None:
-                data.signals_table.append(("Analyst", "Short % Float", _fmt_pct(pos.short_pct_float, True)))
+                data.signals_table.append(
+                    ("Analyst", "Short % Float", _fmt_pct(pos.short_pct_float, True))
+                )
             if pos.short_squeeze_risk:
                 data.signals_table.append(("Analyst", "Short Squeeze Risk", "Yes"))
 
         # Quant signal scores
         if quant.metrics.signal_scores:
             for sig_name, sig_val in quant.metrics.signal_scores.items():
-                data.signals_table.append(("Signal", sig_name.replace("_", " ").title(), f"{sig_val:.2f}"))
+                data.signals_table.append(
+                    ("Signal", sig_name.replace("_", " ").title(), f"{sig_val:.2f}")
+                )
 
         # Peer comparison from quant
         if quant.peer_comparison:
             pc = quant.peer_comparison
             peer_tickers = [p for p in pc.peers if p != data.ticker][:2]
             data.peer_names = peer_tickers
-            for key, label in [("pe", "P/E Ratio"), ("ev_ebitda", "EV/EBITDA"),
-                                ("rev_growth", "Revenue Growth"), ("op_margin", "Operating Margin"),
-                                ("roe", "ROE")]:
+            for key, label in [
+                ("pe", "P/E Ratio"),
+                ("ev_ebitda", "EV/EBITDA"),
+                ("rev_growth", "Revenue Growth"),
+                ("op_margin", "Operating Margin"),
+                ("roe", "ROE"),
+            ]:
                 row = {"metric": label}
                 is_pct_key = "growth" in key or "margin" in key or "roe" in key
                 tv = (pc.comparison.get(data.ticker) or {}).get(key)
-                row["col0"] = f"{tv * 100:.1f}%" if is_pct_key and isinstance(tv, (int, float)) else f"{tv:.1f}" if isinstance(tv, (int, float)) else "N/A"
+                row["col0"] = (
+                    f"{tv * 100:.1f}%"
+                    if is_pct_key and isinstance(tv, (int, float))
+                    else f"{tv:.1f}"
+                    if isinstance(tv, (int, float))
+                    else "N/A"
+                )
                 for ci, pt in enumerate(peer_tickers):
                     pv = (pc.comparison.get(pt) or {}).get(key)
-                    row[f"col{ci + 1}"] = f"{pv * 100:.1f}%" if is_pct_key and isinstance(pv, (int, float)) else f"{pv:.1f}" if isinstance(pv, (int, float)) else "N/A"
+                    row[f"col{ci + 1}"] = (
+                        f"{pv * 100:.1f}%"
+                        if is_pct_key and isinstance(pv, (int, float))
+                        else f"{pv:.1f}"
+                        if isinstance(pv, (int, float))
+                        else "N/A"
+                    )
                 data.peers.append(row)
 
         # Stress test → valuation table
@@ -1709,11 +1938,15 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
     # ── Sentiment / Market Context ──────────────────────────────────────────────
     if sentiment:
         if sentiment.key_tailwinds and not data.opportunities:
-            data.opportunities = [_clean_item(t) or t for t in sentiment.key_tailwinds[:5] if _clean_item(t)]
+            data.opportunities = [
+                _clean_item(t) or t for t in sentiment.key_tailwinds[:5] if _clean_item(t)
+            ]
             if data.opportunities:
                 data.opportunities_extracted = True
         if sentiment.key_headwinds and not data.risks:
-            data.risks = [_clean_item(h) or h for h in sentiment.key_headwinds[:5] if _clean_item(h)]
+            data.risks = [
+                _clean_item(h) or h for h in sentiment.key_headwinds[:5] if _clean_item(h)
+            ]
             if data.risks:
                 data.risks_extracted = True
 
@@ -1734,11 +1967,22 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
 
         # Narrative — already clean text (CrewAI output_pydantic strips code blocks)
         if sentiment.narrative:
-            data.sections.append(Section("Market Narrative", _truncate_at_sentence(_strip_markdown(sentiment.narrative), 4000)))
+            data.sections.append(
+                Section(
+                    "Market Narrative",
+                    _truncate_at_sentence(_strip_markdown(sentiment.narrative), 4000),
+                )
+            )
 
         if sentiment.overall_signal:
             sig = sentiment.overall_signal
-            sig_badge = "bullish" if "bull" in sig.lower() or sig.upper() == "BUY" else "expensive" if "bear" in sig.lower() or sig.upper() == "SELL" else "moderate"
+            sig_badge = (
+                "bullish"
+                if "bull" in sig.lower() or sig.upper() == "BUY"
+                else "expensive"
+                if "bear" in sig.lower() or sig.upper() == "SELL"
+                else "moderate"
+            )
             data.scorecard.append(("Market Sentiment", sig.capitalize(), sig_badge))
 
         if sentiment.macro_regime:
@@ -1753,14 +1997,22 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
             data.scorecard.append(("Analytics Trend", td.capitalize(), badge))
             if trend.ma_crossover_signal:
                 badge = "bullish" if trend.ma_crossover_signal == "golden_cross" else "expensive"
-                data.scorecard.append(("MA Crossover", trend.ma_crossover_signal.replace("_", " ").title(), badge))
+                data.scorecard.append(
+                    ("MA Crossover", trend.ma_crossover_signal.replace("_", " ").title(), badge)
+                )
 
             data.trend_data = {
                 "direction": td.capitalize(),
                 "strength": f"{trend.trend_strength:.0%}" if trend.trend_strength else "N/A",
-                "crossover": trend.ma_crossover_signal.replace("_", " ").title() if trend.ma_crossover_signal else "None",
-                "momentum": trend.momentum_shift.replace("_", " ").title() if trend.momentum_shift else "Stable",
-                "indicators": trend.supporting_indicators[:6] if trend.supporting_indicators else [],
+                "crossover": trend.ma_crossover_signal.replace("_", " ").title()
+                if trend.ma_crossover_signal
+                else "None",
+                "momentum": trend.momentum_shift.replace("_", " ").title()
+                if trend.momentum_shift
+                else "Stable",
+                "indicators": trend.supporting_indicators[:6]
+                if trend.supporting_indicators
+                else [],
             }
 
         forecast = analytics.forecast
@@ -1789,53 +2041,109 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
                     data.risks.append(fa)
 
             for a in anomalies.price_anomalies:
-                data.anomaly_alerts.append({"type": "Price", "description": f"{a.get('date', 'N/A')}: {a.get('type', 'anomaly')}", "severity": anomalies.severity})
+                data.anomaly_alerts.append(
+                    {
+                        "type": "Price",
+                        "description": f"{a.get('date', 'N/A')}: {a.get('type', 'anomaly')}",
+                        "severity": anomalies.severity,
+                    }
+                )
             for a in anomalies.volume_anomalies:
-                data.anomaly_alerts.append({"type": "Volume", "description": f"{a.get('date', 'N/A')}: {a.get('type', 'anomaly')}", "severity": anomalies.severity})
+                data.anomaly_alerts.append(
+                    {
+                        "type": "Volume",
+                        "description": f"{a.get('date', 'N/A')}: {a.get('type', 'anomaly')}",
+                        "severity": anomalies.severity,
+                    }
+                )
             for fa in anomalies.fundamental_anomalies:
-                data.anomaly_alerts.append({"type": "Fundamental", "description": fa, "severity": anomalies.severity})
+                data.anomaly_alerts.append(
+                    {"type": "Fundamental", "description": fa, "severity": anomalies.severity}
+                )
             if anomalies.catalyst_context:
                 for ctx_item in anomalies.catalyst_context[:3]:
-                    data.anomaly_alerts.append({"type": "Catalyst", "description": ctx_item, "severity": "info"})
+                    data.anomaly_alerts.append(
+                        {"type": "Catalyst", "description": ctx_item, "severity": "info"}
+                    )
 
         stats = analytics.statistical_summary
         if stats:
             if stats.skewness is not None:
                 data.financials.append(("Skewness", f"{stats.skewness:.3f}", "Return Distribution"))
-                interp = "Left-skewed (more downside risk)" if stats.skewness < -0.5 else "Right-skewed (positive bias)" if stats.skewness > 0.5 else "Near symmetric"
+                interp = (
+                    "Left-skewed (more downside risk)"
+                    if stats.skewness < -0.5
+                    else "Right-skewed (positive bias)"
+                    if stats.skewness > 0.5
+                    else "Near symmetric"
+                )
                 data.stats_table.append(("Skewness", f"{stats.skewness:.3f}", interp))
             if stats.kurtosis is not None:
                 data.financials.append(("Kurtosis", f"{stats.kurtosis:.3f}", "Return Distribution"))
-                interp = "Heavy tails (extreme moves likely)" if stats.kurtosis > 3 else "Light tails" if stats.kurtosis < 3 else "Normal"
+                interp = (
+                    "Heavy tails (extreme moves likely)"
+                    if stats.kurtosis > 3
+                    else "Light tails"
+                    if stats.kurtosis < 3
+                    else "Normal"
+                )
                 data.stats_table.append(("Kurtosis", f"{stats.kurtosis:.3f}", interp))
             if stats.jarque_bera_pvalue is not None:
-                interp = "Non-normal distribution" if stats.jarque_bera_pvalue < 0.05 else "Approximately normal"
-                data.stats_table.append(("Jarque-Bera p-value", f"{stats.jarque_bera_pvalue:.4f}", interp))
+                interp = (
+                    "Non-normal distribution"
+                    if stats.jarque_bera_pvalue < 0.05
+                    else "Approximately normal"
+                )
+                data.stats_table.append(
+                    ("Jarque-Bera p-value", f"{stats.jarque_bera_pvalue:.4f}", interp)
+                )
             if stats.return_distribution:
                 data.stats_table.append(("Distribution", stats.return_distribution, ""))
             if stats.regression_beta is not None:
-                data.stats_table.append(("Regression Beta (1Y)", f"{stats.regression_beta:.3f}", "Market sensitivity"))
+                data.stats_table.append(
+                    ("Regression Beta (1Y)", f"{stats.regression_beta:.3f}", "Market sensitivity")
+                )
             if stats.regression_r_squared is not None:
-                interp = "Strong fit" if stats.regression_r_squared > 0.7 else "Moderate fit" if stats.regression_r_squared > 0.3 else "Weak fit"
+                interp = (
+                    "Strong fit"
+                    if stats.regression_r_squared > 0.7
+                    else "Moderate fit"
+                    if stats.regression_r_squared > 0.3
+                    else "Weak fit"
+                )
                 data.stats_table.append(("R-Squared", f"{stats.regression_r_squared:.3f}", interp))
             if stats.correlations:
                 for corr_name, corr_val in list(stats.correlations.items())[:5]:
-                    data.stats_table.append((f"Corr: {corr_name}", f"{corr_val:.3f}", "Strong" if abs(corr_val) > 0.7 else "Moderate" if abs(corr_val) > 0.3 else "Weak"))
+                    data.stats_table.append(
+                        (
+                            f"Corr: {corr_name}",
+                            f"{corr_val:.3f}",
+                            "Strong"
+                            if abs(corr_val) > 0.7
+                            else "Moderate"
+                            if abs(corr_val) > 0.3
+                            else "Weak",
+                        )
+                    )
 
         if analytics.charts:
-            data.charts = [c.model_dump() if hasattr(c, "model_dump") else c for c in analytics.charts]
+            data.charts = [
+                c.model_dump() if hasattr(c, "model_dump") else c for c in analytics.charts
+            ]
 
     # ── Reviewer (validated path) ───────────────────────────────────────────────
     if reviewer:
         for c in reviewer.contradictions:
             if c.severity == "high":
                 data.risks.append(f"Contradiction: {c.description}")
-            data.reviewer_contradictions.append({
-                "agents": ", ".join(c.agents),
-                "field": c.field,
-                "description": c.description,
-                "severity": c.severity,
-            })
+            data.reviewer_contradictions.append(
+                {
+                    "agents": ", ".join(c.agents),
+                    "field": c.field,
+                    "description": c.description,
+                    "severity": c.severity,
+                }
+            )
 
         cb = reviewer.confidence_breakdown
         if cb and cb.meta_confidence is not None:
@@ -1855,13 +2163,15 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
             }
 
         for sv in reviewer.source_verifications:
-            data.reviewer_verifications.append({
-                "agent": sv.agent_name,
-                "checked": sv.claims_checked,
-                "verified": sv.claims_verified,
-                "rate": f"{sv.verification_rate:.0%}",
-                "unverified": sv.unverified_claims[:3],
-            })
+            data.reviewer_verifications.append(
+                {
+                    "agent": sv.agent_name,
+                    "checked": sv.claims_checked,
+                    "verified": sv.claims_verified,
+                    "rate": f"{sv.verification_rate:.0%}",
+                    "unverified": sv.unverified_claims[:3],
+                }
+            )
 
         rv = reviewer.recommendation_validation
         if rv:
@@ -1873,13 +2183,17 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
                 "contradicting": rv.contradicting_evidence[:5],
             }
             if rv.evidence_strength == "strong":
-                data.sections.append(Section("Evidence Strength", "Strong evidence supports the recommendation."))
+                data.sections.append(
+                    Section("Evidence Strength", "Strong evidence supports the recommendation.")
+                )
 
         for flag in reviewer.flags:
             data.risks.append(flag)
 
         if reviewer.review_summary:
-            data.executive_summary = _truncate_at_sentence(_strip_markdown(reviewer.review_summary), 4000)
+            data.executive_summary = _truncate_at_sentence(
+                _strip_markdown(reviewer.review_summary), 4000
+            )
 
     # ── Executive summary synthesis ────────────────────────────────────────────
     if not data.executive_summary:
@@ -1896,7 +2210,11 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
     # ── Final recommendation scorecard entry ───────────────────────────────────
     rec = data.recommendation
     data.scorecard.append(
-        ("Recommendation", rec, "strong" if rec == "BUY" else "bullish" if rec == "HOLD" else "expensive")
+        (
+            "Recommendation",
+            rec,
+            "strong" if rec == "BUY" else "bullish" if rec == "HOLD" else "expensive",
+        )
     )
 
 
@@ -2113,7 +2431,16 @@ def _extract_deck_data(
         return data
 
     # ── Raw agent outputs path ─────────────────────────────────────────────
-    if any(k in brief_data for k in ("quant_response", "rag_response", "sentiment_response", "analytics_response", "reviewer_response")):
+    if any(
+        k in brief_data
+        for k in (
+            "quant_response",
+            "rag_response",
+            "sentiment_response",
+            "analytics_response",
+            "reviewer_response",
+        )
+    ):
         # Try the validated Pydantic path first; fall back to legacy dict extraction
         # if validation fails (e.g., briefs stored before models were introduced).
         _used_validated = False
@@ -2953,7 +3280,12 @@ def _enrich_from_markdown(
 
     # Valuation context: DCF + current price
     dcf_val = next(
-        (v for lbl, v in data.valuation_table if "dcf" in lbl.lower() or "intrinsic" in lbl.lower()), None
+        (
+            v
+            for lbl, v in data.valuation_table
+            if "dcf" in lbl.lower() or "intrinsic" in lbl.lower()
+        ),
+        None,
     )
     cur_price = next((v for lbl, v in data.valuation_table if "current price" in lbl.lower()), None)
     if dcf_val and cur_price:

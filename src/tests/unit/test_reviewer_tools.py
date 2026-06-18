@@ -10,17 +10,34 @@ def _make_mock_outputs(**overrides) -> dict:
     base = {
         "quant": {
             "recommendation": "BUY",
-            "metrics": {"quant_confidence": 0.8, "quant_signal": "bullish", "sharpe_ratio": 1.5, "var_95_daily": 0.02},
+            "metrics": {
+                "quant_confidence": 0.8,
+                "quant_signal": "bullish",
+                "sharpe_ratio": 1.5,
+                "var_95_daily": 0.02,
+            },
             "dcf_valuation": {"intrinsic_value": 200, "current_price": 150, "upside_pct": 33.33},
         },
-        "rag": {"confidence_score": 0.85, "sources": ["10-K"], "summary": "Strong growth and positive outlook"},
+        "rag": {
+            "confidence_score": 0.85,
+            "sources": ["10-K"],
+            "summary": "Strong growth and positive outlook",
+        },
         "market_context": {"overall_signal": "bullish", "confidence_score": 0.7},
         "analytics": {
             "analytics_confidence": 0.75,
             "trend_analysis": {"trend_direction": "bullish", "ma_crossover_signal": None},
-            "forecast": {"forecast_prices": [160, 165], "forecast_dates": ["2025-02-01", "2025-02-02"]},
+            "forecast": {
+                "forecast_prices": [160, 165],
+                "forecast_dates": ["2025-02-01", "2025-02-02"],
+            },
             "charts": [{"chart_type": "candlestick", "datasets": [{}]}],
-            "anomalies": {"severity": "low", "price_anomalies": [], "volume_anomalies": [], "fundamental_anomalies": []},
+            "anomalies": {
+                "severity": "low",
+                "price_anomalies": [],
+                "volume_anomalies": [],
+                "fundamental_anomalies": [],
+            },
         },
     }
     result = base.copy()

@@ -142,7 +142,15 @@ def get_peer_tickers(ticker: str, industry: str, sector: str) -> list[str]:
         if norm_key in _NORM_MAP:
             raw_key = _NORM_MAP[norm_key]
             peers = [p for p in _PEER_SETS[raw_key] if p != ticker_up][:5]
-            logger.debug("Peer lookup (norm): ticker=%s key=%s raw=%s found=%d", ticker, key, raw_key, len(peers))
+            logger.debug(
+                "Peer lookup (norm): ticker=%s key=%s raw=%s found=%d",
+                ticker,
+                key,
+                raw_key,
+                len(peers),
+            )
             return peers
-    logger.debug("Peer lookup: ticker=%s industry=%s sector=%s — no match", ticker, industry, sector)
+    logger.debug(
+        "Peer lookup: ticker=%s industry=%s sector=%s — no match", ticker, industry, sector
+    )
     return []

@@ -5,7 +5,9 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
-async def _detect_anomalies(price_data: dict, ohlcv_data: list[dict], fundamentals_data: dict) -> dict:
+async def _detect_anomalies(
+    price_data: dict, ohlcv_data: list[dict], fundamentals_data: dict
+) -> dict:
     try:
         price_anomalies = []
         volume_anomalies = []
@@ -23,13 +25,19 @@ async def _detect_anomalies(price_data: dict, ohlcv_data: list[dict], fundamenta
                     z_score = (ret - mean_ret) / std_ret if std_ret > 0 else 0
                     if abs(z_score) > 2.5:
                         date_idx = i + 1
-                        date = sorted_dates[date_idx] if date_idx < len(sorted_dates) else f"idx-{date_idx}"
-                        price_anomalies.append({
-                            "date": date,
-                            "return_pct": round(float(ret) * 100, 2),
-                            "z_score": round(float(z_score), 2),
-                            "type": "price_spike" if z_score > 0 else "price_drop",
-                        })
+                        date = (
+                            sorted_dates[date_idx]
+                            if date_idx < len(sorted_dates)
+                            else f"idx-{date_idx}"
+                        )
+                        price_anomalies.append(
+                            {
+                                "date": date,
+                                "return_pct": round(float(ret) * 100, 2),
+                                "z_score": round(float(z_score), 2),
+                                "type": "price_spike" if z_score > 0 else "price_drop",
+                            }
+                        )
 
         if ohlcv_data and len(ohlcv_data) >= 10:
             volumes = [d.get("volume", 0) for d in ohlcv_data if d.get("volume", 0) > 0]
@@ -42,12 +50,14 @@ async def _detect_anomalies(price_data: dict, ohlcv_data: list[dict], fundamenta
                     if v > 0 and vol_std > 0:
                         z_score = (v - vol_mean) / vol_std
                         if abs(z_score) > 3.0:
-                            volume_anomalies.append({
-                                "date": d.get("date", ""),
-                                "volume": int(v),
-                                "z_score": round(float(z_score), 2),
-                                "type": "high_volume" if z_score > 0 else "low_volume",
-                            })
+                            volume_anomalies.append(
+                                {
+                                    "date": d.get("date", ""),
+                                    "volume": int(v),
+                                    "z_score": round(float(z_score), 2),
+                                    "type": "high_volume" if z_score > 0 else "low_volume",
+                                }
+                            )
 
         if fundamentals_data:
             pe = fundamentals_data.get("trailingPE") or fundamentals_data.get("trailing_pe")
@@ -80,4 +90,10 @@ async def _detect_anomalies(price_data: dict, ohlcv_data: list[dict], fundamenta
         }
     except Exception as e:
         logger.warning("Anomaly detection failed: %s", e)
-        return {"price_anomalies": [], "volume_anomalies": [], "fundamental_anomalies": [], "anomaly_count": 0, "severity": "none"}
+        return {
+            "price_anomalies": [],
+            "volume_anomalies": [],
+            "fundamental_anomalies": [],
+            "anomaly_count": 0,
+            "severity": "none",
+        }

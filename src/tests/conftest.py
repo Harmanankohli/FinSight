@@ -16,9 +16,7 @@ def pytest_unconfigure(config):
     # Leaked aiosqlite connections leave non-daemon worker threads alive,
     # which block interpreter shutdown indefinitely (CI hang). Force-exit
     # with the real test status once reporting is done.
-    leaked = [
-        t for t in threading.enumerate() if t is not threading.main_thread() and not t.daemon
-    ]
+    leaked = [t for t in threading.enumerate() if t is not threading.main_thread() and not t.daemon]
     if leaked:
         names = ", ".join(t.name for t in leaked)
         print(f"\n[conftest] force-exiting: leaked non-daemon threads: {names}", flush=True)

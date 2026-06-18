@@ -78,8 +78,6 @@ async def _auto_release() -> None:
         await asyncio.sleep(timeout)
         n = await release_evals()
         if n:
-            logger.warning(
-                "[eval-gate] auto-released %d eval(s) after %.0fs timeout", n, timeout
-            )
+            logger.warning("[eval-gate] auto-released %d eval(s) after %.0fs timeout", n, timeout)
     except asyncio.CancelledError:
         pass

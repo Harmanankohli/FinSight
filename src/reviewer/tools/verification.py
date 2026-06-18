@@ -27,13 +27,17 @@ def verify_sources(agent_outputs: dict) -> list[dict]:
     if dcf_intrinsic and dcf_current and dcf_upside is not None:
         calculated_upside = (dcf_intrinsic - dcf_current) / dcf_current * 100
         if abs(calculated_upside - dcf_upside) > 1.0:
-            verifications.append({
-                "agent_name": "Quant Analysis Agent",
-                "claims_checked": 1,
-                "claims_verified": 0,
-                "verification_rate": 0.0,
-                "unverified_claims": [f"DCF upside_pct ({dcf_upside:.1f}%) != calculated ({calculated_upside:.1f}%)"],
-            })
+            verifications.append(
+                {
+                    "agent_name": "Quant Analysis Agent",
+                    "claims_checked": 1,
+                    "claims_verified": 0,
+                    "verification_rate": 0.0,
+                    "unverified_claims": [
+                        f"DCF upside_pct ({dcf_upside:.1f}%) != calculated ({calculated_upside:.1f}%)"
+                    ],
+                }
+            )
 
     metrics = quant.get("metrics") or {}
     sharpe = metrics.get("sharpe_ratio")
@@ -55,13 +59,15 @@ def verify_sources(agent_outputs: dict) -> list[dict]:
             unverified.append(f"VaR(95%) {var_95:.4f} out of range [0, 1]")
     if claims_checked > 0:
         rate = claims_verified / claims_checked if claims_checked > 0 else 0.0
-        verifications.append({
-            "agent_name": "Quant Analysis Agent",
-            "claims_checked": claims_checked,
-            "claims_verified": claims_verified,
-            "verification_rate": round(rate, 2),
-            "unverified_claims": unverified,
-        })
+        verifications.append(
+            {
+                "agent_name": "Quant Analysis Agent",
+                "claims_checked": claims_checked,
+                "claims_verified": claims_verified,
+                "verification_rate": round(rate, 2),
+                "unverified_claims": unverified,
+            }
+        )
 
     rag_confidence = rag.get("confidence_score")
     rag_sources = rag.get("sources", [])
@@ -83,13 +89,15 @@ def verify_sources(agent_outputs: dict) -> list[dict]:
             unverified.append("RAG summary present but no sources listed")
     if claims_checked > 0:
         rate = claims_verified / claims_checked if claims_checked > 0 else 0.0
-        verifications.append({
-            "agent_name": "Financial RAG Agent",
-            "claims_checked": claims_checked,
-            "claims_verified": claims_verified,
-            "verification_rate": round(rate, 2),
-            "unverified_claims": unverified,
-        })
+        verifications.append(
+            {
+                "agent_name": "Financial RAG Agent",
+                "claims_checked": claims_checked,
+                "claims_verified": claims_verified,
+                "verification_rate": round(rate, 2),
+                "unverified_claims": unverified,
+            }
+        )
 
     market_confidence = market.get("confidence_score")
     market_signal = market.get("overall_signal")
@@ -110,13 +118,15 @@ def verify_sources(agent_outputs: dict) -> list[dict]:
             unverified.append(f"Market signal '{market_signal}' not one of bullish/bearish/neutral")
     if claims_checked > 0:
         rate = claims_verified / claims_checked if claims_checked > 0 else 0.0
-        verifications.append({
-            "agent_name": "Market Context Agent",
-            "claims_checked": claims_checked,
-            "claims_verified": claims_verified,
-            "verification_rate": round(rate, 2),
-            "unverified_claims": unverified,
-        })
+        verifications.append(
+            {
+                "agent_name": "Market Context Agent",
+                "claims_checked": claims_checked,
+                "claims_verified": claims_verified,
+                "verification_rate": round(rate, 2),
+                "unverified_claims": unverified,
+            }
+        )
 
     analytics_confidence = analytics.get("analytics_confidence")
     forecast = analytics.get("forecast") or {}
@@ -134,6 +144,7 @@ def verify_sources(agent_outputs: dict) -> list[dict]:
     if forecast_dates:
         claims_checked += 1
         from datetime import datetime
+
         if all(d > datetime.now().strftime("%Y-%m-%d") for d in forecast_dates):
             claims_verified += 1
         else:
@@ -146,24 +157,31 @@ def verify_sources(agent_outputs: dict) -> list[dict]:
             unverified.append("One or more charts have empty datasets")
     if claims_checked > 0:
         rate = claims_verified / claims_checked if claims_checked > 0 else 0.0
-        verifications.append({
-            "agent_name": "Analytics Agent",
-            "claims_checked": claims_checked,
-            "claims_verified": claims_verified,
-            "verification_rate": round(rate, 2),
-            "unverified_claims": unverified,
-        })
+        verifications.append(
+            {
+                "agent_name": "Analytics Agent",
+                "claims_checked": claims_checked,
+                "claims_verified": claims_verified,
+                "verification_rate": round(rate, 2),
+                "unverified_claims": unverified,
+            }
+        )
 
     for v in verifications:
         if v.get("unverified_claims"):
             logger.warning(
                 "Verification for %s: %d/%d passed — unverified: %s",
-                v["agent_name"], v["claims_verified"], v["claims_checked"], v["unverified_claims"],
+                v["agent_name"],
+                v["claims_verified"],
+                v["claims_checked"],
+                v["unverified_claims"],
             )
         else:
             logger.info(
                 "Verification for %s: %d/%d passed",
-                v["agent_name"], v["claims_verified"], v["claims_checked"],
+                v["agent_name"],
+                v["claims_verified"],
+                v["claims_checked"],
             )
     if not verifications:
         logger.info("Verification: no claims checked for any agent")

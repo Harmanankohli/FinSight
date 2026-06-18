@@ -51,11 +51,13 @@ async def _web_search_uncached(query: str, max_results: int, time_filter: str) -
 
         results = []
         for item in raw_results:
-            results.append({
-                "title": item.get("title", ""),
-                "url": item.get("href", ""),
-                "snippet": item.get("body", ""),
-            })
+            results.append(
+                {
+                    "title": item.get("title", ""),
+                    "url": item.get("href", ""),
+                    "snippet": item.get("body", ""),
+                }
+            )
 
         return {
             "query": query,

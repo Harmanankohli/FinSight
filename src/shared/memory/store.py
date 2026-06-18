@@ -220,7 +220,9 @@ async def init_db(conn: aiosqlite.Connection) -> None:
             created_at TIMESTAMP NOT NULL,
             PRIMARY KEY (session_id, agent_name)
         )""")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_aos_session ON agent_output_store(session_id)")
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_aos_session ON agent_output_store(session_id)"
+        )
         await conn.commit()
     except Exception:
         logger.debug("Migration v6: table/column already exists, skipping")

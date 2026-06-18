@@ -125,10 +125,16 @@ def test_quant_optional_fields_default_none():
 
 def test_quant_with_optional_fields():
     quant = _make_quant(
-        dcf_valuation={"intrinsic_value": 185.0, "current_price": 170.0,
-                       "upside_pct": 8.8, "wacc": 0.09, "growth_rate": 0.05,
-                       "terminal_growth": 0.025, "enterprise_value": 2.5e12,
-                       "fcf_used": 1.0e11},
+        dcf_valuation={
+            "intrinsic_value": 185.0,
+            "current_price": 170.0,
+            "upside_pct": 8.8,
+            "wacc": 0.09,
+            "growth_rate": 0.05,
+            "terminal_growth": 0.025,
+            "enterprise_value": 2.5e12,
+            "fcf_used": 1.0e11,
+        },
         stress_test={"cvar_95": -0.03, "var_95": -0.025},
     )
     assert quant.dcf_valuation.intrinsic_value == 185.0

@@ -56,9 +56,9 @@ def test_html_generates_valid_output(tmp_path):
     assert isinstance(html_str, str)
     assert len(html_str) > 5000, f"HTML too small: {len(html_str)} chars"
     assert "Walmart Inc." in html_str
-    assert "class=\"hero\"" in html_str
-    assert "class=\"report-section\"" in html_str
-    assert "class=\"conclusion\"" in html_str
+    assert 'class="hero"' in html_str
+    assert 'class="report-section"' in html_str
+    assert 'class="conclusion"' in html_str
     assert "var(--blue)" in html_str or "color:var" in html_str
     out = tmp_path / "WMT_report.html"
     out.write_text(html_str, encoding="utf-8")
@@ -71,7 +71,7 @@ def test_html_with_empty_brief(tmp_path):
         html_str = generate_html({}, "XYZ", "UNKNOWN", 0.0, "2026-01-01")
     assert isinstance(html_str, str)
     assert len(html_str) > 2000
-    assert "class=\"hero\"" in html_str
+    assert 'class="hero"' in html_str
     assert "XYZ" in html_str or "No analysis" in html_str
     out = tmp_path / "XYZ_empty.html"
     out.write_text(html_str, encoding="utf-8")

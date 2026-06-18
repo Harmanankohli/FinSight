@@ -25,8 +25,10 @@ async def _clean_env(monkeypatch, tmp_path):
     # Pre-open connection to temp path — get_db()'s default arg captures the
     # original DB_PATH at function definition time, so we must pass explicitly.
     from shared.memory.store import get_db
+
     await get_db(db_path)
     import shared.memory.user_store as us_mod
+
     us_mod._schema_v4_ensured = False
     yield
     if store_mod._db_conn is not None:

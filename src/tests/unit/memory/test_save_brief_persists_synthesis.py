@@ -45,6 +45,7 @@ def _stub_modules():
     if oa is not None and isinstance(oa, MagicMock):
         del sys.modules["orchestrator.agent"]
         import orchestrator.agent as _real_mod  # noqa: E402
+
         # Graft the real function onto the mock so both paths work
         oa.save_brief = _real_mod.save_brief
         oa._synthesis_text_from_context = _real_mod._synthesis_text_from_context

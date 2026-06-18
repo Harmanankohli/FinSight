@@ -140,7 +140,12 @@ def score_confidence(agent_outputs: dict) -> dict:
 
     total_fields = 0
     filled_fields = 0
-    for agent_key, agent_data in [("quant", quant), ("rag", rag), ("market_context", market), ("analytics", analytics)]:
+    for agent_key, agent_data in [
+        ("quant", quant),
+        ("rag", rag),
+        ("market_context", market),
+        ("analytics", analytics),
+    ]:
         if isinstance(agent_data, dict):
             for k in agent_data:
                 total_fields += 1
@@ -155,7 +160,13 @@ def score_confidence(agent_outputs: dict) -> dict:
 
     logger.info(
         "Confidence: meta=%.2f (agreement=%.2f, quality=%.2f, agents=[quant=%.2f, rag=%.2f, market=%.2f, analytics=%.2f])",
-        meta_confidence, agreement, data_quality, quant_conf, rag_conf, market_conf, analytics_conf,
+        meta_confidence,
+        agreement,
+        data_quality,
+        quant_conf,
+        rag_conf,
+        market_conf,
+        analytics_conf,
     )
     return {
         "agent_scores": {

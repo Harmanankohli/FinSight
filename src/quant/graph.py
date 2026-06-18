@@ -186,24 +186,26 @@ class QuantAnalysisGraph:
         from shared.agent_models import QuantAgentOutput
 
         try:
-            output = QuantAgentOutput.model_validate({
-                "ticker": ticker.upper(),
-                "recommendation": result.get("recommendation", "HOLD"),
-                "reasoning": result.get("reasoning", ""),
-                "metrics": result.get("metrics", {}),
-                "dcf_valuation": result.get("dcf_valuation"),
-                "dcf_error": dcf_error,
-                "stress_test": result.get("stress_test_result"),
-                "monte_carlo": result.get("monte_carlo"),
-                "correlation_matrix": result.get("correlation_matrix", {}),
-                "fundamentals": result.get("fundamentals"),
-                "technicals": result.get("technicals"),
-                "peer_comparison": result.get("peer_comparison"),
-                "options_signals": result.get("options_signals"),
-                "insider_signals": result.get("insider_signals"),
-                "positioning": result.get("positioning"),
-                "schema_validation": result.get("schema_validation"),
-            })
+            output = QuantAgentOutput.model_validate(
+                {
+                    "ticker": ticker.upper(),
+                    "recommendation": result.get("recommendation", "HOLD"),
+                    "reasoning": result.get("reasoning", ""),
+                    "metrics": result.get("metrics", {}),
+                    "dcf_valuation": result.get("dcf_valuation"),
+                    "dcf_error": dcf_error,
+                    "stress_test": result.get("stress_test_result"),
+                    "monte_carlo": result.get("monte_carlo"),
+                    "correlation_matrix": result.get("correlation_matrix", {}),
+                    "fundamentals": result.get("fundamentals"),
+                    "technicals": result.get("technicals"),
+                    "peer_comparison": result.get("peer_comparison"),
+                    "options_signals": result.get("options_signals"),
+                    "insider_signals": result.get("insider_signals"),
+                    "positioning": result.get("positioning"),
+                    "schema_validation": result.get("schema_validation"),
+                }
+            )
             return output.model_dump(by_alias=True)
         except Exception as exc:
             logger.warning("QuantAgentOutput validation failed (%s) — returning raw dict", exc)

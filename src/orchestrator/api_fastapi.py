@@ -138,7 +138,9 @@ async def agent_health(name: str):
     summary="Download latest ticker report",
 )
 async def report_latest(symbol: str, format: str):
-    logger.warning("Unimplemented endpoint called: GET /api/reports/ticker/%s/latest/%s", symbol, format)
+    logger.warning(
+        "Unimplemented endpoint called: GET /api/reports/ticker/%s/latest/%s", symbol, format
+    )
     raise HTTPException(501)
 
 

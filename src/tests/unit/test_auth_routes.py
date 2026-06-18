@@ -32,6 +32,7 @@ async def _clean_env(monkeypatch):
             except PermissionError:
                 pass
     import shared.memory.user_store as us_mod
+
     us_mod._schema_v4_ensured = False
     yield
     if store_mod._db_conn is not None:

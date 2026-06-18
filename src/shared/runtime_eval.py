@@ -792,7 +792,10 @@ def _build_reviewer_reference(result: dict) -> str:
         parts.append(f"Verdict: {verdict}")
     contradictions = result.get("contradictions", [])
     if contradictions:
-        descs = [f"{c.get('agents', [])} on {c.get('field')} (severity: {c.get('severity')})" for c in contradictions]
+        descs = [
+            f"{c.get('agents', [])} on {c.get('field')} (severity: {c.get('severity')})"
+            for c in contradictions
+        ]
         parts.append(f"Contradictions: {'; '.join(descs)}")
     cb = result.get("confidence_breakdown") or {}
     if cb:
@@ -1013,14 +1016,18 @@ def score_analytics_deterministic(analytics_result: dict) -> dict:
     checks: dict = {}
 
     conf = analytics_result.get("analytics_confidence")
-    checks["confidence_in_range"] = conf is not None and isinstance(conf, (int, float)) and 0.0 <= conf <= 1.0
+    checks["confidence_in_range"] = (
+        conf is not None and isinstance(conf, (int, float)) and 0.0 <= conf <= 1.0
+    )
 
     signal = analytics_result.get("analytics_signal")
     checks["signal_valid"] = signal in {"bullish", "bearish", "neutral"}
 
     trend = analytics_result.get("trend_analysis") or {}
     checks["trend_direction_valid"] = trend.get("trend_direction", "neutral") in {
-        "bullish", "bearish", "neutral",
+        "bullish",
+        "bearish",
+        "neutral",
     }
     ts = trend.get("trend_strength")
     checks["trend_strength_in_range"] = ts is None or (
@@ -1028,13 +1035,16 @@ def score_analytics_deterministic(analytics_result: dict) -> dict:
     )
     ma_signal = trend.get("ma_crossover_signal")
     checks["ma_crossover_valid"] = ma_signal is None or ma_signal in {
-        "golden_cross", "death_cross",
+        "golden_cross",
+        "death_cross",
     }
 
     forecast = analytics_result.get("forecast") or {}
     if forecast:
         horizon = forecast.get("horizon_days")
-        checks["forecast_horizon_positive"] = horizon is not None and isinstance(horizon, int) and horizon > 0
+        checks["forecast_horizon_positive"] = (
+            horizon is not None and isinstance(horizon, int) and horizon > 0
+        )
         mape = forecast.get("mape")
         checks["forecast_mape_plausible"] = mape is None or (
             isinstance(mape, (int, float)) and 0.0 <= mape <= 100.0
@@ -1057,30 +1067,32 @@ def score_analytics_deterministic(analytics_result: dict) -> dict:
         checks["forecast_dates_future"] = True
 
     charts = analytics_result.get("charts", [])
-    checks["charts_well_formed"] = all(
-        isinstance(c, dict) and c.get("chart_type") and isinstance(c.get("datasets"), list)
-        for c in charts
-    ) if charts else True
+    checks["charts_well_formed"] = (
+        all(
+            isinstance(c, dict) and c.get("chart_type") and isinstance(c.get("datasets"), list)
+            for c in charts
+        )
+        if charts
+        else True
+    )
 
     anomalies = analytics_result.get("anomalies") or {}
     severity = anomalies.get("severity", "none")
     checks["anomaly_severity_valid"] = severity in {"none", "low", "medium", "high"}
     acount = anomalies.get("anomaly_count", 0)
     checks["anomaly_count_consistent"] = (
-        (severity == "none" and acount == 0)
-        or (severity != "none" and acount > 0)
-        or not anomalies
+        (severity == "none" and acount == 0) or (severity != "none" and acount > 0) or not anomalies
     )
 
     stats = analytics_result.get("statistical_summary") or {}
     dist = stats.get("return_distribution")
     checks["distribution_valid"] = dist is None or dist in {
-        "normal", "leptokurtic", "platykurtic",
+        "normal",
+        "leptokurtic",
+        "platykurtic",
     }
     jb = stats.get("jarque_bera_pvalue")
-    checks["jarque_bera_valid"] = jb is None or (
-        isinstance(jb, (int, float)) and 0.0 <= jb <= 1.0
-    )
+    checks["jarque_bera_valid"] = jb is None or (isinstance(jb, (int, float)) and 0.0 <= jb <= 1.0)
 
     checks["passed"] = all(v for k, v in checks.items() if k != "passed")
     return checks
@@ -1106,36 +1118,58 @@ def score_reviewer_deterministic(reviewer_result: dict) -> dict:
     checks: dict = {}
 
     conf = reviewer_result.get("review_confidence")
-    checks["confidence_in_range"] = conf is not None and isinstance(conf, (int, float)) and 0.0 <= conf <= 1.0
+    checks["confidence_in_range"] = (
+        conf is not None and isinstance(conf, (int, float)) and 0.0 <= conf <= 1.0
+    )
 
     verdict = reviewer_result.get("verdict")
     checks["verdict_valid"] = verdict in {"BUY", "HOLD", "SELL"}
 
-    known_agents = {"quant", "rag", "market_context", "analytics", "Quant Analysis Agent",
-                    "Financial RAG Agent", "Market Context Agent", "Analytics Agent"}
+    known_agents = {
+        "quant",
+        "rag",
+        "market_context",
+        "analytics",
+        "Quant Analysis Agent",
+        "Financial RAG Agent",
+        "Market Context Agent",
+        "Analytics Agent",
+    }
     contradictions = reviewer_result.get("contradictions", [])
-    checks["contradictions_well_formed"] = all(
-        isinstance(c, dict)
-        and isinstance(c.get("agents"), list)
-        and c.get("field")
-        and c.get("severity") in {"low", "medium", "high"}
-        for c in contradictions
-    ) if contradictions else True
+    checks["contradictions_well_formed"] = (
+        all(
+            isinstance(c, dict)
+            and isinstance(c.get("agents"), list)
+            and c.get("field")
+            and c.get("severity") in {"low", "medium", "high"}
+            for c in contradictions
+        )
+        if contradictions
+        else True
+    )
 
-    checks["contradiction_agents_known"] = all(
-        any(a.lower() in known.lower() or known.lower() in a.lower() for known in known_agents)
-        for c in contradictions
-        for a in (c.get("agents") or [])
-    ) if contradictions else True
+    checks["contradiction_agents_known"] = (
+        all(
+            any(a.lower() in known.lower() or known.lower() in a.lower() for known in known_agents)
+            for c in contradictions
+            for a in (c.get("agents") or [])
+        )
+        if contradictions
+        else True
+    )
 
     verifications = reviewer_result.get("source_verifications", [])
-    checks["verifications_well_formed"] = all(
-        isinstance(v, dict)
-        and v.get("agent_name")
-        and isinstance(v.get("verification_rate", 0), (int, float))
-        and 0.0 <= v.get("verification_rate", 0) <= 1.0
-        for v in verifications
-    ) if verifications else True
+    checks["verifications_well_formed"] = (
+        all(
+            isinstance(v, dict)
+            and v.get("agent_name")
+            and isinstance(v.get("verification_rate", 0), (int, float))
+            and 0.0 <= v.get("verification_rate", 0) <= 1.0
+            for v in verifications
+        )
+        if verifications
+        else True
+    )
 
     cb = reviewer_result.get("confidence_breakdown") or {}
     if cb:
@@ -1145,10 +1179,11 @@ def score_reviewer_deterministic(reviewer_result: dict) -> dict:
                 isinstance(val, (int, float)) and 0.0 <= val <= 1.0
             )
         agent_scores = cb.get("agent_scores", {})
-        checks["cb_agent_scores_valid"] = all(
-            isinstance(v, (int, float)) and 0.0 <= v <= 1.0
-            for v in agent_scores.values()
-        ) if agent_scores else True
+        checks["cb_agent_scores_valid"] = (
+            all(isinstance(v, (int, float)) and 0.0 <= v <= 1.0 for v in agent_scores.values())
+            if agent_scores
+            else True
+        )
     else:
         checks["cb_agreement_score_valid"] = True
         checks["cb_data_quality_score_valid"] = True

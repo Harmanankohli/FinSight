@@ -33,7 +33,12 @@ async def store_agent_output(session_id: str, agent_name: str, output: dict) -> 
         conn = await get_db()
         await conn.execute(
             "INSERT OR REPLACE INTO agent_output_store (session_id, agent_name, output_json, created_at) VALUES (?, ?, ?, ?)",
-            (session_id, agent_name, json.dumps(output, default=str), datetime.now(timezone.utc).isoformat()),
+            (
+                session_id,
+                agent_name,
+                json.dumps(output, default=str),
+                datetime.now(timezone.utc).isoformat(),
+            ),
         )
         await conn.commit()
     logger.debug("Stored agent output: session=%s agent=%s", session_id, agent_name)
@@ -54,13 +59,15 @@ async def get_agent_outputs(session_id: str) -> dict[str, dict]:
             result[key] = json.loads(output_json)
         except (json.JSONDecodeError, TypeError):
             result[key] = {"_raw_text": output_json[:5000]}
-    logger.info("Fetched %d agent outputs from shared store for session=%s", len(result), session_id)
+    logger.info(
+        "Fetched %d agent outputs from shared store for session=%s", len(result), session_id
+    )
     return result
 
 
 async def prune_stale_outputs(max_age_seconds: int = 600) -> int:
     """Delete agent outputs older than max_age_seconds. Returns count deleted."""
-    cutoff = (datetime.now(timezone.utc).timestamp() - max_age_seconds)
+    cutoff = datetime.now(timezone.utc).timestamp() - max_age_seconds
     cutoff_iso = datetime.fromtimestamp(cutoff, tz=timezone.utc).isoformat()
     async with write_lock():
         conn = await get_db()

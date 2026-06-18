@@ -1,234 +1,526 @@
-# Plan: Add Analytics & Reviewer Agent Tiles to Frontend
+# Code Organization Remediation Plan
 
-## Context
-
-The system has 5 sub-agents but the frontend Research page only shows 3 agent tiles during processing (Financial RAG, Quant Analysis, Market Context). The **Analytics Agent** (port 8005, PydanticAI) and **Reviewer Agent** (port 8006, OpenAI Agents SDK) are missing from the UI. The backend AG-UI bridge (`src/orchestrator/agui_bridge.py:70-82`) already maps and emits these agents in `active_agents` state — only the frontend needs updating.
-
-**Processing flow:** Phase 1 runs RAG + Quant + Market + Analytics in parallel, then Phase 2 runs Reviewer sequentially after Phase 1 completes.
-
-**Backend `active_agents` lifecycle** (verified in `agui_bridge.py:435-531`):
-- Agents are **appended** to the list when dispatched (never removed individually)
-- The entire list is **cleared to `[]`** only after successful run completion (line 522-531)
-- **On error/cancel** (lines 556-561): the `active_agents` clear is SKIPPED because it's inside the `try` block — the list stays stale
-- During Phase 1: list contains 4 agents. During Phase 2: list contains all 5. After normal completion: empty.
+Auto-generated from code review. Each section is independently actionable.
+An agent should tackle items in priority order, verifying each with `make test && make lint && make type` before moving to the next.
 
 ---
 
-## Files to Modify (5 files)
+## P1 — Structural Fixes (High Priority)
 
-### 1. `src/web/nextjs-app/app/globals.css`
+### 1.1 Move `src/seed_user.py` into `src/scripts/`
 
-**1a. Add CSS custom properties** — insert after line 23 (`--market-bg: #fce8d9;`), before `--orch`:
-```css
---analytics: #1a7a7a;  --analytics-bg: #ddf0f0;
---reviewer: #9b2335;   --reviewer-bg: #f4dde1;
-```
-Rationale: Teal for analytics (data/stats feel), crimson for reviewer (distinct from `--sell: #7a2c2c`).
+ **Files to touch:**
+- `C:\Users\harma\OneDrive\Documents\Code\FinSight\multi-agent-investment-system\src\seed_user.py`
 
-**1b. Add tile color rules** — insert after line 164 (`.tile.market`):
-```css
-.tile.analytics { border-color: var(--analytics); background: var(--analytics-bg); }
-.tile.reviewer  { border-color: var(--reviewer);  background: var(--reviewer-bg); }
-```
+**Action:**
+1. Move `src/seed_user.py` → `src/scripts/seed_user.py`
+2. **Fix `sys.path` hack**: line 13 has `sys.path.insert(0, "src")`. After moving into `src/scripts/`, change to `sys.path.insert(0, "..")` so the project root is still on the path.
+3. Update the usage docstring on lines 4-5: `uv run python src/scripts/seed_user.py`
+4. Grep for any remaining references to `src/seed_user.py` in docs/ (CHANGELOG.md, DESIGN_DECISIONS.md, AGENTS.md) and update them to `src/scripts/seed_user.py`.
 
----
-
-### 2. `src/web/nextjs-app/app/research/page.tsx` (5 edits)
-
-**2a. Expand `AGENTS` array** (lines 26-30) — add `phase` field to all entries + 2 new agents:
-```typescript
-const AGENTS = [
-  { key: "rag", name: "Financial RAG", sub: "LlamaIndex · filings", color: "--rag", match: ["financial rag", "rag agent"], phase: 1 },
-  { key: "quant", name: "Quant Analysis", sub: "LangGraph · metrics", color: "--quant", match: ["quant", "quant analysis"], phase: 1 },
-  { key: "market", name: "Market Context", sub: "CrewAI · macro + peers", color: "--market", match: ["market context", "sentiment"], phase: 1 },
-  { key: "analytics", name: "Analytics", sub: "PydanticAI · trends", color: "--analytics", match: ["analytics"], phase: 1 },
-  { key: "reviewer", name: "Reviewer", sub: "OpenAI SDK · validation", color: "--reviewer", match: ["reviewer"], phase: 2 },
-] as const;
-```
-Match strings work via `.toLowerCase().includes()`: `"analytics"` matches `"Analytics Agent"`, `"reviewer"` matches `"Reviewer Agent"`.
-
-**2b. Fix `tileStatus` function** (lines 32-36) — make phase-aware AND handle stale state:
-```typescript
-function tileStatus(cfg: typeof AGENTS[number], active: string[], running: boolean) {
-  if (active.some((a) => cfg.match.some((m) => a.toLowerCase().includes(m)))) {
-    return running ? "working" : "done";
-  }
-  if (active.length > 0 && cfg.phase === 1) return running ? "done" : "done";
-  return "idle";
-}
-```
-
-**Why the `running` parameter matters (no stop button edge case):**
-
-Without `running`, if the backend errors and never clears `active_agents`:
-- `running` = false (stream ended), but `anyActive` = true (stale list)
-- Tiles stay visible via `(running || (hasMessages && anyActive))`
-- All matched agents show "working" forever — misleading since the run is over
-- The topbar says "Complete" but tiles say "working" — contradictory
-
-With `running`:
-- When agent IS in the stale list but `running` is false → show "done" (not "working")
-- This gives honest UI: the run ended, these agents completed what they could
-
-**Full state table for `tileStatus(cfg, active, running)`:**
-
-| Agent in list? | Phase | `running` | Result | Scenario |
-|---|---|---|---|---|
-| Yes | 1 or 2 | true | "working" | Normal: agent is active |
-| Yes | 1 or 2 | false | "done" | Error/stale: run ended but list not cleared |
-| No | 1 | true | "done" | Normal: Phase 1 agents dispatched together |
-| No | 1 | false | "done" | Normal completion or error |
-| No | 2 | true | "idle" | Normal: Reviewer hasn't started yet |
-| No | 2 | false | "idle" | Normal: Reviewer never ran (Phase 1 error) |
-
-**2c. Update tile rendering call site** (line 170) — pass `running`:
-```typescript
-const s = tileStatus(a, activeAgents, running);
-```
-
-**2d. Update orchestrator strip hardcoded counts** (lines 156, 158):
-- Line 156: `"3 agents"` → `"5 agents"`
-- Line 158: `"send_message ×3"` → `"send_message ×5"`
-
-**2e. Update empty-state text** (line 195):
-`"three specialized agents"` → `"five specialized agents"`
-
-**No tile layout changes needed.** Keep all 5 tiles in a single `.tiles` row with `flex: 1`. The `.tname` class already has `overflow: hidden; text-overflow: ellipsis` (CSS line 156) for graceful truncation. During Phase 1, the Reviewer tile appears dimmed (`opacity: 0.5` via `.tile.idle`) which naturally communicates it hasn't started yet.
+**Verification:**
+- `uv run python src/scripts/seed_user.py --help` prints usage (not `-m scripts.seed_user`, since that requires `__main__.py`)
+- `scripts/` directory now contains 4 consistent files
+- No dangling references to `src/seed_user.py`
 
 ---
 
-### 3. `src/web/nextjs-app/app/page.tsx` — Overview page (3 edits)
+### 1.2 [REMOVED — Stale] `contexts/lib/` nesting does not exist in current codebase
 
-**3a. Hero text** (line 23):
-`"four specialized agents"` → `"five specialized agents"`
-
-**3b. Agent cards in flow diagram** (lines 51-54) — add Analytics to the existing array:
-```typescript
-{ name: "RAG Agent", color: "--rag", meta: "LlamaIndex · :8002" },
-{ name: "Quant Agent", color: "--quant", meta: "LangGraph · :8003" },
-{ name: "Market Context", color: "--market", meta: "CrewAI · :8004" },
-{ name: "Analytics", color: "--analytics", meta: "PydanticAI · :8005" },
-```
-Then insert a Phase 2 section **between** the Phase 1 agent row (line 64) and the MCP connector (line 65):
-- A dashed connector card: `"Phase 2 · sequential cross-validation ↓"`
-- A single Reviewer Agent card (constrained to `maxWidth: "calc(25% - 10.5px)"` to match Phase 1 tile width)
-
-Visual ordering: Orchestrator → A2A → Phase 1 agents (4) → Phase 2 connector → Reviewer → MCP connector → MCP server.
-
-**3c. Feature card 04** (line 87):
-`"all four agent processes"` → `"all five agent processes"`
+`contexts/lib/` directory not found. `AuthContext.tsx` already imports from `@/lib/auth`. No action needed.
 
 ---
 
-### 4. `src/web/nextjs-app/app/operator/page.tsx` — Agent capability colors (1 edit)
+### 1.3 Populate `shared/__init__.py` with re-exports
 
-**Lines 90-91:** The ternary chain falls back to `--market` / `--market-bg` for all unrecognized agents. Expand with Analytics and Reviewer before the fallback:
+**Files to touch:**
+- `C:\Users\harma\OneDrive\Documents\Code\FinSight\multi-agent-investment-system\src\shared\__init__.py`
 
-```typescript
-background: a.name.includes("RAG") ? "var(--rag-bg)"
-  : a.name.includes("Quant") ? "var(--quant-bg)"
-  : a.name.includes("Market") ? "var(--market-bg)"
-  : a.name.includes("Analytics") ? "var(--analytics-bg)"
-  : a.name.includes("Reviewer") ? "var(--reviewer-bg)"
-  : "var(--orch-bg)",
-color: a.name.includes("RAG") ? "var(--rag)"
-  : a.name.includes("Quant") ? "var(--quant)"
-  : a.name.includes("Market") ? "var(--market)"
-  : a.name.includes("Analytics") ? "var(--analytics)"
-  : a.name.includes("Reviewer") ? "var(--reviewer)"
-  : "var(--clay)",
-```
-**Note:** The SERVICES health list (lines 8-16) already includes both agents — no changes needed there.
+**Action:**
+Currently `shared/__init__.py` is empty. Every consumer must know the exact internal module path. Add explicit re-exports for the most commonly used symbols. Each import line needs `# noqa: F401` to suppress ruff's unused-import rule for re-exports:
 
----
+```python
+"""FinSight shared infrastructure — core utilities, base abstractions, and factories."""
 
-### 5. `src/web/nextjs-app/app/trace/page.tsx` — Trace span colors + legend (3 edits)
+from shared.base_agent import BaseAgent  # noqa: F401
+from shared.settings import Settings, get_settings, reset_settings_for_tests  # noqa: F401
+from shared.agent_server import build_agent_app  # noqa: F401
+from shared.generic_executor import GenericAgentExecutor  # noqa: F401
+from shared.bootstrap import bootstrap  # noqa: F401
+from shared.logging_config import logged, logged_sync, logged_class, setup_file_logging  # noqa: F401
+from shared.mcp_client import get_shared_mcp  # noqa: F401
+from shared.observability import get_langfuse_client, init_instrumentation  # noqa: F401
+from shared.guardrails import is_off_topic  # noqa: F401
+from shared.ticker_utils import extract_ticker, resolve_and_validate_ticker, extract_holdings  # noqa: F401
 
-**5a. `color()` function** (lines 28-34) — add 2 lines after the market check (line 32), before the MCP check (line 33):
-```typescript
-if (n.includes("analytics") || n.includes("pydanticai") || n.includes("trend") || n.includes("forecast")) return "var(--analytics)";
-if (n.includes("reviewer") || n.includes("cross-valid")) return "var(--reviewer)";
+__all__ = [
+    "BaseAgent",
+    "Settings",
+    "get_settings",
+    "reset_settings_for_tests",
+    "build_agent_app",
+    "GenericAgentExecutor",
+    "bootstrap",
+    "logged",
+    "logged_sync",
+    "logged_class",
+    "setup_file_logging",
+    "get_shared_mcp",
+    "get_langfuse_client",
+    "init_instrumentation",
+    "is_off_topic",
+    "extract_ticker",
+    "resolve_and_validate_ticker",
+    "extract_holdings",
+]
 ```
 
-**5b. `bg()` function** (lines 37-43) — add 2 lines after the market check (line 41), before the MCP check (line 42):
-```typescript
-if (n.includes("analytics") || n.includes("pydanticai")) return "var(--analytics-bg)";
-if (n.includes("reviewer")) return "var(--reviewer-bg)";
+Do NOT remove existing `from shared.xxx import YYY` statements from consumer files — this only adds a convenience path. Over time, the team can migrate to `from shared import YYY` style.
+
+**Verification:**
+- `import shared; shared.BaseAgent` works from any module
+- `make lint` passes (ruff may complain about unused imports in `__init__`)
+- `make test` passes
+
+---
+
+## P2 — Design & Maintainability (Medium Priority)
+
+### 2.1 Extract Duplicate `_build_response()` Pattern into `BaseAgent`
+
+**Files to touch:**
+- `C:\Users\harma\OneDrive\Documents\Code\FinSight\multi-agent-investment-system\src\shared\base_agent.py`
+- `C:\Users\harma\OneDrive\Documents\Code\FinSight\multi-agent-investment-system\src\quant\executor.py`
+- `C:\Users\harma\OneDrive\Documents\Code\FinSight\multi-agent-investment-system\src\analytics\executor.py`
+- `C:\Users\harma\OneDrive\Documents\Code\FinSight\multi-agent-investment-system\src\market_context\executor.py`
+- `C:\Users\harma\OneDrive\Documents\Code\FinSight\multi-agent-investment-system\src\reviewer\executor.py`
+
+**Problem:**
+
+Every agent executor duplicates this pattern in `_build_response()`:
+
+```python
+async def _build_response(self, query: str) -> dict:
+    trace_id, parent_span_id, query = extract_trace_ids(query)
+    langfuse = get_langfuse_client()
+    trace_ctx = (
+        {"trace_id": trace_id, "parent_span_id": parent_span_id}
+        if trace_id and parent_span_id
+        else None
+    )
+    with langfuse.start_as_current_observation(
+        as_type="span",
+        name="<agent-name>-agent-stream",
+        input=query,
+        trace_context=trace_ctx,
+    ) as span:
+        if trace_id:
+            trace_ctx = {"trace_id": trace_id, "parent_span_id": span.id}
+        try:
+            # ... agent-specific logic ...
+        except Exception as e:
+            logger.exception("<Agent> analysis failed")
+            span.update(output={"error": str(e)})
+            return {
+                "response_type": "text",
+                "is_task_complete": True,
+                "is_error": True,
+                "require_user_input": False,
+                "content": f"<Agent> analysis failed: {e}",
+            }
 ```
 
-**5c. Legend array** (lines 286-291) — add 2 entries after "Market Context" (line 290), before "MCP tool" (line 291):
-```typescript
-{ label: "Analytics", c: "var(--analytics)" },
-{ label: "Reviewer", c: "var(--reviewer)" },
+**Action:**
+
+1. Add to `BaseAgent` (`src/shared/base_agent.py`):
+
+```python
+import traceback
+from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator
+
+@asynccontextmanager
+async def _telemetry_span(self, span_name: str, query: str) -> AsyncIterator[tuple[dict | None, dict | None]]:
+    """Open a Langfuse span, extract trace context from query, yield (trace_ctx, span) metadata.
+    
+    Usage inside subclass:
+        async with self._telemetry_span("my-span", query) as (trace_ctx, span):
+            ...
+    """
+    from shared.observability import get_langfuse_client
+    from shared.trace_context import extract_trace_ids
+    trace_id, parent_span_id, query = extract_trace_ids(query)
+    langfuse = get_langfuse_client()
+    trace_ctx = (
+        {"trace_id": trace_id, "parent_span_id": parent_span_id}
+        if trace_id and parent_span_id
+        else None
+    )
+    with langfuse.start_as_current_observation(
+        as_type="span",
+        name=span_name,
+        input=query,
+        trace_context=trace_ctx,
+    ) as span:
+        if trace_id:
+            trace_ctx = {"trace_id": trace_id, "parent_span_id": span.id}
+        yield trace_ctx, span
 ```
 
+2. Add a helper to build the standard error response dict:
+
+```python
+def _error_response(self, message: str) -> dict:
+    return {
+        "response_type": "text",
+        "is_task_complete": True,
+        "is_error": True,
+        "require_user_input": False,
+        "content": message,
+    }
+
+def _data_response(self, data: dict) -> dict:
+    return {
+        "response_type": "data",
+        "is_task_complete": True,
+        "is_error": False,
+        "require_user_input": False,
+        "content": data,
+    }
+```
+
+3. Refactor each agent's `_build_response()` to use these helpers. Example for `quant/executor.py`:
+
+```diff
+-    @logged()
+-    async def _build_response(self, query: str) -> dict:
+-        trace_id, parent_span_id, query = extract_trace_ids(query)
+-        langfuse = get_langfuse_client()
+-        trace_ctx = (...)
+-        with langfuse.start_as_current_observation(...) as span:
+-            ticker, company = await resolve_and_validate_ticker(query)
++    async def _build_response(self, query: str) -> dict:
++        async with self._telemetry_span("quant-agent-stream", query) as (trace_ctx, span):
++            ticker, company = await resolve_and_validate_ticker(query)
+             if not ticker:
+                 span.update(output={"error": company or "No ticker found"})
+-                return {...}
++                return self._error_response(company or "Could not identify a stock ticker.")
+             ...
+-            return {...}
++            return self._data_response(result)
+```
+
+4. **IMPORTANT: Keep `@logged()` decorator on `_build_response`**. The `@logged()` decorator provides entry/exit/latency logging that `_telemetry_span` does not replace. Keep both:
+```python
+    @logged()
+    async def _build_response(self, query: str) -> dict:
+        async with self._telemetry_span("quant-agent-stream", query) as (trace_ctx, span):
+            ...
+```
+The `@logged()` decorator logs at function boundary level; `_telemetry_span` manages the Langfuse observation lifecycle. They serve different purposes.
+
+5. Remove now-unused imports from each agent's `executor.py`:
+   - `from shared.observability import get_langfuse_client`
+   - `from shared.trace_context import extract_trace_ids`
+
+**VERY IMPORTANT — per-agent differences to preserve:**
+- **Quant** (`quant/executor.py:69-136`): Has holdings extraction via `extract_holdings()`, deterministic schema check via `score_quant_deterministic()`, and deferred eval via `_eval_quant_response`. Preserve all of these inside the telemetry span block.
+- **Analytics** (`analytics/executor.py:43-109`): Uses `AnalyticsAgentOutput.model_validate(result)`, schema check via `score_analytics_deterministic()`, and deferred eval via `_eval_analytics`. Preserve.
+- **Market Context** (`market_context/executor.py:149-220`): Has `contexts = result.pop("_retrieved_contexts", [])`, narrative extraction from multiple possible keys, and deferred eval via `_eval_sentiment_response`. Preserve.
+- **Reviewer** (`reviewer/executor.py:39-218`): Uses `context_id` parameter (not just `query`), JSON deserialization of payload, inline agent outputs vs SQLite fetch, runs 4 deterministic tools, integrity gate, LLM synthesis via `Runner.run()`, and deferred eval. **Most complex** — ensure `_telemetry_span` works with extra args (add `context_id` as optional param). Also: reviewer returns `"content": json.dumps(output_dict)` (string, not dict). Call `self._data_response(json.dumps(output_dict))` to preserve this.
+
+**Verification:**
+- `make test` — all existing tests pass (especially `test_quant_nodes_io.py` and characterization tests)
+- `make lint` — ruff clean
+- `make type` — mypy clean on `src/shared` and `src/orchestrator`
+- Spot-check: each agent's response dict shape preserved exactly (down to every key in the return dict)
+
 ---
 
-## Edge Cases: No Stop Button
+### 2.2 Add `ruff format` to CI
 
-Since there is no cancel/stop button, the frontend must handle these scenarios gracefully:
+**Files to touch:**
+- `C:\Users\harma\OneDrive\Documents\Code\FinSight\multi-agent-investment-system\Makefile`
+- (optionally) `.github/workflows/ci.yml`
 
-### Scenario 1: Backend errors during Phase 1 (before Reviewer starts)
-- `active_agents` stays stale as `["Financial RAG Agent", "Quant Analysis Agent", "Market Context Agent", "Analytics Agent"]`
-- `running` becomes `false` (stream emits `RunFinishedEvent` on line 563, always — even after errors)
-- **With our fix**: `tileStatus` returns `"done"` for Phase 1 agents (agent in list + not running = "done"), Reviewer shows "idle" (never started). Topbar shows "Complete". Consistent UI.
-- **Without our fix** (current code): tiles show "working" forever while topbar says "Complete" — contradictory.
+**Action:**
+Add to `Makefile`:
 
-### Scenario 2: Backend errors during Phase 2
-- `active_agents` stays stale as all 5 agents
-- `running` becomes `false`
-- **With our fix**: all 5 tiles show "done". Honest — they all ran (partially). Topbar shows "Complete".
+```makefile
+fmt:     ruff format .
+fmtcheck: ruff format --check .
+```
 
-### Scenario 3: Backend timeout (line 415-425)
-- The timeout triggers a `break`, falls through to the `active_agents` clear at line 522. **This path DOES clear the list.**
-- Tiles disappear normally. No issue.
+**Do NOT add `fmtcheck` to the `ci` target yet.** Adding it before the codebase has been formatted means `make ci` fails immediately. The sequence is:
 
-### Scenario 4: User navigates away and back
-- CopilotKit state may or may not persist depending on session. If it persists, stale `active_agents` could show old tiles. Same mitigation: `running` being `false` shows "done" instead of "working".
+1. **This sprint**: Add `fmt` and `fmtcheck` targets to Makefile (no CI changes).
+2. **After 3.3** (format entire codebase): Then add `fmtcheck` to the `ci` target.
 
-### Scenario 5: User submits new query while loading
-- `handleSubmit` (line 109) already guards: `if (!input.trim() || isLoading) return;`
-- Input is also disabled: `disabled={isLoading}` (line 318)
-- **No issue** — duplicate submissions are prevented.
+For now, just add the targets. Update `ci` only after 3.3 is complete.
 
----
-
-## What Does NOT Need Changing
-
-| Component | Why |
-|---|---|
-| `src/orchestrator/agui_bridge.py` | Already maps both agents and emits them in `active_agents` (lines 70-82) |
-| Operator page SERVICES array | Already lists Analytics (:8005) and Reviewer (:8006) (lines 13-14) |
-| Sidebar (`components/Sidebar.tsx`) | No agent references |
-| Layout (`app/layout.tsx`) | No agent references |
-| Backend agent cards / servers | Already fully configured |
+**Verification:**
+- `make fmtcheck` reports formatting issues (expected, since codebase isn't formatted yet)
+- `make fmt` runs without error
+- `make lint` still passes after `make fmt`
 
 ---
 
-## Risk Assessment
+### 2.3 Standardize Lazy vs Eager Import Style
 
-| Risk | Impact | Mitigation |
-|---|---|---|
-| TypeScript type change from adding `phase` | Low | `as const` infers literal types; `typeof AGENTS[number]` auto-includes `phase: 1 \| 2` |
-| 5 tiles slightly narrower than 3 | Low | `.tname` already has `text-overflow: ellipsis` (CSS line 156) |
-| `"analytics"` match string collision in trace spans | Very low | Agent display names are well-structured (`"Analytics Agent"`); unlikely false matches |
-| Phase 1 agents stay "working" during Phase 2 | None | Already the current behavior for existing agents — backend never removes them individually |
-| Stale `active_agents` on error (no stop button) | Low | `tileStatus` now uses `running` flag to show "done" instead of "working" when stream ends |
+**Files to touch:**
+- `C:\Users\harma\OneDrive\Documents\Code\FinSight\multi-agent-investment-system\src\quant\executor.py`
+- `C:\Users\harma\OneDrive\Documents\Code\FinSight\multi-agent-investment-system\src\analytics\executor.py`
+- `C:\Users\harma\OneDrive\Documents\Code\FinSight\multi-agent-investment-system\src\market_context\executor.py`
+- `C:\Users\harma\OneDrive\Documents\Code\FinSight\multi-agent-investment-system\src\financial_rag\executor.py`
+- `C:\Users\harma\OneDrive\Documents\Code\FinSight\multi-agent-investment-system\src\reviewer\executor.py`
+- `C:\Users\harma\OneDrive\Documents\Code\FinSight\multi-agent-investment-system\src\orchestrator\agent_executor.py`
+
+**Problem:**
+
+Inconsistent import pattern for `defer_eval` and `score_*` functions across agent executors:
+
+| File | Pattern |
+|------|---------|
+| `quant/executor.py:10` | `from shared.runtime_eval import score_quant_response as _eval_quant_response` (eager, top-level) |
+| `quant/executor.py:124` | `from shared.eval_gate import defer_eval` (lazy, inside `if EVAL_ENABLED:` block) |
+| `analytics/executor.py:84` | `from shared.eval_gate import defer_eval` and `from shared.runtime_eval import ...` (both lazy) |
+| `financial_rag/executor.py:12` | `from shared.runtime_eval import score_rag_response as _eval_rag_response` (eager, top-level) |
+| `financial_rag/executor.py:253` | `from shared.eval_gate import defer_eval` (lazy, inside guard) |
+| `market_context/executor.py:196` | `from shared.eval_gate import defer_eval` (lazy) |
+| `reviewer/executor.py:201` | `from shared.eval_gate import defer_eval` and `from shared.runtime_eval import ...` (both lazy) |
+| `orchestrator/agent_executor.py:24` | `from shared.runtime_eval import score_response as _eval_score_response` (eager) |
+
+**Action:**
+
+All deferred-eval related imports should be lazy (inside the `if EVAL_ENABLED:` guard) since they add import overhead for runtime paths that rarely execute. Remove the eager imports and move them into the guard block consistently.
+
+For each file:
+1. Remove `from shared.eval_gate import defer_eval` from module-level imports
+2. Remove `from shared.runtime_eval import score_*` from module-level imports
+3. Ensure these imports exist inside the `if EVAL_ENABLED:` block where they're used
+
+Exception: `src/shared/runtime_eval.py` — do NOT touch this file; it's the definition site.
+
+**Verification:**
+- `make test` — especially eval-gated tests
+- `make lint`
+- `make type`
 
 ---
 
-## Verification
+## P3 — Minor & Nice-to-Have (Low Priority)
 
-1. **Build check**: `cd src/web/nextjs-app && npm run build` — confirm no TypeScript errors
-2. **Dev server**: `npm run dev` — open `http://localhost:3000`
-3. **Research page** (`/research`): Submit a query and confirm:
-   - 5 agent tiles appear in one row
-   - Phase 1 tiles (RAG, Quant, Market, Analytics) light up with correct colors when active
-   - Reviewer tile stays dimmed/idle during Phase 1, lights up during Phase 2
-   - Orchestrator strip says "5 agents" and "send_message ×5"
-   - Empty state says "five specialized agents"
-   - After run completes: tiles show checkmarks (done state), not stuck on "working"
-4. **Error scenario**: If the backend is down or errors mid-run, tiles should transition to "done" (not stay "working") once the stream ends
-5. **Overview page** (`/`): Confirm architecture diagram shows 4 Phase 1 agents + Reviewer, hero text says "five"
-6. **Operator page** (`/operator`): Confirm Analytics and Reviewer capability card icons use teal/crimson (not market brown)
-7. **Trace page** (`/trace`): Confirm analytics/reviewer spans use correct colors and legend shows 7 entries
+### 3.1 Fix `market_context/executor.py:224` — Inline `_extract_retrieved_contexts`
+
+**Files to touch:**
+- `C:\Users\harma\OneDrive\Documents\Code\FinSight\multi-agent-investment-system\src\market_context\executor.py`
+
+**Action:**
+Move `_extract_retrieved_contexts` from a module-level function (decorated with `@logged_sync()`) into `MarketContextAgent` as a static method or private method. This makes it consistent with the other agents where helper functions are class methods.
+
+```diff
+-class MarketContextAgent(BaseAgent):
++class MarketContextAgent(BaseAgent):
++    @staticmethod
++    def _extract_retrieved_contexts(data: dict) -> list[str]:
++        ...
+```
+
+And update the call site (line 126):
+
+```diff
+-        result["_retrieved_contexts"] = _extract_retrieved_contexts(data)
++        result["_retrieved_contexts"] = self._extract_retrieved_contexts(data)
+```
+
+Remove the standalone `@logged_sync()` decorator from the function (it's a pure data transformation, no side effects worth logging at that granularity).
+
+**Verification:**
+- `make test` — market context tests pass
+- `make lint`
+
+---
+
+### 3.2 Fix `shared/memory/__init__.py` — Replace `__getattr__` with Explicit Imports
+
+**Files to touch:**
+- `C:\Users\harma\OneDrive\Documents\Code\FinSight\multi-agent-investment-system\src\shared\memory\__init__.py`
+
+**Action:**
+Replace the `__getattr__` dynamic dispatch (which breaks static analysis) with direct imports:
+
+```diff
+-from shared.memory.store import DB_PATH, get_db, init_db
+-from shared.memory.ticker_memory import TickerMemory
+-
+-
+-def __getattr__(name: str):
+-    if name == "SQLiteMemoryService":
+-        from shared.memory.memory_service import SQLiteMemoryService
+-        return SQLiteMemoryService
+-    if name == "PerformanceTracker":
+-        from shared.memory.performance_tracker import PerformanceTracker
+-        return PerformanceTracker
+-    if name == "PortfolioStore":
+-        from shared.memory.portfolio_store import PortfolioStore
+-        return PortfolioStore
+-    if name in ("store_agent_output", "get_agent_outputs", "prune_stale_outputs"):
+-        from shared.memory.agent_output_store import (
+-            get_agent_outputs,
+-            prune_stale_outputs,
+-            store_agent_output,
+-        )
+-        return locals()[name]
+-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
++from shared.memory.store import DB_PATH, get_db, init_db
++from shared.memory.ticker_memory import TickerMemory
++from shared.memory.memory_service import SQLiteMemoryService
++from shared.memory.performance_tracker import PerformanceTracker
++from shared.memory.portfolio_store import PortfolioStore
++from shared.memory.agent_output_store import (
++    get_agent_outputs,
++    prune_stale_outputs,
++    store_agent_output,
++)
+```
+
+**Verification:**
+- `import shared.memory; shared.memory.PortfolioStore` works
+- `make test` passes
+- `make type` — no more `"SQLiteMemoryService" is not exported from module` warnings
+- Check that no circular import errors appear at runtime (run `uv run python -c "from shared.memory import SQLiteMemoryService"`)
+
+---
+
+### 3.3 One-Off: Format Entire Codebase with `ruff format`
+
+**Action (only after 2.2 is done):**
+1. `cd` to project root
+2. `uv run ruff format .`
+3. Review the diff — it should only be whitespace/line-break changes (ruff format is very safe)
+4. `make lint && make test && make type`
+
+This step is optional and should be a separate commit from any logic changes. It touches many files but is purely mechanical.
+
+---
+
+### 3.4 Harmonize agent_card definitions
+
+**Problem:**
+- Each `src/*/server.py` defines `agent_card = AgentCard(...)` in code
+- `agent_cards/*.json` duplicates the same info as JSON files
+- If they diverge, A2A discovery returns wrong metadata
+
+**Short-term fix (this sprint):**
+Add a comment at the top of each `server.py` that says:
+```python
+# Agent card: keep in sync with agent_cards/<name>.json
+```
+
+**Long-term (future):**
+Generate `agent_cards/*.json` from the Python definitions at build time. Not implementing now — just document as known tech debt.
+
+**Action:**
+Add the sync-warning comment to each `server.py` file (quant, analytics, market_context, reviewer, financial_rag, orchestrator).
+
+---
+
+## P4 — Future Architecture (Not for This Sprint)
+
+These are noted but explicitly out of scope for this plan:
+
+### 4.1 Split `orchestrator/agent_executor.py` — God Class
+- 624 lines, 7+ responsibilities
+- Would require: extract `TickerCacheService`, `GuardrailChain`, `MemoryPersistenceService`, `OrchestrationService`
+- Risk: high. Tests heavily depend on `FinSightAgentExecutor`. Skip for now.
+
+### 4.2 `shared/` module splitting
+- Growing to 30+ modules in one package
+- Consider `finsight_lib/` for utility code (ticker_utils, rate_limiter, ttl_cache, sandbox) separate from `finsight_shared/` for infrastructure (settings, base_agent, agent_server, logging, auth)
+- Skip for now — not urgent
+
+---
+
+## Verification Checklist
+
+After ALL changes:
+
+| Check | Command |
+|-------|---------|
+| Lint | `make lint` — ruff clean |
+| Type check | `make type` — mypy clean on shared + orchestrator |
+| Unit + characterization tests | `make test` — all pass |
+| Frontend build | `cd src/web/nextjs-app && npm run build` |
+| All agent startup | `uv run python -c "from quant.executor import QuantAgent; QuantAgent()"` (repeat for each agent) |
+| Shared imports work | `uv run python -c "from shared import BaseAgent, get_settings, build_agent_app"` |
+
+---
+
+## Rollback Plan
+
+1. Each change above is independent — revert individual commits if one breaks
+2. The `ruff format` step (3.3) should be its own commit at the end, NOT squashed with logic changes
+3. Tests are the safety net: if `make test` passes, the change is safe
+
+---
+
+## Code Review — Plan Correctness & Safety (2026-06-18)
+
+Verified each item against current codebase state.
+
+### Item 1.1 — `seed_user.py` move
+- File exists with `sys.path.insert(0, "src")` on line 13. After moving into `src/scripts/`, this path breaks — must update to `sys.path.insert(0, "..")` or remove if pyproject.toml handles it.
+- No references in Makefile, shell scripts, or CI — only in docs (CHANGELOG, DESIGN_DECISIONS, AGENTS.md). Safe.
+- Verification command `uv run python -m scripts.seed_user --help` requires `src/scripts/__main__.py` which doesn't exist. Correct command: `uv run python src/scripts/seed_user.py --help`.
+
+### Item 1.2 — `contexts/lib/` nesting
+**STALE. Remove from plan.** The directory `src/web/nextjs-app/contexts/lib/` does not exist. `AuthContext.tsx` already imports from `@/lib/auth` (line 8). The `lib/` directory already has the correct structure. No files reference `contexts/lib/` anywhere.
+
+### Item 1.3 — `shared/__init__.py` re-exports
+- `shared/__init__.py` is confirmed empty.
+- No circular import risk: memory submodules import from `shared.memory.store`, `shared.models`, `shared.settings` — none import from `shared` (top-level).
+- **Caveat**: Ruff F401 (unused imports) will fire on `__init__.py` re-exports. Add `# noqa: F401` to each import line or add per-file-ignore in pyproject.toml.
+
+### Item 2.1 — Extract `_build_response()` into `BaseAgent`
+Verified all 4 executors. Plan's per-agent difference notes are accurate.
+- **`@logged()` decorator**: All 4 executors decorate `_build_response` with `@logged()`. Plan's diff shows removing it. Confirm whether `@logged()` should be removed or kept alongside `_telemetry_span`. Removing it loses the entry/exit log lines.
+- **Reviewer return shape**: Reviewer returns `"content": json.dumps(output_dict)` (string, not dict). The `_data_response` helper passes `data` as-is. This is fine as long as reviewer calls `self._data_response(json.dumps(output_dict))`, but plan doesn't show this explicitly.
+- **`BaseAgent` is Pydantic BaseModel**: Adding `_telemetry_span` (asynccontextmanager), `_error_response`, `_data_response` as methods is fine. No BaseModel field conflicts.
+
+### Item 2.2 — Add `ruff format` to CI
+**WILL BREAK CI as written.** Adding `fmtcheck` to `ci` target before running `ruff format` on the codebase means `make ci` fails immediately. Either:
+- (a) Run `ruff format .` first, then add `fmtcheck` to `ci`, OR
+- (b) Add `fmt` and `fmtcheck` targets but do NOT add `fmtcheck` to `ci` until 3.3 is done.
+
+### Item 2.3 — Standardize lazy vs eager imports
+- Missing `financial_rag/executor.py` from the file list. It has `from shared.runtime_eval import score_rag_response as _eval_rag_response` (eager, line 12) and `from shared.eval_gate import defer_eval` (lazy, line 253). Same pattern as the others — needs the same treatment.
+- The `score_*_deterministic` functions (e.g., `score_quant_deterministic`) are called outside `EVAL_ENABLED` guards, so they correctly remain eager. Plan is correct to only move `score_*_response` and `defer_eval`.
+- `orchestrator/agent_executor.py:24` has `from shared.runtime_eval import score_response as _eval_score_response` (eager) — plan mentions this, correct.
+
+### Item 3.1 — Inline `_extract_retrieved_contexts`
+Safe. Module-level `@logged_sync()` function at line 223-264, call site at line 126. Moving to `@staticmethod` is straightforward.
+
+### Item 3.2 — Replace `__getattr__` in `shared/memory/__init__.py`
+Safe. No circular import risk confirmed. `__all__` already lists all exported names.
+
+### Item 3.3 — Format codebase
+Depends on 2.2. Purely mechanical whitespace. Safe.
+
+### Item 3.4 — Harmonize agent_card
+Comment-only change. Safe.
+
+### Risk Summary
+
+| Change | Risk | Reason |
+|--------|------|--------|
+| 1.1 seed_user move | Low | Only path hack needs updating |
+| 1.2 contexts/lib | N/A | Stale — skip |
+| 1.3 shared/__init__ re-exports | Low | Add noqa for F401 |
+| 2.1 _build_response extraction | Medium | Core agent logic refactored; test thoroughly |
+| 2.2 ruff format CI | High | Breaks CI if fmtcheck added before format run |
+| 2.3 lazy imports | Low | Import path changes only, no logic change |
+| 3.1 inline function | Low | Simple method move |
+| 3.2 memory __getattr__ | Low | Direct replacement |
+| 3.3 format codebase | Low | Mechanical |
+| 3.4 agent_card comments | None | Comment-only |

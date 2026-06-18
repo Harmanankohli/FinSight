@@ -51,7 +51,11 @@ async def compute_metrics_node(state: QuantAnalysisState) -> dict:
 
     annual_vol = float(returns.std() * np.sqrt(252))
     rf_daily = 0.043 / 252
-    sharpe = float(((returns.mean() - rf_daily) / returns.std()) * np.sqrt(252)) if returns.std() > 0 else 0.0
+    sharpe = (
+        float(((returns.mean() - rf_daily) / returns.std()) * np.sqrt(252))
+        if returns.std() > 0
+        else 0.0
+    )
     var_95 = float(np.percentile(returns, 5))
 
     running_max = prices.expanding().max()

@@ -28,14 +28,16 @@ async def _fetch_prices(mcp_client, ticker: str, period: str) -> dict:
             close_val = row.get("Close") or row.get("close")
             if close_val is not None and date_str:
                 close_data[date_str] = float(close_val)
-            ohlcv_data.append({
-                "date": date_str,
-                "open": float(row.get("Open", row.get("open", 0))),
-                "high": float(row.get("High", row.get("high", 0))),
-                "low": float(row.get("Low", row.get("low", 0))),
-                "close": float(row.get("Close", row.get("close", 0))),
-                "volume": float(row.get("Volume", row.get("volume", 0))),
-            })
+            ohlcv_data.append(
+                {
+                    "date": date_str,
+                    "open": float(row.get("Open", row.get("open", 0))),
+                    "high": float(row.get("High", row.get("high", 0))),
+                    "low": float(row.get("Low", row.get("low", 0))),
+                    "close": float(row.get("Close", row.get("close", 0))),
+                    "volume": float(row.get("Volume", row.get("volume", 0))),
+                }
+            )
         logger.info("Fetched prices for ticker=%s: %d days of data", ticker, len(close_data))
         return {"close_data": close_data, "ohlcv_data": ohlcv_data}
     except Exception as e:
@@ -47,9 +49,7 @@ async def _fetch_fundamentals(mcp_client, ticker: str) -> dict:
     try:
         import json
 
-        result = await mcp_client.call_tool_by_name(
-            "get_financials", {"ticker": ticker}
-        )
+        result = await mcp_client.call_tool_by_name("get_financials", {"ticker": ticker})
         if hasattr(result, "content"):
             for item in result.content:
                 txt = item.text if hasattr(item, "text") else str(item)

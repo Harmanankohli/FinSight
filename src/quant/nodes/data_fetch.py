@@ -225,14 +225,19 @@ async def fetch_web_context_node(state: QuantAnalysisState) -> dict:
     if not mcp:
         return {"web_context": []}
     try:
-        result = await mcp.call_tool_by_name("web_search", {
-            "query": f"{ticker} stock analyst opinion news",
-            "max_results": 5,
-            "time_filter": "w",
-        })
+        result = await mcp.call_tool_by_name(
+            "web_search",
+            {
+                "query": f"{ticker} stock analyst opinion news",
+                "max_results": 5,
+                "time_filter": "w",
+            },
+        )
         if not hasattr(result, "content") or not result.content:
             return {"web_context": []}
-        raw = result.content[0].text if hasattr(result.content[0], "text") else str(result.content[0])
+        raw = (
+            result.content[0].text if hasattr(result.content[0], "text") else str(result.content[0])
+        )
         data = json.loads(raw)
         results_list = [
             {"title": r.get("title", ""), "snippet": r.get("snippet", "")}

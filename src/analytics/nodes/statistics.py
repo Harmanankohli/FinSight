@@ -11,12 +11,28 @@ async def _compute_statistics(price_data: dict, mcp_client) -> dict:
         sorted_dates = sorted(price_data.keys())
         closes = [price_data[d] for d in sorted_dates if price_data[d] is not None]
         if len(closes) < 10:
-            return {"return_distribution": None, "skewness": None, "kurtosis": None, "jarque_bera_pvalue": None, "correlations": {}, "regression_beta": None, "regression_r_squared": None}
+            return {
+                "return_distribution": None,
+                "skewness": None,
+                "kurtosis": None,
+                "jarque_bera_pvalue": None,
+                "correlations": {},
+                "regression_beta": None,
+                "regression_r_squared": None,
+            }
 
         prices = np.array(closes, dtype=float)
         log_returns = np.diff(np.log(prices))
         if len(log_returns) < 5:
-            return {"return_distribution": None, "skewness": None, "kurtosis": None, "jarque_bera_pvalue": None, "correlations": {}, "regression_beta": None, "regression_r_squared": None}
+            return {
+                "return_distribution": None,
+                "skewness": None,
+                "kurtosis": None,
+                "jarque_bera_pvalue": None,
+                "correlations": {},
+                "regression_beta": None,
+                "regression_r_squared": None,
+            }
 
         skew = float(scipy_stats.skew(log_returns))
         kurt = float(scipy_stats.kurtosis(log_returns, fisher=True))
@@ -36,7 +52,9 @@ async def _compute_statistics(price_data: dict, mcp_client) -> dict:
         try:
             import json as _json
 
-            spy_result = await mcp_client.call_tool_by_name("get_prices", {"ticker": "SPY", "period": "1y", "interval": "1d"})
+            spy_result = await mcp_client.call_tool_by_name(
+                "get_prices", {"ticker": "SPY", "period": "1y", "interval": "1d"}
+            )
             spy_raw = {}
             if hasattr(spy_result, "content"):
                 for item in spy_result.content:
@@ -62,7 +80,9 @@ async def _compute_statistics(price_data: dict, mcp_client) -> dict:
                     common_dates.append(d)
 
             if len(spy_closes) > 10 and len(common_dates) > 10:
-                stock_returns = np.diff(np.log([price_data[d] for d in common_dates if price_data[d] is not None]))
+                stock_returns = np.diff(
+                    np.log([price_data[d] for d in common_dates if price_data[d] is not None])
+                )
                 spy_returns_arr = np.diff(np.log(spy_closes))
                 min_len = min(len(stock_returns), len(spy_returns_arr))
                 if min_len > 5:
@@ -78,7 +98,13 @@ async def _compute_statistics(price_data: dict, mcp_client) -> dict:
         except Exception as spy_err:
             logger.debug("SPY correlation failed (non-fatal): %s", spy_err)
 
-        logger.debug("Statistics: dist=%s skew=%.4f kurt=%.4f beta=%s", dist_class, skew, kurt, regression_beta)
+        logger.debug(
+            "Statistics: dist=%s skew=%.4f kurt=%.4f beta=%s",
+            dist_class,
+            skew,
+            kurt,
+            regression_beta,
+        )
         return {
             "return_distribution": dist_class,
             "skewness": round(skew, 4),
@@ -90,4 +116,12 @@ async def _compute_statistics(price_data: dict, mcp_client) -> dict:
         }
     except Exception as e:
         logger.warning("Statistical analysis failed: %s", e)
-        return {"return_distribution": None, "skewness": None, "kurtosis": None, "jarque_bera_pvalue": None, "correlations": {}, "regression_beta": None, "regression_r_squared": None}
+        return {
+            "return_distribution": None,
+            "skewness": None,
+            "kurtosis": None,
+            "jarque_bera_pvalue": None,
+            "correlations": {},
+            "regression_beta": None,
+            "regression_r_squared": None,
+        }

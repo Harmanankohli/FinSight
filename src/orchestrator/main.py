@@ -157,11 +157,13 @@ async def _authenticated_report(request):
 
 routes.append(Route("/reports/{filename}", _authenticated_report, methods=["GET"]))
 
+
 @asynccontextmanager
 async def lifespan(app):
     await start_background_discovery()
     yield
     from shared.mcp_client import _global_client
+
     if _global_client and _global_client._connected:
         try:
             await _global_client.disconnect_all()
@@ -204,6 +206,7 @@ async def start_server(host: str, port: int) -> None:
     # Prune stale agent outputs from the shared store (TTL-based cleanup)
     try:
         from shared.memory.agent_output_store import prune_stale_outputs
+
         stale_count = await prune_stale_outputs(max_age_seconds=600)
         if stale_count:
             logger.info("Pruned %d stale agent outputs", stale_count)

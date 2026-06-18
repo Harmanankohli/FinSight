@@ -196,7 +196,8 @@ async def format_output_node(state: QuantAnalysisState) -> dict:
             confidence = min(confidence, prob_profit)
             logger.info(
                 "Downgraded %s from BUY to HOLD: MC prob_profit=%.1f%% < 50%%",
-                ticker, prob_profit * 100,
+                ticker,
+                prob_profit * 100,
             )
 
     # Named signal list (for display/backward compat)

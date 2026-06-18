@@ -76,7 +76,8 @@ async def test_web_search_uncached_empty_results(fake_ddgs, mock_limiter):
 
 
 @pytest.mark.skip(
-    reason="ImportError path requires removing installed package; covered by code review")
+    reason="ImportError path requires removing installed package; covered by code review"
+)
 async def test_web_search_import_error_fallback():
     """When ddgs module can't be imported, return error dict."""
     from mcp_tools.tools.web_search import _web_search_uncached

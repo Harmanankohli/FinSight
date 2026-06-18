@@ -56,8 +56,26 @@ def validate_recommendation(agent_outputs: dict) -> dict:
     # ── RAG filings sentiment ──
     rag_summary = rag.get("summary", "")
     if rag_summary:
-        positive_words = ["growth", "profit", "positive", "strong", "beat", "exceed", "improvement", "record"]
-        negative_words = ["decline", "loss", "negative", "weak", "miss", "risk", "warning", "deteriorat"]
+        positive_words = [
+            "growth",
+            "profit",
+            "positive",
+            "strong",
+            "beat",
+            "exceed",
+            "improvement",
+            "record",
+        ]
+        negative_words = [
+            "decline",
+            "loss",
+            "negative",
+            "weak",
+            "miss",
+            "risk",
+            "warning",
+            "deteriorat",
+        ]
         pos_count = sum(1 for w in positive_words if w in rag_summary.lower())
         neg_count = sum(1 for w in negative_words if w in rag_summary.lower())
         if pos_count > neg_count:
@@ -92,7 +110,9 @@ def validate_recommendation(agent_outputs: dict) -> dict:
     roe = fundamentals.get("roe")
     if roe is not None:
         if roe > 0.20:
-            supporting.append(f"Strong ROE of {roe * 100:.1f}%" if roe < 5 else f"Strong ROE of {roe:.1f}%")
+            supporting.append(
+                f"Strong ROE of {roe * 100:.1f}%" if roe < 5 else f"Strong ROE of {roe:.1f}%"
+            )
         elif roe < 0:
             contradicting.append(f"Negative ROE of {roe * 100:.1f}%")
 
@@ -103,7 +123,11 @@ def validate_recommendation(agent_outputs: dict) -> dict:
     rev_growth = fundamentals.get("revenue_growth")
     if rev_growth is not None:
         if rev_growth > 0.10:
-            supporting.append(f"Revenue growth of {rev_growth * 100:.1f}%" if rev_growth < 5 else f"Revenue growth of {rev_growth:.1f}%")
+            supporting.append(
+                f"Revenue growth of {rev_growth * 100:.1f}%"
+                if rev_growth < 5
+                else f"Revenue growth of {rev_growth:.1f}%"
+            )
         elif rev_growth < -0.05:
             contradicting.append(f"Revenue decline of {rev_growth * 100:.1f}%")
 
@@ -163,7 +187,11 @@ def validate_recommendation(agent_outputs: dict) -> dict:
 
     logger.info(
         "Validation: %s (evidence supports=%s, strength=%s, supporting=%d, contradicting=%d)",
-        recommendation, evidence_supports, strength, len(supporting), len(contradicting),
+        recommendation,
+        evidence_supports,
+        strength,
+        len(supporting),
+        len(contradicting),
     )
     return {
         "recommendation": recommendation,

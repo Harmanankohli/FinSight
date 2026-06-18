@@ -55,5 +55,7 @@ class TokenBucket:
             if self.tokens >= 1:
                 self.tokens -= 1
                 return True
-            logger.debug("Rate limiter hit for %s (rate=%.1f/s, burst=%d)", self._name, self.rate, self.burst)
+            logger.debug(
+                "Rate limiter hit for %s (rate=%.1f/s, burst=%d)", self._name, self.rate, self.burst
+            )
             return False

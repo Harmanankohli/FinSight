@@ -91,14 +91,29 @@ async def _detect_trends(price_data: dict) -> dict:
                 direction = "neutral"
             strength = max(bullish_count, bearish_count) / max(total, 1)
 
-        logger.debug("Trend detection: direction=%s strength=%.2f crossover=%s", direction, strength, ma_crossover)
+        logger.debug(
+            "Trend detection: direction=%s strength=%.2f crossover=%s",
+            direction,
+            strength,
+            ma_crossover,
+        )
         return {
             "trend_direction": direction,
             "ma_crossover_signal": ma_crossover,
-            "momentum_shift": "accelerating" if roc_20d > roc_60d else "decelerating" if roc_20d < roc_60d else None,
+            "momentum_shift": "accelerating"
+            if roc_20d > roc_60d
+            else "decelerating"
+            if roc_20d < roc_60d
+            else None,
             "trend_strength": round(strength, 2),
             "supporting_indicators": signals if signals else ["neutral"],
         }
     except Exception as e:
         logger.warning("Trend detection failed: %s", e)
-        return {"trend_direction": "neutral", "ma_crossover_signal": None, "momentum_shift": None, "trend_strength": 0.0, "supporting_indicators": []}
+        return {
+            "trend_direction": "neutral",
+            "ma_crossover_signal": None,
+            "momentum_shift": None,
+            "trend_strength": 0.0,
+            "supporting_indicators": [],
+        }

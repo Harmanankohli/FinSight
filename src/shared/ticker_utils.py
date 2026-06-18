@@ -393,7 +393,10 @@ async def resolve_and_validate_ticker(query: str) -> tuple[str | None, str | Non
         resolved = True
 
     if not ticker:
-        return None, "Could not identify a stock ticker from the query. Try using parentheses (AAPL) or $ prefix ($V)."
+        return (
+            None,
+            "Could not identify a stock ticker from the query. Try using parentheses (AAPL) or $ prefix ($V).",
+        )
 
     valid, validated_ticker, company = await validate_ticker(ticker)
     if not valid and not resolved:

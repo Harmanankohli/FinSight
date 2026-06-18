@@ -7,7 +7,14 @@ from scipy import signal
 logger = logging.getLogger(__name__)
 
 
-def _holt_winters(series: list[float], horizon: int, alpha: float = 0.3, beta: float = 0.1, gamma: float = 0.1, period: int = 5) -> tuple[list[float], list[float], list[float]]:
+def _holt_winters(
+    series: list[float],
+    horizon: int,
+    alpha: float = 0.3,
+    beta: float = 0.1,
+    gamma: float = 0.1,
+    period: int = 5,
+) -> tuple[list[float], list[float], list[float]]:
     n = len(series)
     if n < 60:
         return [], [], []
@@ -68,6 +75,7 @@ def _holt_winters(series: list[float], horizon: int, alpha: float = 0.3, beta: f
 
 async def _run_forecast(price_data: dict) -> dict:
     import json
+
     try:
         sorted_dates = sorted(price_data.keys())
         closes = [price_data[d] for d in sorted_dates if price_data[d] is not None]
@@ -105,13 +113,17 @@ async def _run_forecast(price_data: dict) -> dict:
             actual = closes[-holdout_size:]
             f_holdout, _, _ = _holt_winters(train, holdout_size)
             if f_holdout and actual:
-                mape = np.mean([abs((a - f) / a) for a, f in zip(actual, f_holdout) if a != 0]) * 100
+                mape = (
+                    np.mean([abs((a - f) / a) for a, f in zip(actual, f_holdout) if a != 0]) * 100
+                )
             else:
                 mape = None
         else:
             mape = None
 
-        logger.info("Forecast complete: horizon=30d mape=%s", f"{mape:.2f}%" if mape is not None else "N/A")
+        logger.info(
+            "Forecast complete: horizon=30d mape=%s", f"{mape:.2f}%" if mape is not None else "N/A"
+        )
         return {
             "method": "exponential_smoothing",
             "horizon_days": 30,
@@ -123,4 +135,12 @@ async def _run_forecast(price_data: dict) -> dict:
         }
     except Exception as e:
         logger.warning("Forecast failed: %s", e)
-        return {"method": "exponential_smoothing", "horizon_days": 30, "forecast_prices": [], "forecast_dates": [], "confidence_lower": [], "confidence_upper": [], "mape": None}
+        return {
+            "method": "exponential_smoothing",
+            "horizon_days": 30,
+            "forecast_prices": [],
+            "forecast_dates": [],
+            "confidence_lower": [],
+            "confidence_upper": [],
+            "mape": None,
+        }

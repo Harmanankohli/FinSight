@@ -1,8 +1,10 @@
 {
   "analysis_date": "2024-01-15",
+  "anomaly_alerts": [],
   "charts": [],
   "company_name": "NVDA",
   "confidence": 0.85,
+  "dcf_breakdown": [],
   "disclaimer": "For informational purposes only. Not financial advice.",
   "exchange": "",
   "executive_summary": "NVDA continues to lead the AI semiconductor space with exceptional margin expansion and accelerating data center revenue. Our analysis supports a BUY rating with 12-month upside to $1,200.",
@@ -28,6 +30,7 @@
       "Daily"
     ]
   ],
+  "forecast_chart": {},
   "kpi_chips": [
     {
       "context": "Year-over-year",
@@ -54,6 +57,8 @@
       "value": "+42.0%"
     }
   ],
+  "macro_regime": "",
+  "monte_carlo_summary": {},
   "opportunities": [
     "Strong operational execution"
   ],
@@ -61,6 +66,10 @@
   "peer_names": [],
   "peers": [],
   "recommendation": "BUY",
+  "reviewer_confidence": {},
+  "reviewer_contradictions": [],
+  "reviewer_validation": {},
+  "reviewer_verifications": [],
   "risks": [
     "Market volatility",
     "Regulatory changes"
@@ -86,7 +95,12 @@
   ],
   "sections": [],
   "sector": "",
+  "signals_table": [],
+  "stats_table": [],
+  "stress_scenarios": [],
+  "technicals_table": [],
   "ticker": "NVDA",
+  "trend_data": {},
   "valuation_table": [
     [
       "DCF Fair Value",

@@ -41,16 +41,33 @@ QUANT_RESPONSE = {
     "peer_comparison": {
         "peers": ["NVDA", "AMD", "INTC"],
         "comparison": {
-            "NVDA": {"pe": 62.5, "ev_ebitda": 45.2, "rev_growth": 1.22, "op_margin": 0.628, "roe": 0.935},  # noqa: E501
-            "AMD": {"pe": 38.1, "ev_ebitda": 28.5, "rev_growth": 0.18, "op_margin": 0.225, "roe": 0.045},  # noqa: E501
-            "INTC": {"pe": 15.2, "ev_ebitda": 8.1, "rev_growth": -0.12, "op_margin": 0.05, "roe": -0.02},  # noqa: E501
+            "NVDA": {
+                "pe": 62.5,
+                "ev_ebitda": 45.2,
+                "rev_growth": 1.22,
+                "op_margin": 0.628,
+                "roe": 0.935,
+            },  # noqa: E501
+            "AMD": {
+                "pe": 38.1,
+                "ev_ebitda": 28.5,
+                "rev_growth": 0.18,
+                "op_margin": 0.225,
+                "roe": 0.045,
+            },  # noqa: E501
+            "INTC": {
+                "pe": 15.2,
+                "ev_ebitda": 8.1,
+                "rev_growth": -0.12,
+                "op_margin": 0.05,
+                "roe": -0.02,
+            },  # noqa: E501
         },
     },
     "stress_test": {"cvar_95": -4.2, "max_drawdown": -35.0},
     "recommendation": "BUY",
     "reasoning": (
-        "NVIDIA dominates AI GPU market with 80%+ share. "
-        "Strong fundamentals and growth trajectory."
+        "NVIDIA dominates AI GPU market with 80%+ share. Strong fundamentals and growth trajectory."
     ),
 }
 
@@ -104,8 +121,14 @@ def test_populate_from_quant_kpi_chips():
     from shared.reports.extraction import _populate_from_agent_outputs
 
     data = DeckData(
-        ticker="NVDA", company_name="NVIDIA", sector="Technology", exchange="NASDAQ",
-        recommendation="BUY", confidence=0.85, analysis_date="2026-06-12", executive_summary="",
+        ticker="NVDA",
+        company_name="NVIDIA",
+        sector="Technology",
+        exchange="NASDAQ",
+        recommendation="BUY",
+        confidence=0.85,
+        analysis_date="2026-06-12",
+        executive_summary="",
     )
     _populate_from_agent_outputs(data, {"quant_response": QUANT_RESPONSE}, "")
 
@@ -122,8 +145,14 @@ def test_populate_from_quant_financials():
     from shared.reports.extraction import _populate_from_agent_outputs
 
     data = DeckData(
-        ticker="NVDA", company_name="NVIDIA", sector="Technology", exchange="NASDAQ",
-        recommendation="BUY", confidence=0.85, analysis_date="2026-06-12", executive_summary="",
+        ticker="NVDA",
+        company_name="NVIDIA",
+        sector="Technology",
+        exchange="NASDAQ",
+        recommendation="BUY",
+        confidence=0.85,
+        analysis_date="2026-06-12",
+        executive_summary="",
     )
     _populate_from_agent_outputs(data, {"quant_response": QUANT_RESPONSE}, "")
 
@@ -142,8 +171,14 @@ def test_populate_from_quant_valuation():
     from shared.reports.extraction import _populate_from_agent_outputs
 
     data = DeckData(
-        ticker="NVDA", company_name="NVIDIA", sector="Technology", exchange="NASDAQ",
-        recommendation="BUY", confidence=0.85, analysis_date="2026-06-12", executive_summary="",
+        ticker="NVDA",
+        company_name="NVIDIA",
+        sector="Technology",
+        exchange="NASDAQ",
+        recommendation="BUY",
+        confidence=0.85,
+        analysis_date="2026-06-12",
+        executive_summary="",
     )
     _populate_from_agent_outputs(data, {"quant_response": QUANT_RESPONSE}, "")
 
@@ -164,8 +199,14 @@ def test_populate_from_quant_scorecard():
     from shared.reports.extraction import _populate_from_agent_outputs
 
     data = DeckData(
-        ticker="NVDA", company_name="NVIDIA", sector="Technology", exchange="NASDAQ",
-        recommendation="BUY", confidence=0.85, analysis_date="2026-06-12", executive_summary="",
+        ticker="NVDA",
+        company_name="NVIDIA",
+        sector="Technology",
+        exchange="NASDAQ",
+        recommendation="BUY",
+        confidence=0.85,
+        analysis_date="2026-06-12",
+        executive_summary="",
     )
     _populate_from_agent_outputs(data, {"quant_response": QUANT_RESPONSE}, "")
 
@@ -182,8 +223,14 @@ def test_populate_from_quant_peers():
     from shared.reports.extraction import _populate_from_agent_outputs
 
     data = DeckData(
-        ticker="NVDA", company_name="NVIDIA", sector="Technology", exchange="NASDAQ",
-        recommendation="BUY", confidence=0.85, analysis_date="2026-06-12", executive_summary="",
+        ticker="NVDA",
+        company_name="NVIDIA",
+        sector="Technology",
+        exchange="NASDAQ",
+        recommendation="BUY",
+        confidence=0.85,
+        analysis_date="2026-06-12",
+        executive_summary="",
     )
     _populate_from_agent_outputs(data, {"quant_response": QUANT_RESPONSE}, "")
 
@@ -200,8 +247,14 @@ def test_populate_from_rag_summary():
     from shared.reports.extraction import _populate_from_agent_outputs
 
     data = DeckData(
-        ticker="NVDA", company_name="NVIDIA", sector="Technology", exchange="NASDAQ",
-        recommendation="BUY", confidence=0.85, analysis_date="2026-06-12", executive_summary="",
+        ticker="NVDA",
+        company_name="NVIDIA",
+        sector="Technology",
+        exchange="NASDAQ",
+        recommendation="BUY",
+        confidence=0.85,
+        analysis_date="2026-06-12",
+        executive_summary="",
     )
     _populate_from_agent_outputs(data, {"rag_response": RAG_RESPONSE}, "")
 
@@ -216,8 +269,14 @@ def test_populate_from_sentiment_risks_opportunities():
     from shared.reports.extraction import _populate_from_agent_outputs
 
     data = DeckData(
-        ticker="NVDA", company_name="NVIDIA", sector="Technology", exchange="NASDAQ",
-        recommendation="BUY", confidence=0.85, analysis_date="2026-06-12", executive_summary="",
+        ticker="NVDA",
+        company_name="NVIDIA",
+        sector="Technology",
+        exchange="NASDAQ",
+        recommendation="BUY",
+        confidence=0.85,
+        analysis_date="2026-06-12",
+        executive_summary="",
     )
     _populate_from_agent_outputs(data, {"sentiment_response": SENTIMENT_RESPONSE}, "")
 
@@ -235,8 +294,14 @@ def test_populate_from_sentiment_peers():
     from shared.reports.extraction import _populate_from_agent_outputs
 
     data = DeckData(
-        ticker="NVDA", company_name="NVIDIA", sector="Technology", exchange="NASDAQ",
-        recommendation="BUY", confidence=0.85, analysis_date="2026-06-12", executive_summary="",
+        ticker="NVDA",
+        company_name="NVIDIA",
+        sector="Technology",
+        exchange="NASDAQ",
+        recommendation="BUY",
+        confidence=0.85,
+        analysis_date="2026-06-12",
+        executive_summary="",
     )
     _populate_from_agent_outputs(data, {"sentiment_response": SENTIMENT_RESPONSE}, "")
 
@@ -250,8 +315,14 @@ def test_populate_all_three_agents():
     from shared.reports.extraction import _populate_from_agent_outputs
 
     data = DeckData(
-        ticker="NVDA", company_name="NVIDIA", sector="Technology", exchange="NASDAQ",
-        recommendation="BUY", confidence=0.85, analysis_date="2026-06-12", executive_summary="",
+        ticker="NVDA",
+        company_name="NVIDIA",
+        sector="Technology",
+        exchange="NASDAQ",
+        recommendation="BUY",
+        confidence=0.85,
+        analysis_date="2026-06-12",
+        executive_summary="",
     )
     brief_data = {
         "quant_response": QUANT_RESPONSE,
@@ -276,8 +347,14 @@ def test_populate_string_values_handled():
     from shared.reports.extraction import _populate_from_agent_outputs
 
     data = DeckData(
-        ticker="NVDA", company_name="NVIDIA", sector="Technology", exchange="NASDAQ",
-        recommendation="BUY", confidence=0.85, analysis_date="2026-06-12", executive_summary="",
+        ticker="NVDA",
+        company_name="NVIDIA",
+        sector="Technology",
+        exchange="NASDAQ",
+        recommendation="BUY",
+        confidence=0.85,
+        analysis_date="2026-06-12",
+        executive_summary="",
     )
     brief_data = {
         "quant_response": "not a json dict",
@@ -294,8 +371,14 @@ def test_populate_empty_agent_dicts():
     from shared.reports.extraction import _populate_from_agent_outputs
 
     data = DeckData(
-        ticker="NVDA", company_name="NVIDIA", sector="Technology", exchange="NASDAQ",
-        recommendation="BUY", confidence=0.85, analysis_date="2026-06-12", executive_summary="",
+        ticker="NVDA",
+        company_name="NVIDIA",
+        sector="Technology",
+        exchange="NASDAQ",
+        recommendation="BUY",
+        confidence=0.85,
+        analysis_date="2026-06-12",
+        executive_summary="",
     )
     brief_data = {
         "quant_response": {},
@@ -320,8 +403,10 @@ def test_extract_deck_data_routes_to_agent_path():
         "rag_response": RAG_RESPONSE,
         "sentiment_response": SENTIMENT_RESPONSE,
     }
-    with patch("yfinance.Ticker", _make_yf_mock("NVIDIA Corporation", "Technology", "NMS")), \
-         patch.object(ext, "_REPORTS_OFFLINE", False):
+    with (
+        patch("yfinance.Ticker", _make_yf_mock("NVIDIA Corporation", "Technology", "NMS")),
+        patch.object(ext, "_REPORTS_OFFLINE", False),
+    ):
         ext._ticker_cache.clear()
         deck = ext._extract_deck_data(brief, "NVDA", "BUY", 0.85, "2026-06-12")
 
@@ -340,8 +425,10 @@ def test_extract_deck_data_falls_through_without_agent_keys():
             "## Key Risks\n- Valuation risk\n- Competition from AMD\n"
         ),
     }
-    with patch("yfinance.Ticker", _make_yf_mock("Walmart Inc.", "Consumer Defensive", "NYQ")), \
-         patch.object(ext, "_REPORTS_OFFLINE", False):
+    with (
+        patch("yfinance.Ticker", _make_yf_mock("Walmart Inc.", "Consumer Defensive", "NYQ")),
+        patch.object(ext, "_REPORTS_OFFLINE", False),
+    ):
         ext._ticker_cache.clear()
         deck = ext._extract_deck_data(brief, "WMT", "HOLD", 0.58, "2026-06-12")
 
@@ -357,8 +444,10 @@ def test_extract_deck_data_agent_path_with_partial_agents():
         "response_text": "Fallback text with revenue growth: +10% YoY.",
         "quant_response": QUANT_RESPONSE,
     }
-    with patch("yfinance.Ticker", _make_yf_mock("NVIDIA Corporation", "Technology", "NMS")), \
-         patch.object(ext, "_REPORTS_OFFLINE", False):
+    with (
+        patch("yfinance.Ticker", _make_yf_mock("NVIDIA Corporation", "Technology", "NMS")),
+        patch.object(ext, "_REPORTS_OFFLINE", False),
+    ):
         ext._ticker_cache.clear()
         deck = ext._extract_deck_data(brief, "NVDA", "BUY", 0.85, "2026-06-12")
 
@@ -386,8 +475,7 @@ def test_agent_path_generates_valid_pptx(tmp_path):
     assert len(data) > 5000
     with zipfile.ZipFile(BytesIO(data)) as z:
         slide_files = [
-            n for n in z.namelist()
-            if n.startswith("ppt/slides/slide") and n.endswith(".xml")
+            n for n in z.namelist() if n.startswith("ppt/slides/slide") and n.endswith(".xml")
         ]
     assert len(slide_files) >= 6
 
@@ -405,5 +493,5 @@ def test_agent_path_generates_valid_html():
         html = generate_html(brief, "NVDA", "BUY", 0.85, "2026-06-12")
 
     assert isinstance(html, str)
-    assert "class=\"hero\"" in html
+    assert 'class="hero"' in html
     assert "NVDA" in html

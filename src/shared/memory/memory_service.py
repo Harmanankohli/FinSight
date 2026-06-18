@@ -230,7 +230,9 @@ class SQLiteMemoryService(BaseMemoryService):
             if entry_id in id_to_entry:
                 memories.append(id_to_entry[entry_id])
 
-        logger.debug("Memory search: user=%s query=%s — %d results", user_id, query[:50], len(memories))
+        logger.debug(
+            "Memory search: user=%s query=%s — %d results", user_id, query[:50], len(memories)
+        )
         return SearchMemoryResponse(memories=memories)
 
     # Tokenizes query and corpus, scores entries with BM25Okapi (term-frequency × inverse document frequency).  # noqa: E501

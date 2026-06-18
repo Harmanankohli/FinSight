@@ -159,8 +159,14 @@ class TestReviewerModels:
             ticker="NVDA",
             verdict="BUY",
             review_summary="Strong alignment across agents.",
-            contradictions=[ContradictionFlag(agents=["A", "B"], field="x", description="y", severity="low")],
-            source_verifications=[SourceVerification(agent_name="Quant", claims_checked=2, claims_verified=2, verification_rate=1.0)],
+            contradictions=[
+                ContradictionFlag(agents=["A", "B"], field="x", description="y", severity="low")
+            ],
+            source_verifications=[
+                SourceVerification(
+                    agent_name="Quant", claims_checked=2, claims_verified=2, verification_rate=1.0
+                )
+            ],
             confidence_breakdown=ConfidenceBreakdown(meta_confidence=0.85),
             recommendation_validation=RecommendationValidation(recommendation="BUY"),
             flags=["High anomaly risk"],

@@ -653,7 +653,12 @@ def generate_pptx(
     def rgb(hex_str: str) -> RGBColor:
         return RGBColor.from_string(hex_str)
 
-    logger.info("Generating PPTX report for %s (recommendation=%s, confidence=%.0f%%)", ticker, recommendation, confidence * 100)
+    logger.info(
+        "Generating PPTX report for %s (recommendation=%s, confidence=%.0f%%)",
+        ticker,
+        recommendation,
+        confidence * 100,
+    )
     deck = _extract_deck_data(
         brief_data, ticker, recommendation, confidence, analysis_date, company_info=company_info
     )
