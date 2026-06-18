@@ -87,8 +87,18 @@ export default function OperatorPage() {
                   <div style={{
                     width: 34, height: 34, borderRadius: 9, display: "grid", placeItems: "center",
                     fontFamily: "var(--serif)", fontWeight: 700, fontSize: 15, flexShrink: 0,
-                    background: a.name.includes("RAG") ? "var(--rag-bg)" : a.name.includes("Quant") ? "var(--quant-bg)" : "var(--market-bg)",
-                    color: a.name.includes("RAG") ? "var(--rag)" : a.name.includes("Quant") ? "var(--quant)" : "var(--market)",
+                    background: a.name.includes("RAG") ? "var(--rag-bg)"
+                      : a.name.includes("Quant") ? "var(--quant-bg)"
+                      : a.name.includes("Market") ? "var(--market-bg)"
+                      : a.name.includes("Analytics") ? "var(--analytics-bg)"
+                      : a.name.includes("Reviewer") ? "var(--reviewer-bg)"
+                      : "var(--orch-bg)",
+                    color: a.name.includes("RAG") ? "var(--rag)"
+                      : a.name.includes("Quant") ? "var(--quant)"
+                      : a.name.includes("Market") ? "var(--market)"
+                      : a.name.includes("Analytics") ? "var(--analytics)"
+                      : a.name.includes("Reviewer") ? "var(--reviewer)"
+                      : "var(--clay)",
                   }}>
                     {a.name[0]}
                   </div>

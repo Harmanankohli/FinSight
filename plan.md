@@ -1,131 +1,234 @@
-# Plan: Shared Agent Output Store + Reviewer Tool Fix
+# Plan: Add Analytics & Reviewer Agent Tiles to Frontend
 
 ## Context
 
-Two problems solved together:
+The system has 5 sub-agents but the frontend Research page only shows 3 agent tiles during processing (Financial RAG, Quant Analysis, Market Context). The **Analytics Agent** (port 8005, PydanticAI) and **Reviewer Agent** (port 8006, OpenAI Agents SDK) are missing from the UI. The backend AG-UI bridge (`src/orchestrator/agui_bridge.py:70-82`) already maps and emits these agents in `active_agents` state — only the frontend needs updating.
 
-1. **Slow Phase 2 handoff**: After Phase 1, the orchestrator LLM reads ~10K tokens of agent output just to copy-paste it into a JSON payload for the reviewer. With a local 14B model, this wastes 30-60s.
+**Processing flow:** Phase 1 runs RAG + Quant + Market + Analytics in parallel, then Phase 2 runs Reviewer sequentially after Phase 1 completes.
 
-2. **Reviewer tool crash** (blocking bug): The OpenAI Agents SDK v0.17.5 rejects plain Python functions as tools with `ChatCompletions` API — `Hosted tools are not supported`. The reviewer's 4 tools (`check_contradictions`, `verify_sources`, `score_confidence`, `validate_recommendation`) are all plain functions, so the reviewer is completely broken.
+**Backend `active_agents` lifecycle** (verified in `agui_bridge.py:435-531`):
+- Agents are **appended** to the list when dispatched (never removed individually)
+- The entire list is **cleared to `[]`** only after successful run completion (line 522-531)
+- **On error/cancel** (lines 556-561): the `active_agents` clear is SKIPPED because it's inside the `try` block — the list stays stale
+- During Phase 1: list contains 4 agents. During Phase 2: list contains all 5. After normal completion: empty.
 
-**Solution**: Store full agent outputs in shared SQLite (both processes already use `db/finsight_memory.db`). The reviewer executor fetches them directly and calls the 4 tools in Python — no LLM tool-call loop, no SDK incompatibility, no token waste.
+---
 
-## New Flow
+## Files to Modify (5 files)
 
+### 1. `src/web/nextjs-app/app/globals.css`
+
+**1a. Add CSS custom properties** — insert after line 23 (`--market-bg: #fce8d9;`), before `--orch`:
+```css
+--analytics: #1a7a7a;  --analytics-bg: #ddf0f0;
+--reviewer: #9b2335;   --reviewer-bg: #f4dde1;
 ```
-Phase 1:  send_message() stores full output in SQLite, returns trimmed summary to LLM
-Phase 2:  LLM sends {"ticker": "AAPL", "session_id": "abc123"} to reviewer
-          Reviewer executor fetches full data from SQLite
-          Executor calls 4 tools directly in Python (no LLM round-trips)
-          Executor calls LLM once for synthesis only (no tools on the agent)
-Phase 3:  Orchestrator LLM synthesizes final recommendation
-```
+Rationale: Teal for analytics (data/stats feel), crimson for reviewer (distinct from `--sell: #7a2c2c`).
 
-## Changes
-
-### 1. New table in `src/shared/memory/store.py`
-
-Bump `SCHEMA_VERSION` to 6. Add to `CREATE_TABLES_SQL`:
-
-```sql
-CREATE TABLE IF NOT EXISTS agent_output_store (
-    session_id TEXT NOT NULL,
-    agent_name TEXT NOT NULL,
-    output_json TEXT NOT NULL,
-    created_at TIMESTAMP NOT NULL,
-    PRIMARY KEY (session_id, agent_name)
-);
-CREATE INDEX IF NOT EXISTS idx_aos_session ON agent_output_store(session_id);
+**1b. Add tile color rules** — insert after line 164 (`.tile.market`):
+```css
+.tile.analytics { border-color: var(--analytics); background: var(--analytics-bg); }
+.tile.reviewer  { border-color: var(--reviewer);  background: var(--reviewer-bg); }
 ```
 
-Add v5→v6 migration block following the existing pattern.
+---
 
-Add `agent_output_store` to `prune_old_records()` allowed tables.
+### 2. `src/web/nextjs-app/app/research/page.tsx` (5 edits)
 
-### 2. New file `src/shared/memory/agent_output_store.py`
+**2a. Expand `AGENTS` array** (lines 26-30) — add `phase` field to all entries + 2 new agents:
+```typescript
+const AGENTS = [
+  { key: "rag", name: "Financial RAG", sub: "LlamaIndex · filings", color: "--rag", match: ["financial rag", "rag agent"], phase: 1 },
+  { key: "quant", name: "Quant Analysis", sub: "LangGraph · metrics", color: "--quant", match: ["quant", "quant analysis"], phase: 1 },
+  { key: "market", name: "Market Context", sub: "CrewAI · macro + peers", color: "--market", match: ["market context", "sentiment"], phase: 1 },
+  { key: "analytics", name: "Analytics", sub: "PydanticAI · trends", color: "--analytics", match: ["analytics"], phase: 1 },
+  { key: "reviewer", name: "Reviewer", sub: "OpenAI SDK · validation", color: "--reviewer", match: ["reviewer"], phase: 2 },
+] as const;
+```
+Match strings work via `.toLowerCase().includes()`: `"analytics"` matches `"Analytics Agent"`, `"reviewer"` matches `"Reviewer Agent"`.
 
-Functions:
-- `store_agent_output(session_id, agent_name, output: dict)` — INSERT OR REPLACE
-- `get_agent_outputs(session_id) -> dict[str, dict]` — returns `{"quant": {...}, "rag": {...}, ...}` with normalized keys
-- `prune_stale_outputs(max_age_seconds=600)` — TTL cleanup
-
-Key mapping (`_normalize_agent_key`): `"Financial RAG Agent"` → `"rag"`, `"Quant Analysis Agent"` → `"quant"`, etc. Same mapping already used in `agent_executor.py:521-534`.
-
-### 3. Modify `send_message()` in `src/orchestrator/agent.py`
-
-After storing in `_agent_responses` (in-memory), also persist to SQLite:
-
-```python
-await store_agent_output(session_id, resolved, parsed)
+**2b. Fix `tileStatus` function** (lines 32-36) — make phase-aware AND handle stale state:
+```typescript
+function tileStatus(cfg: typeof AGENTS[number], active: string[], running: boolean) {
+  if (active.some((a) => cfg.match.some((m) => a.toLowerCase().includes(m)))) {
+    return running ? "working" : "done";
+  }
+  if (active.length > 0 && cfg.phase === 1) return running ? "done" : "done";
+  return "idle";
+}
 ```
 
-The trimmed return to the LLM (already implemented) stays unchanged.
+**Why the `running` parameter matters (no stop button edge case):**
 
-### 4. Inject session_id into LLM prompt in `src/orchestrator/agent.py`
+Without `running`, if the backend errors and never clears `active_agents`:
+- `running` = false (stream ended), but `anyActive` = true (stale list)
+- Tiles stay visible via `(running || (hasMessages && anyActive))`
+- All matched agents show "working" forever — misleading since the run is over
+- The topbar says "Complete" but tiles say "working" — contradictory
 
-- `_build_instruction(session_id=None)` — append `Your current session_id is: {session_id}` when available
-- `_instruction_provider(ctx)` — extract `ctx.session.id` and pass to `_build_instruction`
+With `running`:
+- When agent IS in the stale list but `running` is false → show "done" (not "working")
+- This gives honest UI: the run ended, these agents completed what they could
 
-### 5. Update Phase 2 instruction in `_STATIC_PREAMBLE`
+**Full state table for `tileStatus(cfg, active, running)`:**
 
-From: `Pass a JSON payload: {"ticker": "AAPL", "agent_outputs": {...}}`
-To: `Pass a JSON payload: {"ticker": "AAPL", "session_id": "<your_session_id>"}`
+| Agent in list? | Phase | `running` | Result | Scenario |
+|---|---|---|---|---|
+| Yes | 1 or 2 | true | "working" | Normal: agent is active |
+| Yes | 1 or 2 | false | "done" | Error/stale: run ended but list not cleared |
+| No | 1 | true | "done" | Normal: Phase 1 agents dispatched together |
+| No | 1 | false | "done" | Normal completion or error |
+| No | 2 | true | "idle" | Normal: Reviewer hasn't started yet |
+| No | 2 | false | "idle" | Normal: Reviewer never ran (Phase 1 error) |
 
-### 6. Rewrite reviewer agent & executor
-
-**`src/reviewer/agent.py`**: Remove tools from the agent. Agent becomes synthesis-only:
-
-```python
-reviewer_agent = Agent(
-    name="Reviewer",
-    model=_model,
-    instructions="You are an investment analysis reviewer. Given pre-computed validation results, synthesize into a verdict.",
-    output_type=ReviewerAgentOutput,
-)
+**2c. Update tile rendering call site** (line 170) — pass `running`:
+```typescript
+const s = tileStatus(a, activeAgents, running);
 ```
 
-No tools, no input guardrails (guardrail logic moves to executor), no output guardrails (confidence check moves to executor).
+**2d. Update orchestrator strip hardcoded counts** (lines 156, 158):
+- Line 156: `"3 agents"` → `"5 agents"`
+- Line 158: `"send_message ×3"` → `"send_message ×5"`
 
-**`src/reviewer/executor.py`**: `_build_response()` changes to:
+**2e. Update empty-state text** (line 195):
+`"three specialized agents"` → `"five specialized agents"`
 
-1. Parse `session_id` and `ticker` from query JSON
-2. Fetch `agent_outputs` from SQLite via `get_agent_outputs(session_id)`
-3. Call 4 tools directly in Python: `check_contradictions(agent_outputs)`, `verify_sources(agent_outputs)`, `score_confidence(agent_outputs)`, `validate_recommendation(agent_outputs)`
-4. Build a compact synthesis prompt with tool results (not the raw agent data)
-5. Call `Runner.run(reviewer_agent, input=synthesis_prompt)` — single LLM call, no tools
-6. Validate confidence range in Python (replaces output guardrail)
+**No tile layout changes needed.** Keep all 5 tiles in a single `.tiles` row with `flex: 1`. The `.tname` class already has `overflow: hidden; text-overflow: ellipsis` (CSS line 156) for graceful truncation. During Phase 1, the Reviewer tile appears dimmed (`opacity: 0.5` via `.tile.idle`) which naturally communicates it hasn't started yet.
 
-This eliminates 5 LLM round-trips → 1, fixes the SDK tool crash, and the reviewer gets the full untrimmmed data from SQLite.
+---
 
-### 7. Update reviewer guardrails `src/reviewer/guardrails.py`
+### 3. `src/web/nextjs-app/app/page.tsx` — Overview page (3 edits)
 
-Accept `session_id` as alternative to `agent_outputs` in payload validation. Or remove guardrails entirely since the executor now validates before calling the LLM.
+**3a. Hero text** (line 23):
+`"four specialized agents"` → `"five specialized agents"`
 
-### 8. Startup cleanup in `src/orchestrator/main.py`
+**3b. Agent cards in flow diagram** (lines 51-54) — add Analytics to the existing array:
+```typescript
+{ name: "RAG Agent", color: "--rag", meta: "LlamaIndex · :8002" },
+{ name: "Quant Agent", color: "--quant", meta: "LangGraph · :8003" },
+{ name: "Market Context", color: "--market", meta: "CrewAI · :8004" },
+{ name: "Analytics", color: "--analytics", meta: "PydanticAI · :8005" },
+```
+Then insert a Phase 2 section **between** the Phase 1 agent row (line 64) and the MCP connector (line 65):
+- A dashed connector card: `"Phase 2 · sequential cross-validation ↓"`
+- A single Reviewer Agent card (constrained to `maxWidth: "calc(25% - 10.5px)"` to match Phase 1 tile width)
 
-Add `prune_stale_outputs()` call alongside existing `prune_old_records()` in lifespan.
+Visual ordering: Orchestrator → A2A → Phase 1 agents (4) → Phase 2 connector → Reviewer → MCP connector → MCP server.
 
-### 9. Export from `src/shared/memory/__init__.py`
+**3c. Feature card 04** (line 87):
+`"all four agent processes"` → `"all five agent processes"`
 
-Add lazy import for `AgentOutputStore` functions.
+---
 
-## Files Modified
+### 4. `src/web/nextjs-app/app/operator/page.tsx` — Agent capability colors (1 edit)
 
-| File | Change |
-|------|--------|
-| `src/shared/memory/store.py` | New table, schema v6, migration, prune list |
-| `src/shared/memory/agent_output_store.py` | **New** — store/retrieve/prune API |
-| `src/shared/memory/__init__.py` | Add to exports |
-| `src/orchestrator/agent.py` | Persist to store, inject session_id, update Phase 2 instructions |
-| `src/orchestrator/main.py` | Add stale output pruning at startup |
-| `src/reviewer/agent.py` | Remove tools, simplify to synthesis-only agent |
-| `src/reviewer/executor.py` | Fetch from store, call tools in Python, single LLM call |
-| `src/reviewer/guardrails.py` | Accept session_id or remove (logic moves to executor) |
+**Lines 90-91:** The ternary chain falls back to `--market` / `--market-bg` for all unrecognized agents. Expand with Analytics and Reviewer before the fallback:
+
+```typescript
+background: a.name.includes("RAG") ? "var(--rag-bg)"
+  : a.name.includes("Quant") ? "var(--quant-bg)"
+  : a.name.includes("Market") ? "var(--market-bg)"
+  : a.name.includes("Analytics") ? "var(--analytics-bg)"
+  : a.name.includes("Reviewer") ? "var(--reviewer-bg)"
+  : "var(--orch-bg)",
+color: a.name.includes("RAG") ? "var(--rag)"
+  : a.name.includes("Quant") ? "var(--quant)"
+  : a.name.includes("Market") ? "var(--market)"
+  : a.name.includes("Analytics") ? "var(--analytics)"
+  : a.name.includes("Reviewer") ? "var(--reviewer)"
+  : "var(--clay)",
+```
+**Note:** The SERVICES health list (lines 8-16) already includes both agents — no changes needed there.
+
+---
+
+### 5. `src/web/nextjs-app/app/trace/page.tsx` — Trace span colors + legend (3 edits)
+
+**5a. `color()` function** (lines 28-34) — add 2 lines after the market check (line 32), before the MCP check (line 33):
+```typescript
+if (n.includes("analytics") || n.includes("pydanticai") || n.includes("trend") || n.includes("forecast")) return "var(--analytics)";
+if (n.includes("reviewer") || n.includes("cross-valid")) return "var(--reviewer)";
+```
+
+**5b. `bg()` function** (lines 37-43) — add 2 lines after the market check (line 41), before the MCP check (line 42):
+```typescript
+if (n.includes("analytics") || n.includes("pydanticai")) return "var(--analytics-bg)";
+if (n.includes("reviewer")) return "var(--reviewer-bg)";
+```
+
+**5c. Legend array** (lines 286-291) — add 2 entries after "Market Context" (line 290), before "MCP tool" (line 291):
+```typescript
+{ label: "Analytics", c: "var(--analytics)" },
+{ label: "Reviewer", c: "var(--reviewer)" },
+```
+
+---
+
+## Edge Cases: No Stop Button
+
+Since there is no cancel/stop button, the frontend must handle these scenarios gracefully:
+
+### Scenario 1: Backend errors during Phase 1 (before Reviewer starts)
+- `active_agents` stays stale as `["Financial RAG Agent", "Quant Analysis Agent", "Market Context Agent", "Analytics Agent"]`
+- `running` becomes `false` (stream emits `RunFinishedEvent` on line 563, always — even after errors)
+- **With our fix**: `tileStatus` returns `"done"` for Phase 1 agents (agent in list + not running = "done"), Reviewer shows "idle" (never started). Topbar shows "Complete". Consistent UI.
+- **Without our fix** (current code): tiles show "working" forever while topbar says "Complete" — contradictory.
+
+### Scenario 2: Backend errors during Phase 2
+- `active_agents` stays stale as all 5 agents
+- `running` becomes `false`
+- **With our fix**: all 5 tiles show "done". Honest — they all ran (partially). Topbar shows "Complete".
+
+### Scenario 3: Backend timeout (line 415-425)
+- The timeout triggers a `break`, falls through to the `active_agents` clear at line 522. **This path DOES clear the list.**
+- Tiles disappear normally. No issue.
+
+### Scenario 4: User navigates away and back
+- CopilotKit state may or may not persist depending on session. If it persists, stale `active_agents` could show old tiles. Same mitigation: `running` being `false` shows "done" instead of "working".
+
+### Scenario 5: User submits new query while loading
+- `handleSubmit` (line 109) already guards: `if (!input.trim() || isLoading) return;`
+- Input is also disabled: `disabled={isLoading}` (line 318)
+- **No issue** — duplicate submissions are prevented.
+
+---
+
+## What Does NOT Need Changing
+
+| Component | Why |
+|---|---|
+| `src/orchestrator/agui_bridge.py` | Already maps both agents and emits them in `active_agents` (lines 70-82) |
+| Operator page SERVICES array | Already lists Analytics (:8005) and Reviewer (:8006) (lines 13-14) |
+| Sidebar (`components/Sidebar.tsx`) | No agent references |
+| Layout (`app/layout.tsx`) | No agent references |
+| Backend agent cards / servers | Already fully configured |
+
+---
+
+## Risk Assessment
+
+| Risk | Impact | Mitigation |
+|---|---|---|
+| TypeScript type change from adding `phase` | Low | `as const` infers literal types; `typeof AGENTS[number]` auto-includes `phase: 1 \| 2` |
+| 5 tiles slightly narrower than 3 | Low | `.tname` already has `text-overflow: ellipsis` (CSS line 156) |
+| `"analytics"` match string collision in trace spans | Very low | Agent display names are well-structured (`"Analytics Agent"`); unlikely false matches |
+| Phase 1 agents stay "working" during Phase 2 | None | Already the current behavior for existing agents — backend never removes them individually |
+| Stale `active_agents` on error (no stop button) | Low | `tileStatus` now uses `running` flag to show "done" instead of "working" when stream ends |
+
+---
 
 ## Verification
 
-1. Run unit tests: `uv run python -m pytest src/tests/unit/ -x -q`
-2. Start servers and run an end-to-end analysis query
-3. Verify reviewer logs show "fetched N agent outputs from shared store"
-4. Verify reviewer completes without `Hosted tools are not supported` error
-5. Verify final synthesis still contains BUY/HOLD/SELL with confidence score
+1. **Build check**: `cd src/web/nextjs-app && npm run build` — confirm no TypeScript errors
+2. **Dev server**: `npm run dev` — open `http://localhost:3000`
+3. **Research page** (`/research`): Submit a query and confirm:
+   - 5 agent tiles appear in one row
+   - Phase 1 tiles (RAG, Quant, Market, Analytics) light up with correct colors when active
+   - Reviewer tile stays dimmed/idle during Phase 1, lights up during Phase 2
+   - Orchestrator strip says "5 agents" and "send_message ×5"
+   - Empty state says "five specialized agents"
+   - After run completes: tiles show checkmarks (done state), not stuck on "working"
+4. **Error scenario**: If the backend is down or errors mid-run, tiles should transition to "done" (not stay "working") once the stream ends
+5. **Overview page** (`/`): Confirm architecture diagram shows 4 Phase 1 agents + Reviewer, hero text says "five"
+6. **Operator page** (`/operator`): Confirm Analytics and Reviewer capability card icons use teal/crimson (not market brown)
+7. **Trace page** (`/trace`): Confirm analytics/reviewer spans use correct colors and legend shows 7 entries

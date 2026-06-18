@@ -20,7 +20,7 @@ export default function OverviewPage() {
               An analyst team that answers <em style={{ fontStyle: "italic", color: "var(--clay)" }}>&ldquo;should I invest?&rdquo;</em>
             </h1>
             <p style={{ fontSize: 17, lineHeight: 1.6, color: "var(--text-secondary)", maxWidth: "60ch", marginTop: 22 }}>
-              FinSight coordinates four specialized agents — each built on a different framework —
+              FinSight coordinates five specialized agents — each built on a different framework —
               into a single, citation-backed investment brief. The orchestrator delegates over the
               Agent-to-Agent protocol, every agent pulls live data through one MCP server, and the
               whole run streams to a CopilotKit v2 chat surface over AG-UI.
@@ -52,8 +52,23 @@ export default function OverviewPage() {
                   { name: "RAG Agent", color: "--rag", meta: "LlamaIndex · :8002" },
                   { name: "Quant Agent", color: "--quant", meta: "LangGraph · :8003" },
                   { name: "Market Context", color: "--market", meta: "CrewAI · :8004" },
+                  { name: "Analytics", color: "--analytics", meta: "PydanticAI · :8005" },
                 ].map((a) => (
                   <div key={a.name} className="card" style={{ flex: 1, padding: "16px 18px" }}>
+                    <div style={{ height: 3, borderRadius: 2, background: `var(${a.color})`, marginBottom: 11 }} />
+                    <div style={{ fontSize: 12, fontWeight: 600, display: "flex", alignItems: "center", gap: 8 }}>
+                      <span className="swatch" style={{ background: `var(${a.color})` }} />{a.name}
+                    </div>
+                    <div className="mono" style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 5 }}>{a.meta}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="card" style={{ textAlign: "center", background: "var(--ivory)", borderStyle: "dashed", padding: 9, fontFamily: "var(--mono)", fontSize: 11.5, color: "var(--text-muted)" }}>
+                Phase 2 · sequential cross-validation ↓
+              </div>
+              <div style={{ display: "flex", gap: 14 }}>
+                {[{ name: "Reviewer Agent", color: "--reviewer", meta: "OpenAI Agents SDK · :8006" }].map((a) => (
+                  <div key={a.name} className="card" style={{ flex: 1, padding: "16px 18px", maxWidth: "calc(25% - 10.5px)" }}>
                     <div style={{ height: 3, borderRadius: 2, background: `var(${a.color})`, marginBottom: 11 }} />
                     <div style={{ fontSize: 12, fontWeight: 600, display: "flex", alignItems: "center", gap: 8 }}>
                       <span className="swatch" style={{ background: `var(${a.color})` }} />{a.name}
@@ -84,7 +99,7 @@ export default function OverviewPage() {
               { n: "01", t: "Multi-tier caching", d: "TTL tool cache (1 min prices → 7 day shocks), LangChain SQLite LLM cache, and ChromaDB semantic cache." },
               { n: "02", t: "Input & output guardrails", d: "Off-topic filter, pre-flight ticker validation, empty-response guard, and BUY/HOLD/SELL signal enforcement." },
               { n: "03", t: "Persistent memory", d: "SQLite ticker briefs, portfolio holdings, and recommendation tracking with live price snapshots." },
-              { n: "04", t: "Distributed tracing", d: "Langfuse joins all four agent processes into one trace tree via A2A context propagation." },
+              { n: "04", t: "Distributed tracing", d: "Langfuse joins all five agent processes into one trace tree via A2A context propagation." },
               { n: "05", t: "Runtime RAGAS eval", d: "Per-query Faithfulness, FactualCorrectness and relevancy scored in the background." },
               { n: "06", t: "Local-first inference", d: "Every agent runs on LM Studio (OpenAI-compatible) with local embeddings — no cloud dependency." },
             ].map((f) => (

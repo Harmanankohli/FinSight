@@ -21,6 +21,8 @@
   --quant-bg: #e3f0e3;
   --market: #8b4513;
   --market-bg: #fce8d9;
+  --analytics: #1a7a7a;  --analytics-bg: #ddf0f0;
+  --reviewer: #9b2335;   --reviewer-bg: #f4dde1;
   --orch: #8b6f4e;
   --orch-bg: #efe6d8;
   --mcp: #5a3e7c;
@@ -162,6 +164,8 @@ code, pre, .mono { font-family: var(--mono); }
 .tile.rag    { border-color: var(--rag);    background: var(--rag-bg); }
 .tile.quant  { border-color: var(--quant);  background: var(--quant-bg); }
 .tile.market { border-color: var(--market); background: var(--market-bg); }
+.tile.analytics { border-color: var(--analytics); background: var(--analytics-bg); }
+.tile.reviewer  { border-color: var(--reviewer);  background: var(--reviewer-bg); }
 
 .thread { flex: 1; overflow-y: auto; padding: 18px 26px 8px; }
 .turn { max-width: 760px; margin: 0 auto 22px; }

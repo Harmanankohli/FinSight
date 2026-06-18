@@ -30,6 +30,8 @@ function color(name: string) {
   if (n.includes("rag") || n.includes("llamaindex") || n.includes("filing")) return "var(--rag)";
   if (n.includes("quant") || n.includes("langgraph") || n.includes("stress") || n.includes("dcf")) return "var(--quant)";
   if (n.includes("market") || n.includes("crewai") || n.includes("peer") || n.includes("macro")) return "var(--market)";
+  if (n.includes("analytics") || n.includes("pydanticai") || n.includes("trend") || n.includes("forecast")) return "var(--analytics)";
+  if (n.includes("reviewer") || n.includes("cross-valid")) return "var(--reviewer)";
   if (n.includes("mcp") || n.includes("get_price") || n.includes("get_financial") || n.includes("get_news")) return "var(--mcp)";
   return "var(--clay)";
 }
@@ -39,6 +41,8 @@ function bg(name: string) {
   if (n.includes("rag") || n.includes("llamaindex")) return "var(--rag-bg)";
   if (n.includes("quant") || n.includes("langgraph")) return "var(--quant-bg)";
   if (n.includes("market") || n.includes("crewai")) return "var(--market-bg)";
+  if (n.includes("analytics") || n.includes("pydanticai")) return "var(--analytics-bg)";
+  if (n.includes("reviewer")) return "var(--reviewer-bg)";
   if (n.includes("mcp")) return "var(--mcp-bg)";
   return "var(--orch-bg)";
 }
@@ -288,6 +292,8 @@ function TraceContent() {
                       { label: "RAG", c: "var(--rag)" },
                       { label: "Quant", c: "var(--quant)" },
                       { label: "Market Context", c: "var(--market)" },
+                      { label: "Analytics", c: "var(--analytics)" },
+                      { label: "Reviewer", c: "var(--reviewer)" },
                       { label: "MCP tool", c: "var(--mcp)" },
                     ].map((l) => (
                       <div key={l.label} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--text-secondary)" }}>

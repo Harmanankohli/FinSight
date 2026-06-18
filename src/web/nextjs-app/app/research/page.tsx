@@ -24,14 +24,18 @@ interface FinsightState {
 }
 
 const AGENTS = [
-  { key: "rag", name: "Financial RAG", sub: "LlamaIndex · filings", color: "--rag", match: ["financial rag", "rag agent"] },
-  { key: "quant", name: "Quant Analysis", sub: "LangGraph · metrics", color: "--quant", match: ["quant", "quant analysis"] },
-  { key: "market", name: "Market Context", sub: "CrewAI · macro + peers", color: "--market", match: ["market context", "sentiment"] },
+  { key: "rag", name: "Financial RAG", sub: "LlamaIndex · filings", color: "--rag", match: ["financial rag", "rag agent"], phase: 1 },
+  { key: "quant", name: "Quant Analysis", sub: "LangGraph · metrics", color: "--quant", match: ["quant", "quant analysis"], phase: 1 },
+  { key: "market", name: "Market Context", sub: "CrewAI · macro + peers", color: "--market", match: ["market context", "sentiment"], phase: 1 },
+  { key: "analytics", name: "Analytics", sub: "PydanticAI · trends", color: "--analytics", match: ["analytics"], phase: 1 },
+  { key: "reviewer", name: "Reviewer", sub: "OpenAI SDK · validation", color: "--reviewer", match: ["reviewer"], phase: 2 },
 ] as const;
 
-function tileStatus(cfg: typeof AGENTS[number], active: string[]) {
-  if (active.some((a) => cfg.match.some((m) => a.toLowerCase().includes(m)))) return "working";
-  if (active.length > 0) return "done";
+function tileStatus(cfg: typeof AGENTS[number], active: string[], running: boolean) {
+  if (active.some((a) => cfg.match.some((m) => a.toLowerCase().includes(m)))) {
+    return running ? "working" : "done";
+  }
+  if (active.length > 0 && cfg.phase === 1) return running ? "done" : "done";
   return "idle";
 }
 
@@ -153,9 +157,9 @@ export default function ResearchPage() {
           {/* ── Orchestrator strip ──────────────────────── */}
           {showOrch && (
             <div className="runbar">
-              {orchStep("Connect", hasMessages ? "done" : "idle", hasMessages ? "3 agents" : undefined)}
+              {orchStep("Connect", hasMessages ? "done" : "idle", hasMessages ? "5 agents" : undefined)}
               {orchStep("Delegate", anyActive ? "active" : hasMessages ? "done" : "idle",
-                anyActive ? `parallel · ${activeAgents.length} agents` : hasMessages ? "send_message ×3" : undefined)}
+                anyActive ? `parallel · ${activeAgents.length} agents` : hasMessages ? "send_message ×5" : undefined)}
               {orchStep("Synthesize", running && !anyActive ? "active" : !running && hasMessages ? "done" : "idle",
                 !running && hasMessages ? extractSignal(messages.filter(m => m.role === "assistant").pop()?.content as string || "")?.signal : undefined)}
               {orchStep("Save", !running && hasMessages ? "done" : "idle",
@@ -167,7 +171,7 @@ export default function ResearchPage() {
           {(running || (hasMessages && anyActive)) && (
             <div className="tiles">
               {AGENTS.map((a) => {
-                const s = tileStatus(a, activeAgents);
+                const s = tileStatus(a, activeAgents, running);
                 const active = s === "working" || s === "done";
                 return (
                   <div key={a.key} className={`tile ${active ? a.key : ""} ${s}`}>
@@ -192,7 +196,7 @@ export default function ResearchPage() {
               <div style={{ textAlign: "center", paddingTop: 100 }}>
                 <h2 style={{ fontSize: 24, marginBottom: 8 }}>Investment Research</h2>
                 <p style={{ color: "var(--text-muted)", fontSize: 14, maxWidth: "40ch", margin: "0 auto" }}>
-                  Ask about any stock for a citation-backed BUY / HOLD / SELL brief from three specialized agents.
+                  Ask about any stock for a citation-backed BUY / HOLD / SELL brief from five specialized agents.
                 </p>
               </div>
             )}
