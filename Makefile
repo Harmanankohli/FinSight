@@ -1,10 +1,16 @@
-.PHONY: lint type test ci install test-auth
+.PHONY: lint type test ci install test-auth fmt fmtcheck
 
 install:
 	uv pip install -e ".[dev]"
 
 lint:
 	ruff check .
+
+fmt:
+	ruff format .
+
+fmtcheck:
+	ruff format --check .
 
 type:
 	mypy src/shared src/orchestrator

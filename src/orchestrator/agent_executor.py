@@ -21,7 +21,6 @@ from orchestrator.agent import pop_agent_responses
 from shared.guardrails import extract_ticker, is_off_topic
 from shared.logging_config import logged, logged_sync
 from shared.observability import get_langfuse_client
-from shared.runtime_eval import score_response as _eval_score_response
 from shared.settings import AGENT_SEED_URLS, EVAL_ENABLED
 from shared.trace_context import current_user_id
 
@@ -110,7 +109,14 @@ class FinSightAgentExecutor(AgentExecutor):
             response_text = ""
 
         has_agent_data = any(
-            k in data for k in ("quant_response", "rag_response", "sentiment_response", "analytics_response", "reviewer_response")
+            k in data
+            for k in (
+                "quant_response",
+                "rag_response",
+                "sentiment_response",
+                "analytics_response",
+                "reviewer_response",
+            )
         )
         if not has_agent_data:
             logger.info(
@@ -351,6 +357,8 @@ class FinSightAgentExecutor(AgentExecutor):
             session_for_pop = context_id or task.context_id
             asyncio.create_task(self._store_memory(user_input, text, session_for_pop, user_id))
         if EVAL_ENABLED:
+            from shared.runtime_eval import score_response as _eval_score_response
+
             asyncio.create_task(
                 _eval_score_response(
                     original_input or user_input,
@@ -478,7 +486,14 @@ class FinSightAgentExecutor(AgentExecutor):
                     try:
                         bj = json.loads(latest.get("brief_json", "{}"))
                         has_agent_data = any(
-                            k in bj for k in ("quant_response", "rag_response", "sentiment_response", "analytics_response", "reviewer_response")
+                            k in bj
+                            for k in (
+                                "quant_response",
+                                "rag_response",
+                                "sentiment_response",
+                                "analytics_response",
+                                "reviewer_response",
+                            )
                         )
                     except Exception:
                         pass
@@ -535,7 +550,9 @@ class FinSightAgentExecutor(AgentExecutor):
 
         logger.info(
             "_store_memory: ticker=%s session=%s extra_keys=%s",
-            ticker, session_id, list(extra.keys()),
+            ticker,
+            session_id,
+            list(extra.keys()),
         )
 
         tm = TickerMemory()
@@ -552,7 +569,14 @@ class FinSightAgentExecutor(AgentExecutor):
                     logger.debug("Could not parse brief_json for %s", ticker, exc_info=True)
                 needs_update = len(response_text) > len(stored)
                 has_new_agent_data = extra and not any(
-                    k in bj for k in ("quant_response", "rag_response", "sentiment_response", "analytics_response", "reviewer_response")
+                    k in bj
+                    for k in (
+                        "quant_response",
+                        "rag_response",
+                        "sentiment_response",
+                        "analytics_response",
+                        "reviewer_response",
+                    )
                 )
                 if needs_update or has_new_agent_data:
                     if has_new_agent_data:
@@ -562,7 +586,9 @@ class FinSightAgentExecutor(AgentExecutor):
                     await tm.update_brief_json(existing["id"], json.dumps(bj))
                     logger.info(
                         "Updated existing brief %s (text_update=%s, agent_data=%s)",
-                        existing["id"], needs_update, has_new_agent_data,
+                        existing["id"],
+                        needs_update,
+                        has_new_agent_data,
                     )
                 else:
                     logger.debug("Skip _store_memory — brief already stored today for %s", ticker)

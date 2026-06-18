@@ -6,11 +6,8 @@ from collections.abc import AsyncIterable
 from shared.base_agent import BaseAgent
 from shared.logging_config import logged, logged_sync
 from shared.mcp_client import get_shared_mcp
-from shared.observability import get_langfuse_client
-from shared.runtime_eval import score_sentiment_response as _eval_sentiment_response
 from shared.settings import EVAL_ENABLED
 from shared.ticker_utils import resolve_and_validate_ticker
-from shared.trace_context import extract_trace_ids
 
 from .crew import MarketContextCrew
 from .mcp_tools import MCPClientWrapper
@@ -48,11 +45,14 @@ class MarketContextAgent(BaseAgent):
         macro, primary_fin, web_context = await asyncio.gather(
             call("get_macro_indicators", {}),
             call("get_financials", {"ticker": ticker}),
-            call("web_search", {
-                "query": f"{ticker} stock market analysis outlook",
-                "max_results": 5,
-                "time_filter": "w",
-            }),
+            call(
+                "web_search",
+                {
+                    "query": f"{ticker} stock market analysis outlook",
+                    "max_results": 5,
+                    "time_filter": "w",
+                },
+            ),
         )
 
         # Extract industry/sector from primary financials for crew context
@@ -66,11 +66,14 @@ class MarketContextAgent(BaseAgent):
 
         # Step 2: sector-level web search (needs sector from Step 1)
         sector_query = f"{sector or 'market'} sector outlook macro risks analyst commentary"
-        macro_web = await call("web_search", {
-            "query": sector_query,
-            "max_results": 5,
-            "time_filter": "w",
-        })
+        macro_web = await call(
+            "web_search",
+            {
+                "query": sector_query,
+                "max_results": 5,
+                "time_filter": "w",
+            },
+        )
 
         # Step 3: discover peers dynamically via Yahoo Finance recommendations API
         peers_result = await call("get_peers", {"ticker": ticker})
@@ -123,7 +126,7 @@ class MarketContextAgent(BaseAgent):
         wrapper = MCPClientWrapper(mcp)
         crew_builder = MarketContextCrew(wrapper)
         result = await crew_builder.analyze(ticker, precollected_data=data)
-        result["_retrieved_contexts"] = _extract_retrieved_contexts(data)
+        result["_retrieved_contexts"] = self._extract_retrieved_contexts(data)
         peer_comparison = []
         for sym, pdata in data.get("peers", {}).items():
             pinfo = (pdata.get("financials") or {}).get("info", {})
@@ -148,33 +151,15 @@ class MarketContextAgent(BaseAgent):
 
     @logged()
     async def _build_response(self, query: str) -> dict:
-        trace_id, parent_span_id, query = extract_trace_ids(query)
-
-        langfuse = get_langfuse_client()
-        trace_ctx = (
-            {"trace_id": trace_id, "parent_span_id": parent_span_id}
-            if trace_id and parent_span_id
-            else None
-        )
-        with langfuse.start_as_current_observation(
-            as_type="span",
-            name="market-context-agent-stream",
-            input=query,
-            trace_context=trace_ctx,
-        ) as span:
-            if trace_id:
-                trace_ctx = {"trace_id": trace_id, "parent_span_id": span.id}
-
+        async with self._telemetry_span("market-context-agent-stream", query) as (
+            trace_ctx,
+            span,
+            trace_id,
+        ):
             ticker, company = await resolve_and_validate_ticker(query)
             if not ticker:
                 span.update(output={"error": company or "No ticker found"})
-                return {
-                    "response_type": "text",
-                    "is_task_complete": True,
-                    "is_error": True,
-                    "require_user_input": False,
-                    "content": company or "Could not identify a stock ticker.",
-                }
+                return self._error_response(company or "Could not identify a stock ticker.")
 
             try:
                 result = await self.analyze(ticker, query)
@@ -194,6 +179,9 @@ class MarketContextAgent(BaseAgent):
                 )
                 if EVAL_ENABLED:
                     from shared.eval_gate import defer_eval
+                    from shared.runtime_eval import (
+                        score_sentiment_response as _eval_sentiment_response,
+                    )
 
                     defer_eval(
                         _eval_sentiment_response,
@@ -202,63 +190,51 @@ class MarketContextAgent(BaseAgent):
                         contexts,
                         trace_id,
                     )
-                return {
-                    "response_type": "data",
-                    "is_task_complete": True,
-                    "require_user_input": False,
-                    "content": result,
-                }
+                return self._data_response(result)
             except Exception as e:
                 logger.exception("Market context analysis failed")
                 span.update(output={"error": str(e)})
-                return {
-                    "response_type": "text",
-                    "is_task_complete": True,
-                    "is_error": True,
-                    "require_user_input": False,
-                    "content": f"Market context analysis failed: {e}",
-                }
+                return self._error_response(f"Market context analysis failed: {e}")
 
+    @staticmethod
+    def _extract_retrieved_contexts(data: dict) -> list[str]:
+        contexts: list[str] = []
 
-@logged_sync()
-def _extract_retrieved_contexts(data: dict) -> list[str]:
-    contexts: list[str] = []
-
-    macro = data.get("macro", {})
-    m = (macro.get("macro") or {}) if isinstance(macro, dict) else {}
-    if m:
-        contexts.append(
-            f"Macro regime: {m.get('regime', 'unknown')} yield curve, "
-            f"10Y={m.get('us10y', {}).get('value')}%, "
-            f"VIX={m.get('vix', {}).get('value')}, "
-            f"DXY 5d change {m.get('dxy', {}).get('change_5d_pct')}%"
-        )
-        sectors = macro.get("sectors", {})
-        if isinstance(sectors, dict):
-            top = sorted(
-                ((k, v) for k, v in sectors.items() if isinstance(v, (int, float))),
-                key=lambda x: abs(x[1]),
-                reverse=True,
-            )[:3]
-            if top:
-                contexts.append("Sector 1mo: " + ", ".join(f"{k}={v}%" for k, v in top))
-
-    for sym, pdata in (data.get("peers") or {}).items():
-        pinfo = (pdata.get("financials") or {}).get("info", {})
-        if pinfo:
+        macro = data.get("macro", {})
+        m = (macro.get("macro") or {}) if isinstance(macro, dict) else {}
+        if m:
             contexts.append(
-                f"Peer {sym}: PE={pinfo.get('trailingPE')}, "
-                f"RevGrowth={pinfo.get('revenueGrowth')}, "
-                f"OpMargin={pinfo.get('operatingMargins')}, "
-                f"MarketCap={pinfo.get('marketCap')}"
+                f"Macro regime: {m.get('regime', 'unknown')} yield curve, "
+                f"10Y={m.get('us10y', {}).get('value')}%, "
+                f"VIX={m.get('vix', {}).get('value')}, "
+                f"DXY 5d change {m.get('dxy', {}).get('change_5d_pct')}%"
             )
+            sectors = macro.get("sectors", {})
+            if isinstance(sectors, dict):
+                top = sorted(
+                    ((k, v) for k, v in sectors.items() if isinstance(v, (int, float))),
+                    key=lambda x: abs(x[1]),
+                    reverse=True,
+                )[:3]
+                if top:
+                    contexts.append("Sector 1mo: " + ", ".join(f"{k}={v}%" for k, v in top))
 
-    for key in ("web_context", "macro_web_context"):
-        w = data.get(key)
-        if isinstance(w, dict):
-            for r in (w.get("results") or []):
-                snippet = r.get("snippet", "")
-                if snippet:
-                    contexts.append(f"[Web] {r.get('title', '')}: {snippet}")
+        for sym, pdata in (data.get("peers") or {}).items():
+            pinfo = (pdata.get("financials") or {}).get("info", {})
+            if pinfo:
+                contexts.append(
+                    f"Peer {sym}: PE={pinfo.get('trailingPE')}, "
+                    f"RevGrowth={pinfo.get('revenueGrowth')}, "
+                    f"OpMargin={pinfo.get('operatingMargins')}, "
+                    f"MarketCap={pinfo.get('marketCap')}"
+                )
 
-    return contexts
+        for key in ("web_context", "macro_web_context"):
+            w = data.get(key)
+            if isinstance(w, dict):
+                for r in w.get("results") or []:
+                    snippet = r.get("snippet", "")
+                    if snippet:
+                        contexts.append(f"[Web] {r.get('title', '')}: {snippet}")
+
+        return contexts

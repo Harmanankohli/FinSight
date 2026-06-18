@@ -7,11 +7,9 @@ from agents import Runner
 from shared.base_agent import BaseAgent
 from shared.llm_queue import Priority, llm_queue
 from shared.logging_config import logged, logged_sync
-from shared.observability import get_langfuse_client
 from shared.runtime_eval import score_reviewer_deterministic
 from shared.settings import EVAL_ENABLED
 from shared.ticker_utils import extract_ticker
-from shared.trace_context import extract_trace_ids
 
 from .agent import reviewer_agent
 from .tools.confidence import score_confidence
@@ -38,22 +36,11 @@ class ReviewerAgent(BaseAgent):
 
     @logged()
     async def _build_response(self, query: str, context_id: str = "") -> dict:
-        trace_id, parent_span_id, query = extract_trace_ids(query)
-
-        langfuse = get_langfuse_client()
-        trace_ctx = (
-            {"trace_id": trace_id, "parent_span_id": parent_span_id}
-            if trace_id and parent_span_id
-            else None
-        )
-        with langfuse.start_as_current_observation(
-            as_type="span",
-            name="reviewer-agent-stream",
-            input=query,
-            trace_context=trace_ctx,
-        ) as span:
-            if trace_id:
-                trace_ctx = {"trace_id": trace_id, "parent_span_id": span.id}
+        async with self._telemetry_span("reviewer-agent-stream", query) as (
+            trace_ctx,
+            span,
+            trace_id,
+        ):
             payload = {}
             try:
                 payload = json.loads(query)
@@ -79,11 +66,19 @@ class ReviewerAgent(BaseAgent):
             # Fallback: fetch from shared SQLite store
             if not agent_outputs and session_id:
                 from shared.memory.agent_output_store import get_agent_outputs
+
                 agent_outputs = await get_agent_outputs(session_id)
-                logger.info("Reviewer fetched %d agent outputs from store for session=%s", len(agent_outputs), session_id)
+                logger.info(
+                    "Reviewer fetched %d agent outputs from store for session=%s",
+                    len(agent_outputs),
+                    session_id,
+                )
 
             if not agent_outputs:
-                logger.warning("Reviewer has NO agent outputs for session=%s — tools will run on empty data", session_id)
+                logger.warning(
+                    "Reviewer has NO agent outputs for session=%s — tools will run on empty data",
+                    session_id,
+                )
 
             # Pre-reviewer integrity gate
             integrity_alerts = validate_metric_integrity(agent_outputs)
@@ -91,7 +86,8 @@ class ReviewerAgent(BaseAgent):
             if critical_alerts:
                 logger.warning(
                     "Metric integrity: %d critical alert(s) for %s: %s",
-                    len(critical_alerts), ticker,
+                    len(critical_alerts),
+                    ticker,
                     "; ".join(a["message"] for a in critical_alerts),
                 )
 
@@ -182,9 +178,7 @@ class ReviewerAgent(BaseAgent):
             schema_checks = score_reviewer_deterministic(output_dict)
             if not schema_checks.get("passed", False):
                 failing = [k for k, v in schema_checks.items() if k != "passed" and not v]
-                logger.warning(
-                    "Reviewer deterministic checks failed for %s: %s", ticker, failing
-                )
+                logger.warning("Reviewer deterministic checks failed for %s: %s", ticker, failing)
             output_dict["schema_validation"] = schema_checks
             if integrity_alerts:
                 output_dict["integrity_alerts"] = integrity_alerts
@@ -209,10 +203,4 @@ class ReviewerAgent(BaseAgent):
                     trace_id,
                 )
 
-            return {
-                "response_type": "data",
-                "is_task_complete": True,
-                "is_error": False,
-                "require_user_input": False,
-                "content": json.dumps(output_dict),
-            }
+            return self._data_response(json.dumps(output_dict))

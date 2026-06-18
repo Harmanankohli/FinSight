@@ -86,7 +86,7 @@
 ### CrewAI Future Annotations Fix & seed_user.py (47f2a7d)
 
 - **`from __future__ import annotations` removed** (`src/shared/agent_models.py`): CrewAI's `generate_model_description` reads `__annotations__` directly; `from __future__ import annotations` stringifies them, causing `AttributeError` on `field_type.__name__` for generic types like `list[str]`.
-- **`src/seed_user.py` (new)**: Script for creating test login credentials with Argon2 hashing. Used by CI and manual testing.
+- **`src/scripts/seed_user.py` (new)**: Script for creating test login credentials with Argon2 hashing. Used by CI and manual testing.
 
 ### Quant Fan-In Redundant LLM Fix (9664a84)
 

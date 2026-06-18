@@ -17,6 +17,7 @@ from .executor import AnalyticsAgent
 
 logger = logging.getLogger(__name__)
 
+# Agent card: keep in sync with agent_cards/analytics.json
 agent_card = AgentCard(
     name="Analytics Agent",
     description="Provides trend detection, forecasting, chart data, statistical analysis, and anomaly detection using PydanticAI and pydantic-graph",
@@ -43,7 +44,10 @@ agent_card = AgentCard(
             name="Price Forecasting",
             description="30-day exponential smoothing forecast with confidence bands and MAPE accuracy metric",
             tags=["forecast", "holt-winters", "prediction"],
-            examples=["Forecast NVDA price for the next 30 days", "What is the price prediction for MSFT?"],
+            examples=[
+                "Forecast NVDA price for the next 30 days",
+                "What is the price prediction for MSFT?",
+            ],
         ),
         AgentSkill(
             id="chart_generation",
@@ -64,7 +68,10 @@ agent_card = AgentCard(
             name="Anomaly Detection",
             description="Detect price spikes, volume anomalies, and fundamental outliers using z-score and IQR methods",
             tags=["anomaly", "outlier", "z-score"],
-            examples=["Detect anomalies in NVDA price data", "Are there any volume anomalies for TSLA?"],
+            examples=[
+                "Detect anomalies in NVDA price data",
+                "Are there any volume anomalies for TSLA?",
+            ],
         ),
     ],
 )
@@ -79,4 +86,5 @@ app = build_agent_app(
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=_settings.agent_port_analytics)

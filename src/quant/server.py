@@ -18,6 +18,7 @@ from .executor import QuantAgent
 
 logger = logging.getLogger(__name__)
 
+# Agent card: keep in sync with agent_cards/quant.json
 agent_card = AgentCard(
     name="Quant Analysis Agent",
     description="Computes quantitative risk metrics, financial analysis, behavioral signals, and peer comparisons using yfinance and LangGraph",  # noqa: E501

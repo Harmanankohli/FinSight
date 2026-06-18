@@ -17,6 +17,7 @@ from .executor import MarketContextAgent
 
 logger = logging.getLogger(__name__)
 
+# Agent card: keep in sync with agent_cards/market_context.json
 agent_card = AgentCard(
     name="Market Context Agent",
     description="Provides macro regime analysis (yield curve, VIX, DXY, sector rotation) and competitive peer landscape positioning using CrewAI",  # noqa: E501

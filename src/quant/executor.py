@@ -6,12 +6,9 @@ from langfuse.langchain import CallbackHandler
 from shared.base_agent import BaseAgent
 from shared.logging_config import logged, logged_sync
 from shared.mcp_client import get_shared_mcp
-from shared.observability import get_langfuse_client
 from shared.runtime_eval import score_quant_deterministic
-from shared.runtime_eval import score_quant_response as _eval_quant_response
 from shared.settings import EVAL_ENABLED
 from shared.ticker_utils import extract_holdings, resolve_and_validate_ticker
-from shared.trace_context import extract_trace_ids
 
 from .graph import QuantAnalysisGraph
 
@@ -67,33 +64,11 @@ class QuantAgent(BaseAgent):
 
     @logged()
     async def _build_response(self, query: str) -> dict:
-        trace_id, parent_span_id, query = extract_trace_ids(query)
-
-        langfuse = get_langfuse_client()
-        trace_ctx = (
-            {"trace_id": trace_id, "parent_span_id": parent_span_id}
-            if trace_id and parent_span_id
-            else None
-        )
-        with langfuse.start_as_current_observation(
-            as_type="span",
-            name="quant-agent-stream",
-            input=query,
-            trace_context=trace_ctx,
-        ) as span:
-            if trace_id:
-                trace_ctx = {"trace_id": trace_id, "parent_span_id": span.id}
-
+        async with self._telemetry_span("quant-agent-stream", query) as (trace_ctx, span, trace_id):
             ticker, company = await resolve_and_validate_ticker(query)
             if not ticker:
                 span.update(output={"error": company or "No ticker found"})
-                return {
-                    "response_type": "text",
-                    "is_task_complete": True,
-                    "is_error": True,
-                    "require_user_input": False,
-                    "content": company or "Could not identify a stock ticker.",
-                }
+                return self._error_response(company or "Could not identify a stock ticker.")
 
             holdings = extract_holdings(query, exclude_ticker=ticker)
             if holdings:
@@ -103,7 +78,6 @@ class QuantAgent(BaseAgent):
                 result = await self.analyze(
                     ticker, portfolio_holdings=holdings, trace_ctx=trace_ctx
                 )
-                # Deterministic schema validator — runs every call, no LLM cost
                 schema_checks = score_quant_deterministic(result)
                 if not schema_checks.get("passed", False):
                     failing = [k for k, v in schema_checks.items() if k != "passed" and not v]
@@ -120,6 +94,7 @@ class QuantAgent(BaseAgent):
                 )
                 if EVAL_ENABLED:
                     from shared.eval_gate import defer_eval
+                    from shared.runtime_eval import score_quant_response as _eval_quant_response
 
                     defer_eval(
                         _eval_quant_response,
@@ -128,19 +103,8 @@ class QuantAgent(BaseAgent):
                         result,
                         trace_id,
                     )
-                return {
-                    "response_type": "data",
-                    "is_task_complete": True,
-                    "require_user_input": False,
-                    "content": result,
-                }
+                return self._data_response(result)
             except Exception as e:
                 logger.exception("Quant analysis failed")
                 span.update(output={"error": str(e)})
-                return {
-                    "response_type": "text",
-                    "is_task_complete": True,
-                    "is_error": True,
-                    "require_user_input": False,
-                    "content": f"Quant analysis failed: {e}",
-                }
+                return self._error_response(f"Quant analysis failed: {e}")

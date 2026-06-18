@@ -17,6 +17,7 @@ from .executor import ReviewerAgent
 
 logger = logging.getLogger(__name__)
 
+# Agent card: keep in sync with agent_cards/reviewer.json
 agent_card = AgentCard(
     name="Reviewer Agent",
     description="Cross-validates all agent outputs, checks for contradictions, and produces calibrated meta-confidence using OpenAI Agents SDK",
@@ -79,4 +80,5 @@ app = build_agent_app(
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=_settings.agent_port_reviewer)

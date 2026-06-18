@@ -21,6 +21,7 @@ from .index_manager import FinancialIndexManager
 
 logger = logging.getLogger(__name__)
 
+# Agent card: keep in sync with agent_cards/financial_rag.json
 agent_card = AgentCard(
     name="Financial RAG Agent",
     description="Retrieves and analyzes financial documents using RAG with ChromaDB and LM Studio",

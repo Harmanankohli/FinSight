@@ -8,11 +8,8 @@ from shared.base_agent import BaseAgent
 from shared.logging_config import logged, logged_sync
 from shared.mcp_client import get_shared_mcp
 from shared.memory.store import is_filing_ingested, mark_filing_ingested
-from shared.observability import get_langfuse_client
-from shared.runtime_eval import score_rag_response as _eval_rag_response
 from shared.settings import EVAL_ENABLED
 from shared.ticker_utils import extract_ticker, resolve_and_validate_ticker
-from shared.trace_context import extract_trace_ids
 
 from .document_ingestion import DocumentIngestionPipeline
 from .index_manager import FinancialIndexManager
@@ -192,33 +189,11 @@ class RAGAgent(BaseAgent):
 
     @logged()
     async def _build_response(self, query: str) -> dict:
-        trace_id, parent_span_id, query = extract_trace_ids(query)
-
-        langfuse = get_langfuse_client()
-        trace_ctx = (
-            {"trace_id": trace_id, "parent_span_id": parent_span_id}
-            if trace_id and parent_span_id
-            else None
-        )
-        with langfuse.start_as_current_observation(
-            as_type="span",
-            name="rag-agent-stream",
-            input=query,
-            trace_context=trace_ctx,
-        ) as span:
-            if trace_id:
-                trace_ctx = {"trace_id": trace_id, "parent_span_id": span.id}
-
+        async with self._telemetry_span("rag-agent-stream", query) as (trace_ctx, span, trace_id):
             ticker, company = await resolve_and_validate_ticker(query)
             if not ticker:
                 span.update(output={"error": company or "No ticker found"})
-                return {
-                    "response_type": "text",
-                    "is_task_complete": True,
-                    "is_error": True,
-                    "require_user_input": False,
-                    "content": company or "Could not identify a stock ticker.",
-                }
+                return self._error_response(company or "Could not identify a stock ticker.")
 
             try:
                 result = await self.query(ticker, query)
@@ -226,18 +201,27 @@ class RAGAgent(BaseAgent):
                 # Augment context_texts with web search results
                 try:
                     mcp = await get_shared_mcp()
-                    web_res = await mcp.call_tool_by_name("web_search", {
-                        "query": f"{ticker} recent news analysis",
-                        "max_results": 5,
-                        "time_filter": "w",
-                    })
+                    web_res = await mcp.call_tool_by_name(
+                        "web_search",
+                        {
+                            "query": f"{ticker} recent news analysis",
+                            "max_results": 5,
+                            "time_filter": "w",
+                        },
+                    )
                     if hasattr(web_res, "content") and web_res.content:
-                        raw = web_res.content[0].text if hasattr(web_res.content[0], "text") else str(web_res.content[0])  # noqa: E501
+                        raw = (
+                            web_res.content[0].text
+                            if hasattr(web_res.content[0], "text")
+                            else str(web_res.content[0])
+                        )  # noqa: E501
                         web_data = json.loads(raw)
-                        for r in (web_data.get("results") or []):
+                        for r in web_data.get("results") or []:
                             snippet = r.get("snippet", "")
                             if snippet:
-                                result.setdefault("context_texts", []).append(f"[Web] {r.get('title', '')}: {snippet}")  # noqa: E501
+                                result.setdefault("context_texts", []).append(
+                                    f"[Web] {r.get('title', '')}: {snippet}"
+                                )  # noqa: E501
                 except Exception as we:
                     logger.debug("Web search augmentation failed: %s", we)
 
@@ -251,6 +235,7 @@ class RAGAgent(BaseAgent):
                 )
                 if EVAL_ENABLED:
                     from shared.eval_gate import defer_eval
+                    from shared.runtime_eval import score_rag_response as _eval_rag_response
 
                     defer_eval(
                         _eval_rag_response,
@@ -259,19 +244,8 @@ class RAGAgent(BaseAgent):
                         result.get("context_texts", []),
                         trace_id,
                     )
-                return {
-                    "response_type": "data",
-                    "is_task_complete": True,
-                    "require_user_input": False,
-                    "content": result,
-                }
+                return self._data_response(result)
             except Exception as e:
                 logger.exception("RAG query failed")
                 span.update(output={"error": str(e)})
-                return {
-                    "response_type": "text",
-                    "is_task_complete": True,
-                    "is_error": True,
-                    "require_user_input": False,
-                    "content": f"RAG analysis failed: {e}",
-                }
+                return self._error_response(f"RAG analysis failed: {e}")
