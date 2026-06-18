@@ -300,7 +300,8 @@ The MCP server exposes tools via SSE transport at `/sse`. Tools are consumed by 
 | Route | Method | Purpose |
 |---|---|---|
 | `/api/copilotkit` | POST | CopilotKit runtime — proxies to orchestrator `/a2a-agui` via AG-UI protocol |
-| `/api/traces` | GET | Langfuse trace proxy — `?traceId=X` for single trace, omit for list |
+| `/api/dashboard` | GET | Dashboard metrics — KPIs, agent breakdown, time series (`?hours=24`) |
+| `/api/dashboard/scores` | GET | RAGAS quality scores per agent |
 | `/api/health` | GET | Backend health proxy — `?svc=orchestrator\|rag\|quant\|market\|analytics\|reviewer\|mcp` |
 
 ### Rewrites

@@ -2647,7 +2647,7 @@ CopilotKit's Zod schemas expect camelCase keys (`messageId`, `toolCallId`, `runI
 
 CopilotKit's Zod validation rejects `null` where an optional field isn't explicitly required. Fields like `rawEvent`, `parentRunId`, `name`, `encryptedValue` are optional metadata — when null, they cause Zod parse errors and the entire event is dropped. Selective null-stripping (`_STRIP_KEYS`) removes only from the event envelope, preserving null in data-carrying fields (`snapshot`, `delta`, nested `content`) where null is semantically meaningful.
 
-### Why server-side API proxies (`/api/traces`, `/api/health`) instead of direct browser calls?
+### Why server-side API proxies (`/api/dashboard`, `/api/health`) instead of direct browser calls?
 
 Two reasons:
 - **Credentials**: Langfuse secret key and health endpoint URLs never leave the backend. The Next.js server-side `fetch` handles auth; the browser gets a clean JSON response.

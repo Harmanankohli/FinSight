@@ -43,7 +43,8 @@ def bootstrap(service_name: str) -> "Settings":
 
     setup_file_logging(service_name)
 
-    logger.info("Bootstrapping %s: LOG_LEVEL=%s, env=%s", service_name, s.log_level, s.env)
+    _log_level = os.environ.get(f"LOG_LEVEL_{service_name.upper().replace('-', '_')}") or os.environ.get("LOG_LEVEL", "INFO")
+    logger.info("Bootstrapping %s: LOG_LEVEL=%s, env=%s", service_name, _log_level, s.env)
 
     # Langfuse is a no-op when keys are not configured
     if s.langfuse_public_key is not None and s.langfuse_secret_key is not None:

@@ -250,7 +250,8 @@ Content-Disposition: attachment; filename="FinSight_{ticker}_{date}.pdf"  (pdf o
 <table>
 <tr><th>Route</th><th>Method</th><th>Purpose</th></tr>
 <tr><td><code>/api/copilotkit</code></td><td>POST</td><td>CopilotKit runtime &mdash; proxies to orchestrator <code>/a2a-agui</code> via AG-UI protocol</td></tr>
-<tr><td><code>/api/traces</code></td><td>GET</td><td>Langfuse trace proxy &mdash; <code>?traceId=X</code> for single trace, omit for list</td></tr>
+<tr><td><code>/api/dashboard</code></td><td>GET</td><td>Dashboard metrics &mdash; KPIs, agent breakdown, time series (<code>?hours=24</code>)</td></tr>
+<tr><td><code>/api/dashboard/scores</code></td><td>GET</td><td>RAGAS quality scores per agent</td></tr>
 <tr><td><code>/api/health</code></td><td>GET</td><td>Backend health proxy &mdash; <code>?svc=orchestrator|rag|quant|market|mcp</code></td></tr>
 </table>
 

@@ -18,7 +18,7 @@ Open `http://localhost:3000`. Requires the backend orchestrator on port 8001.
 |---|---|
 | `/` | Overview landing — architecture diagram, feature grid, CTAs |
 | `/research` | **Primary page** — CopilotKit chat, agent activity tiles, BUY/HOLD/SELL badges, PPTX/DOCX downloads |
-| `/trace` | Langfuse trace inspector — nested span tree, color-coded by agent |
+| `/dashboard` | Observability dashboard — KPIs, agent metrics, latency charts, RAGAS quality scores |
 | `/memory` | Persistent briefs browser — search by ticker, expandable cards, report downloads |
 | `/operator` | Service health dashboard — LED status for all 5 backend services |
 
@@ -39,14 +39,15 @@ CopilotKit connects via `HttpAgent` pointing at the orchestrator's AG-UI streami
 | File | Purpose |
 |---|---|
 | `components/Providers.tsx` | CopilotKit provider + app shell (Sidebar + main content) |
-| `components/Sidebar.tsx` | Left nav — workspace links, recent traces, recent queries |
+| `components/Sidebar.tsx` | Left nav — workspace links, recent queries |
 
 ## API Routes
 
 | Route | Purpose |
 |---|---|
 | `POST /api/copilotkit` | CopilotKit runtime → orchestrator AG-UI bridge |
-| `GET /api/traces` | Langfuse proxy (list or single trace) |
+| `GET /api/dashboard` | Dashboard metrics — KPIs, agent breakdown, time series (`?hours=24`) |
+| `GET /api/dashboard/scores` | RAGAS quality scores per agent |
 | `GET /api/health` | Backend health proxy (`?svc=orchestrator\|rag\|quant\|market\|mcp`) |
 
 ### Rewrites
@@ -91,7 +92,7 @@ Warm ivory/clay palette. All CSS in `app/globals.css` — no Tailwind utility cl
 
 | File | Purpose |
 |---|---|
-| `lib/stores/useAppStore.ts` | Zustand store — `traceOpen`, `sidebarOpen`, `userId` |
+| `lib/stores/useAppStore.ts` | Zustand store — `sidebarOpen`, `userId` |
 | `lib/recentQueries.ts` | localStorage-backed recent query history (max 12) |
 
 ## Environment Variables
@@ -100,9 +101,9 @@ Warm ivory/clay palette. All CSS in `app/globals.css` — no Tailwind utility cl
 |---|---|---|
 | `NEXT_PUBLIC_ORCHESTRATOR_URL` | Yes | Backend orchestrator URL (default `http://localhost:8001`) |
 | `NEXT_PUBLIC_COPILOTKIT_API_KEY` | Yes | CopilotKit public API key |
-| `LANGFUSE_PUBLIC_KEY` | For `/api/traces` | Langfuse public key |
-| `LANGFUSE_SECRET_KEY` | For `/api/traces` | Langfuse secret key |
-| `LANGFUSE_BASE_URL` | For `/api/traces` | Langfuse base URL (default `https://cloud.langfuse.com`) |
+| `LANGFUSE_PUBLIC_KEY` | For `/api/dashboard` | Langfuse public key |
+| `LANGFUSE_SECRET_KEY` | For `/api/dashboard` | Langfuse secret key |
+| `LANGFUSE_BASE_URL` | For `/api/dashboard` | Langfuse base URL (default `https://cloud.langfuse.com`) |
 
 ## Scripts
 

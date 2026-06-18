@@ -9,31 +9,20 @@ import { useAuth } from "@/contexts/AuthContext";
 const NAV = [
   { href: "/", label: "Overview", icon: "M3 9.5 12 3l9 6.5V21H3z" },
   { href: "/research", label: "Research", icon: "M21 11.5a8.4 8.4 0 0 1-12 7.6L3 21l1.9-6A8.5 8.5 0 1 1 21 11.5z" },
-  { href: "/trace", label: "Trace", icon: "M4 4v16M4 8h7M4 14h11M4 20h5" },
+  { href: "/dashboard", label: "Dashboard", icon: "M3 3v18h18M7 14v3M11 10v7M15 7v10M19 4v13" },
   { href: "/memory", label: "Memory", icon: "M12 3a9 9 0 1 0 9 9M12 3v9l5 3" },
   { href: "/operator", label: "Operator", icon: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z" },
 ];
-
-interface LfTrace {
-  id: string; name?: string; latency?: number; timestamp?: string;
-}
 
 export function Sidebar() {
   const pathname = usePathname();
   const { user, logout } = useAuth();
   const [recent, setRecent] = useState<RecentQuery[]>([]);
-  const [traces, setTraces] = useState<LfTrace[]>([]);
 
   useEffect(() => {
     setRecent(getRecentQueries());
     const h = () => setRecent(getRecentQueries());
     window.addEventListener("finsight:recent-queries-changed", h);
-
-    fetch("/api/traces")
-      .then((r) => r.ok ? r.json() : { traces: [] })
-      .then((data) => setTraces((data.traces || []).slice(0, 5)))
-      .catch(() => {});
-
     return () => window.removeEventListener("finsight:recent-queries-changed", h);
   }, []);
 
@@ -56,28 +45,6 @@ export function Sidebar() {
           </Link>
         ))}
       </nav>
-
-      {/* Langfuse traces */}
-      {traces.length > 0 && (
-        <>
-          <div className="sb-sec">Recent traces</div>
-          <nav className="sb-nav" style={{ paddingTop: 2 }}>
-            {traces.map((t, i) => (
-              <Link
-                key={`t-${i}`}
-                href={`/trace?traceId=${t.id}`}
-                className="sb-link"
-                style={{ fontWeight: 400, fontSize: "12px", color: "var(--text-muted)" }}
-              >
-                <span style={{ fontSize: 11 }}>{t.name || "trace"}</span>
-                <span className="mono" style={{ marginLeft: "auto", fontSize: 10, opacity: 0.6 }}>
-                  {t.latency ? `${(t.latency / 1000).toFixed(0)}s` : ""}
-                </span>
-              </Link>
-            ))}
-          </nav>
-        </>
-      )}
 
       {/* Recent queries */}
       {recent.length > 0 && (
