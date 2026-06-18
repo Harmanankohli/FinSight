@@ -45,6 +45,7 @@ _FINANCIAL_STOP_WORDS: frozenset[str] = frozenset(
         "MCP",
         "A2A",
         "API",
+        "TASK",
         # Common English words that collide with rare tickers
         "I",
         "AM",

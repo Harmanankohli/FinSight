@@ -10,6 +10,7 @@ from shared.logging_config import logged, logged_sync
 from shared.runtime_eval import score_reviewer_deterministic
 from shared.settings import EVAL_ENABLED
 from shared.ticker_utils import extract_ticker
+from shared.trace_context import extract_trace_context
 
 from .agent import reviewer_agent
 from .tools.confidence import score_confidence
@@ -41,13 +42,15 @@ class ReviewerAgent(BaseAgent):
             span,
             trace_id,
         ):
+            _, clean_query = extract_trace_context(query)
+
             payload = {}
             try:
-                payload = json.loads(query)
+                payload = json.loads(clean_query)
                 ticker = payload.get("ticker", "")
                 session_id = payload.get("session_id", "")
             except json.JSONDecodeError:
-                ticker = extract_ticker(query) or ""
+                ticker = extract_ticker(clean_query) or ""
                 session_id = ""
                 span.update(output={"warning": "Query was not JSON, parsed ticker from text"})
 

@@ -6,6 +6,8 @@ import threading
 import time
 from datetime import datetime
 
+from pydantic import BaseModel, Field
+
 from google.adk.agents import LlmAgent
 from google.adk.tools.tool_context import ToolContext
 from google.genai import types as genai_types
@@ -97,25 +99,39 @@ def _trim_for_llm(agent_name: str, data: dict) -> dict:
     return data
 
 
-async def send_message(agent_name: str, task: str, tool_context: ToolContext) -> str:
+_AGENT_TASK_TEMPLATES: dict[str, str] = {
+    "financial rag agent": "Analyze {ticker} SEC filings, earnings reports, and recent financial news.",
+    "quant analysis agent": "Perform quantitative analysis on {ticker} including DCF valuation, technical indicators, peer comparison, and risk metrics.",
+    "market context agent": "Analyze {ticker} market context including macro regime, competitive landscape, and industry trends.",
+    "analytics agent": "Run statistical trend analysis, forecasting, and anomaly detection for {ticker}.",
+    "reviewer agent": '{{"ticker": "{ticker}"}}',
+}
+
+
+class SendMessageInput(BaseModel):
+    """Input for delegating a task to a specialized investment agent."""
+
+    agent_name: str = Field(
+        description="The EXACT name of the agent from the Available agents list. "
+        "Valid names: Financial RAG Agent, Quant Analysis Agent, "
+        "Market Context Agent, Analytics Agent, Reviewer Agent.",
+    )
+    ticker: str = Field(
+        description="Stock ticker symbol in ALL CAPS (e.g. AAPL, NVDA, MA, MSFT). "
+        "Must be the same ticker for every agent call.",
+        pattern=r"^[A-Z]{1,5}$",
+    )
+
+
+async def send_message(args: SendMessageInput, tool_context: ToolContext) -> str:
     """Delegate a task to a specialized remote investment agent.
 
-    ONLY call this tool when agents are listed under "Available agents"
-    in your instructions. Call it for EACH listed agent. Use the EXACT
-    agent name from that list — never invent or guess names.
-
-    If no agents are listed, DO NOT call this tool — there are no agents.
-
-    Args:
-        agent_name: The exact name of the agent as listed under
-            "Available agents" in your instructions. Never invent names.
-        task: Full description of the analysis. MUST include the company's
-            ticker symbol (e.g. "MA", "AAPL", "NVDA") in ALL CAPS somewhere
-            in the task text. Use the SAME ticker for every agent.
-
-    Returns:
-        The agent's analysis as text.
+    Call this for EACH agent listed under "Available agents". Use the EXACT
+    agent name from that list. Pass the stock ticker in ALL CAPS.
     """
+    agent_name = args.agent_name
+    ticker = args.ticker.strip().upper()
+
     if not _client.list_agents():
         return json.dumps(
             {
@@ -133,9 +149,9 @@ async def send_message(agent_name: str, task: str, tool_context: ToolContext) ->
                 "Use one of these exact names and retry."
             }
         )
-    # ADK may pass task as dict or string — normalize early
-    if isinstance(task, dict):
-        task = json.dumps(task)
+
+    template = _AGENT_TASK_TEMPLATES.get(resolved.lower(), "Analyze {ticker}.")
+    task = template.format(ticker=ticker)
 
     # Capture session_id from tool context for storing outputs
     session_id = tool_context.session.id if tool_context and tool_context.session else None
@@ -145,7 +161,7 @@ async def send_message(agent_name: str, task: str, tool_context: ToolContext) ->
         try:
             payload = json.loads(task)
         except (json.JSONDecodeError, TypeError):
-            payload = {"ticker": extract_ticker(task) or ""}
+            payload = {"ticker": ticker}
         payload["session_id"] = session_id
         entry = _agent_responses.get(session_id)
         if entry:
@@ -417,24 +433,17 @@ PHASE 1 — Parallel Analysis:
     `load_memory` first. Do NOT call any other tool first. You MUST emit ALL
     Phase 1 `send_message` calls in a SINGLE assistant response so they
     execute in PARALLEL. Use their EXACT names — never invent agent names.
-3.  Each task MUST include the SAME ticker symbol in ALL CAPS (e.g. "MA").
-    Do NOT use different tickers for different agents.
-4.  Only include portfolio holdings in the Quant Analysis Agent task if the
-    user EXPLICITLY mentions their portfolio or asks for correlation/portfolio
-    analysis in their CURRENT message (e.g. "My portfolio holds AAPL, MSFT").
-    Do NOT include holdings from memory context background lines — those are
-    for your reference only. If the user just asks about a single stock, send
-    only that ticker to the Quant agent.
+3.  Pass the SAME ticker symbol in ALL CAPS (e.g. "MA") to every agent.
+    The task description is generated automatically — you only provide
+    `agent_name` and `ticker`.
 
 PHASE 2 — Review:
-5.  After ALL Phase 1 agents have responded (you will receive their results
-    together in the next turn), call `send_message` for the Reviewer Agent.
-    Pass a JSON payload: {"ticker": "AAPL", "session_id": "<your_session_id>"}
-    Do NOT include agent_outputs — the reviewer will fetch the full data
-    from the shared store using the session_id.
+4.  After ALL Phase 1 agents have responded (you will receive their results
+    together in the next turn), call `send_message` for the Reviewer Agent
+    with the same ticker.
 
 PHASE 3 — Synthesis:
-6.  After the Reviewer Agent responds, synthesize ALL findings including the
+5.  After the Reviewer Agent responds, synthesize ALL findings including the
     reviewer's cross-validation into a BUY/HOLD/SELL recommendation with
     supporting evidence. Include a confidence score (0.0–1.0) in your response.
     Your analysis is automatically saved after you respond — no manual save
@@ -442,6 +451,7 @@ PHASE 3 — Synthesis:
 
 TOOL RULES:
 - `send_message`: Use this for ALL stock analysis requests. ALWAYS call it first.
+  Parameters: agent_name (exact name from list), ticker (ALL CAPS symbol).
 - `load_memory`: ONLY use this when the user explicitly asks about past
   recommendations (e.g. "what did you recommend before", "show history").
   NEVER call load_memory when the user asks to analyze a stock.
@@ -451,8 +461,9 @@ MEMORY CONTEXT RULES (applies when [MEMORY CONTEXT] block is present):
 - [STALE]: analysis is from a prior day — you MUST call ALL agents for a fresh analysis.
   Treat stale data as background reference only. Do NOT return it as the current recommendation.
 
-TASK FORMAT — always include the ticker and current date in the task text:
-  "Analyze MA (Mastercard) SEC filings for recent financial performance."
+EXAMPLES:
+  User: "Analyze Mastercard" → send_message(agent_name="Financial RAG Agent", ticker="MA")
+  User: "What about Apple?" → send_message(agent_name="Quant Analysis Agent", ticker="AAPL")
 
 For general chat or non-stock queries, respond conversationally.\
 """

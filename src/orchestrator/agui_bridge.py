@@ -415,7 +415,7 @@ async def _stream(
     # Short timeout for LLM thinking; long timeout while tools (sub-agents) run.
     from shared.settings import A2A_TIMEOUT
 
-    _LLM_TIMEOUT = 120
+    _LLM_TIMEOUT = 600
     _TOOL_TIMEOUT = A2A_TIMEOUT + 30
     _awaiting_tool_response = 0
 
@@ -429,17 +429,24 @@ async def _stream(
             deadline = _TOOL_TIMEOUT if _awaiting_tool_response > 0 else _LLM_TIMEOUT
             elapsed = 0
             event = None
+            next_task = asyncio.ensure_future(event_iter.__anext__())
             while elapsed < deadline:
                 wait = min(_KEEPALIVE_INTERVAL, deadline - elapsed)
+                done, _ = await asyncio.wait({next_task}, timeout=wait)
+                if done:
+                    try:
+                        event = next_task.result()
+                    except StopAsyncIteration:
+                        event = _SENTINEL
+                    break
+                elapsed += wait
+                yield ": keepalive\n\n"
+            else:
+                next_task.cancel()
                 try:
-                    event = await asyncio.wait_for(event_iter.__anext__(), timeout=wait)
-                    break
-                except StopAsyncIteration:
-                    event = _SENTINEL
-                    break
-                except asyncio.TimeoutError:
-                    elapsed += wait
-                    yield ": keepalive\n\n"
+                    await next_task
+                except (asyncio.CancelledError, StopAsyncIteration):
+                    pass
             if event is _SENTINEL:
                 break
             if event is None:
