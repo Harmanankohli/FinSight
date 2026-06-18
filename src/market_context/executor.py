@@ -108,6 +108,7 @@ class MarketContextAgent(BaseAgent):
             "macro": macro,
             "sector": sector,
             "industry": industry,
+            "primary_financials": info,
             "peers": peers,
             "web_context": web_context,
             "macro_web_context": macro_web,

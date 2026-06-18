@@ -38,11 +38,17 @@ _BLOCK_STOP = re.compile(r"\n#{1,6}\s|\n\s*\n|(?i:\b(?:bull|bear)\s+case\s*:)")
 _BARE_FIGURE = re.compile(r"^\$?\s*[\d,]+(?:\.\d+)?\s*%?$")
 
 
+_RAW_ANOMALY_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}(?:T[\d:.+-]+)?\s+(?:price_spike|price_drop|high_volume|low_volume|anomaly)\s*$",
+    re.IGNORECASE,
+)
+
+
 def _clean_item(s: str) -> str | None:
     """Single choke-point for every risk/opportunity/bullet append.
 
     Strips markdown, rejects items that are too short/long, contain raw
-    markdown, match bare figures, or are price sentences (scenario data).
+    markdown, match bare figures, are price sentences, or raw anomaly data.
     """
     s = re.sub(r"\*\*(.+?)\*\*", r"\1", s)
     s = re.sub(r"^[-•*+]\s+", "", s)
@@ -56,6 +62,8 @@ def _clean_item(s: str) -> str | None:
     if _BARE_FIGURE.match(s):
         return None
     if re.match(r"^(?:bull|bear)\s+case\b.*\$", s, re.IGNORECASE):
+        return None
+    if _RAW_ANOMALY_RE.match(s):
         return None
     return s
 
@@ -1462,12 +1470,6 @@ def _populate_from_agent_outputs(data: DeckData, brief_data: dict, response_text
 
         anomalies = analytics.get("anomalies") or {}
         if anomalies.get("severity") in ("medium", "high"):
-            for a in anomalies.get("price_anomalies", []):
-                desc = a.get("date", "") + " " + a.get("type", "anomaly")
-                data.risks.append(desc)
-            for a in anomalies.get("volume_anomalies", []):
-                desc = a.get("date", "") + " " + a.get("type", "anomaly")
-                data.risks.append(desc)
             for fa in anomalies.get("fundamental_anomalies", []):
                 data.risks.append(fa)
 
@@ -2061,12 +2063,6 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
         anomalies = analytics.anomalies
         if anomalies:
             if anomalies.severity in ("medium", "high"):
-                for a in anomalies.price_anomalies:
-                    desc = a.get("date", "") + " " + a.get("type", "anomaly")
-                    data.risks.append(desc)
-                for a in anomalies.volume_anomalies:
-                    desc = a.get("date", "") + " " + a.get("type", "anomaly")
-                    data.risks.append(desc)
                 for fa in anomalies.fundamental_anomalies:
                     data.risks.append(fa)
 

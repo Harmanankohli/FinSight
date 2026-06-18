@@ -49,13 +49,19 @@ class MarketContextCrew:
             else "(macro data unavailable)"
         )
 
+        def _pct(v) -> str:
+            return f"{v * 100:.1f}%" if isinstance(v, (int, float)) else str(v)
+
+        def _num(v) -> str:
+            return f"{v:.1f}" if isinstance(v, float) else str(v)
+
         peer_lines = []
         for sym, pdata in peers.items():
             pinfo = (pdata.get("financials") or {}).get("info", {})
             peer_lines.append(
-                f"  - {sym}: PE={pinfo.get('trailingPE')}, "
-                f"RevGrowth={pinfo.get('revenueGrowth')}, "
-                f"OpMargin={pinfo.get('operatingMargins')}, "
+                f"  - {sym}: PE={_num(pinfo.get('trailingPE'))}, "
+                f"RevGrowth={_pct(pinfo.get('revenueGrowth'))}, "
+                f"OpMargin={_pct(pinfo.get('operatingMargins'))}, "
                 f"MarketCap={pinfo.get('marketCap')}"
             )
         peer_summary = "\n".join(peer_lines) if peer_lines else "(no peer data)"
@@ -80,8 +86,21 @@ class MarketContextCrew:
         if len(web_section) > 2000:
             web_section = web_section[:2000] + "…"
 
+        pf = data.get("primary_financials") or {}
+        if pf:
+            target_summary = (
+                f"  PE={_num(pf.get('trailingPE'))}, "
+                f"RevGrowth={_pct(pf.get('revenueGrowth'))}, "
+                f"OpMargin={_pct(pf.get('operatingMargins'))}, "
+                f"ROE={_pct(pf.get('returnOnEquity'))}, "
+                f"MarketCap={pf.get('marketCap')}"
+            )
+        else:
+            target_summary = "  (financials unavailable)"
+
         context_data = (
-            f"Target: {ticker} ({industry or sector})\n\n"
+            f"Target: {ticker} ({industry or sector})\n"
+            f"{ticker} FUNDAMENTALS:\n{target_summary}\n\n"
             f"MACRO REGIME:\n{macro_summary}\n\n"
             f"PEER LANDSCAPE ({len(peers)} peers):\n{peer_summary}"
         )
