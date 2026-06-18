@@ -14,7 +14,7 @@ def _make_mock_outputs(**overrides) -> dict:
                 "quant_confidence": 0.8,
                 "quant_signal": "bullish",
                 "sharpe_ratio": 1.5,
-                "var_95_daily": 0.02,
+                "var_95_daily": -0.02,
             },
             "dcf_valuation": {"intrinsic_value": 200, "current_price": 150, "upside_pct": 33.33},
         },

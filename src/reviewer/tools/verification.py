@@ -53,10 +53,10 @@ def verify_sources(agent_outputs: dict) -> list[dict]:
             unverified.append(f"Sharpe ratio {sharpe:.2f} out of plausible range [-5, 5]")
     if var_95 is not None:
         claims_checked += 1
-        if 0 <= var_95 <= 1:
+        if -1 <= var_95 <= 0:
             claims_verified += 1
         else:
-            unverified.append(f"VaR(95%) {var_95:.4f} out of range [0, 1]")
+            unverified.append(f"VaR(95%) {var_95:.4f} out of range [-1, 0]")
     if claims_checked > 0:
         rate = claims_verified / claims_checked if claims_checked > 0 else 0.0
         verifications.append(
@@ -145,7 +145,7 @@ def verify_sources(agent_outputs: dict) -> list[dict]:
         claims_checked += 1
         from datetime import datetime
 
-        if all(d > datetime.now().strftime("%Y-%m-%d") for d in forecast_dates):
+        if all(d >= datetime.now().strftime("%Y-%m-%d") for d in forecast_dates):
             claims_verified += 1
         else:
             unverified.append("Some forecast dates are in the past")

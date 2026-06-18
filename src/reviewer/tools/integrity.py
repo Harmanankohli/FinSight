@@ -82,13 +82,13 @@ def validate_metric_integrity(agent_outputs: dict) -> list[dict]:
 
     # ── Quant: VaR ──
     var_95 = metrics.get("var_95_daily")
-    if var_95 is not None and not (0 <= var_95 <= 1):
+    if var_95 is not None and not (-1 <= var_95 <= 0):
         alerts.append(
             {
                 "agent": "quant",
                 "metric": "metrics.var_95_daily",
                 "severity": "critical",
-                "message": f"VaR(95%) {var_95:.4f} outside [0, 1]",
+                "message": f"VaR(95%) {var_95:.4f} outside [-1, 0]",
             }
         )
 
