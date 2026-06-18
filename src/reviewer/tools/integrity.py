@@ -33,19 +33,11 @@ def validate_metric_integrity(agent_outputs: dict) -> list[dict]:
                 }
             )
 
-    # ── Quant: Monte Carlo ──
+    # ── Quant: Monte Carlo cross-field consistency ──
+    # (prob_profit range [0,1] is enforced by MonteCarloResult Pydantic model)
     mc = quant.get("monte_carlo") or {}
     prob_profit = mc.get("prob_profit")
     if prob_profit is not None:
-        if not (0.0 <= prob_profit <= 1.0):
-            alerts.append(
-                {
-                    "agent": "quant",
-                    "metric": "monte_carlo.prob_profit",
-                    "severity": "critical",
-                    "message": f"prob_profit={prob_profit} outside [0, 1]",
-                }
-            )
         p50 = mc.get("p50")
         if p50 is not None and current is not None:
             if p50 > current and prob_profit < 0.4:
@@ -67,57 +59,11 @@ def validate_metric_integrity(agent_outputs: dict) -> list[dict]:
                     }
                 )
 
-    # ── Quant: Sharpe ratio ──
-    metrics = quant.get("metrics") or {}
-    sharpe = metrics.get("sharpe_ratio")
-    if isinstance(sharpe, (int, float)) and not (-5 <= sharpe <= 5):
-        alerts.append(
-            {
-                "agent": "quant",
-                "metric": "metrics.sharpe_ratio",
-                "severity": "critical",
-                "message": f"Sharpe ratio {sharpe:.2f} outside plausible range [-5, 5]",
-            }
-        )
-
-    # ── Quant: VaR ──
-    var_95 = metrics.get("var_95_daily")
-    if var_95 is not None and not (-1 <= var_95 <= 0):
-        alerts.append(
-            {
-                "agent": "quant",
-                "metric": "metrics.var_95_daily",
-                "severity": "critical",
-                "message": f"VaR(95%) {var_95:.4f} outside [-1, 0]",
-            }
-        )
-
-    # ── Quant: Beta ──
-    beta = metrics.get("beta")
-    if isinstance(beta, (int, float)) and not (-3 <= beta <= 6):
-        alerts.append(
-            {
-                "agent": "quant",
-                "metric": "metrics.beta",
-                "severity": "warning",
-                "message": f"Beta {beta:.2f} outside typical range [-3, 6]",
-            }
-        )
-
-    # ── Quant: RSI ──
-    technicals = quant.get("technicals") or {}
-    rsi = technicals.get("rsi_14") or technicals.get("rsi")
-    if isinstance(rsi, (int, float)) and not (0 <= rsi <= 100):
-        alerts.append(
-            {
-                "agent": "quant",
-                "metric": "technicals.rsi",
-                "severity": "critical",
-                "message": f"RSI {rsi:.1f} outside [0, 100]",
-            }
-        )
+    # Range checks for sharpe_ratio, var_95_daily, beta, rsi are enforced
+    # by Pydantic Field constraints on QuantRiskMetrics / TechnicalIndicators.
 
     # ── Quant: recommendation vs quant_signal direction ──
+    metrics = quant.get("metrics") or {}
     rec = quant.get("recommendation")
     signal = metrics.get("quant_signal")
     if rec and signal:
@@ -153,17 +99,7 @@ def validate_metric_integrity(agent_outputs: dict) -> list[dict]:
             }
         )
 
-    # ── Quant: MAPE if present ──
-    mape = _safe_get(quant, "forecast", "mape", default=None)
-    if isinstance(mape, (int, float)) and mape < 0:
-        alerts.append(
-            {
-                "agent": "quant",
-                "metric": "forecast.mape",
-                "severity": "critical",
-                "message": f"MAPE is negative ({mape:.2f}) — mathematically impossible",
-            }
-        )
+    # MAPE >= 0 is enforced by ForecastResult Pydantic model.
 
     # ── Quant: stress test vs recommendation ──
     stress = quant.get("stress_test") or {}
@@ -178,43 +114,9 @@ def validate_metric_integrity(agent_outputs: dict) -> list[dict]:
             }
         )
 
-    # ── Analytics: confidence ──
-    a_conf = analytics.get("analytics_confidence")
-    if isinstance(a_conf, (int, float)) and not (0.0 <= a_conf <= 1.0):
-        alerts.append(
-            {
-                "agent": "analytics",
-                "metric": "analytics_confidence",
-                "severity": "critical",
-                "message": f"Analytics confidence {a_conf} outside [0, 1]",
-            }
-        )
-
-    # ── Analytics: anomaly count ──
-    anomalies = analytics.get("anomalies") or {}
-    a_count = anomalies.get("anomaly_count")
-    if isinstance(a_count, (int, float)) and a_count < 0:
-        alerts.append(
-            {
-                "agent": "analytics",
-                "metric": "anomalies.anomaly_count",
-                "severity": "critical",
-                "message": f"Anomaly count is negative ({a_count})",
-            }
-        )
-
-    # ── Analytics: forecast MAPE ──
-    forecast = analytics.get("forecast") or {}
-    a_mape = forecast.get("mape")
-    if isinstance(a_mape, (int, float)) and a_mape < 0:
-        alerts.append(
-            {
-                "agent": "analytics",
-                "metric": "forecast.mape",
-                "severity": "critical",
-                "message": f"Forecast MAPE is negative ({a_mape:.2f}) — mathematically impossible",
-            }
-        )
+    # analytics_confidence [0,1], anomaly_count >= 0, and forecast MAPE >= 0
+    # are enforced by Pydantic Field constraints on AnalyticsAgentOutput,
+    # AnomalyReport, and ForecastResult respectively.
 
     # ── Analytics: momentum range ──
     trend = analytics.get("trend_analysis") or {}

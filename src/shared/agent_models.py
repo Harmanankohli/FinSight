@@ -16,10 +16,10 @@ from pydantic import BaseModel, Field
 class QuantRiskMetrics(BaseModel):
     """Risk metrics from compute_metrics_node + signal scores from format_output_node."""
 
-    sharpe_ratio: float = 0.0
+    sharpe_ratio: float = Field(0.0, ge=-5, le=5)
     annual_volatility: float = 0.0
-    beta: float = 0.0
-    var_95_daily: float = 0.0
+    beta: float = Field(0.0, ge=-3, le=6)
+    var_95_daily: float = Field(0.0, ge=-1, le=0)
     max_drawdown: float = 0.0
     quant_confidence: Optional[float] = None
     quant_signal: Optional[str] = None
@@ -44,7 +44,7 @@ class MonteCarloResult(BaseModel):
     p50: float
     p75: Optional[float] = None
     p90: float
-    prob_profit: float
+    prob_profit: float = Field(ge=0.0, le=1.0)
     expected_return_pct: Optional[float] = None
     mc_var_95: Optional[float] = None
     current_price: Optional[float] = None
@@ -81,8 +81,8 @@ class TechnicalIndicators(BaseModel):
     macd_signal: Optional[float] = None
     macd_histogram: Optional[float] = None
     macd_bullish: Optional[bool] = None
-    rsi: Optional[float] = None
-    rsi_14: Optional[float] = None
+    rsi: Optional[float] = Field(None, ge=0, le=100)
+    rsi_14: Optional[float] = Field(None, ge=0, le=100)
     bb_upper: Optional[float] = None
     bb_lower: Optional[float] = None
     bb_position: Optional[float] = None
@@ -215,7 +215,7 @@ class RAGAgentOutput(BaseModel):
     summary: str = ""
     sources: list = Field(default_factory=list)
     relevance_scores: list[float] = Field(default_factory=list)
-    confidence_score: float = 0.0
+    confidence_score: float = Field(0.0, ge=0.0, le=1.0)
     context_texts: list[str] = Field(default_factory=list)
 
 
@@ -232,7 +232,7 @@ class MarketContextOutput(BaseModel):
 
     narrative: str = ""
     overall_signal: str = "neutral"
-    confidence_score: float = 0.0
+    confidence_score: float = Field(0.0, ge=0.0, le=1.0)
     key_tailwinds: list[str] = Field(default_factory=list)
     key_headwinds: list[str] = Field(default_factory=list)
     macro_regime: Optional[str] = None
@@ -258,7 +258,7 @@ class ForecastResult(BaseModel):
     forecast_dates: list[str] = Field(default_factory=list)
     confidence_lower: list[float] = Field(default_factory=list)
     confidence_upper: list[float] = Field(default_factory=list)
-    mape: Optional[float] = None
+    mape: Optional[float] = Field(None, ge=0)
 
 
 class ChartPayload(BaseModel):
@@ -282,7 +282,7 @@ class AnomalyReport(BaseModel):
     price_anomalies: list[dict[str, Any]] = Field(default_factory=list)
     volume_anomalies: list[dict[str, Any]] = Field(default_factory=list)
     fundamental_anomalies: list[str] = Field(default_factory=list)
-    anomaly_count: int = 0
+    anomaly_count: int = Field(0, ge=0)
     severity: str = "none"
     catalyst_context: list[str] = Field(default_factory=list)
 
@@ -294,7 +294,7 @@ class AnalyticsAgentOutput(BaseModel):
     charts: list[ChartPayload] = Field(default_factory=list)
     statistical_summary: Optional[StatisticalSummary] = None
     anomalies: Optional[AnomalyReport] = None
-    analytics_confidence: float = 0.0
+    analytics_confidence: float = Field(0.0, ge=0.0, le=1.0)
     analytics_signal: str = "neutral"
 
 

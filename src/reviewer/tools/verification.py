@@ -39,107 +39,42 @@ def verify_sources(agent_outputs: dict) -> list[dict]:
                 }
             )
 
-    metrics = quant.get("metrics") or {}
-    sharpe = metrics.get("sharpe_ratio")
-    var_95 = metrics.get("var_95_daily")
-    claims_checked = 0
-    claims_verified = 0
-    unverified = []
-    if sharpe is not None:
-        claims_checked += 1
-        if -5 <= sharpe <= 5:
-            claims_verified += 1
-        else:
-            unverified.append(f"Sharpe ratio {sharpe:.2f} out of plausible range [-5, 5]")
-    if var_95 is not None:
-        claims_checked += 1
-        if -1 <= var_95 <= 0:
-            claims_verified += 1
-        else:
-            unverified.append(f"VaR(95%) {var_95:.4f} out of range [-1, 0]")
-    if claims_checked > 0:
-        rate = claims_verified / claims_checked if claims_checked > 0 else 0.0
-        verifications.append(
-            {
-                "agent_name": "Quant Analysis Agent",
-                "claims_checked": claims_checked,
-                "claims_verified": claims_verified,
-                "verification_rate": round(rate, 2),
-                "unverified_claims": unverified,
-            }
-        )
+    # Sharpe ratio and VaR(95%) range checks are enforced by
+    # QuantRiskMetrics Pydantic Field constraints.
 
-    rag_confidence = rag.get("confidence_score")
+    # RAG confidence_score [0,1] is enforced by RAGAgentOutput Pydantic model.
     rag_sources = rag.get("sources", [])
     rag_summary = rag.get("summary", "")
-    claims_checked = 0
-    claims_verified = 0
-    unverified = []
-    if rag_confidence is not None:
-        claims_checked += 1
-        if 0 <= rag_confidence <= 1:
-            claims_verified += 1
-        else:
-            unverified.append(f"RAG confidence {rag_confidence} not in [0, 1]")
-    if rag_summary:
-        claims_checked += 1
-        if rag_sources:
-            claims_verified += 1
-        else:
-            unverified.append("RAG summary present but no sources listed")
-    if claims_checked > 0:
-        rate = claims_verified / claims_checked if claims_checked > 0 else 0.0
+    if rag_summary and not rag_sources:
         verifications.append(
             {
                 "agent_name": "Financial RAG Agent",
-                "claims_checked": claims_checked,
-                "claims_verified": claims_verified,
-                "verification_rate": round(rate, 2),
-                "unverified_claims": unverified,
+                "claims_checked": 1,
+                "claims_verified": 0,
+                "verification_rate": 0.0,
+                "unverified_claims": ["RAG summary present but no sources listed"],
             }
         )
 
-    market_confidence = market.get("confidence_score")
+    # Market confidence_score [0,1] is enforced by MarketContextOutput Pydantic model.
     market_signal = market.get("overall_signal")
-    claims_checked = 0
-    claims_verified = 0
-    unverified = []
-    if market_confidence is not None:
-        claims_checked += 1
-        if 0 <= market_confidence <= 1:
-            claims_verified += 1
-        else:
-            unverified.append(f"Market confidence {market_confidence} not in [0, 1]")
-    if market_signal:
-        claims_checked += 1
-        if market_signal.lower() in ("bullish", "bearish", "neutral"):
-            claims_verified += 1
-        else:
-            unverified.append(f"Market signal '{market_signal}' not one of bullish/bearish/neutral")
-    if claims_checked > 0:
-        rate = claims_verified / claims_checked if claims_checked > 0 else 0.0
+    if market_signal and market_signal.lower() not in ("bullish", "bearish", "neutral"):
         verifications.append(
             {
                 "agent_name": "Market Context Agent",
-                "claims_checked": claims_checked,
-                "claims_verified": claims_verified,
-                "verification_rate": round(rate, 2),
-                "unverified_claims": unverified,
+                "claims_checked": 1,
+                "claims_verified": 0,
+                "verification_rate": 0.0,
+                "unverified_claims": [f"Market signal '{market_signal}' not one of bullish/bearish/neutral"],
             }
         )
 
-    analytics_confidence = analytics.get("analytics_confidence")
+    # analytics_confidence [0,1] is enforced by AnalyticsAgentOutput Pydantic model.
     forecast = analytics.get("forecast") or {}
     charts = analytics.get("charts", [])
     claims_checked = 0
     claims_verified = 0
     unverified = []
-    if analytics_confidence is not None:
-        claims_checked += 1
-        if 0 <= analytics_confidence <= 1:
-            claims_verified += 1
-        else:
-            unverified.append(f"Analytics confidence {analytics_confidence} not in [0, 1]")
     forecast_dates = forecast.get("forecast_dates", [])
     if forecast_dates:
         claims_checked += 1
