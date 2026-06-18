@@ -196,6 +196,24 @@ def _fmt_dollar(val: float | None) -> str:
     return f"${val:,.2f}"
 
 
+def _confidence_reason(agent: str, score: float) -> str:
+    """Generate a human-readable reason for an agent's confidence score."""
+    _FACTORS = {
+        "quant": "Sharpe ratio strength, DCF/Monte Carlo availability, fundamentals and technicals coverage",
+        "rag": "Filing summary quality, number of cited sources",
+        "market_context": "Narrative depth, signal strength, tailwind/headwind identification, macro regime clarity",
+        "analytics": "Trend analysis, forecast model, statistical summary, chart generation",
+    }
+    factors = _FACTORS.get(agent, "Agent output completeness")
+    if score >= 0.8:
+        level = "High"
+    elif score >= 0.5:
+        level = "Moderate"
+    else:
+        level = "Low"
+    return f"{level} — based on {factors}"
+
+
 def _extract_bullets(text: str) -> list[str]:
     """Extract bullet points from markdown-like text, labeled lines, or numbered items."""
     bullets = []
@@ -1870,12 +1888,7 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
             if pos.short_squeeze_risk:
                 data.signals_table.append(("Analyst", "Short Squeeze Risk", "Yes"))
 
-        # Quant signal scores
-        if quant.metrics.signal_scores:
-            for sig_name, sig_val in quant.metrics.signal_scores.items():
-                data.signals_table.append(
-                    ("Signal", sig_name.replace("_", " ").title(), f"{sig_val:.2f}")
-                )
+        # Quant signal scores — internal model scores, not shown in report
 
         # Peer comparison from quant
         if quant.peer_comparison:
@@ -2001,9 +2014,20 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
                     ("MA Crossover", trend.ma_crossover_signal.replace("_", " ").title(), badge)
                 )
 
+            if trend.trend_strength is not None:
+                ts = trend.trend_strength
+                strength_label = (
+                    "Strong"
+                    if ts > 0.7
+                    else "Moderate"
+                    if ts > 0.4
+                    else "Weak"
+                )
+            else:
+                strength_label = "N/A"
             data.trend_data = {
                 "direction": td.capitalize(),
-                "strength": f"{trend.trend_strength:.0%}" if trend.trend_strength else "N/A",
+                "strength": strength_label,
                 "crossover": trend.ma_crossover_signal.replace("_", " ").title()
                 if trend.ma_crossover_signal
                 else "None",
@@ -2026,6 +2050,12 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
                 "method": forecast.method.replace("_", " ").title(),
                 "mape": f"{forecast.mape:.2f}%" if forecast.mape else None,
                 "horizon": forecast.horizon_days,
+                "ci_low": _fmt_dollar(forecast.confidence_lower[-1])
+                if forecast.confidence_lower
+                else None,
+                "ci_high": _fmt_dollar(forecast.confidence_upper[-1])
+                if forecast.confidence_upper
+                else None,
             }
 
         anomalies = analytics.anomalies
@@ -2041,18 +2071,47 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
                     data.risks.append(fa)
 
             for a in anomalies.price_anomalies:
+                date_str = a.get("date", "N/A")
+                if "T" in str(date_str):
+                    date_str = str(date_str).split("T")[0]
+                atype = a.get("type", "anomaly")
+                ret = a.get("return_pct")
+                z = a.get("z_score")
+                parts = [date_str]
+                if atype == "price_spike":
+                    parts.append(f"Price surged {ret:+.1f}%" if ret else "Price spike")
+                elif atype == "price_drop":
+                    parts.append(f"Price fell {ret:+.1f}%" if ret else "Price drop")
+                else:
+                    parts.append(atype.replace("_", " ").title())
+                if z:
+                    parts.append(f"({abs(z):.1f}σ deviation)")
                 data.anomaly_alerts.append(
                     {
                         "type": "Price",
-                        "description": f"{a.get('date', 'N/A')}: {a.get('type', 'anomaly')}",
+                        "description": " ".join(parts),
                         "severity": anomalies.severity,
                     }
                 )
             for a in anomalies.volume_anomalies:
+                date_str = a.get("date", "N/A")
+                if "T" in str(date_str):
+                    date_str = str(date_str).split("T")[0]
+                atype = a.get("type", "anomaly")
+                z = a.get("z_score")
+                parts = [date_str]
+                if z:
+                    parts.append(f"Volume {abs(z):.1f}x std above average")
+                elif atype == "high_volume":
+                    parts.append("Abnormally high volume")
+                elif atype == "low_volume":
+                    parts.append("Abnormally low volume")
+                else:
+                    parts.append(atype.replace("_", " ").title())
                 data.anomaly_alerts.append(
                     {
                         "type": "Volume",
-                        "description": f"{a.get('date', 'N/A')}: {a.get('type', 'anomaly')}",
+                        "description": " ".join(parts),
                         "severity": anomalies.severity,
                     }
                 )
@@ -2160,6 +2219,15 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
                 "rag_raw": cb.agent_scores.rag,
                 "market_context_raw": cb.agent_scores.market_context,
                 "analytics_raw": cb.agent_scores.analytics,
+                "methodology": {
+                    "quant": _confidence_reason("quant", cb.agent_scores.quant),
+                    "rag": _confidence_reason("rag", cb.agent_scores.rag),
+                    "market_context": _confidence_reason("market_context", cb.agent_scores.market_context),
+                    "analytics": _confidence_reason("analytics", cb.agent_scores.analytics),
+                    "agreement": "Proportion of agents aligned on direction (bullish/bearish/neutral)",
+                    "data_quality": f"Non-null fields across all agents ({cb.data_quality_score:.0%} populated)",
+                    "meta": "Weighted: 40% avg agent confidence + 30% directional agreement + 30% data quality",
+                },
             }
 
         for sv in reviewer.source_verifications:

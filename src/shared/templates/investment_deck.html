@@ -1121,12 +1121,13 @@
 <div class="report-section">
   <div class="container">
     <div class="section-label">Stress Test</div>
-    <h2 class="section-title">Scenario Impact Analysis</h2>
+    <h2 class="section-title">Historical Scenario Simulation</h2>
+    <p style="font-size: 14px; color: var(--text-mid); margin-bottom: 20px;">Applies historical market drawdowns to current stock beta. These are hypothetical projections, not predictions — the company's fundamentals and market position differ from prior crisis periods.</p>
     <table class="data-table">
       <thead>
         <tr>
           <th style="width:40%;">Scenario</th>
-          <th style="width:30%;">Market Decline</th>
+          <th style="width:30%;">Simulated Decline</th>
           <th style="width:30%;">Projected Price</th>
         </tr>
       </thead>
@@ -1153,6 +1154,9 @@
     <div class="chart-container">
       <canvas id="forecastChart"></canvas>
       <div class="chart-meta">
+        {% if deck.forecast_chart.ci_low and deck.forecast_chart.ci_high %}
+        <div>80% CI: <span>{{ deck.forecast_chart.ci_low }} – {{ deck.forecast_chart.ci_high }}</span></div>
+        {% endif %}
         {% if deck.forecast_chart.mape %}
         <div>MAPE: <span>{{ deck.forecast_chart.mape }}</span></div>
         {% endif %}
@@ -1345,6 +1349,9 @@
           <div class="confidence-bar"><div class="confidence-bar-fill" style="width: {{ (deck.reviewer_confidence.get(key ~ '_raw', 0) * 100)|int }}%;"></div></div>
           <span class="confidence-bar-value">{{ deck.reviewer_confidence[key] }}</span>
         </div>
+        {% if deck.reviewer_confidence.get('methodology') and deck.reviewer_confidence.methodology.get(key) %}
+        <div style="font-size: 11px; color: var(--text-light); margin: -6px 0 8px 112px;">{{ deck.reviewer_confidence.methodology[key] }}</div>
+        {% endif %}
         {% endif %}
         {% endfor %}
         <div style="margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border);">
@@ -1354,6 +1361,9 @@
             <div class="confidence-bar"><div class="confidence-bar-fill" style="width: {{ deck.reviewer_confidence.agreement }}; background: var(--green);"></div></div>
             <span class="confidence-bar-value">{{ deck.reviewer_confidence.agreement }}</span>
           </div>
+          {% if deck.reviewer_confidence.get('methodology') and deck.reviewer_confidence.methodology.get('agreement') %}
+          <div style="font-size: 11px; color: var(--text-light); margin: -6px 0 8px 112px;">{{ deck.reviewer_confidence.methodology.agreement }}</div>
+          {% endif %}
           {% endif %}
           {% if deck.reviewer_confidence.get('data_quality') %}
           <div class="confidence-bar-container">
@@ -1361,6 +1371,9 @@
             <div class="confidence-bar"><div class="confidence-bar-fill" style="width: {{ deck.reviewer_confidence.data_quality }}; background: var(--amber);"></div></div>
             <span class="confidence-bar-value">{{ deck.reviewer_confidence.data_quality }}</span>
           </div>
+          {% if deck.reviewer_confidence.get('methodology') and deck.reviewer_confidence.methodology.get('data_quality') %}
+          <div style="font-size: 11px; color: var(--text-light); margin: -6px 0 8px 112px;">{{ deck.reviewer_confidence.methodology.data_quality }}</div>
+          {% endif %}
           {% endif %}
           {% if deck.reviewer_confidence.get('meta') %}
           <div class="confidence-bar-container">
@@ -1368,6 +1381,9 @@
             <div class="confidence-bar"><div class="confidence-bar-fill" style="width: {{ deck.reviewer_confidence.meta }}; background: var(--navy);"></div></div>
             <span class="confidence-bar-value" style="font-weight: 700;">{{ deck.reviewer_confidence.meta }}</span>
           </div>
+          {% if deck.reviewer_confidence.get('methodology') and deck.reviewer_confidence.methodology.get('meta') %}
+          <div style="font-size: 11px; color: var(--text-light); margin: -6px 0 4px 112px;">{{ deck.reviewer_confidence.methodology.meta }}</div>
+          {% endif %}
           {% endif %}
         </div>
       </div>
