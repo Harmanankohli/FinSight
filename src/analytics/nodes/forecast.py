@@ -99,7 +99,7 @@ async def _run_forecast(price_data: dict) -> dict:
         last_date = datetime.strptime(raw_date, "%Y-%m-%d") if "-" in raw_date else datetime.now()
         dates = [(last_date + timedelta(days=i + 1)).strftime("%Y-%m-%d") for i in range(30)]
 
-        holdout_size = max(1, len(closes) // 5)
+        holdout_size = min(max(1, len(closes) // 5), 30)
         if holdout_size >= 5:
             train = closes[:-holdout_size]
             actual = closes[-holdout_size:]

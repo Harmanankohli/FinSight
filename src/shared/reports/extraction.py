@@ -1553,9 +1553,9 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
             if t.resistance is not None:
                 data.technicals_table.append(("Resistance Level", f"${t.resistance:,.2f}", ""))
             if t.momentum_20d is not None:
-                data.technicals_table.append(("Momentum (20d)", _fmt_pct(t.momentum_20d, True), "Short-term"))
+                data.technicals_table.append(("Momentum (20d)", _fmt_pct(t.momentum_20d, False), "Short-term"))
             if t.momentum_60d is not None:
-                data.technicals_table.append(("Momentum (60d)", _fmt_pct(t.momentum_60d, True), "Medium-term"))
+                data.technicals_table.append(("Momentum (60d)", _fmt_pct(t.momentum_60d, False), "Medium-term"))
             if t.golden_cross is not None:
                 data.technicals_table.append(("Golden Cross", "Yes" if t.golden_cross else "No", "Bullish" if t.golden_cross else ""))
             if t.above_50d_ma is not None:
@@ -1600,7 +1600,7 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
         # Stress test scenarios
         if quant.stress_test and quant.stress_test.scenarios:
             for name, sc in quant.stress_test.scenarios.items():
-                decline = _fmt_pct(sc.market_decline_pct / 100, True) if sc.market_decline_pct else "N/A"
+                decline = _fmt_pct(sc.market_decline_pct, True) if sc.market_decline_pct else "N/A"
                 price = _fmt_dollar(sc.projected_price) if sc.projected_price else "N/A"
                 data.stress_scenarios.append((name.replace("_", " ").title(), decline, price))
 
@@ -1762,7 +1762,7 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
                 "lower": forecast.confidence_lower,
                 "upper": forecast.confidence_upper,
                 "method": forecast.method.replace("_", " ").title(),
-                "mape": f"{forecast.mape:.2%}" if forecast.mape else None,
+                "mape": f"{forecast.mape:.2f}%" if forecast.mape else None,
                 "horizon": forecast.horizon_days,
             }
 
@@ -1804,7 +1804,7 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
             if stats.return_distribution:
                 data.stats_table.append(("Distribution", stats.return_distribution, ""))
             if stats.regression_beta is not None:
-                data.stats_table.append(("Regression Beta", f"{stats.regression_beta:.3f}", "Market sensitivity"))
+                data.stats_table.append(("Regression Beta (1Y)", f"{stats.regression_beta:.3f}", "Market sensitivity"))
             if stats.regression_r_squared is not None:
                 interp = "Strong fit" if stats.regression_r_squared > 0.7 else "Moderate fit" if stats.regression_r_squared > 0.3 else "Weak fit"
                 data.stats_table.append(("R-Squared", f"{stats.regression_r_squared:.3f}", interp))
@@ -1840,7 +1840,7 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
                 "meta": f"{cb.meta_confidence:.0%}",
                 "quant_raw": cb.agent_scores.quant,
                 "rag_raw": cb.agent_scores.rag,
-                "market_raw": cb.agent_scores.market_context,
+                "market_context_raw": cb.agent_scores.market_context,
                 "analytics_raw": cb.agent_scores.analytics,
             }
 

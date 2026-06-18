@@ -187,6 +187,18 @@ async def format_output_node(state: QuantAnalysisState) -> dict:
 
     recommendation, confidence = _weighted_vote(group_scores)
 
+    # Downgrade BUY → HOLD when Monte Carlo probability of profit < 50%
+    mc = state.get("monte_carlo")
+    if mc and recommendation == "BUY":
+        prob_profit = mc.get("prob_profit", 1.0)
+        if prob_profit < 0.50:
+            recommendation = "HOLD"
+            confidence = min(confidence, prob_profit)
+            logger.info(
+                "Downgraded %s from BUY to HOLD: MC prob_profit=%.1f%% < 50%%",
+                ticker, prob_profit * 100,
+            )
+
     # Named signal list (for display/backward compat)
     signals: list[str] = []
     sharpe = metrics.get("sharpe_ratio", 0)
