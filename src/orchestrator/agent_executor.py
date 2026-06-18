@@ -578,17 +578,42 @@ class FinSightAgentExecutor(AgentExecutor):
                         "reviewer_response",
                     )
                 )
-                if needs_update or has_new_agent_data:
+                rec_match = re.search(
+                    r"\b(BUY|HOLD|SELL)\b", response_text, re.IGNORECASE
+                )
+                new_rec = rec_match.group(1).upper() if rec_match else None
+                old_rec = existing.get("recommendation", "UNKNOWN")
+                rec_changed = new_rec and new_rec != old_rec
+                if needs_update or has_new_agent_data or rec_changed:
                     if has_new_agent_data:
                         bj.update(extra)
                     if needs_update:
                         bj["response_text"] = response_text
-                    await tm.update_brief_json(existing["id"], json.dumps(bj))
+                    conf_match = re.search(
+                        r"(?:confidence|conf)[:\s]*(\d+(?:\.\d+)?)",
+                        response_text, re.IGNORECASE,
+                    )
+                    new_conf = (
+                        float(conf_match.group(1))
+                        if conf_match
+                        else None
+                    )
+                    if new_conf and new_conf > 1:
+                        new_conf = new_conf / 100.0
+                    await tm.update_brief_json(
+                        existing["id"],
+                        json.dumps(bj),
+                        recommendation=new_rec if rec_changed else None,
+                        confidence=new_conf if rec_changed else None,
+                    )
                     logger.info(
-                        "Updated existing brief %s (text_update=%s, agent_data=%s)",
+                        "Updated existing brief %s "
+                        "(text=%s, agents=%s, rec=%s->%s)",
                         existing["id"],
                         needs_update,
                         has_new_agent_data,
+                        old_rec,
+                        new_rec if rec_changed else "(unchanged)",
                     )
                 else:
                     logger.debug("Skip _store_memory — brief already stored today for %s", ticker)

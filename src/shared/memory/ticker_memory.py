@@ -124,14 +124,28 @@ class TickerMemory:
         logger.debug("Updated response_text for %s", record_id)
         return True
 
-    async def update_brief_json(self, record_id: str, brief_json: str) -> bool:
-        """Replace the full brief_json for an existing record."""
+    async def update_brief_json(
+        self,
+        record_id: str,
+        brief_json: str,
+        recommendation: str | None = None,
+        confidence: float | None = None,
+    ) -> bool:
+        """Replace the full brief_json and optionally the recommendation columns."""
         async with write_lock():
             conn = await get_db(self._db_path)
-            await conn.execute(
-                "UPDATE ticker_briefs SET brief_json = ? WHERE id = ?",
-                (brief_json, record_id),
-            )
+            if recommendation is not None and confidence is not None:
+                await conn.execute(
+                    "UPDATE ticker_briefs "
+                    "SET brief_json = ?, recommendation = ?, confidence = ? "
+                    "WHERE id = ?",
+                    (brief_json, recommendation, confidence, record_id),
+                )
+            else:
+                await conn.execute(
+                    "UPDATE ticker_briefs SET brief_json = ? WHERE id = ?",
+                    (brief_json, record_id),
+                )
             await conn.commit()
         logger.debug("Updated brief_json for %s", record_id)
         return True

@@ -15,7 +15,7 @@ bootstrap("adk_web")
 
 from google.genai import types
 
-from orchestrator.agent import discover_background, root_agent
+from orchestrator.agent import discover_background, pop_agent_responses, root_agent
 from shared.runtime_eval import score_response as _eval_score_response
 from shared.settings import AGENT_SEED_URLS, EVAL_ENABLED
 
@@ -246,10 +246,33 @@ def _extract_recommendation_from_text(text: str) -> tuple[str, float]:
     return rec, round(conf, 2)
 
 
+def _collect_agent_extra(session_id: str) -> dict:
+    """Pop agent responses for a session and map to brief_json keys."""
+    agent_outputs = pop_agent_responses(session_id)
+    extra: dict = {}
+    for agent_name, data in agent_outputs.items():
+        name_lower = agent_name.lower()
+        if "rag" in name_lower:
+            truncated = dict(data)
+            if "context_texts" in truncated:
+                truncated["context_texts"] = [t[:500] for t in truncated["context_texts"][:3]]
+            extra["rag_response"] = truncated
+        elif "quant" in name_lower:
+            extra["quant_response"] = data
+        elif "market" in name_lower or "sentiment" in name_lower:
+            extra["sentiment_response"] = data
+        elif "analytics" in name_lower:
+            extra["analytics_response"] = data
+        elif "reviewer" in name_lower:
+            extra["reviewer_response"] = data
+    return extra
+
+
 async def _auto_save_brief(session, user_query: str, response_text: str) -> None:
     """Auto-save the investment brief after the turn completes.
 
     Extracts BUY/HOLD/SELL and confidence from the full response text,
+    captures structured agent outputs from the in-memory response store,
     then persists via TickerMemory + PerformanceTracker.
     """
     from datetime import datetime
@@ -264,28 +287,61 @@ async def _auto_save_brief(session, user_query: str, response_text: str) -> None
         return
 
     user_id = session.user_id or "default_user"
+    extra = _collect_agent_extra(session.id)
+    logger.info(
+        "auto_save_brief: ticker=%s session=%s extra_keys=%s",
+        ticker, session.id, list(extra.keys()),
+    )
+
     tm = TickerMemory()
 
     existing = await tm.get_latest(ticker, user_id=None)
     if existing:
         ad = existing.get("analysis_date") or existing["created_at"][:10]
         if ad == datetime.now(IST).date().isoformat():
-            # Update with longer text if available
+            import json as _json
+
+            bj = {}
             stored = ""
             try:
-                import json as _json
-
                 bj = _json.loads(existing.get("brief_json", "{}"))
                 stored = bj.get("response_text", "")
             except Exception:
                 logger.debug("Could not parse brief_json for %s", ticker, exc_info=True)
-            if len(response_text) > len(stored):
-                await tm.update_response_text(existing["id"], response_text)
-                logger.info(
-                    "Updated brief %s with longer text (%d > %d)",
+
+            needs_update = len(response_text) > len(stored)
+            has_new_agent_data = extra and not any(
+                k in bj
+                for k in (
+                    "quant_response",
+                    "rag_response",
+                    "sentiment_response",
+                    "analytics_response",
+                    "reviewer_response",
+                )
+            )
+            rec, conf = _extract_recommendation_from_text(response_text)
+            old_rec = existing.get("recommendation", "UNKNOWN")
+            rec_changed = rec != "UNKNOWN" and rec != old_rec
+            if needs_update or has_new_agent_data or rec_changed:
+                if has_new_agent_data:
+                    bj.update(extra)
+                if needs_update:
+                    bj["response_text"] = response_text
+                await tm.update_brief_json(
                     existing["id"],
-                    len(response_text),
-                    len(stored),
+                    _json.dumps(bj),
+                    recommendation=rec if rec_changed else None,
+                    confidence=conf if rec_changed else None,
+                )
+                logger.info(
+                    "Updated existing brief %s "
+                    "(text=%s, agents=%s, rec=%s->%s)",
+                    existing["id"],
+                    needs_update,
+                    has_new_agent_data,
+                    old_rec,
+                    rec if rec_changed else "(unchanged)",
                 )
             else:
                 logger.debug("Auto-save skipped — brief already exists today for %s", ticker)
@@ -301,6 +357,7 @@ async def _auto_save_brief(session, user_query: str, response_text: str) -> None
         response_text=response_text,
         recommendation=rec,
         confidence=conf,
+        extra_data=extra if extra else None,
     )
 
     pt = PerformanceTracker()
@@ -311,9 +368,12 @@ async def _auto_save_brief(session, user_query: str, response_text: str) -> None
         confidence=conf,
     )
 
-    logger.info("auto_save_brief: saved %s %s (%.0f%%)", ticker, rec, conf * 100)
+    logger.info(
+        "auto_save_brief: saved %s %s (%.0f%%) agent_keys=%s",
+        ticker, rec, conf * 100, list(extra.keys()),
+    )
     with open(_LOG_FILE, "a") as f:
-        f.write(f"  auto_save_brief: {ticker} {rec} ({conf:.0%})\n")
+        f.write(f"  auto_save_brief: {ticker} {rec} ({conf:.0%}) agents={list(extra.keys())}\n")
 
 
 # ADK invokes this after every agent turn. Non-analysis turns are skipped to avoid polluting long-term memory with casual chitchat queries.  # noqa: E501
