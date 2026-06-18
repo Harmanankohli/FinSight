@@ -6,7 +6,10 @@ yfinance's "Software - Infrastructure" (hyphen + spaces) matches our stored
 "Software—Infrastructure" (em-dash) and vice versa.
 """
 
+import logging
 import re
+
+logger = logging.getLogger(__name__)
 
 _PEER_SETS: dict[str, list[str]] = {
     # ── Technology ──────────────────────────────────────────────────────────
@@ -131,10 +134,15 @@ def get_peer_tickers(ticker: str, industry: str, sector: str) -> list[str]:
             continue
         # Exact match first
         if key in _PEER_SETS:
-            return [p for p in _PEER_SETS[key] if p != ticker_up][:5]
+            peers = [p for p in _PEER_SETS[key] if p != ticker_up][:5]
+            logger.debug("Peer lookup (exact): ticker=%s key=%s found=%d", ticker, key, len(peers))
+            return peers
         # Normalised match (handles em-dash vs hyphen, case differences)
         norm_key = _norm(key)
         if norm_key in _NORM_MAP:
             raw_key = _NORM_MAP[norm_key]
-            return [p for p in _PEER_SETS[raw_key] if p != ticker_up][:5]
+            peers = [p for p in _PEER_SETS[raw_key] if p != ticker_up][:5]
+            logger.debug("Peer lookup (norm): ticker=%s key=%s raw=%s found=%d", ticker, key, raw_key, len(peers))
+            return peers
+    logger.debug("Peer lookup: ticker=%s industry=%s sector=%s — no match", ticker, industry, sector)
     return []

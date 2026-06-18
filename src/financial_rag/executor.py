@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 from collections.abc import AsyncIterable
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 from shared.base_agent import BaseAgent
 from shared.logging_config import logged, logged_sync
@@ -11,7 +11,7 @@ from shared.memory.store import is_filing_ingested, mark_filing_ingested
 from shared.observability import get_langfuse_client
 from shared.runtime_eval import score_rag_response as _eval_rag_response
 from shared.settings import EVAL_ENABLED
-from shared.ticker_utils import extract_ticker, resolve_ticker, validate_ticker
+from shared.ticker_utils import extract_ticker, resolve_and_validate_ticker
 from shared.trace_context import extract_trace_ids
 
 from .document_ingestion import DocumentIngestionPipeline
@@ -35,7 +35,7 @@ class RAGAgent(BaseAgent):
     @logged(log_result=False)
     async def _ensure_ingested(self, ticker: str) -> None:
         # Daily dedup: skip if already ingested today (avoids re-fetching filings every call)
-        today = datetime.now(timezone.utc).date()
+        today = datetime.now(UTC).date()
         if self._last_ingestion.get(ticker) == today:
             return
         try:
@@ -116,7 +116,7 @@ class RAGAgent(BaseAgent):
     @logged(log_result=False)
     async def _ensure_news_ingested(self, ticker: str) -> None:
         """Fetches recent news via MCP and ingests articles into the 'news' ChromaDB collection."""
-        today = datetime.now(timezone.utc).date()
+        today = datetime.now(UTC).date()
         news_key = f"news_{ticker}"
         if self._last_ingestion.get(news_key) == today:
             return
@@ -181,25 +181,11 @@ class RAGAgent(BaseAgent):
         return await self.index.query(ticker, query_text)
 
     async def stream(self, query: str, context_id: str, task_id: str) -> AsyncIterable[dict]:
-        # Emit WORKING status events while awaiting ingestion so the A2A
-        # client keeps the connection open rather than receiving a hollow
-        # "index warming" placeholder. The orchestrator's SubAgentClient
-        # already skips WORKING events and waits for the terminal state.
         logger.info("stream() called for query=%s...", query[:100])
         ticker = extract_ticker(query)
         if ticker:
-            today_ingested = self._last_ingestion.get(ticker)
-            from datetime import datetime, timezone
-
-            today = datetime.now(timezone.utc).date()
-            if today_ingested != today:
-                yield {
-                    "is_task_complete": False,
-                    "require_user_input": False,
-                    "content": f"Fetching {ticker} documents and news...",
-                }
-                await self._ensure_ingested(ticker)
-                await self._ensure_news_ingested(ticker)
+            await self._ensure_ingested(ticker)
+            await self._ensure_news_ingested(ticker)
 
         logger.info("stream() complete for query=%s...", query[:100])
         yield await self._build_response(query)
@@ -220,41 +206,19 @@ class RAGAgent(BaseAgent):
             input=query,
             trace_context=trace_ctx,
         ) as span:
-            # Fallback chain: regex extract → MCP resolve → MCP validate
-            ticker = extract_ticker(query)
-            resolved = False
+            if trace_id:
+                trace_ctx = {"trace_id": trace_id, "parent_span_id": span.id}
 
+            ticker, company = await resolve_and_validate_ticker(query)
             if not ticker:
-                ticker, _ = await resolve_ticker(query)
-                resolved = True
-
-            if not ticker:
-                span.update(output={"error": "No ticker found"})
+                span.update(output={"error": company or "No ticker found"})
                 return {
                     "response_type": "text",
                     "is_task_complete": True,
                     "is_error": True,
                     "require_user_input": False,
-                    "content": "Could not identify a stock ticker from the query. Try using parentheses (AAPL) or $ prefix ($V).",  # noqa: E501
+                    "content": company or "Could not identify a stock ticker.",
                 }
-
-            valid, validated_ticker, company = await validate_ticker(ticker)
-            if not valid and not resolved:
-                ticker, _ = await resolve_ticker(query, ticker)
-                if ticker:
-                    valid, validated_ticker, company = await validate_ticker(ticker)
-
-            if not valid:
-                span.update(output={"error": f"Invalid ticker: {ticker}"})
-                return {
-                    "response_type": "text",
-                    "is_task_complete": True,
-                    "is_error": True,
-                    "require_user_input": False,
-                    "content": f"Ticker '{ticker}' is not valid. Error: {company}",
-                }
-
-            ticker = validated_ticker
 
             try:
                 result = await self.query(ticker, query)

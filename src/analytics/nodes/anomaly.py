@@ -70,6 +70,7 @@ async def _detect_anomalies(price_data: dict, ohlcv_data: list[dict], fundamenta
         else:
             severity = "high"
 
+        logger.info("Anomaly detection: count=%d severity=%s", anomaly_count, severity)
         return {
             "price_anomalies": price_anomalies,
             "volume_anomalies": volume_anomalies,

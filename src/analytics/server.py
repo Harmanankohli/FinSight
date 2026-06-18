@@ -12,7 +12,6 @@ init_instrumentation("analytics")
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
 
 from shared.agent_server import build_agent_app
-from shared.logging_config import logged
 
 from .executor import AnalyticsAgent
 

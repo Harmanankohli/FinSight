@@ -78,6 +78,7 @@ async def _compute_statistics(price_data: dict, mcp_client) -> dict:
         except Exception as spy_err:
             logger.debug("SPY correlation failed (non-fatal): %s", spy_err)
 
+        logger.debug("Statistics: dist=%s skew=%.4f kurt=%.4f beta=%s", dist_class, skew, kurt, regression_beta)
         return {
             "return_distribution": dist_class,
             "skewness": round(skew, 4),

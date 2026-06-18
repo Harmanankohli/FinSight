@@ -9,7 +9,7 @@ from shared.mcp_client import get_shared_mcp
 from shared.observability import get_langfuse_client
 from shared.runtime_eval import score_sentiment_response as _eval_sentiment_response
 from shared.settings import EVAL_ENABLED
-from shared.ticker_utils import extract_ticker, resolve_ticker, validate_ticker
+from shared.ticker_utils import resolve_and_validate_ticker
 from shared.trace_context import extract_trace_ids
 
 from .crew import MarketContextCrew
@@ -93,7 +93,7 @@ class MarketContextAgent(BaseAgent):
         )
 
         peers = {}
-        for sym, res in zip(peer_tickers, peer_fin_results):
+        for sym, res in zip(peer_tickers, peer_fin_results, strict=False):
             if isinstance(res, Exception):
                 peers[sym] = {"financials": {}}
             else:
@@ -162,36 +162,19 @@ class MarketContextAgent(BaseAgent):
             input=query,
             trace_context=trace_ctx,
         ) as span:
-            ticker = extract_ticker(query)
-            resolved = False
+            if trace_id:
+                trace_ctx = {"trace_id": trace_id, "parent_span_id": span.id}
 
+            ticker, company = await resolve_and_validate_ticker(query)
             if not ticker:
-                span.update(output={"error": "No ticker found"})
+                span.update(output={"error": company or "No ticker found"})
                 return {
                     "response_type": "text",
                     "is_task_complete": True,
                     "is_error": True,
                     "require_user_input": False,
-                    "content": "Could not identify a stock ticker from the query. Try using parentheses (AAPL) or $ prefix ($V).",  # noqa: E501
+                    "content": company or "Could not identify a stock ticker.",
                 }
-
-            valid, validated_ticker, company = await validate_ticker(ticker)
-            if not valid and not resolved:
-                ticker, _ = await resolve_ticker(query, ticker)
-                if ticker:
-                    valid, validated_ticker, company = await validate_ticker(ticker)
-
-            if not valid:
-                span.update(output={"error": f"Invalid ticker: {ticker}"})
-                return {
-                    "response_type": "text",
-                    "is_task_complete": True,
-                    "is_error": True,
-                    "require_user_input": False,
-                    "content": f"Ticker '{ticker}' is not valid. Error: {company}",
-                }
-
-            ticker = validated_ticker
 
             try:
                 result = await self.analyze(ticker, query)

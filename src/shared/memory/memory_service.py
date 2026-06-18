@@ -51,8 +51,10 @@ class SQLiteMemoryService(BaseMemoryService):
     # Called after a session completes. Extracts all events and persists as searchable memory entries.  # noqa: E501
     async def add_session_to_memory(self, session: Session) -> None:
         """Store all events from a session as memory entries."""
+        event_count = len(session.events)
         async with write_lock():
             conn = await get_db(self._db_path)
+            stored = 0
             for event in session.events:
                 content_text = self._extract_text(event)
                 if not content_text:
@@ -81,7 +83,9 @@ class SQLiteMemoryService(BaseMemoryService):
                         datetime.now(IST).isoformat(),
                     ),
                 )
+                stored += 1
             await conn.commit()
+        logger.info("Memory add: session=%s events=%d stored=%d", session.id, event_count, stored)
 
     async def add_events_to_memory(
         self,
@@ -99,6 +103,7 @@ class SQLiteMemoryService(BaseMemoryService):
         """
         if not events:
             return
+        logger.debug("Memory add_events_to_memory: session=%s events=%d", session_id, len(events))
 
         # Extract context values from custom_metadata if not provided directly
         if custom_metadata:
@@ -159,6 +164,7 @@ class SQLiteMemoryService(BaseMemoryService):
         rows = await cursor.fetchall()
 
         if not rows:
+            logger.debug("Memory search: user=%s query=%s — no results", user_id, query[:50])
             return SearchMemoryResponse(memories=[])
 
         # Parse entries
@@ -224,6 +230,7 @@ class SQLiteMemoryService(BaseMemoryService):
             if entry_id in id_to_entry:
                 memories.append(id_to_entry[entry_id])
 
+        logger.debug("Memory search: user=%s query=%s — %d results", user_id, query[:50], len(memories))
         return SearchMemoryResponse(memories=memories)
 
     # Tokenizes query and corpus, scores entries with BM25Okapi (term-frequency × inverse document frequency).  # noqa: E501

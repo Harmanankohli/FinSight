@@ -12,6 +12,9 @@ def _merge_dict(a: dict, b: dict) -> dict:
         return b or {}
     if not b:
         return a
+    overlapping = set(a) & set(b)
+    if overlapping:
+        logging.getLogger(__name__).debug("Dict merge collision on keys: %s", overlapping)
     return {**a, **b}
 
 

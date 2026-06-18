@@ -13,7 +13,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import getpass
+import logging
 import sys
+
+logger = logging.getLogger(__name__)
 
 
 async def main() -> None:
@@ -41,8 +44,10 @@ async def main() -> None:
 
     try:
         user_id = await create_user(username, password, role=args.role)
+        logger.info("User created: %s (role=%s)", username, args.role)
         print(f"Created user: {username} (id={user_id[:8]}..., role={args.role})")
     except ValueError as e:
+        logger.error("Failed to create user %s: %s", username, e)
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 

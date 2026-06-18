@@ -281,10 +281,9 @@ python_version = "3.12"
 strict = true
 ignore_missing_imports = true
 
-# Escape hatch — packages not yet mypy-clean
+# Relaxed — enforce typed signatures but allow untyped internals
 [[tool.mypy.overrides]]
 module = [
-    "orchestrator.*",
     "financial_rag.*",
     "quant.*",
     "market_context.*",
@@ -292,7 +291,13 @@ module = [
     "reviewer.*",
     "mcp_tools.*",
 ]
+disallow_untyped_defs = false
 ignore_errors = true
+
+# Orchestrator gets stricter checking
+[[tool.mypy.overrides]]
+module = ["orchestrator.*"]
+disallow_untyped_defs = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

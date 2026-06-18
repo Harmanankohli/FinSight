@@ -1106,7 +1106,13 @@ def _enrich_from_markdown(
         tables=tables or [],
     )
     for stage in STAGES:
+        logger.debug("Extraction stage: %s", stage.__name__)
         stage(ctx)
+    logger.info(
+        "Extraction complete: ticker=%s, kpis=%d, risks=%d, opps=%d, peers=%d, scorecard=%d",
+        data.ticker, len(data.kpi_chips), len(data.risks), len(data.opportunities),
+        len(data.peer_names), len(data.scorecard),
+    )
 
 
 def _safe_parse(val):
@@ -1127,6 +1133,10 @@ def _populate_from_agent_outputs(data: DeckData, brief_data: dict, response_text
     sentiment = _safe_parse(brief_data.get("sentiment_response"))
     analytics = _safe_parse(brief_data.get("analytics_response"))
     reviewer = _safe_parse(brief_data.get("reviewer_response"))
+    logger.info(
+        "Populating from agent outputs: quant=%s, rag=%s, sentiment=%s, analytics=%s, reviewer=%s",
+        bool(quant), bool(rag), bool(sentiment), bool(analytics), bool(reviewer),
+    )
 
     # ── Quant response ─────────────────────────────────────────────────────
     if quant:

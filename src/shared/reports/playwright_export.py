@@ -33,20 +33,30 @@ def _pptx_worker(html: str) -> bytes:
 
     html = html.replace("<deck-stage ", "<deck-stage noscale ")
 
+    logger.info("Playwright PPTX worker: launching browser")
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=True)
+        try:
+            browser = pw.chromium.launch(headless=True, timeout=20000)
+        except Exception as e:
+            logger.warning("Browser launch failed: %s", e)
+            raise
         page = browser.new_page(viewport={"width": 1920, "height": 1080})
         page.set_content(html, wait_until="networkidle")
-        page.wait_for_function(
-            """() => {
-                const ds = document.querySelector('deck-stage');
-                if (!ds || !customElements.get('deck-stage')) return false;
-                if (ds.hasAttribute('data-fonts-pending')) return false;
-                return ds._slides && ds._slides.length > 0;
-            }""",
-            timeout=15000,
-        )
+        try:
+            page.wait_for_function(
+                """() => {
+                    const ds = document.querySelector('deck-stage');
+                    if (!ds || !customElements.get('deck-stage')) return false;
+                    if (ds.hasAttribute('data-fonts-pending')) return false;
+                    return ds._slides && ds._slides.length > 0;
+                }""",
+                timeout=15000,
+            )
+        except Exception as e:
+            logger.warning("deck-stage wait failed: %s", e)
+            raise
         total = page.evaluate("document.querySelector('deck-stage')._slides.length")
+        logger.info("Playwright PPTX: %d slides detected", total)
 
         from pptx import Presentation
         from pptx.util import Emu
@@ -71,6 +81,7 @@ def _pptx_worker(html: str) -> bytes:
 
         buf = _BytesIO()
         prs.save(buf)
+        logger.info("Playwright PPTX done: %d bytes", buf.getbuffer().nbytes)
         return buf.getvalue()
 
 
@@ -79,8 +90,13 @@ def _pdf_worker(html: str) -> bytes:
     _set_proactor_policy()
     from playwright.sync_api import sync_playwright
 
+    logger.info("Playwright PDF worker: launching browser")
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=True)
+        try:
+            browser = pw.chromium.launch(headless=True, timeout=20000)
+        except Exception as e:
+            logger.warning("Browser launch failed: %s", e)
+            raise
         page = browser.new_page(viewport={"width": 1024, "height": 1400})
         page.set_content(html, wait_until="networkidle")
         page.emulate_media(media="print")
@@ -90,6 +106,7 @@ def _pdf_worker(html: str) -> bytes:
             margin={"top": "18mm", "right": "16mm", "bottom": "20mm", "left": "16mm"},
         )
         browser.close()
+        logger.info("Playwright PDF done: %d bytes", len(pdf_bytes))
         return pdf_bytes
 
 

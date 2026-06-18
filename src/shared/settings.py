@@ -92,6 +92,7 @@ class Settings(BaseSettings):
     eval_runtime_disabled: bool = False
     eval_burst_limit: int = 30
     eval_metric_timeout: float = 90.0
+    eval_defer_timeout: float = 120.0
 
     # ── HuggingFace ───────────────────────────────────────────────────────
     hf_hub_offline: bool = True

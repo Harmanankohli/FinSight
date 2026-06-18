@@ -30,6 +30,7 @@ class FetchDataNode(BaseNode[AnalyticsState, AnalyticsDeps]):
         ctx.state.price_data = prices["close_data"]
         ctx.state.ohlcv_data = prices["ohlcv_data"]
         ctx.state.fundamentals_data = fundamentals
+        logger.info("FetchDataNode: ticker=%s prices=%d days fundamentals=%s", ticker, len(prices["close_data"]), bool(fundamentals))
         return AnalyzeNode()
 
 
@@ -47,6 +48,11 @@ class AnalyzeNode(BaseNode[AnalyticsState, AnalyticsDeps]):
         ctx.state.statistical_summary = stats
         ctx.state.anomaly_report = anomalies
         ctx.state.chart_payloads = charts
+        logger.info(
+            "AnalyzeNode: ticker=%s trend=%s forecast_days=%d anomalies=%d charts=%d",
+            ctx.deps.ticker, trend.get("trend_direction", "?"),
+            len(forecast.get("forecast_prices", [])), anomalies.get("anomaly_count", 0), len(charts),
+        )
 
         # Web search for anomaly catalysts if severity >= medium
         if anomalies.get("severity") in ("medium", "high") and ctx.deps.mcp_client:
@@ -75,6 +81,7 @@ class AnalyticsPipeline:
         )
 
     async def run(self, ticker: str, period: str, mcp_client, langfuse_handler=None) -> dict:
+        logger.info("Analytics graph run start: ticker=%s period=%s", ticker, period)
         deps = AnalyticsDeps(
             ticker=ticker,
             period=period,
@@ -83,4 +90,6 @@ class AnalyticsPipeline:
         )
         state = AnalyticsState(ticker=ticker, period=period)
         result = await self.graph.run(FetchDataNode(), state=state, deps=deps)
-        return result.output if hasattr(result, "output") else result
+        output = result.output if hasattr(result, "output") else result
+        logger.info("Analytics graph run complete: ticker=%s signal=%s", ticker, output.get("analytics_signal", "unknown") if isinstance(output, dict) else "unknown")
+        return output

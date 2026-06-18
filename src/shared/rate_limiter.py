@@ -11,11 +11,12 @@ logger = logging.getLogger(__name__)
 
 
 class TokenBucket:
-    def __init__(self, rate: float, burst: int) -> None:
+    def __init__(self, rate: float, burst: int, name: str = "") -> None:
         self.rate: float = rate
         self.burst: int = burst
         self.tokens: float = float(burst)
         self.last: float = time.monotonic()
+        self._name: str = name
         self._lock: asyncio.Lock = asyncio.Lock()
 
     async def acquire(self) -> None:
@@ -54,4 +55,5 @@ class TokenBucket:
             if self.tokens >= 1:
                 self.tokens -= 1
                 return True
+            logger.debug("Rate limiter hit for %s (rate=%.1f/s, burst=%d)", self._name, self.rate, self.burst)
             return False

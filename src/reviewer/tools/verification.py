@@ -1,3 +1,8 @@
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 def _safe_get(d: dict, *keys, default=None):
     for k in keys:
         if isinstance(d, dict):
@@ -149,4 +154,17 @@ def verify_sources(agent_outputs: dict) -> list[dict]:
             "unverified_claims": unverified,
         })
 
+    for v in verifications:
+        if v.get("unverified_claims"):
+            logger.warning(
+                "Verification for %s: %d/%d passed — unverified: %s",
+                v["agent_name"], v["claims_verified"], v["claims_checked"], v["unverified_claims"],
+            )
+        else:
+            logger.info(
+                "Verification for %s: %d/%d passed",
+                v["agent_name"], v["claims_verified"], v["claims_checked"],
+            )
+    if not verifications:
+        logger.info("Verification: no claims checked for any agent")
     return verifications

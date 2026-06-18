@@ -111,6 +111,7 @@ async def _run_forecast(price_data: dict) -> dict:
         else:
             mape = None
 
+        logger.info("Forecast complete: horizon=30d mape=%s", f"{mape:.2f}%" if mape is not None else "N/A")
         return {
             "method": "exponential_smoothing",
             "horizon_days": 30,

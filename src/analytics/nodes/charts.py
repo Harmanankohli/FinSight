@@ -54,6 +54,7 @@ async def _generate_charts(ohlcv_data: list[dict], price_data: dict) -> list[dic
         }
         charts.append(line_chart)
 
+        logger.debug("Chart generation complete: %d charts", len(charts))
         return charts
     except Exception as e:
         logger.warning("Chart generation failed: %s", e)

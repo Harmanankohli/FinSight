@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 import re
+
+logger = logging.getLogger(__name__)
 
 _NON_INVESTMENT_RE = re.compile(
     r"\b(weather|recipe|sports score|movie|song|joke|cook(?:ing)?|weather forecast|"
@@ -13,7 +16,10 @@ _NON_INVESTMENT_RE = re.compile(
 
 def is_off_topic(text: str) -> bool:
     """Return True if `text` is clearly unrelated to investment/finance."""
-    return bool(_NON_INVESTMENT_RE.search(text))
+    result = bool(_NON_INVESTMENT_RE.search(text))
+    if result:
+        logger.info("Off-topic query blocked: %.80s", text)
+    return result
 
 
 # Re-export so callers can import from one place

@@ -7,6 +7,7 @@ entrypoint, before any framework imports that might trigger model loads or async
 from __future__ import annotations
 
 import atexit
+import logging
 import os
 import sys
 from typing import TYPE_CHECKING
@@ -24,6 +25,8 @@ def bootstrap(service_name: str) -> "Settings":
 
     s = get_settings()
 
+    logger = logging.getLogger(service_name)
+
     # G7: set OpenAI-compatible env vars before any framework import reads them
     os.environ.setdefault("OPENAI_API_BASE", s.llm_base_url)
     os.environ.setdefault("OPENAI_API_KEY", s.llm_api_key)
@@ -40,12 +43,17 @@ def bootstrap(service_name: str) -> "Settings":
 
     setup_file_logging(service_name)
 
+    logger.info("Bootstrapping %s: LOG_LEVEL=%s, env=%s", service_name, s.log_level, s.env)
+
     # Langfuse is a no-op when keys are not configured
     if s.langfuse_public_key is not None and s.langfuse_secret_key is not None:
         from shared.observability import init_langfuse, shutdown_langfuse
 
         init_langfuse(service_name)
         atexit.register(shutdown_langfuse)
+        logger.info("Langfuse initialised for %s", service_name)
+    else:
+        logger.debug("Langfuse skipped — keys not configured")
 
     return s
 

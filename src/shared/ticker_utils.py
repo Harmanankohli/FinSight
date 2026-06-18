@@ -184,7 +184,6 @@ _QUERY_NOISE_WORDS: frozenset[str] = frozenset(
         "sentiment",
         "risk",
         "risks",
-        "do",
         "any",
         "all",
         "some",
@@ -374,6 +373,38 @@ async def resolve_ticker(query: str, exclude: str = "") -> tuple[str, str]:
 
         _logging.getLogger(__name__).warning("MCP ticker resolution failed: %s", e)
         return "", ""
+
+
+async def resolve_and_validate_ticker(query: str) -> tuple[str | None, str | None]:
+    """Extract, resolve, and validate a stock ticker from a query.
+
+    Returns (validated_ticker, company_or_error_message).
+    - validated_ticker: canonical ticker on success (None on failure)
+    - company_or_error_message: company name on success, error message on failure
+
+    Pipeline: extract_ticker -> resolve_ticker (if missing) -> validate_ticker ->
+              resolve_ticker (if invalid) -> validate_ticker -> result
+    """
+    ticker = extract_ticker(query)
+    resolved = False
+
+    if not ticker:
+        ticker, _ = await resolve_ticker(query)
+        resolved = True
+
+    if not ticker:
+        return None, "Could not identify a stock ticker from the query. Try using parentheses (AAPL) or $ prefix ($V)."
+
+    valid, validated_ticker, company = await validate_ticker(ticker)
+    if not valid and not resolved:
+        ticker, _ = await resolve_ticker(query, ticker)
+        if ticker:
+            valid, validated_ticker, company = await validate_ticker(ticker)
+
+    if not valid:
+        return None, f"Ticker '{ticker}' is not valid. Error: {company}"
+
+    return validated_ticker, company or validated_ticker
 
 
 def extract_holdings(query: str, exclude_ticker: str = "") -> list[str]:

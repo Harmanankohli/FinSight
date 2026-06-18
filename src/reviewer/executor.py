@@ -52,6 +52,8 @@ class ReviewerAgent(BaseAgent):
             input=query,
             trace_context=trace_ctx,
         ) as span:
+            if trace_id:
+                trace_ctx = {"trace_id": trace_id, "parent_span_id": span.id}
             payload = {}
             try:
                 payload = json.loads(query)
@@ -208,6 +210,9 @@ class ReviewerAgent(BaseAgent):
                 )
 
             return {
+                "response_type": "data",
                 "is_task_complete": True,
+                "is_error": False,
+                "require_user_input": False,
                 "content": json.dumps(output_dict),
             }

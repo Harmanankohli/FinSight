@@ -257,11 +257,15 @@ async def prune_old_records(days: int | None = None) -> dict[str, int]:
 
 async def is_filing_ingested(edgar_url: str, db_path: Path = DB_PATH) -> bool:
     """Return True if this filing URL has already been ingested."""
-    conn = await get_db(db_path)
-    cursor = await conn.execute(
-        "SELECT 1 FROM ingested_filings WHERE edgar_url = ? LIMIT 1", (edgar_url,)
-    )
-    return await cursor.fetchone() is not None
+    try:
+        conn = await get_db(db_path)
+        cursor = await conn.execute(
+            "SELECT 1 FROM ingested_filings WHERE edgar_url = ? LIMIT 1", (edgar_url,)
+        )
+        return await cursor.fetchone() is not None
+    except Exception:
+        logger.exception("Failed to check filing ingestion for %s", edgar_url)
+        return False
 
 
 async def mark_filing_ingested(edgar_url: str, ticker: str, db_path: Path = DB_PATH) -> None:
@@ -271,10 +275,14 @@ async def mark_filing_ingested(edgar_url: str, ticker: str, db_path: Path = DB_P
     from shared.settings import IST
 
     async with write_lock():
-        conn = await get_db(db_path)
-        await conn.execute(
-            "INSERT OR IGNORE INTO ingested_filings (edgar_url, ticker, ingested_at) VALUES (?, ?, ?)",  # noqa: E501
-            (edgar_url, ticker.upper(), datetime.now(IST).isoformat()),
-        )
-        await conn.commit()
+        try:
+            conn = await get_db(db_path)
+            await conn.execute(
+                "INSERT OR IGNORE INTO ingested_filings (edgar_url, ticker, ingested_at) VALUES (?, ?, ?)",  # noqa: E501
+                (edgar_url, ticker.upper(), datetime.now(IST).isoformat()),
+            )
+            await conn.commit()
+        except Exception:
+            logger.exception("Failed to mark filing ingested: %s (%s)", edgar_url, ticker)
+            return
     logger.debug("Marked filing ingested: %s (%s)", edgar_url, ticker)

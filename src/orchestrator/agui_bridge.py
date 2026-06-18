@@ -49,6 +49,8 @@ from shared.guardrails import is_off_topic
 
 logger = logging.getLogger(__name__)
 
+_SENTINEL = object()
+
 
 async def _release_sub_agent_evals() -> None:
     """POST /release-evals to each sub-agent so they fire deferred evals."""
@@ -387,20 +389,33 @@ async def _stream(
     _TOOL_TIMEOUT = A2A_TIMEOUT + 30
     _awaiting_tool_response = 0
 
+    _KEEPALIVE_INTERVAL = 15
+
     try:
         event_iter = runner.run_async(
             user_id=user_id, session_id=session_id, new_message=content
         ).__aiter__()
         while True:
-            timeout = _TOOL_TIMEOUT if _awaiting_tool_response > 0 else _LLM_TIMEOUT
-            try:
-                event = await asyncio.wait_for(event_iter.__anext__(), timeout=timeout)
-            except StopAsyncIteration:
+            deadline = _TOOL_TIMEOUT if _awaiting_tool_response > 0 else _LLM_TIMEOUT
+            elapsed = 0
+            event = None
+            while elapsed < deadline:
+                wait = min(_KEEPALIVE_INTERVAL, deadline - elapsed)
+                try:
+                    event = await asyncio.wait_for(event_iter.__anext__(), timeout=wait)
+                    break
+                except StopAsyncIteration:
+                    event = _SENTINEL
+                    break
+                except asyncio.TimeoutError:
+                    elapsed += wait
+                    yield ": keepalive\n\n"
+            if event is _SENTINEL:
                 break
-            except asyncio.TimeoutError:
+            if event is None:
                 logger.error(
                     "Orchestrator timed out after %ds (awaiting_tools=%d, model may be unavailable)",
-                    timeout, _awaiting_tool_response,
+                    deadline, _awaiting_tool_response,
                 )
                 yield sse(RunErrorEvent(
                     type=EventType.RUN_ERROR,

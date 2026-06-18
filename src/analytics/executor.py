@@ -9,7 +9,7 @@ from shared.mcp_client import get_shared_mcp
 from shared.observability import get_langfuse_client
 from shared.runtime_eval import score_analytics_deterministic
 from shared.settings import EVAL_ENABLED
-from shared.ticker_utils import extract_ticker, resolve_ticker, validate_ticker
+from shared.ticker_utils import resolve_and_validate_ticker
 from shared.trace_context import extract_trace_ids
 
 from .graph import AnalyticsPipeline
@@ -59,34 +59,16 @@ class AnalyticsAgent(BaseAgent):
             if trace_id:
                 trace_ctx = {"trace_id": trace_id, "parent_span_id": span.id}
 
-            ticker = extract_ticker(query)
+            ticker, company = await resolve_and_validate_ticker(query)
             if not ticker:
-                span.update(output={"error": "No ticker found"})
+                span.update(output={"error": company or "No ticker found"})
                 return {
                     "response_type": "text",
                     "is_task_complete": True,
                     "is_error": True,
                     "require_user_input": False,
-                    "content": "Could not identify a stock ticker from the query.",
+                    "content": company or "Could not identify a stock ticker.",
                 }
-
-            valid, validated_ticker, company = await validate_ticker(ticker)
-            if not valid:
-                ticker, _ = await resolve_ticker(query, ticker)
-                if ticker:
-                    valid, validated_ticker, company = await validate_ticker(ticker)
-
-            if not valid:
-                span.update(output={"error": f"Invalid ticker: {ticker}"})
-                return {
-                    "response_type": "text",
-                    "is_task_complete": True,
-                    "is_error": True,
-                    "require_user_input": False,
-                    "content": f"Ticker '{ticker}' is not valid.",
-                }
-
-            ticker = validated_ticker
 
             try:
                 result = await self.analyze(ticker, trace_ctx=trace_ctx)

@@ -10,7 +10,7 @@ from shared.observability import get_langfuse_client
 from shared.runtime_eval import score_quant_deterministic
 from shared.runtime_eval import score_quant_response as _eval_quant_response
 from shared.settings import EVAL_ENABLED
-from shared.ticker_utils import extract_holdings, extract_ticker, resolve_ticker, validate_ticker
+from shared.ticker_utils import extract_holdings, resolve_and_validate_ticker
 from shared.trace_context import extract_trace_ids
 
 from .graph import QuantAnalysisGraph
@@ -81,40 +81,19 @@ class QuantAgent(BaseAgent):
             input=query,
             trace_context=trace_ctx,
         ) as span:
-            # Nest LangGraph CallbackHandler under this agent span so graph steps appear as children
             if trace_id:
                 trace_ctx = {"trace_id": trace_id, "parent_span_id": span.id}
 
-            ticker = extract_ticker(query)
-            resolved = False
-
+            ticker, company = await resolve_and_validate_ticker(query)
             if not ticker:
-                span.update(output={"error": "No ticker found"})
+                span.update(output={"error": company or "No ticker found"})
                 return {
                     "response_type": "text",
                     "is_task_complete": True,
                     "is_error": True,
                     "require_user_input": False,
-                    "content": "Could not identify a stock ticker from the query. Try using parentheses (AAPL) or $ prefix ($V).",  # noqa: E501
+                    "content": company or "Could not identify a stock ticker.",
                 }
-
-            valid, validated_ticker, company = await validate_ticker(ticker)
-            if not valid and not resolved:
-                ticker, _ = await resolve_ticker(query, ticker)
-                if ticker:
-                    valid, validated_ticker, company = await validate_ticker(ticker)
-
-            if not valid:
-                span.update(output={"error": f"Invalid ticker: {ticker}"})
-                return {
-                    "response_type": "text",
-                    "is_task_complete": True,
-                    "is_error": True,
-                    "require_user_input": False,
-                    "content": f"Ticker '{ticker}' is not valid. Error: {company}",
-                }
-
-            ticker = validated_ticker
 
             holdings = extract_holdings(query, exclude_ticker=ticker)
             if holdings:

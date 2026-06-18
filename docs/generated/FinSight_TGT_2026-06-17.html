@@ -1,0 +1,2360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Investment Recommendation | Target Corporation (TGT)</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;0,9..40,800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --navy: #0c1425;
+    --navy-mid: #162036;
+    --blue: #3b7dfa;
+    --blue-light: #e8f0fe;
+    --green: #22c55e;
+    --green-dark: #15803d;
+    --amber: #f59e0b;
+    --red: #ef4444;
+    --text: #1a2236;
+    --text-mid: #475569;
+    --text-light: #94a3b8;
+    --border: #e2e8f0;
+    --surface: #f1f5f9;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html {
+    font-family: 'DM Sans', system-ui, sans-serif;
+    color: var(--text);
+    background: #f8fafc;
+    scroll-behavior: smooth;
+  }
+
+  body { min-height: 100vh; }
+
+  /* ── Hero banner ─── */
+  .hero {
+    background: var(--navy);
+    color: #fff;
+    padding: 80px 0 64px;
+  }
+  .container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 40px;
+  }
+  .hero-label {
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 2.5px;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.5);
+    margin-bottom: 18px;
+  }
+  .hero-title {
+    font-size: 56px;
+    font-weight: 800;
+    line-height: 1.1;
+    letter-spacing: -2px;
+    margin-bottom: 12px;
+  }
+  .hero-subtitle {
+    font-size: 22px;
+    font-weight: 400;
+    color: rgba(255,255,255,0.7);
+    margin-bottom: 48px;
+  }
+  .hero-metrics {
+    display: flex;
+    gap: 48px;
+    flex-wrap: wrap;
+  }
+  .hero-metric {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .hero-metric .label {
+    font-size: 13px;
+    color: rgba(255,255,255,0.45);
+    font-weight: 500;
+  }
+  .hero-metric .value {
+    font-family: 'DM Mono', monospace;
+    font-size: 32px;
+    font-weight: 500;
+  }
+
+  /* ── Section layout ─── */
+  .report-section {
+    padding: 64px 0;
+  }
+  .report-section:nth-child(even) {
+    background: #fff;
+  }
+  .section-label {
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 2.5px;
+    text-transform: uppercase;
+    color: var(--blue);
+    margin-bottom: 12px;
+  }
+  .section-title {
+    font-size: 36px;
+    font-weight: 800;
+    line-height: 1.15;
+    letter-spacing: -1px;
+    color: var(--text);
+    margin-bottom: 32px;
+  }
+
+  /* ── KPI chips ─── */
+  .kpi-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 24px;
+  }
+  .kpi-chip {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 28px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .kpi-chip .label {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-mid);
+  }
+  .kpi-chip .value {
+    font-family: 'DM Mono', monospace;
+    font-size: 36px;
+    font-weight: 500;
+    letter-spacing: -1px;
+  }
+  .kpi-chip .value.pos { color: var(--green-dark); }
+  .kpi-chip .value.neg { color: var(--red); }
+  .kpi-chip .context {
+    font-size: 13px;
+    color: var(--text-light);
+  }
+
+  /* ── Thesis / summary block ─── */
+  .thesis-block {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 40px 48px;
+    font-size: 17px;
+    line-height: 1.8;
+    color: var(--text);
+    border-left: 4px solid var(--blue);
+    white-space: pre-line;
+  }
+
+  /* ── Data tables ─── */
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 15px;
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .data-table th {
+    text-align: left;
+    font-weight: 600;
+    font-size: 12px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--text-light);
+    padding: 14px 20px;
+    border-bottom: 2px solid var(--border);
+    background: var(--surface);
+  }
+  .data-table td {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+  }
+  .data-table tr:last-child td { border-bottom: none; }
+  .data-table .metric-name {
+    font-weight: 600;
+    color: var(--text);
+  }
+  .data-table .mono {
+    font-family: 'DM Mono', monospace;
+    font-weight: 400;
+    letter-spacing: -0.3px;
+  }
+
+  /* ── Scorecard ─── */
+  .score-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+  }
+  .score-item {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 24px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .score-item .dim {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-mid);
+  }
+  .score-item .rating-badge {
+    font-size: 14px;
+    font-weight: 700;
+    padding: 5px 14px;
+    border-radius: 8px;
+    display: inline-block;
+    width: fit-content;
+  }
+  .badge-strong { background: #dcfce7; color: var(--green-dark); }
+  .badge-bullish { background: #dbeafe; color: #1d4ed8; }
+  .badge-expensive { background: #fef3c7; color: #92400e; }
+  .badge-moderate { background: #f1f5f9; color: #475569; }
+  .badge-hold { background: #dbeafe; color: #1d4ed8; }
+
+  /* ── Risk-Reward ─── */
+  .rr-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 28px;
+  }
+  .rr-col {
+    border-radius: 16px;
+    padding: 32px 28px;
+  }
+  .rr-col.opp {
+    background: #f0fdf4;
+    border: 1.5px solid #bbf7d0;
+  }
+  .rr-col.risk {
+    background: #fef2f2;
+    border: 1.5px solid #fecaca;
+  }
+  .rr-col h3 {
+    font-size: 18px;
+    font-weight: 700;
+    margin-bottom: 20px;
+  }
+  .rr-col.opp h3 { color: var(--green-dark); }
+  .rr-col.risk h3 { color: #b91c1c; }
+  .rr-col ul {
+    list-style: none;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .rr-col li {
+    font-size: 15px;
+    line-height: 1.5;
+    padding-left: 24px;
+    position: relative;
+    color: var(--text);
+  }
+  .rr-col li::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 7px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+  }
+  .rr-col.opp li::before { background: var(--green); }
+  .rr-col.risk li::before { background: var(--red); }
+
+  /* ── Peer table ─── */
+  .peer-table th:not(:first-child),
+  .peer-table td:not(:first-child) { text-align: center; }
+  .peer-table .highlight { background: rgba(59, 125, 250, 0.04); }
+  .peer-table .highlight td { font-weight: 600; }
+
+  /* ── Valuation two-col ─── */
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 32px;
+    align-items: start;
+  }
+  .scenario-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .scenario-card {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 24px;
+  }
+  .scenario-card .card-label {
+    font-size: 12px;
+    color: var(--text-light);
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    margin-bottom: 8px;
+  }
+  .scenario-card .card-value {
+    font-family: 'DM Mono', monospace;
+    font-size: 32px;
+    font-weight: 500;
+  }
+
+  /* ── Conclusion ─── */
+  .conclusion {
+    background: var(--navy);
+    color: #fff;
+    padding: 80px 0;
+    text-align: center;
+  }
+  .conclusion .section-label { color: rgba(255,255,255,0.5); }
+  .divider {
+    width: 60px;
+    height: 4px;
+    background: var(--blue);
+    border-radius: 2px;
+    margin: 0 auto 24px;
+  }
+  .rec-badge {
+    font-family: 'DM Mono', monospace;
+    font-size: 52px;
+    font-weight: 500;
+    letter-spacing: -2px;
+    color: var(--blue);
+    margin-bottom: 8px;
+  }
+  .rec-conf {
+    font-size: 18px;
+    color: rgba(255,255,255,0.45);
+    font-weight: 500;
+    margin-bottom: 28px;
+  }
+  .rec-text {
+    font-size: 17px;
+    line-height: 1.8;
+    color: rgba(255,255,255,0.7);
+    max-width: 800px;
+    margin: 0 auto;
+    white-space: pre-line;
+  }
+
+  /* ── Footer ─── */
+  .report-footer {
+    background: var(--navy);
+    color: rgba(255,255,255,0.3);
+    padding: 20px 0;
+    font-size: 13px;
+    border-top: 1px solid rgba(255,255,255,0.08);
+  }
+  .report-footer .container {
+    display: flex;
+    justify-content: space-between;
+  }
+
+  /* ── PDF download button ─── */
+  .pdf-download-bar {
+    position: sticky;
+    top: 0;
+    z-index: 1000;
+    background: rgba(255,255,255,0.92);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    padding: 10px 0;
+  }
+  .pdf-download-bar .container {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .pdf-download-bar .doc-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .btn-pdf {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 20px;
+    border-radius: 8px;
+    border: 1px solid var(--blue);
+    background: var(--blue);
+    color: #fff;
+    font-family: 'DM Sans', system-ui, sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 150ms ease, border-color 150ms ease;
+  }
+  .btn-pdf:hover { background: #2563eb; border-color: #2563eb; }
+  .btn-pdf svg { width: 16px; height: 16px; }
+
+  /* ── Responsive ─── */
+  @media (max-width: 768px) {
+    .container { padding: 0 20px; }
+    .hero { padding: 48px 0 40px; }
+    .hero-title { font-size: 36px; }
+    .hero-metrics { gap: 28px; }
+    .two-col, .rr-grid { grid-template-columns: 1fr; }
+    .kpi-row { grid-template-columns: 1fr 1fr; }
+    .thesis-block { padding: 24px 28px; }
+  }
+
+  /* ── Trend dashboard ─── */
+  .trend-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+  .trend-card {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 24px 20px;
+    text-align: center;
+  }
+  .trend-card .trend-label {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--text-light);
+    margin-bottom: 8px;
+  }
+  .trend-card .trend-value {
+    font-family: 'DM Mono', monospace;
+    font-size: 24px;
+    font-weight: 500;
+  }
+  .trend-bullish { color: var(--green-dark); }
+  .trend-bearish { color: var(--red); }
+  .trend-neutral { color: var(--text-mid); }
+
+  /* ── Chart container ─── */
+  .chart-container {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 32px;
+    margin-bottom: 24px;
+  }
+  .chart-container canvas {
+    max-height: 400px;
+  }
+  .chart-meta {
+    display: flex;
+    gap: 24px;
+    margin-top: 16px;
+    font-size: 13px;
+    color: var(--text-light);
+  }
+  .chart-meta span { font-family: 'DM Mono', monospace; }
+
+  /* ── Monte Carlo cards ─── */
+  .mc-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+  .mc-card {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 20px 16px;
+    text-align: center;
+  }
+  .mc-card .mc-label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--text-light);
+    margin-bottom: 6px;
+  }
+  .mc-card .mc-value {
+    font-family: 'DM Mono', monospace;
+    font-size: 22px;
+    font-weight: 500;
+    color: var(--text);
+  }
+
+  /* ── Anomaly alerts ─── */
+  .anomaly-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .anomaly-item {
+    background: #fff;
+    border-radius: 12px;
+    padding: 16px 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    font-size: 14px;
+  }
+  .anomaly-item.severity-high {
+    border: 1.5px solid #fecaca;
+    background: #fef2f2;
+  }
+  .anomaly-item.severity-medium {
+    border: 1.5px solid #fde68a;
+    background: #fefce8;
+  }
+  .anomaly-item.severity-low, .anomaly-item.severity-none, .anomaly-item.severity-info {
+    border: 1px solid var(--border);
+  }
+  .anomaly-badge {
+    font-size: 11px;
+    font-weight: 700;
+    padding: 4px 10px;
+    border-radius: 6px;
+    white-space: nowrap;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  .anomaly-badge.type-Price { background: #dbeafe; color: #1d4ed8; }
+  .anomaly-badge.type-Volume { background: #f3e8ff; color: #7c3aed; }
+  .anomaly-badge.type-Fundamental { background: #fef3c7; color: #92400e; }
+  .anomaly-badge.type-Catalyst { background: #f0fdf4; color: var(--green-dark); }
+
+  /* ── Reviewer cards ─── */
+  .reviewer-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+  }
+  .reviewer-card {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 28px 24px;
+  }
+  .reviewer-card h3 {
+    font-size: 16px;
+    font-weight: 700;
+    margin-bottom: 16px;
+    color: var(--text);
+  }
+  .confidence-bar-container {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 10px;
+  }
+  .confidence-bar-label {
+    font-size: 13px;
+    color: var(--text-mid);
+    min-width: 100px;
+  }
+  .confidence-bar {
+    flex: 1;
+    height: 8px;
+    background: var(--surface);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .confidence-bar-fill {
+    height: 100%;
+    border-radius: 4px;
+    background: var(--blue);
+    transition: width 0.3s ease;
+  }
+  .confidence-bar-value {
+    font-family: 'DM Mono', monospace;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text);
+    min-width: 40px;
+    text-align: right;
+  }
+  .contradiction-item {
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .contradiction-item:last-child { border-bottom: none; }
+  .contradiction-severity {
+    font-size: 11px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-right: 8px;
+  }
+  .severity-high { background: #fecaca; color: #b91c1c; }
+  .severity-medium { background: #fde68a; color: #92400e; }
+  .severity-low { background: #e2e8f0; color: #475569; }
+  .evidence-item {
+    font-size: 14px;
+    padding: 6px 0;
+    padding-left: 20px;
+    position: relative;
+    color: var(--text);
+  }
+  .evidence-item::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 11px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+  }
+  .evidence-item.supporting::before { background: var(--green); }
+  .evidence-item.contradicting::before { background: var(--red); }
+
+  /* ── Signals table ─── */
+  .signals-category {
+    font-size: 11px;
+    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 6px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    white-space: nowrap;
+  }
+  .cat-Insider { background: #dbeafe; color: #1d4ed8; }
+  .cat-Options { background: #f3e8ff; color: #7c3aed; }
+  .cat-Analyst { background: #fef3c7; color: #92400e; }
+  .cat-Signal { background: #f0fdf4; color: var(--green-dark); }
+
+  /* ── Print / PDF ─── */
+  @media print {
+    *, *::before, *::after {
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+    @page {
+      size: A4 portrait;
+      margin: 18mm 16mm 20mm 16mm;
+    }
+    @page :first { margin-top: 0; }
+
+    html, body {
+      background: #fff !important;
+      font-size: 11pt;
+      line-height: 1.5;
+    }
+
+    .pdf-download-bar { display: none !important; }
+
+    .container { max-width: 100%; padding: 0 !important; }
+
+    /* ── Cover page ─── */
+    .hero {
+      background: var(--navy) !important;
+      padding: 60mm 16mm 40mm !important;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      page-break-after: always;
+      break-after: page;
+      margin: -18mm -16mm 0 -16mm;
+      width: calc(100% + 32mm);
+    }
+    .hero .container { padding: 0 24mm !important; }
+    .hero-title { font-size: 36pt !important; }
+    .hero-subtitle { font-size: 14pt !important; }
+    .hero-metric .value { font-size: 22pt !important; }
+    .hero-metric .label { font-size: 9pt !important; }
+
+    /* ── Section layout ─── */
+    .report-section {
+      padding: 10mm 0 8mm !important;
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+    .section-title {
+      font-size: 18pt !important;
+      margin-bottom: 6mm !important;
+    }
+    .section-label {
+      font-size: 8pt !important;
+      margin-bottom: 3mm !important;
+    }
+
+    /* ── KPI chips ─── */
+    .kpi-row {
+      grid-template-columns: repeat(4, 1fr) !important;
+      gap: 4mm !important;
+    }
+    .kpi-chip {
+      padding: 5mm 4mm !important;
+      border: 0.5pt solid var(--border) !important;
+    }
+    .kpi-chip .value { font-size: 22pt !important; }
+    .kpi-chip .label { font-size: 8pt !important; }
+    .kpi-chip .context { font-size: 7pt !important; }
+
+    /* ── Thesis block ─── */
+    .thesis-block {
+      padding: 6mm 8mm !important;
+      font-size: 10.5pt !important;
+      line-height: 1.65 !important;
+      border: 0.5pt solid var(--border) !important;
+      border-left: 3pt solid var(--blue) !important;
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+
+    /* ── Tables ─── */
+    .data-table {
+      font-size: 9.5pt !important;
+      border: 0.5pt solid var(--border) !important;
+    }
+    .data-table th {
+      font-size: 7pt !important;
+      padding: 3mm 4mm !important;
+    }
+    .data-table td {
+      padding: 2.5mm 4mm !important;
+    }
+
+    /* ── Scorecard ─── */
+    .score-grid {
+      grid-template-columns: repeat(3, 1fr) !important;
+      gap: 3mm !important;
+    }
+    .score-item {
+      padding: 4mm !important;
+      border: 0.5pt solid var(--border) !important;
+    }
+    .score-item .dim { font-size: 8pt !important; }
+    .score-item .rating-badge { font-size: 9pt !important; padding: 2pt 8pt !important; }
+
+    /* ── Valuation ─── */
+    .two-col { gap: 6mm !important; }
+    .scenario-card {
+      padding: 4mm !important;
+      border: 0.5pt solid var(--border) !important;
+    }
+    .scenario-card .card-value { font-size: 18pt !important; }
+    .scenario-card .card-label { font-size: 7pt !important; }
+    .scenario-cards { gap: 3mm !important; }
+
+    /* ── Risk-Reward ─── */
+    .rr-grid {
+      gap: 5mm !important;
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+    .rr-col {
+      padding: 5mm !important;
+    }
+    .rr-col h3 { font-size: 11pt !important; margin-bottom: 4mm !important; }
+    .rr-col li {
+      font-size: 9.5pt !important;
+      padding-left: 5mm !important;
+    }
+    .rr-col li::before { width: 6px !important; height: 6px !important; top: 5px !important; }
+
+    /* ── Peer table ─── */
+    .peer-table { page-break-inside: avoid; break-inside: avoid; }
+
+    /* ── New sections ─── */
+    .trend-grid { grid-template-columns: repeat(4, 1fr) !important; gap: 3mm !important; }
+    .trend-card { padding: 4mm !important; }
+    .trend-card .trend-value { font-size: 14pt !important; }
+    .chart-container { padding: 5mm !important; page-break-inside: avoid; break-inside: avoid; }
+    .chart-container canvas { max-height: 250px !important; }
+    .mc-grid { grid-template-columns: repeat(5, 1fr) !important; gap: 3mm !important; }
+    .mc-card { padding: 3mm !important; }
+    .mc-card .mc-value { font-size: 14pt !important; }
+    .anomaly-item { padding: 3mm 4mm !important; font-size: 9pt !important; }
+    .reviewer-grid { gap: 5mm !important; page-break-inside: avoid; break-inside: avoid; }
+    .reviewer-card { padding: 4mm !important; }
+
+    /* ── Conclusion ─── */
+    .conclusion {
+      background: var(--navy) !important;
+      padding: 30mm 16mm !important;
+      page-break-before: always;
+      break-before: page;
+      margin: 0 -16mm -20mm -16mm;
+      width: calc(100% + 32mm);
+      min-height: 50vh;
+    }
+    .conclusion .container { padding: 0 24mm !important; }
+    .rec-badge { font-size: 32pt !important; }
+    .rec-conf { font-size: 12pt !important; }
+    .rec-text { font-size: 10pt !important; line-height: 1.65 !important; }
+
+    /* ── Footer ─── */
+    .report-footer {
+      background: var(--navy) !important;
+      padding: 4mm 0 !important;
+      margin: 0 -16mm -20mm -16mm;
+      width: calc(100% + 32mm);
+    }
+    .report-footer .container { padding: 0 24mm !important; }
+    .report-footer span { font-size: 7pt !important; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ── Sticky PDF bar ─── -->
+<div class="pdf-download-bar">
+  <div class="container">
+    <span class="doc-title">Target Corporation (TGT) — Investment Report</span>
+    <button class="btn-pdf" onclick="window.print()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+      Download PDF
+    </button>
+  </div>
+</div>
+
+<!-- ─── HERO ─── -->
+<header class="hero">
+  <div class="container">
+    <div class="hero-label">Equity Research Report</div>
+    <h1 class="hero-title">Target Corporation</h1>
+    <p class="hero-subtitle">NYSE: TGT · Consumer Defensive</p>
+
+    <div class="hero-metrics">
+      <div class="hero-metric">
+        <span class="label">Recommendation</span>
+        <span class="value" style="color:var(--blue);">HOLD</span>
+      </div>
+      <div class="hero-metric">
+        <span class="label">Confidence</span>
+        <span class="value">66%</span>
+      </div>
+      
+      <div class="hero-metric">
+        <span class="label">Median Target</span>
+        <span class="value">$121.80</span>
+      </div>
+      
+      
+      <div class="hero-metric">
+        <span class="label">Analysis Date</span>
+        <span class="value" style="font-size:24px;">2026-06-17</span>
+      </div>
+      
+    </div>
+  </div>
+</header>
+
+<!-- ─── KEY METRICS ─── -->
+
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Key Metrics</div>
+    <h2 class="section-title">Performance Snapshot</h2>
+    <div class="kpi-row">
+      
+      <div class="kpi-chip">
+        <span class="label">Sharpe Ratio</span>
+        <span class="value neg">-0.05</span>
+        <span class="context">Risk-adjusted return</span>
+      </div>
+      
+      <div class="kpi-chip">
+        <span class="label">Annual Volatility</span>
+        <span class="value neg">+35.5%</span>
+        <span class="context">Annualized</span>
+      </div>
+      
+      <div class="kpi-chip">
+        <span class="label">Beta</span>
+        <span class="value pos">0.95</span>
+        <span class="context">Mkt sensitivity</span>
+      </div>
+      
+      <div class="kpi-chip">
+        <span class="label">RSI</span>
+        <span class="value pos">56</span>
+        <span class="context">Momentum (14-day)</span>
+      </div>
+      
+    </div>
+  </div>
+</div>
+
+
+<!-- ─── EXECUTIVE SUMMARY ─── -->
+
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Investment Thesis</div>
+    <h2 class="section-title">Executive Summary</h2>
+    <div class="thesis-block">Target (TGT) presents a mixed picture with strong fundamental and technical signals, but significant macroeconomic headwinds and high anomaly severity warrant caution. The RAG agent highlights robust financial performance in Q1 FY2026, with sales up 6.7% to $25.4 billion and net earnings of $8.78 billion, while the Quant agent&#39;s BUY recommendation is supported by a strong uptrend (RSI=56.2), Golden Cross, and ROE of 22.0%. However, the Market Context agent notes lagging sector performance relative to peers like COST and WMT, with TGT underperforming on growth and margins, while the Analytics agent flags high anomaly severity (9.0) and a decelerating momentum trend. The Quant agent&#39;s Monte Carlo simulation contradicts its BUY recommendation with only a 42% probability of profit, further complicating the outlook.</div>
+  </div>
+</div>
+
+
+<!-- ─── FINANCIAL PERFORMANCE ─── -->
+
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Financial Performance</div>
+    <h2 class="section-title">Earnings &amp; Growth</h2>
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th style="width:40%;">Metric</th>
+          <th style="width:30%;">Current</th>
+          <th style="width:30%;">Context</th>
+        </tr>
+      </thead>
+      <tbody>
+        
+        <tr>
+          <td class="metric-name">Sharpe Ratio</td>
+          <td class="mono">-0.05</td>
+          <td class="mono" >Risk-Adjusted</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Volatility</td>
+          <td class="mono">+35.5%</td>
+          <td class="mono" >Annualized</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Beta</td>
+          <td class="mono">0.95</td>
+          <td class="mono" >vs. S&amp;P 500</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">VaR (95%, daily)</td>
+          <td class="mono">-3.0%</td>
+          <td class="mono" >Daily</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">P/E Ratio</td>
+          <td class="mono">17.46</td>
+          <td class="mono" >Price / Earnings</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Forward P/E</td>
+          <td class="mono">14.83</td>
+          <td class="mono" ></td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">ROE</td>
+          <td class="mono">+22.0%</td>
+          <td class="mono" >Return on Equity</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Operating Margin</td>
+          <td class="mono">+4.5%</td>
+          <td class="mono" >Profitability</td>
+        </tr>
+        
+      </tbody>
+    </table>
+  </div>
+</div>
+
+
+<!-- ─── TECHNICAL ANALYSIS ─── -->
+
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Technical Analysis</div>
+    <h2 class="section-title">Price Indicators</h2>
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th style="width:35%;">Indicator</th>
+          <th style="width:30%;">Value</th>
+          <th style="width:35%;">Signal</th>
+        </tr>
+      </thead>
+      <tbody>
+        
+        <tr>
+          <td class="metric-name">RSI (14)</td>
+          <td class="mono">56.2</td>
+          <td class="mono" style="color:var(--green-dark);">Bullish</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">SMA 20</td>
+          <td class="mono">$127.33</td>
+          <td class="mono" >Short-term trend</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">SMA 50</td>
+          <td class="mono">$125.77</td>
+          <td class="mono" >Medium-term trend</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">SMA 200</td>
+          <td class="mono">$105.64</td>
+          <td class="mono" >Long-term trend</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">EMA 12</td>
+          <td class="mono">$129.73</td>
+          <td class="mono" >Short-term EMA</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">EMA 26</td>
+          <td class="mono">$127.51</td>
+          <td class="mono" >Long-term EMA</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">MACD</td>
+          <td class="mono">2.2154</td>
+          <td class="mono" style="color:var(--green-dark);">Bullish</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">MACD Signal</td>
+          <td class="mono">1.4069</td>
+          <td class="mono" ></td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">MACD Histogram</td>
+          <td class="mono">0.8085</td>
+          <td class="mono" >Expanding</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Bollinger Upper</td>
+          <td class="mono">$135.29</td>
+          <td class="mono" ></td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Bollinger Lower</td>
+          <td class="mono">$119.36</td>
+          <td class="mono" ></td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">BB Position</td>
+          <td class="mono">0.78</td>
+          <td class="mono" >Mid-Band</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Support Level</td>
+          <td class="mono">$128.05</td>
+          <td class="mono" ></td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Resistance Level</td>
+          <td class="mono">$133.40</td>
+          <td class="mono" ></td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Momentum (20d)</td>
+          <td class="mono">+777.0%</td>
+          <td class="mono" >Short-term</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Momentum (60d)</td>
+          <td class="mono">+1481.0%</td>
+          <td class="mono" >Medium-term</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Golden Cross</td>
+          <td class="mono">Yes</td>
+          <td class="mono" style="color:var(--green-dark);">Bullish</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Above 50d MA</td>
+          <td class="mono">Yes</td>
+          <td class="mono" ></td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Above 200d MA</td>
+          <td class="mono">Yes</td>
+          <td class="mono" ></td>
+        </tr>
+        
+      </tbody>
+    </table>
+  </div>
+</div>
+
+
+<!-- ─── TREND & MOMENTUM ─── -->
+
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Trend Analysis</div>
+    <h2 class="section-title">Momentum Dashboard</h2>
+    <div class="trend-grid">
+      <div class="trend-card">
+        <div class="trend-label">Trend</div>
+        <div class="trend-value trend-bullish">Bullish</div>
+      </div>
+      <div class="trend-card">
+        <div class="trend-label">Strength</div>
+        <div class="trend-value">100%</div>
+      </div>
+      <div class="trend-card">
+        <div class="trend-label">MA Crossover</div>
+        <div class="trend-value trend-neutral">None</div>
+      </div>
+      <div class="trend-card">
+        <div class="trend-label">Momentum</div>
+        <div class="trend-value">Decelerating</div>
+      </div>
+    </div>
+    
+    <div style="margin-top: 16px;">
+      <div style="font-size: 13px; font-weight: 600; color: var(--text-mid); margin-bottom: 8px;">Supporting Indicators</div>
+      <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+        
+        <span style="background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 6px 14px; font-size: 13px; color: var(--text);">bullish</span>
+        
+        <span style="background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 6px 14px; font-size: 13px; color: var(--text);">bullish</span>
+        
+      </div>
+    </div>
+    
+  </div>
+</div>
+
+
+<!-- ─── VALUATION ─── -->
+
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Valuation</div>
+    <h2 class="section-title">Scenario Analysis</h2>
+    <div class="two-col">
+      
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Metric</th>
+            <th>Value</th>
+          </tr>
+        </thead>
+        <tbody>
+          
+          <tr>
+            <td class="metric-name">Bull Case (p90)</td>
+            <td class="mono">$194.65</td>
+          </tr>
+          
+          <tr>
+            <td class="metric-name">Base Case (p50)</td>
+            <td class="mono">$121.80</td>
+          </tr>
+          
+          <tr>
+            <td class="metric-name">Bear Case (p10)</td>
+            <td class="mono">$76.58</td>
+          </tr>
+          
+          <tr>
+            <td class="metric-name">CVaR (95%)</td>
+            <td class="mono">-4.9%</td>
+          </tr>
+          
+          <tr>
+            <td class="metric-name">VaR (95%)</td>
+            <td class="mono">-3.0%</td>
+          </tr>
+          
+          <tr>
+            <td class="metric-name">30d Forecast</td>
+            <td class="mono">$150.31</td>
+          </tr>
+          
+        </tbody>
+      </table>
+      
+
+      
+      <div class="scenario-cards">
+        
+        <div class="scenario-card">
+          <div class="card-label">Bull Case</div>
+          <div class="card-value" style="color:var(--green-dark);">$194.65</div>
+        </div>
+        
+        <div class="scenario-card">
+          <div class="card-label">Base Case</div>
+          <div class="card-value" style="color:var(--blue);">$121.80</div>
+        </div>
+        
+        <div class="scenario-card">
+          <div class="card-label">Bear Case</div>
+          <div class="card-value" style="color:var(--red);">$76.58</div>
+        </div>
+        
+      </div>
+      
+    </div>
+  </div>
+</div>
+
+
+<!-- ─── DCF BREAKDOWN ─── -->
+
+
+<!-- ─── MONTE CARLO ─── -->
+
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Monte Carlo Simulation</div>
+    <h2 class="section-title">Price Distribution</h2>
+    <div class="mc-grid">
+      
+      <div class="mc-card">
+        <div class="mc-label">P10 (Bear)</div>
+        <div class="mc-value" style="color:var(--red);">$76.58</div>
+      </div>
+      
+      
+      <div class="mc-card">
+        <div class="mc-label">P25</div>
+        <div class="mc-value" style="color:var(--amber);">$95.52</div>
+      </div>
+      
+      
+      <div class="mc-card">
+        <div class="mc-label">P50 (Base)</div>
+        <div class="mc-value" style="color:var(--blue);">$121.80</div>
+      </div>
+      
+      
+      <div class="mc-card">
+        <div class="mc-label">P75</div>
+        <div class="mc-value" style="color:var(--green);">$155.46</div>
+      </div>
+      
+      
+      <div class="mc-card">
+        <div class="mc-label">P90 (Bull)</div>
+        <div class="mc-value" style="color:var(--green-dark);">$194.65</div>
+      </div>
+      
+    </div>
+
+    
+    <div class="chart-container">
+      <canvas id="mcChart"></canvas>
+    </div>
+    
+
+    <div style="display: flex; gap: 32px; flex-wrap: wrap; margin-top: 8px;">
+      
+      <div><span style="font-size: 13px; color: var(--text-light);">Prob. of Profit:</span> <span style="font-family: 'DM Mono', monospace; font-weight: 500;">42.4%</span></div>
+      
+      
+      <div><span style="font-size: 13px; color: var(--text-light);">Expected Return:</span> <span style="font-family: 'DM Mono', monospace; font-weight: 500;">-1.1%</span></div>
+      
+      
+      <div><span style="font-size: 13px; color: var(--text-light);">MC VaR (95%):</span> <span style="font-family: 'DM Mono', monospace; font-weight: 500;">-48.5%</span></div>
+      
+      
+      <div><span style="font-size: 13px; color: var(--text-light);">Simulations:</span> <span style="font-family: 'DM Mono', monospace; font-weight: 500;">5,000</span></div>
+      
+      
+      <div><span style="font-size: 13px; color: var(--text-light);">Horizon:</span> <span style="font-family: 'DM Mono', monospace; font-weight: 500;">252 days</span></div>
+      
+    </div>
+  </div>
+</div>
+
+
+<!-- ─── STRESS TEST ─── -->
+
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Stress Test</div>
+    <h2 class="section-title">Scenario Impact Analysis</h2>
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th style="width:40%;">Scenario</th>
+          <th style="width:30%;">Market Decline</th>
+          <th style="width:30%;">Projected Price</th>
+        </tr>
+      </thead>
+      <tbody>
+        
+        <tr>
+          <td class="metric-name">Market Crash 2008</td>
+          <td class="mono" style="color:var(--red);">-0.6%</td>
+          <td class="mono">$60.87</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Covid Crash 2020</td>
+          <td class="mono" style="color:var(--red);">-0.3%</td>
+          <td class="mono">$89.44</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Mild Recession</td>
+          <td class="mono" style="color:var(--red);">-0.3%</td>
+          <td class="mono">$100.05</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Dot Com Bubble</td>
+          <td class="mono" style="color:var(--red);">-0.5%</td>
+          <td class="mono">$70.41</td>
+        </tr>
+        
+      </tbody>
+    </table>
+  </div>
+</div>
+
+
+<!-- ─── PRICE FORECAST ─── -->
+
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Price Forecast</div>
+    <h2 class="section-title">Exponential Smoothing — 30d Horizon</h2>
+    <div class="chart-container">
+      <canvas id="forecastChart"></canvas>
+      <div class="chart-meta">
+        
+        <div>MAPE: <span>328.00%</span></div>
+        
+        <div>Method: <span>Exponential Smoothing</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ─── ANALYTICS CHARTS (Moving Averages + Candlestick) ─── -->
+
+
+
+
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Analytics</div>
+    <h2 class="section-title">90-Day Price Action (OHLC)</h2>
+    <div class="chart-container">
+      <canvas id="ohlcChart"></canvas>
+    </div>
+  </div>
+</div>
+
+
+
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Analytics</div>
+    <h2 class="section-title">Price &amp; Moving Averages</h2>
+    <div class="chart-container">
+      <canvas id="maChart"></canvas>
+    </div>
+  </div>
+</div>
+
+
+
+
+
+<!-- ─── SCORECARD ─── -->
+
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Assessment</div>
+    <h2 class="section-title">Investment Scorecard</h2>
+    <div class="score-grid">
+      
+      <div class="score-item">
+        <span class="dim">Momentum</span>
+        <span class="rating-badge badge-bullish">Bullish</span>
+      </div>
+      
+      <div class="score-item">
+        <span class="dim">Technical Outlook</span>
+        <span class="rating-badge badge-bullish">Bullish</span>
+      </div>
+      
+      <div class="score-item">
+        <span class="dim">Quant Signal</span>
+        <span class="rating-badge badge-strong">BUY</span>
+      </div>
+      
+      <div class="score-item">
+        <span class="dim">Market Sentiment</span>
+        <span class="rating-badge badge-moderate">Neutral</span>
+      </div>
+      
+      <div class="score-item">
+        <span class="dim">Analytics Trend</span>
+        <span class="rating-badge badge-bullish">Bullish</span>
+      </div>
+      
+      <div class="score-item">
+        <span class="dim">Recommendation</span>
+        <span class="rating-badge badge-bullish">HOLD</span>
+      </div>
+      
+    </div>
+  </div>
+</div>
+
+
+<!-- ─── PEER COMPARISON ─── -->
+
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Competitive Landscape</div>
+    <h2 class="section-title">Peer Comparison</h2>
+    <table class="data-table peer-table">
+      <thead>
+        <tr>
+          <th style="width:30%;">Metric</th>
+          <th style="width:23%;">TGT</th>
+          
+          <th style="width:23%;">WMT</th>
+          
+          <th style="width:23%;">COST</th>
+          
+        </tr>
+      </thead>
+      <tbody>
+        
+        <tr class="highlight">
+          <td class="metric-name">P/E Ratio</td>
+          <td class="mono">17.5</td>
+          <td class="mono">42.2</td>
+          
+          <td class="mono" style="color:var(--text-light);">49.3</td>
+          
+        </tr>
+        
+        <tr class="">
+          <td class="metric-name">EV/EBITDA</td>
+          <td class="mono">9.1</td>
+          <td class="mono">23.1</td>
+          
+          <td class="mono" style="color:var(--text-light);">31.6</td>
+          
+        </tr>
+        
+        <tr class="highlight">
+          <td class="metric-name">Revenue Growth</td>
+          <td class="mono">6.7%</td>
+          <td class="mono">7.3%</td>
+          
+          <td class="mono" style="color:var(--text-light);">21.5%</td>
+          
+        </tr>
+        
+        <tr class="">
+          <td class="metric-name">Operating Margin</td>
+          <td class="mono">4.5%</td>
+          <td class="mono">4.2%</td>
+          
+          <td class="mono" style="color:var(--text-light);">3.7%</td>
+          
+        </tr>
+        
+        <tr class="highlight">
+          <td class="metric-name">ROE</td>
+          <td class="mono">22.0%</td>
+          <td class="mono">24.1%</td>
+          
+          <td class="mono" style="color:var(--text-light);">29.2%</td>
+          
+        </tr>
+        
+      </tbody>
+    </table>
+  </div>
+</div>
+
+
+<!-- ─── BEHAVIORAL SIGNALS ─── -->
+
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Behavioral Signals</div>
+    <h2 class="section-title">Insider, Options &amp; Analyst Activity</h2>
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th style="width:20%;">Source</th>
+          <th style="width:40%;">Metric</th>
+          <th style="width:40%;">Value</th>
+        </tr>
+      </thead>
+      <tbody>
+        
+        <tr>
+          <td><span class="signals-category cat-Insider">Insider</span></td>
+          <td class="metric-name">Activity Level</td>
+          <td class="mono">High</td>
+        </tr>
+        
+        <tr>
+          <td><span class="signals-category cat-Insider">Insider</span></td>
+          <td class="metric-name">Direction</td>
+          <td class="mono">Neutral</td>
+        </tr>
+        
+        <tr>
+          <td><span class="signals-category cat-Insider">Insider</span></td>
+          <td class="metric-name">Buy Signals</td>
+          <td class="mono">0</td>
+        </tr>
+        
+        <tr>
+          <td><span class="signals-category cat-Insider">Insider</span></td>
+          <td class="metric-name">Sell Signals</td>
+          <td class="mono">0</td>
+        </tr>
+        
+        <tr>
+          <td><span class="signals-category cat-Insider">Insider</span></td>
+          <td class="metric-name">Net Shares</td>
+          <td class="mono">0</td>
+        </tr>
+        
+        <tr>
+          <td><span class="signals-category cat-Insider">Insider</span></td>
+          <td class="metric-name">Net Value</td>
+          <td class="mono">$0.00</td>
+        </tr>
+        
+        <tr>
+          <td><span class="signals-category cat-Options">Options</span></td>
+          <td class="metric-name">Flow Signal</td>
+          <td class="mono">No Data</td>
+        </tr>
+        
+        <tr>
+          <td><span class="signals-category cat-Analyst">Analyst</span></td>
+          <td class="metric-name">Consensus</td>
+          <td class="mono">Hold</td>
+        </tr>
+        
+        <tr>
+          <td><span class="signals-category cat-Analyst">Analyst</span></td>
+          <td class="metric-name"># Analysts</td>
+          <td class="mono">33</td>
+        </tr>
+        
+        <tr>
+          <td><span class="signals-category cat-Analyst">Analyst</span></td>
+          <td class="metric-name">Target Price</td>
+          <td class="mono">$131.81</td>
+        </tr>
+        
+        <tr>
+          <td><span class="signals-category cat-Analyst">Analyst</span></td>
+          <td class="metric-name">Target Upside</td>
+          <td class="mono">-10.0%</td>
+        </tr>
+        
+        <tr>
+          <td><span class="signals-category cat-Analyst">Analyst</span></td>
+          <td class="metric-name">Short Ratio</td>
+          <td class="mono">2.6</td>
+        </tr>
+        
+        <tr>
+          <td><span class="signals-category cat-Analyst">Analyst</span></td>
+          <td class="metric-name">Short % Float</td>
+          <td class="mono">+3.5%</td>
+        </tr>
+        
+        <tr>
+          <td><span class="signals-category cat-Signal">Signal</span></td>
+          <td class="metric-name">Behavioral</td>
+          <td class="mono">-0.10</td>
+        </tr>
+        
+        <tr>
+          <td><span class="signals-category cat-Signal">Signal</span></td>
+          <td class="metric-name">Technicals Trend</td>
+          <td class="mono">1.00</td>
+        </tr>
+        
+        <tr>
+          <td><span class="signals-category cat-Signal">Signal</span></td>
+          <td class="metric-name">Dcf Value</td>
+          <td class="mono">0.00</td>
+        </tr>
+        
+        <tr>
+          <td><span class="signals-category cat-Signal">Signal</span></td>
+          <td class="metric-name">Risk Quality</td>
+          <td class="mono">-0.60</td>
+        </tr>
+        
+        <tr>
+          <td><span class="signals-category cat-Signal">Signal</span></td>
+          <td class="metric-name">Technicals Momentum</td>
+          <td class="mono">0.25</td>
+        </tr>
+        
+        <tr>
+          <td><span class="signals-category cat-Signal">Signal</span></td>
+          <td class="metric-name">Fundamental Value</td>
+          <td class="mono">0.40</td>
+        </tr>
+        
+        <tr>
+          <td><span class="signals-category cat-Signal">Signal</span></td>
+          <td class="metric-name">Fundamental Quality</td>
+          <td class="mono">-0.10</td>
+        </tr>
+        
+        <tr>
+          <td><span class="signals-category cat-Signal">Signal</span></td>
+          <td class="metric-name">Peer Positioning</td>
+          <td class="mono">0.15</td>
+        </tr>
+        
+      </tbody>
+    </table>
+  </div>
+</div>
+
+
+<!-- ─── MACRO REGIME ─── -->
+
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Market Environment</div>
+    <h2 class="section-title">Macro Regime</h2>
+    <div class="thesis-block">flat yield curve with moderate volatility and stable DXY</div>
+  </div>
+</div>
+
+
+<!-- ─── ANOMALY ALERTS ─── -->
+
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Anomaly Detection</div>
+    <h2 class="section-title">Detected Anomalies</h2>
+    <div class="anomaly-list">
+      
+      <div class="anomaly-item severity-high">
+        <span class="anomaly-badge type-Price">Price</span>
+        <span>2025-07-01T00:00:00-04:00: price_spike</span>
+      </div>
+      
+      <div class="anomaly-item severity-high">
+        <span class="anomaly-badge type-Price">Price</span>
+        <span>2025-08-20T00:00:00-04:00: price_drop</span>
+      </div>
+      
+      <div class="anomaly-item severity-high">
+        <span class="anomaly-badge type-Price">Price</span>
+        <span>2026-03-03T00:00:00-05:00: price_spike</span>
+      </div>
+      
+      <div class="anomaly-item severity-high">
+        <span class="anomaly-badge type-Price">Price</span>
+        <span>2026-05-11T00:00:00-04:00: price_drop</span>
+      </div>
+      
+      <div class="anomaly-item severity-high">
+        <span class="anomaly-badge type-Volume">Volume</span>
+        <span>2025-08-20T00:00:00-04:00: high_volume</span>
+      </div>
+      
+      <div class="anomaly-item severity-high">
+        <span class="anomaly-badge type-Volume">Volume</span>
+        <span>2025-09-30T00:00:00-04:00: high_volume</span>
+      </div>
+      
+      <div class="anomaly-item severity-high">
+        <span class="anomaly-badge type-Volume">Volume</span>
+        <span>2025-11-19T00:00:00-05:00: high_volume</span>
+      </div>
+      
+      <div class="anomaly-item severity-high">
+        <span class="anomaly-badge type-Volume">Volume</span>
+        <span>2026-03-20T00:00:00-04:00: high_volume</span>
+      </div>
+      
+      <div class="anomaly-item severity-high">
+        <span class="anomaly-badge type-Volume">Volume</span>
+        <span>2026-05-20T00:00:00-04:00: high_volume</span>
+      </div>
+      
+      <div class="anomaly-item severity-info">
+        <span class="anomaly-badge type-Catalyst">Catalyst</span>
+        <span>Is Target a Hidden Value Play? - TGT Stock Analysis - YouTube: Target has had huge growth in the past several years in share price. In this video, we look at the financial statements and see if that rise is justified and...</span>
+      </div>
+      
+      <div class="anomaly-item severity-info">
+        <span class="anomaly-badge type-Catalyst">Catalyst</span>
+        <span>TGT Stock Quote Price and Forecast | CNN: View Target Corporation TGT stock quote prices, financial information, real-time forecasts, and company news from CNN.</span>
+      </div>
+      
+      <div class="anomaly-item severity-info">
+        <span class="anomaly-badge type-Catalyst">Catalyst</span>
+        <span>Target Corporation (TGT) Stock Historical Prices... - Yahoo Finance: Discover historical prices for TGT stock on Yahoo Finance. View daily, weekly or monthly format back to when Target Corporation stock was issued.</span>
+      </div>
+      
+    </div>
+  </div>
+</div>
+
+
+<!-- ─── STATISTICAL ANALYSIS ─── -->
+
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Statistical Analysis</div>
+    <h2 class="section-title">Return Distribution &amp; Correlations</h2>
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th style="width:30%;">Metric</th>
+          <th style="width:30%;">Value</th>
+          <th style="width:40%;">Interpretation</th>
+        </tr>
+      </thead>
+      <tbody>
+        
+        <tr>
+          <td class="metric-name">Skewness</td>
+          <td class="mono">-0.080</td>
+          <td style="color:var(--text-mid);">Near symmetric</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Kurtosis</td>
+          <td class="mono">0.721</td>
+          <td style="color:var(--text-mid);">Light tails</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Jarque-Bera p-value</td>
+          <td class="mono">0.0579</td>
+          <td style="color:var(--text-mid);">Approximately normal</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Distribution</td>
+          <td class="mono">platykurtic</td>
+          <td style="color:var(--text-mid);"></td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Regression Beta</td>
+          <td class="mono">0.617</td>
+          <td style="color:var(--text-mid);">Market sensitivity</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">R-Squared</td>
+          <td class="mono">0.066</td>
+          <td style="color:var(--text-mid);">Weak fit</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Corr: SPY</td>
+          <td class="mono">0.256</td>
+          <td style="color:var(--text-mid);">Weak</td>
+        </tr>
+        
+      </tbody>
+    </table>
+  </div>
+</div>
+
+
+<!-- ─── CROSS-VALIDATION REPORT ─── -->
+
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Cross-Validation</div>
+    <h2 class="section-title">Reviewer Analysis</h2>
+    <div class="reviewer-grid">
+
+      
+      <div class="reviewer-card">
+        <h3>Agent Confidence Scores</h3>
+        
+        
+        <div class="confidence-bar-container">
+          <span class="confidence-bar-label">Quant Agent</span>
+          <div class="confidence-bar"><div class="confidence-bar-fill" style="width: 9%;"></div></div>
+          <span class="confidence-bar-value">9%</span>
+        </div>
+        
+        
+        
+        <div class="confidence-bar-container">
+          <span class="confidence-bar-label">RAG Agent</span>
+          <div class="confidence-bar"><div class="confidence-bar-fill" style="width: 65%;"></div></div>
+          <span class="confidence-bar-value">65%</span>
+        </div>
+        
+        
+        
+        <div class="confidence-bar-container">
+          <span class="confidence-bar-label">Market Context</span>
+          <div class="confidence-bar"><div class="confidence-bar-fill" style="width: 65%;"></div></div>
+          <span class="confidence-bar-value">65%</span>
+        </div>
+        
+        
+        
+        <div class="confidence-bar-container">
+          <span class="confidence-bar-label">Analytics</span>
+          <div class="confidence-bar"><div class="confidence-bar-fill" style="width: 33%;"></div></div>
+          <span class="confidence-bar-value">33%</span>
+        </div>
+        
+        
+        <div style="margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border);">
+          
+          <div class="confidence-bar-container">
+            <span class="confidence-bar-label">Agreement</span>
+            <div class="confidence-bar"><div class="confidence-bar-fill" style="width: 67%; background: var(--green);"></div></div>
+            <span class="confidence-bar-value">67%</span>
+          </div>
+          
+          
+          <div class="confidence-bar-container">
+            <span class="confidence-bar-label">Data Quality</span>
+            <div class="confidence-bar"><div class="confidence-bar-fill" style="width: 97%; background: var(--amber);"></div></div>
+            <span class="confidence-bar-value">97%</span>
+          </div>
+          
+          
+          <div class="confidence-bar-container">
+            <span class="confidence-bar-label" style="font-weight: 700;">Meta Score</span>
+            <div class="confidence-bar"><div class="confidence-bar-fill" style="width: 66%; background: var(--navy);"></div></div>
+            <span class="confidence-bar-value" style="font-weight: 700;">66%</span>
+          </div>
+          
+        </div>
+      </div>
+      
+
+      
+      <div class="reviewer-card">
+        <h3>Recommendation Validation</h3>
+        <div style="margin-bottom: 16px;">
+          <span style="font-size: 14px; color: var(--text-mid);">Evidence Strength: </span>
+          <span class="rating-badge badge-strong">Strong</span>
+        </div>
+        
+        <div style="margin-bottom: 12px;">
+          <div style="font-size: 13px; font-weight: 600; color: var(--green-dark); margin-bottom: 6px;">Supporting Evidence</div>
+          
+          <div class="evidence-item supporting">Bullish technical trend (RSI=56.2, Golden Cross)</div>
+          
+          <div class="evidence-item supporting">Positive RAG filing signals (3 positive indicators: sales growth 6.7%, net earnings $8.78B, ROE=22.0%)</div>
+          
+          <div class="evidence-item supporting">Strong ROE of 22.0%</div>
+          
+          <div class="evidence-item supporting">Golden cross (50d &gt; 200d MA)</div>
+          
+          <div class="evidence-item supporting">3 macro tailwind(s) identified (flat yield curve, strong balance sheet, moderate volatility)</div>
+          
+        </div>
+        
+        
+        <div>
+          <div style="font-size: 13px; font-weight: 600; color: var(--red); margin-bottom: 6px;">Contradicting Evidence</div>
+          
+          <div class="evidence-item contradicting">Anomaly severity: high (9.0 detected)</div>
+          
+          <div class="evidence-item contradicting">High debt/equity ratio of 117.5</div>
+          
+          <div class="evidence-item contradicting">3 macro headwind(s) identified (lagging sector performance, peer underperformance on growth/margins, high valuation premium vs peers)</div>
+          
+          <div class="evidence-item contradicting">Negative Sharpe ratio (-0.05)</div>
+          
+          <div class="evidence-item contradicting">Monte Carlo probability of profit: 42%</div>
+          
+        </div>
+        
+      </div>
+      
+
+    </div>
+
+    
+    <div style="margin-top: 24px;">
+      <h3 style="font-size: 16px; font-weight: 700; margin-bottom: 12px;">Contradictions Found</h3>
+      
+      <div class="contradiction-item">
+        <span class="contradiction-severity severity-medium">medium</span>
+        <strong>recommendation vs Monte Carlo</strong> — Quant recommends BUY but Monte Carlo shows only 42% probability of profit
+        <span style="font-size: 12px; color: var(--text-light); margin-left: 8px;">(Quant Analysis Agent (recommendation), Quant Analysis Agent (Monte Carlo))</span>
+      </div>
+      
+    </div>
+    
+
+    
+    <div style="margin-top: 24px;">
+      <h3 style="font-size: 16px; font-weight: 700; margin-bottom: 12px;">Source Verification</h3>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Agent</th>
+            <th>Claims Checked</th>
+            <th>Verified</th>
+            <th>Rate</th>
+          </tr>
+        </thead>
+        <tbody>
+          
+          <tr>
+            <td class="metric-name">Quant Analysis Agent</td>
+            <td class="mono">2</td>
+            <td class="mono">1</td>
+            <td class="mono" >50%</td>
+          </tr>
+          
+          <tr>
+            <td class="metric-name">Financial RAG Agent</td>
+            <td class="mono">2</td>
+            <td class="mono">2</td>
+            <td class="mono" style="color:var(--green-dark);">100%</td>
+          </tr>
+          
+          <tr>
+            <td class="metric-name">Market Context Agent</td>
+            <td class="mono">2</td>
+            <td class="mono">2</td>
+            <td class="mono" style="color:var(--green-dark);">100%</td>
+          </tr>
+          
+          <tr>
+            <td class="metric-name">Analytics Agent</td>
+            <td class="mono">3</td>
+            <td class="mono">3</td>
+            <td class="mono" style="color:var(--green-dark);">100%</td>
+          </tr>
+          
+        </tbody>
+      </table>
+    </div>
+    
+
+  </div>
+</div>
+
+
+<!-- ─── RISK-REWARD ─── -->
+
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Risk–Reward</div>
+    <h2 class="section-title">Assessment</h2>
+    <div class="rr-grid">
+      
+      <div class="rr-col opp">
+        <h3>Growth Opportunities</h3>
+        <ul>
+          
+          <li>Flat yield curve favoring defensive retailers with stable cash flows</li>
+          
+          <li>Strong balance sheet and dividend history aligning with quality asset preference</li>
+          
+          <li>Moderate volatility (VIX) reducing downside risk</li>
+          
+        </ul>
+      </div>
+      
+      
+      <div class="rr-col risk">
+        <h3>Key Risks</h3>
+        <ul>
+          
+          <li>Lagging sector performance in consumer discretionary vs. tech/industrials</li>
+          
+          <li>Peer comparison shows TGT underperforms on growth and margins relative to COST, DLTR, and OLLI</li>
+          
+          <li>High valuation premium for peers like WMT (PE=42.2) and COST (PE=49.3), suggesting limited upside</li>
+          
+          <li>2025-07-01T00:00:00-04:00 price_spike</li>
+          
+          <li>2025-08-20T00:00:00-04:00 price_drop</li>
+          
+        </ul>
+      </div>
+      
+    </div>
+  </div>
+</div>
+
+
+<!-- ─── ADDITIONAL SECTIONS ─── -->
+
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">CITED SOURCES</div>
+    <h2 class="section-title">Cited Sources</h2>
+    <div class="thesis-block">- TGT_10-Q_2026-05-29.html
+- TGT_news_Fri, 12 Jun 2026 20:15:00 +0000.txt
+- TGT_news_Thu, 11 Jun 2026 19:34:45 +0000.txt
+- TGT_news_Sat, 13 Jun 2026 19:13:00 +0000.txt
+- TGT_news_Mon, 15 Jun 2026 10:01:00 +0000.txt</div>
+  </div>
+</div>
+
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">MARKET NARRATIVE</div>
+    <h2 class="section-title">Market Narrative</h2>
+    <div class="thesis-block">Target (TGT) operates in a macro regime characterized by a flat yield curve (10Y=4.432%, spread=0.27), moderate volatility (VIX=16.57, down -14.76% over 5 days), and a stable U.S. dollar (DXY change -0.21%). Sector rotation shows mixed performance, with consumer discretionary slightly positive (+2.51%) but lagging behind tech (+9.15%) and industrials (+7.51%), while energy (-10.47%) and communication services (-5.15%) underperform. This environment suggests a preference for defensive sectors like consumer staples, which TGT is not part of (consumer_stap=-1.71%). However, the flat yield curve typically benefits value-oriented retailers with stable cash flows, aligning with TGT&#39;s business model. PIMCO&#39;s economic outlook highlights resilience in portfolios with liquidity and quality assets, which could favor TGT&#39;s strong balance sheet and dividend history.</div>
+  </div>
+</div>
+
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">EVIDENCE STRENGTH</div>
+    <h2 class="section-title">Evidence Strength</h2>
+    <div class="thesis-block">Strong evidence supports the recommendation.</div>
+  </div>
+</div>
+
+
+<!-- ─── CONCLUSION ─── -->
+<div class="conclusion">
+  <div class="container">
+    <div class="section-label">Conclusion</div>
+    <div class="divider"></div>
+    <div class="rec-badge">HOLD</div>
+    <div class="rec-conf">66% Confidence</div>
+    
+    <p class="rec-text">Target (TGT) presents a mixed picture with strong fundamental and technical signals, but significant macroeconomic headwinds and high anomaly severity warrant caution. The RAG agent highlights robust financial performance in Q1 FY2026, with sales up 6.7% to $25.4 billion and net earnings of $8.78 billion, while the Quant agent&#39;s BUY recommendation is supported by a strong uptrend (RSI=56.2), Golden Cross, and ROE of 22.0%. However, the Market Context agent notes lagging sector performance relative to peers like COST and WMT, with TGT underperforming on growth and margins, while the Analytics agent flags high anomaly severity (9.0) and a decelerating momentum trend. The Quant agent&#39;s Monte Carlo simulation contradicts its BUY recommendation with only a 42% probability of profit, further complicating the outlook.</p>
+    
+  </div>
+</div>
+
+<!-- ─── Footer ─── -->
+<footer class="report-footer">
+  <div class="container">
+    <span>&copy; 2026 Institutional Equity Research</span>
+    <span>For informational purposes only</span>
+  </div>
+</footer>
+
+<!-- ─── Chart.js Rendering ─── -->
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  if (typeof Chart === 'undefined') return;
+
+  
+  (function() {
+    var ctx = document.getElementById('forecastChart');
+    if (!ctx) return;
+    var dates = ["2026-06-18", "2026-06-19", "2026-06-20", "2026-06-21", "2026-06-22", "2026-06-23", "2026-06-24", "2026-06-25", "2026-06-26", "2026-06-27", "2026-06-28", "2026-06-29", "2026-06-30", "2026-07-01", "2026-07-02", "2026-07-03", "2026-07-04", "2026-07-05", "2026-07-06", "2026-07-07", "2026-07-08", "2026-07-09", "2026-07-10", "2026-07-11", "2026-07-12", "2026-07-13", "2026-07-14", "2026-07-15", "2026-07-16", "2026-07-17"];
+    var prices = [134.28, 134.8, 134.42, 134.73, 135.92, 137.16, 137.68, 137.3, 137.6, 138.8, 140.03, 140.55, 140.18, 140.48, 141.68, 142.91, 143.43, 143.05, 143.36, 144.55, 145.79, 146.31, 145.93, 146.24, 147.43, 148.67, 149.19, 148.81, 149.11, 150.31];
+    var lower = [130.95, 131.31, 130.76, 130.9, 131.93, 133.0, 133.35, 132.81, 132.95, 133.97, 135.04, 135.4, 134.85, 134.99, 136.02, 137.09, 137.44, 136.9, 137.04, 138.07, 139.13, 139.49, 138.95, 139.08, 140.11, 141.18, 141.54, 140.99, 141.13, 142.16];
+    var upper = [137.6, 138.29, 138.08, 138.55, 139.91, 141.31, 142.0, 141.79, 142.26, 143.62, 145.02, 145.71, 145.5, 145.97, 147.33, 148.73, 149.42, 149.21, 149.68, 151.04, 152.44, 153.13, 152.92, 153.39, 154.75, 156.15, 156.84, 156.63, 157.1, 158.46];
+
+    var datasets = [{
+      label: 'Forecast Price',
+      data: prices,
+      borderColor: '#3b7dfa',
+      backgroundColor: 'rgba(59,125,250,0.08)',
+      borderWidth: 2,
+      pointRadius: 2,
+      fill: false,
+      tension: 0.3
+    }];
+
+    if (upper.length && lower.length) {
+      datasets.push({
+        label: 'Upper Band',
+        data: upper,
+        borderColor: 'rgba(34,197,94,0.4)',
+        backgroundColor: 'rgba(34,197,94,0.08)',
+        borderWidth: 1,
+        borderDash: [4, 4],
+        pointRadius: 0,
+        fill: false
+      });
+      datasets.push({
+        label: 'Lower Band',
+        data: lower,
+        borderColor: 'rgba(239,68,68,0.4)',
+        backgroundColor: 'rgba(239,68,68,0.08)',
+        borderWidth: 1,
+        borderDash: [4, 4],
+        pointRadius: 0,
+        fill: '-1'
+      });
+    }
+
+    new Chart(ctx, {
+      type: 'line',
+      data: { labels: dates, datasets: datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: true,
+        aspectRatio: 2.5,
+        plugins: {
+          legend: { position: 'bottom', labels: { font: { family: 'DM Sans', size: 12 } } },
+          tooltip: { mode: 'index', intersect: false }
+        },
+        scales: {
+          x: {
+            display: true,
+            ticks: { maxRotation: 45, maxTicksLimit: 10, font: { family: 'DM Mono', size: 11 } },
+            grid: { display: false }
+          },
+          y: {
+            display: true,
+            ticks: { callback: function(v) { return '$' + v.toFixed(0); }, font: { family: 'DM Mono', size: 11 } },
+            grid: { color: 'rgba(0,0,0,0.05)' }
+          }
+        }
+      }
+    });
+  })();
+  
+
+  
+  (function() {
+    var ctx = document.getElementById('mcChart');
+    if (!ctx) return;
+    var labels = ['P10', 'P25', 'P50', 'P75', 'P90'];
+    var values = [
+      76.58,
+      95.52,
+      121.8,
+      155.46,
+      194.65
+    ];
+    var colors = ['#ef4444', '#f59e0b', '#3b7dfa', '#22c55e', '#15803d'];
+
+    new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: 'Price at Percentile',
+          data: values,
+          backgroundColor: colors.map(function(c) { return c + '33'; }),
+          borderColor: colors,
+          borderWidth: 2,
+          borderRadius: 8
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: true,
+        aspectRatio: 3,
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: function(ctx) { return '$' + ctx.parsed.y.toFixed(2); } } }
+        },
+        scales: {
+          x: { grid: { display: false }, ticks: { font: { family: 'DM Mono', size: 12, weight: 'bold' } } },
+          y: {
+            ticks: { callback: function(v) { return '$' + v.toFixed(0); }, font: { family: 'DM Mono', size: 11 } },
+            grid: { color: 'rgba(0,0,0,0.05)' }
+          }
+        }
+      }
+    });
+  })();
+  
+
+  
+  
+  
+  
+  (function() {
+    var ctx = document.getElementById('ohlcChart');
+    if (!ctx) return;
+    var rawData = [{"close": 113.28660583496094, "date": "2026-02-09T00:00:00-05:00", "high": 113.95345944280966, "low": 111.53121915087098, "open": 113.04143917739732, "volume": 4507500.0}, {"close": 111.04088592529297, "date": "2026-02-10T00:00:00-05:00", "high": 114.90470736392449, "low": 110.9624307991551, "open": 113.26699588573305, "volume": 4955200.0}, {"close": 113.53730010986328, "date": "2026-02-11T00:00:00-05:00", "high": 113.70570716878382, "low": 111.25882410122217, "open": 111.88293240826027, "volume": 6612000.0}, {"close": 111.63526916503906, "date": "2026-02-12T00:00:00-05:00", "high": 115.28082614166023, "low": 110.81303581860318, "open": 113.90383658942974, "volume": 5588400.0}, {"close": 114.6765365600586, "date": "2026-02-13T00:00:00-05:00", "high": 115.0628857172812, "low": 111.56592626150469, "open": 112.34853309633642, "volume": 6597100.0}, {"close": 115.44923400878906, "date": "2026-02-17T00:00:00-05:00", "high": 117.27200873094155, "low": 113.12123056252382, "open": 115.80586516016437, "volume": 6258900.0}, {"close": 114.57746887207031, "date": "2026-02-18T00:00:00-05:00", "high": 115.7365162915598, "low": 113.67598250714325, "open": 114.66662287757586, "volume": 5608100.0}, {"close": 114.57746887207031, "date": "2026-02-19T00:00:00-05:00", "high": 115.17185158273264, "low": 113.54720197986205, "open": 114.12176765064343, "volume": 3631500.0}, {"close": 115.59783172607422, "date": "2026-02-20T00:00:00-05:00", "high": 117.86639916927578, "low": 113.37879176852273, "open": 114.19111660145191, "volume": 6285900.0}, {"close": 112.27918243408203, "date": "2026-02-23T00:00:00-05:00", "high": 115.62755191641385, "low": 111.7541442167425, "open": 114.9935426474016, "volume": 7924800.0}, {"close": 114.43877410888672, "date": "2026-02-24T00:00:00-05:00", "high": 114.49821767150011, "low": 112.33862132687635, "open": 112.33862132687635, "volume": 4977600.0}, {"close": 115.35017395019531, "date": "2026-02-25T00:00:00-05:00", "high": 115.38980047430645, "low": 113.53730015154044, "open": 114.66662963575473, "volume": 4522100.0}, {"close": 113.71561431884766, "date": "2026-02-26T00:00:00-05:00", "high": 117.5890144172728, "low": 112.89338095922247, "open": 116.38043945783181, "volume": 5930300.0}, {"close": 112.7249755859375, "date": "2026-02-27T00:00:00-05:00", "high": 112.81412959692196, "low": 110.07005892770219, "open": 111.9423687382427, "volume": 6417000.0}, {"close": 112.11077117919922, "date": "2026-03-02T00:00:00-05:00", "high": 113.30944514474832, "low": 110.20874344335203, "open": 110.79321764591478, "volume": 6301900.0}, {"close": 119.66936492919922, "date": "2026-03-03T00:00:00-05:00", "high": 121.28410608172462, "low": 113.92364750985537, "open": 114.92419644335207, "volume": 15692200.0}, {"close": 118.95610046386719, "date": "2026-03-04T00:00:00-05:00", "high": 124.82068978925514, "low": 118.7678763702325, "open": 122.79978247618502, "volume": 9496000.0}, {"close": 119.23348236083984, "date": "2026-03-05T00:00:00-05:00", "high": 119.74861205720362, "low": 116.98472435978493, "open": 118.6490005789407, "volume": 7129700.0}, {"close": 119.65945434570312, "date": "2026-03-06T00:00:00-05:00", "high": 119.65945434570312, "low": 115.90492633771947, "open": 118.05461418322882, "volume": 5979700.0}, {"close": 119.01554107666016, "date": "2026-03-09T00:00:00-04:00", "high": 119.0353581178028, "low": 114.66663017821183, "open": 117.5493974675452, "volume": 6005500.0}, {"close": 119.60991668701172, "date": "2026-03-10T00:00:00-04:00", "high": 121.32372786021176, "low": 117.46022888851292, "open": 118.37161621903044, "volume": 4400000.0}, {"close": 117.66826629638672, "date": "2026-03-11T00:00:00-04:00", "high": 120.12505783047165, "low": 117.39088819179365, "open": 119.20376194993811, "volume": 4418700.0}, {"close": 114.6666259765625, "date": "2026-03-12T00:00:00-04:00", "high": 116.80641286236035, "low": 114.11186977268295, "open": 116.33090214618757, "volume": 6215300.0}, {"close": 116.24173736572266, "date": "2026-03-13T00:00:00-04:00", "high": 116.78659259231289, "low": 114.47839871673789, "open": 115.31054055753148, "volume": 5282600.0}, {"close": 115.95446014404297, "date": "2026-03-16T00:00:00-04:00", "high": 117.34135063733085, "low": 114.9142847160907, "open": 116.8955654870578, "volume": 4858100.0}, {"close": 115.66717529296875, "date": "2026-03-17T00:00:00-04:00", "high": 117.35126095083314, "low": 115.07279256419228, "open": 116.41015559343595, "volume": 4347200.0}, {"close": 113.97318267822266, "date": "2026-03-18T00:00:00-04:00", "high": 116.27146813687378, "low": 113.71561405429145, "open": 115.4294177384048, "volume": 5267500.0}, {"close": 113.39860534667969, "date": "2026-03-19T00:00:00-04:00", "high": 115.00343792288716, "low": 112.3584299259638, "open": 113.58682943716774, "volume": 6549400.0}, {"close": 112.19993591308594, "date": "2026-03-20T00:00:00-04:00", "high": 114.19111771247692, "low": 111.63527117687278, "open": 112.93300770652361, "volume": 19717500.0}, {"close": 113.85430145263672, "date": "2026-03-23T00:00:00-04:00", "high": 115.39969805778674, "low": 112.94291409872703, "open": 113.55710630949874, "volume": 6381900.0}, {"close": 114.83503723144531, "date": "2026-03-24T00:00:00-04:00", "high": 114.96382532490512, "low": 111.95227750026297, "open": 112.75469383280058, "volume": 4991300.0}, {"close": 115.28082275390625, "date": "2026-03-25T00:00:00-04:00", "high": 116.54884122016578, "low": 113.61654662744405, "open": 116.40024365284151, "volume": 4408000.0}, {"close": 115.9049301147461, "date": "2026-03-26T00:00:00-04:00", "high": 117.24229318139582, "low": 114.607193572188, "open": 114.79541011413998, "volume": 3403100.0}, {"close": 118.71834564208984, "date": "2026-03-27T00:00:00-04:00", "high": 120.32318586144031, "low": 115.40961022985715, "open": 116.00399297695436, "volume": 8112900.0}, {"close": 117.66826629638672, "date": "2026-03-30T00:00:00-04:00", "high": 120.36280941183907, "low": 116.83613198260753, "open": 118.99572837149331, "volume": 4425200.0}, {"close": 120.06561279296875, "date": "2026-03-31T00:00:00-04:00", "high": 120.20430184356303, "low": 117.66826485214031, "open": 118.77778481488096, "volume": 4662100.0}, {"close": 119.3226318359375, "date": "2026-04-01T00:00:00-04:00", "high": 121.00672503208693, "low": 119.28301287140414, "open": 120.01608464305305, "volume": 4250600.0}, {"close": 119.3226318359375, "date": "2026-04-02T00:00:00-04:00", "high": 120.37271578774416, "low": 118.03480386498526, "open": 119.1740418239715, "volume": 5348000.0}, {"close": 121.066162109375, "date": "2026-04-06T00:00:00-04:00", "high": 121.30391368861315, "low": 119.30282341055143, "open": 119.37216793607865, "volume": 4059500.0}, {"close": 118.40133666992188, "date": "2026-04-07T00:00:00-04:00", "high": 121.75961456189495, "low": 117.49985784073876, "open": 121.15532331638241, "volume": 3799500.0}, {"close": 121.9676513671875, "date": "2026-04-08T00:00:00-04:00", "high": 122.17568494866093, "low": 118.87685053246815, "open": 119.44151527017792, "volume": 3634100.0}, {"close": 122.86912536621094, "date": "2026-04-09T00:00:00-04:00", "high": 123.05734945734048, "low": 120.36280640910975, "open": 121.1156952156416, "volume": 4093500.0}, {"close": 120.74916076660156, "date": "2026-04-10T00:00:00-04:00", "high": 123.29510635585719, "low": 120.17458750633709, "open": 123.17622678401351, "volume": 3699800.0}, {"close": 116.77668762207031, "date": "2026-04-13T00:00:00-04:00", "high": 119.95664239886537, "low": 116.2615579396243, "open": 119.30282366506903, "volume": 5800600.0}, {"close": 118.41124725341797, "date": "2026-04-14T00:00:00-04:00", "high": 118.50040882066327, "low": 115.73652116384359, "open": 116.697443572894, "volume": 5189100.0}, {"close": 121.71998596191406, "date": "2026-04-15T00:00:00-04:00", "high": 122.14596162676014, "low": 117.67817140588424, "open": 118.60937577973061, "volume": 5232400.0}, {"close": 122.75025939941406, "date": "2026-04-16T00:00:00-04:00", "high": 122.90875793817756, "low": 120.47178338554362, "open": 122.28465718769375, "volume": 4293000.0}, {"close": 126.64346313476562, "date": "2026-04-17T00:00:00-04:00", "high": 126.85150426655193, "low": 122.12614539971165, "open": 122.93847021273427, "volume": 5844800.0}, {"close": 128.96156311035156, "date": "2026-04-20T00:00:00-04:00", "high": 128.9714791888121, "low": 125.68255328422437, "open": 126.65337666704374, "volume": 5819100.0}, {"close": 130.8636016845703, "date": "2026-04-21T00:00:00-04:00", "high": 131.8542420754725, "low": 128.48605567682137, "open": 129.12998100049145, "volume": 5745900.0}, {"close": 129.3776397705078, "date": "2026-04-22T00:00:00-04:00", "high": 131.27966748760417, "low": 128.80306653576423, "open": 131.27966748760417, "volume": 5141400.0}, {"close": 128.95166015625, "date": "2026-04-23T00:00:00-04:00", "high": 130.26921371342803, "low": 128.22849689054144, "open": 129.31819227027145, "volume": 3595200.0}, {"close": 128.0501708984375, "date": "2026-04-24T00:00:00-04:00", "high": 128.80306726628947, "low": 126.90103953840548, "open": 128.80306726628947, "volume": 3129300.0}, {"close": 128.50587463378906, "date": "2026-04-27T00:00:00-04:00", "high": 129.53613400466577, "low": 126.27693372101423, "open": 128.29783349756863, "volume": 5824300.0}, {"close": 125.95001983642578, "date": "2026-04-28T00:00:00-04:00", "high": 129.77389238461126, "low": 125.7816127823625, "open": 129.29838922514006, "volume": 3728100.0}, {"close": 126.67318725585938, "date": "2026-04-29T00:00:00-04:00", "high": 126.8415867474189, "low": 124.15695980069691, "open": 125.40516122931578, "volume": 3760100.0}, {"close": 128.5355987548828, "date": "2026-04-30T00:00:00-04:00", "high": 128.57521772196765, "low": 126.50478280338356, "open": 127.28739722606569, "volume": 5436600.0}, {"close": 127.68363952636719, "date": "2026-05-01T00:00:00-04:00", "high": 130.08098746120547, "low": 127.59448551891637, "open": 128.59502687313417, "volume": 3729000.0}, {"close": 126.56421661376953, "date": "2026-05-04T00:00:00-04:00", "high": 129.9720143693883, "low": 126.07879738755017, "open": 127.23785237208713, "volume": 3118200.0}, {"close": 127.61430358886719, "date": "2026-05-05T00:00:00-04:00", "high": 128.53559190523774, "low": 126.21749699697678, "open": 127.01001234020364, "volume": 4206800.0}, {"close": 128.9714813232422, "date": "2026-05-06T00:00:00-04:00", "high": 130.74472106010376, "low": 127.91148879660159, "open": 128.2780360383235, "volume": 4423100.0}, {"close": 124.70181274414062, "date": "2026-05-07T00:00:00-04:00", "high": 128.5851289157832, "low": 122.47287180994705, "open": 128.0303727018285, "volume": 7539000.0}, {"close": 124.07771301269531, "date": "2026-05-08T00:00:00-04:00", "high": 126.67319364249875, "low": 122.66109690512113, "open": 126.66328512202993, "volume": 3883700.0}, {"close": 117.33145141601562, "date": "2026-05-11T00:00:00-04:00", "high": 124.51359431732925, "low": 116.5686540754037, "open": 124.3749052659428, "volume": 7589700.0}, {"close": 120.66000366210938, "date": "2026-05-12T00:00:00-04:00", "high": 121.60110901828236, "low": 118.9362839255175, "open": 119.86748831944738, "volume": 5623800.0}, {"close": 121.4800033569336, "date": "2026-05-13T00:00:00-04:00", "high": 121.61000061035156, "low": 119.12000274658203, "open": 120.7300033569336, "volume": 3964800.0}, {"close": 123.08000183105469, "date": "2026-05-14T00:00:00-04:00", "high": 123.73999786376953, "low": 121.29000091552734, "open": 121.61000061035156, "volume": 4160100.0}, {"close": 121.54000091552734, "date": "2026-05-15T00:00:00-04:00", "high": 123.4800033569336, "low": 120.5, "open": 123.44000244140625, "volume": 3661400.0}, {"close": 123.4000015258789, "date": "2026-05-18T00:00:00-04:00", "high": 123.55000305175781, "low": 120.08000183105469, "open": 121.81999969482422, "volume": 3708100.0}, {"close": 127.23999786376953, "date": "2026-05-19T00:00:00-04:00", "high": 127.48999786376953, "low": 120.25, "open": 122.77999877929688, "volume": 10539800.0}, {"close": 122.33000183105469, "date": "2026-05-20T00:00:00-04:00", "high": 123.12999725341797, "low": 117.05000305175781, "open": 120.20999908447266, "volume": 20309300.0}, {"close": 126.1500015258789, "date": "2026-05-21T00:00:00-04:00", "high": 126.5199966430664, "low": 117.80999755859375, "open": 120.83000183105469, "volume": 9959900.0}, {"close": 125.5999984741211, "date": "2026-05-22T00:00:00-04:00", "high": 127.9800033569336, "low": 125.11000061035156, "open": 127.48999786376953, "volume": 4943000.0}, {"close": 125.43000030517578, "date": "2026-05-26T00:00:00-04:00", "high": 126.8499984741211, "low": 124.05000305175781, "open": 126.5199966430664, "volume": 4455500.0}, {"close": 128.3300018310547, "date": "2026-05-27T00:00:00-04:00", "high": 131.1999969482422, "low": 126.45999908447266, "open": 126.9800033569336, "volume": 6076900.0}, {"close": 128.64999389648438, "date": "2026-05-28T00:00:00-04:00", "high": 130.1999969482422, "low": 127.75, "open": 129.75999450683594, "volume": 4676600.0}, {"close": 127.06999969482422, "date": "2026-05-29T00:00:00-04:00", "high": 127.87999725341797, "low": 125.2699966430664, "open": 127.41000366210938, "volume": 6455200.0}, {"close": 123.70999908447266, "date": "2026-06-01T00:00:00-04:00", "high": 126.72000122070312, "low": 121.56999969482422, "open": 126.4800033569336, "volume": 4859100.0}, {"close": 123.18000030517578, "date": "2026-06-02T00:00:00-04:00", "high": 124.97000122070312, "low": 123.0199966430664, "open": 123.2300033569336, "volume": 3206500.0}, {"close": 124.80000305175781, "date": "2026-06-03T00:00:00-04:00", "high": 125.25, "low": 122.51000213623047, "open": 123.12999725341797, "volume": 3336300.0}, {"close": 123.8499984741211, "date": "2026-06-04T00:00:00-04:00", "high": 126.83000183105469, "low": 123.83000183105469, "open": 126.55000305175781, "volume": 4749600.0}, {"close": 122.56999969482422, "date": "2026-06-05T00:00:00-04:00", "high": 124.08000183105469, "low": 121.79000091552734, "open": 124.0, "volume": 4384500.0}, {"close": 123.97000122070312, "date": "2026-06-08T00:00:00-04:00", "high": 124.1500015258789, "low": 120.7699966430664, "open": 122.02999877929688, "volume": 2846200.0}, {"close": 126.61000061035156, "date": "2026-06-09T00:00:00-04:00", "high": 127.5199966430664, "low": 123.9800033569336, "open": 124.16000366210938, "volume": 4092100.0}, {"close": 127.9800033569336, "date": "2026-06-10T00:00:00-04:00", "high": 128.5, "low": 125.37000274658203, "open": 127.6500015258789, "volume": 3943100.0}, {"close": 132.63999938964844, "date": "2026-06-11T00:00:00-04:00", "high": 132.9600067138672, "low": 128.10000610351562, "open": 129.02999877929688, "volume": 4535600.0}, {"close": 135.22999572753906, "date": "2026-06-12T00:00:00-04:00", "high": 136.13999938964844, "low": 133.4499969482422, "open": 133.4499969482422, "volume": 4803300.0}, {"close": 133.1699981689453, "date": "2026-06-15T00:00:00-04:00", "high": 137.8699951171875, "low": 133.05999755859375, "open": 136.0, "volume": 7287900.0}, {"close": 133.39999389648438, "date": "2026-06-16T00:00:00-04:00", "high": 134.64999389648438, "low": 131.32000732421875, "open": 133.1699981689453, "volume": 3186000.0}, {"close": 131.83700561523438, "date": "2026-06-17T00:00:00-04:00", "high": 133.6790008544922, "low": 131.74009704589844, "open": 132.57000732421875, "volume": 181395.0}];
+    var labels = rawData.map(function(d) { return d.date; });
+    var highs = rawData.map(function(d) { return d.high; });
+    var lows = rawData.map(function(d) { return d.low; });
+    var opens = rawData.map(function(d) { return d.open; });
+    var closes = rawData.map(function(d) { return d.close; });
+    var barColors = rawData.map(function(d) { return d.close >= d.open ? 'rgba(34,197,94,0.7)' : 'rgba(239,68,68,0.7)'; });
+    var barBorders = rawData.map(function(d) { return d.close >= d.open ? '#15803d' : '#dc2626'; });
+    var barData = rawData.map(function(d) {
+      var top = Math.max(d.open, d.close);
+      var bot = Math.min(d.open, d.close);
+      return [bot, top];
+    });
+    new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: labels,
+        datasets: [
+          {
+            label: 'High',
+            data: highs,
+            type: 'line',
+            borderColor: 'rgba(34,197,94,0.25)',
+            borderWidth: 1,
+            pointRadius: 0,
+            fill: false,
+            order: 1
+          },
+          {
+            label: 'Low',
+            data: lows,
+            type: 'line',
+            borderColor: 'rgba(239,68,68,0.25)',
+            borderWidth: 1,
+            pointRadius: 0,
+            fill: false,
+            order: 1
+          },
+          {
+            label: 'OHLC',
+            data: barData,
+            backgroundColor: barColors,
+            borderColor: barBorders,
+            borderWidth: 1,
+            borderRadius: 1,
+            order: 0
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: true,
+        aspectRatio: 2.5,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: function(ctx) {
+                var i = ctx.dataIndex;
+                return 'O: $' + opens[i].toFixed(2) + '  H: $' + highs[i].toFixed(2) + '  L: $' + lows[i].toFixed(2) + '  C: $' + closes[i].toFixed(2);
+              }
+            }
+          }
+        },
+        scales: {
+          x: { display: true, ticks: { maxRotation: 45, maxTicksLimit: 10, font: { family: 'DM Mono', size: 11 } }, grid: { display: false } },
+          y: { display: true, ticks: { callback: function(v) { return '$' + v.toFixed(0); }, font: { family: 'DM Mono', size: 11 } }, grid: { color: 'rgba(0,0,0,0.05)' } }
+        }
+      }
+    });
+  })();
+  
+  
+  
+  (function() {
+    var ctx = document.getElementById('maChart');
+    if (!ctx) return;
+    var labels = ["2025-06-17T00:00:00-04:00", "2025-06-18T00:00:00-04:00", "2025-06-20T00:00:00-04:00", "2025-06-23T00:00:00-04:00", "2025-06-24T00:00:00-04:00", "2025-06-25T00:00:00-04:00", "2025-06-26T00:00:00-04:00", "2025-06-27T00:00:00-04:00", "2025-06-30T00:00:00-04:00", "2025-07-01T00:00:00-04:00", "2025-07-02T00:00:00-04:00", "2025-07-03T00:00:00-04:00", "2025-07-07T00:00:00-04:00", "2025-07-08T00:00:00-04:00", "2025-07-09T00:00:00-04:00", "2025-07-10T00:00:00-04:00", "2025-07-11T00:00:00-04:00", "2025-07-14T00:00:00-04:00", "2025-07-15T00:00:00-04:00", "2025-07-16T00:00:00-04:00", "2025-07-17T00:00:00-04:00", "2025-07-18T00:00:00-04:00", "2025-07-21T00:00:00-04:00", "2025-07-22T00:00:00-04:00", "2025-07-23T00:00:00-04:00", "2025-07-24T00:00:00-04:00", "2025-07-25T00:00:00-04:00", "2025-07-28T00:00:00-04:00", "2025-07-29T00:00:00-04:00", "2025-07-30T00:00:00-04:00", "2025-07-31T00:00:00-04:00", "2025-08-01T00:00:00-04:00", "2025-08-04T00:00:00-04:00", "2025-08-05T00:00:00-04:00", "2025-08-06T00:00:00-04:00", "2025-08-07T00:00:00-04:00", "2025-08-08T00:00:00-04:00", "2025-08-11T00:00:00-04:00", "2025-08-12T00:00:00-04:00", "2025-08-13T00:00:00-04:00", "2025-08-14T00:00:00-04:00", "2025-08-15T00:00:00-04:00", "2025-08-18T00:00:00-04:00", "2025-08-19T00:00:00-04:00", "2025-08-20T00:00:00-04:00", "2025-08-21T00:00:00-04:00", "2025-08-22T00:00:00-04:00", "2025-08-25T00:00:00-04:00", "2025-08-26T00:00:00-04:00", "2025-08-27T00:00:00-04:00", "2025-08-28T00:00:00-04:00", "2025-08-29T00:00:00-04:00", "2025-09-02T00:00:00-04:00", "2025-09-03T00:00:00-04:00", "2025-09-04T00:00:00-04:00", "2025-09-05T00:00:00-04:00", "2025-09-08T00:00:00-04:00", "2025-09-09T00:00:00-04:00", "2025-09-10T00:00:00-04:00", "2025-09-11T00:00:00-04:00", "2025-09-12T00:00:00-04:00", "2025-09-15T00:00:00-04:00", "2025-09-16T00:00:00-04:00", "2025-09-17T00:00:00-04:00", "2025-09-18T00:00:00-04:00", "2025-09-19T00:00:00-04:00", "2025-09-22T00:00:00-04:00", "2025-09-23T00:00:00-04:00", "2025-09-24T00:00:00-04:00", "2025-09-25T00:00:00-04:00", "2025-09-26T00:00:00-04:00", "2025-09-29T00:00:00-04:00", "2025-09-30T00:00:00-04:00", "2025-10-01T00:00:00-04:00", "2025-10-02T00:00:00-04:00", "2025-10-03T00:00:00-04:00", "2025-10-06T00:00:00-04:00", "2025-10-07T00:00:00-04:00", "2025-10-08T00:00:00-04:00", "2025-10-09T00:00:00-04:00", "2025-10-10T00:00:00-04:00", "2025-10-13T00:00:00-04:00", "2025-10-14T00:00:00-04:00", "2025-10-15T00:00:00-04:00", "2025-10-16T00:00:00-04:00", "2025-10-17T00:00:00-04:00", "2025-10-20T00:00:00-04:00", "2025-10-21T00:00:00-04:00", "2025-10-22T00:00:00-04:00", "2025-10-23T00:00:00-04:00", "2025-10-24T00:00:00-04:00", "2025-10-27T00:00:00-04:00", "2025-10-28T00:00:00-04:00", "2025-10-29T00:00:00-04:00", "2025-10-30T00:00:00-04:00", "2025-10-31T00:00:00-04:00", "2025-11-03T00:00:00-05:00", "2025-11-04T00:00:00-05:00", "2025-11-05T00:00:00-05:00", "2025-11-06T00:00:00-05:00", "2025-11-07T00:00:00-05:00", "2025-11-10T00:00:00-05:00", "2025-11-11T00:00:00-05:00", "2025-11-12T00:00:00-05:00", "2025-11-13T00:00:00-05:00", "2025-11-14T00:00:00-05:00", "2025-11-17T00:00:00-05:00", "2025-11-18T00:00:00-05:00", "2025-11-19T00:00:00-05:00", "2025-11-20T00:00:00-05:00", "2025-11-21T00:00:00-05:00", "2025-11-24T00:00:00-05:00", "2025-11-25T00:00:00-05:00", "2025-11-26T00:00:00-05:00", "2025-11-28T00:00:00-05:00", "2025-12-01T00:00:00-05:00", "2025-12-02T00:00:00-05:00", "2025-12-03T00:00:00-05:00", "2025-12-04T00:00:00-05:00", "2025-12-05T00:00:00-05:00", "2025-12-08T00:00:00-05:00", "2025-12-09T00:00:00-05:00", "2025-12-10T00:00:00-05:00", "2025-12-11T00:00:00-05:00", "2025-12-12T00:00:00-05:00", "2025-12-15T00:00:00-05:00", "2025-12-16T00:00:00-05:00", "2025-12-17T00:00:00-05:00", "2025-12-18T00:00:00-05:00", "2025-12-19T00:00:00-05:00", "2025-12-22T00:00:00-05:00", "2025-12-23T00:00:00-05:00", "2025-12-24T00:00:00-05:00", "2025-12-26T00:00:00-05:00", "2025-12-29T00:00:00-05:00", "2025-12-30T00:00:00-05:00", "2025-12-31T00:00:00-05:00", "2026-01-02T00:00:00-05:00", "2026-01-05T00:00:00-05:00", "2026-01-06T00:00:00-05:00", "2026-01-07T00:00:00-05:00", "2026-01-08T00:00:00-05:00", "2026-01-09T00:00:00-05:00", "2026-01-12T00:00:00-05:00", "2026-01-13T00:00:00-05:00", "2026-01-14T00:00:00-05:00", "2026-01-15T00:00:00-05:00", "2026-01-16T00:00:00-05:00", "2026-01-20T00:00:00-05:00", "2026-01-21T00:00:00-05:00", "2026-01-22T00:00:00-05:00", "2026-01-23T00:00:00-05:00", "2026-01-26T00:00:00-05:00", "2026-01-27T00:00:00-05:00", "2026-01-28T00:00:00-05:00", "2026-01-29T00:00:00-05:00", "2026-01-30T00:00:00-05:00", "2026-02-02T00:00:00-05:00", "2026-02-03T00:00:00-05:00", "2026-02-04T00:00:00-05:00", "2026-02-05T00:00:00-05:00", "2026-02-06T00:00:00-05:00", "2026-02-09T00:00:00-05:00", "2026-02-10T00:00:00-05:00", "2026-02-11T00:00:00-05:00", "2026-02-12T00:00:00-05:00", "2026-02-13T00:00:00-05:00", "2026-02-17T00:00:00-05:00", "2026-02-18T00:00:00-05:00", "2026-02-19T00:00:00-05:00", "2026-02-20T00:00:00-05:00", "2026-02-23T00:00:00-05:00", "2026-02-24T00:00:00-05:00", "2026-02-25T00:00:00-05:00", "2026-02-26T00:00:00-05:00", "2026-02-27T00:00:00-05:00", "2026-03-02T00:00:00-05:00", "2026-03-03T00:00:00-05:00", "2026-03-04T00:00:00-05:00", "2026-03-05T00:00:00-05:00", "2026-03-06T00:00:00-05:00", "2026-03-09T00:00:00-04:00", "2026-03-10T00:00:00-04:00", "2026-03-11T00:00:00-04:00", "2026-03-12T00:00:00-04:00", "2026-03-13T00:00:00-04:00", "2026-03-16T00:00:00-04:00", "2026-03-17T00:00:00-04:00", "2026-03-18T00:00:00-04:00", "2026-03-19T00:00:00-04:00", "2026-03-20T00:00:00-04:00", "2026-03-23T00:00:00-04:00", "2026-03-24T00:00:00-04:00", "2026-03-25T00:00:00-04:00", "2026-03-26T00:00:00-04:00", "2026-03-27T00:00:00-04:00", "2026-03-30T00:00:00-04:00", "2026-03-31T00:00:00-04:00", "2026-04-01T00:00:00-04:00", "2026-04-02T00:00:00-04:00", "2026-04-06T00:00:00-04:00", "2026-04-07T00:00:00-04:00", "2026-04-08T00:00:00-04:00", "2026-04-09T00:00:00-04:00", "2026-04-10T00:00:00-04:00", "2026-04-13T00:00:00-04:00", "2026-04-14T00:00:00-04:00", "2026-04-15T00:00:00-04:00", "2026-04-16T00:00:00-04:00", "2026-04-17T00:00:00-04:00", "2026-04-20T00:00:00-04:00", "2026-04-21T00:00:00-04:00", "2026-04-22T00:00:00-04:00", "2026-04-23T00:00:00-04:00", "2026-04-24T00:00:00-04:00", "2026-04-27T00:00:00-04:00", "2026-04-28T00:00:00-04:00", "2026-04-29T00:00:00-04:00", "2026-04-30T00:00:00-04:00", "2026-05-01T00:00:00-04:00", "2026-05-04T00:00:00-04:00", "2026-05-05T00:00:00-04:00", "2026-05-06T00:00:00-04:00", "2026-05-07T00:00:00-04:00", "2026-05-08T00:00:00-04:00", "2026-05-11T00:00:00-04:00", "2026-05-12T00:00:00-04:00", "2026-05-13T00:00:00-04:00", "2026-05-14T00:00:00-04:00", "2026-05-15T00:00:00-04:00", "2026-05-18T00:00:00-04:00", "2026-05-19T00:00:00-04:00", "2026-05-20T00:00:00-04:00", "2026-05-21T00:00:00-04:00", "2026-05-22T00:00:00-04:00", "2026-05-26T00:00:00-04:00", "2026-05-27T00:00:00-04:00", "2026-05-28T00:00:00-04:00", "2026-05-29T00:00:00-04:00", "2026-06-01T00:00:00-04:00", "2026-06-02T00:00:00-04:00", "2026-06-03T00:00:00-04:00", "2026-06-04T00:00:00-04:00", "2026-06-05T00:00:00-04:00", "2026-06-08T00:00:00-04:00", "2026-06-09T00:00:00-04:00", "2026-06-10T00:00:00-04:00", "2026-06-11T00:00:00-04:00", "2026-06-12T00:00:00-04:00", "2026-06-15T00:00:00-04:00", "2026-06-16T00:00:00-04:00", "2026-06-17T00:00:00-04:00"];
+    var colorMap = {'Close': '#1a2236', 'SMA-20': '#3b7dfa', 'SMA-50': '#f59e0b', 'SMA-200': '#ef4444'};
+    var datasets = [];
+    
+    datasets.push({
+      label: "Close",
+      data: [91.04, 91.13, 91.53, 92.48, 93.44, 92.65, 93.51, 95.07, 94.51, 99.5, 101.03, 99.7, 97.34, 97.73, 98.14, 100.35, 99.87, 100.47, 97.92, 97.09, 99.3, 99.12, 97.45, 102.07, 102.93, 101.38, 101.6, 101.97, 99.81, 98.82, 96.29, 95.59, 95.61, 98.14, 100.97, 101.24, 100.98, 99.65, 101.8, 102.04, 100.96, 99.77, 101.64, 102.04, 95.58, 94.0, 96.11, 94.07, 93.08, 94.87, 93.76, 92.95, 89.52, 89.44, 89.79, 90.23, 88.61, 88.04, 87.92, 88.63, 87.12, 85.77, 86.89, 86.13, 86.6, 85.35, 83.83, 84.3, 85.52, 84.39, 85.08, 86.03, 86.87, 86.33, 86.69, 86.22, 86.15, 86.45, 87.53, 86.29, 82.83, 84.59, 86.15, 88.04, 87.23, 87.97, 88.64, 91.42, 91.05, 91.28, 91.29, 94.69, 94.05, 91.15, 89.99, 89.8, 88.57, 87.14, 89.04, 86.34, 88.36, 87.87, 88.69, 90.13, 88.87, 88.16, 86.77, 86.82, 84.42, 82.06, 85.93, 82.91, 84.91, 88.06, 88.87, 89.59, 88.72, 89.16, 89.82, 90.41, 91.26, 91.81, 92.79, 95.1, 95.21, 95.67, 95.78, 96.69, 97.14, 96.12, 93.36, 92.48, 94.66, 97.63, 96.2, 95.55, 95.86, 98.57, 100.13, 102.28, 101.67, 104.27, 103.48, 104.09, 106.53, 107.7, 108.98, 109.13, 107.23, 103.99, 104.44, 106.01, 101.95, 102.09, 99.77, 100.85, 103.43, 107.41, 109.15, 111.92, 108.71, 113.32, 113.29, 111.04, 113.54, 111.64, 114.68, 115.45, 114.58, 114.58, 115.6, 112.28, 114.44, 115.35, 113.72, 112.72, 112.11, 119.67, 118.96, 119.23, 119.66, 119.02, 119.61, 117.67, 114.67, 116.24, 115.95, 115.67, 113.97, 113.4, 112.2, 113.85, 114.84, 115.28, 115.9, 118.72, 117.67, 120.07, 119.32, 119.32, 121.07, 118.4, 121.97, 122.87, 120.75, 116.78, 118.41, 121.72, 122.75, 126.64, 128.96, 130.86, 129.38, 128.95, 128.05, 128.51, 125.95, 126.67, 128.54, 127.68, 126.56, 127.61, 128.97, 124.7, 124.08, 117.33, 120.66, 121.48, 123.08, 121.54, 123.4, 127.24, 122.33, 126.15, 125.6, 125.43, 128.33, 128.65, 127.07, 123.71, 123.18, 124.8, 123.85, 122.57, 123.97, 126.61, 127.98, 132.64, 135.23, 133.17, 133.4, 131.84],
+      borderColor: colorMap["Close"] || '#94a3b8',
+      borderWidth: "Close" === 'Close' ? 2 : 1.5,
+      pointRadius: 0,
+      fill: false,
+      tension: 0.1,
+      spanGaps: true
+    });
+    
+    datasets.push({
+      label: "SMA-20",
+      data: [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, 96.22, 96.64, 97.04, 97.33, 97.81, 98.29, 98.72, 99.13, 99.47, 99.74, 99.7, 99.47, 99.26, 99.18, 99.2, 99.34, 99.38, 99.44, 99.4, 99.59, 99.84, 99.92, 99.95, 100.16, 100.16, 99.79, 99.42, 99.15, 98.75, 98.42, 98.22, 98.09, 97.96, 97.66, 97.22, 96.66, 96.11, 95.5, 94.91, 94.22, 93.55, 92.86, 92.16, 91.42, 90.63, 90.18, 89.74, 89.13, 88.64, 88.26, 87.74, 87.31, 86.96, 86.83, 86.67, 86.52, 86.32, 86.19, 86.11, 86.09, 85.98, 85.76, 85.7, 85.67, 85.76, 85.79, 85.93, 86.17, 86.52, 86.8, 87.14, 87.45, 87.89, 88.25, 88.49, 88.65, 88.83, 88.95, 88.98, 89.06, 89.06, 89.34, 89.5, 89.63, 89.73, 89.82, 89.83, 89.73, 89.5, 89.17, 88.71, 88.44, 87.85, 87.4, 87.24, 87.19, 87.17, 87.18, 87.28, 87.32, 87.53, 87.67, 87.87, 88.07, 88.32, 88.64, 89.01, 89.46, 89.96, 90.59, 91.3, 91.67, 92.15, 92.64, 93.11, 93.48, 93.78, 94.13, 94.6, 95.12, 95.71, 96.23, 96.86, 97.39, 97.84, 98.41, 99.01, 99.67, 100.29, 100.79, 101.19, 101.74, 102.42, 102.78, 103.01, 103.19, 103.45, 103.83, 104.27, 104.72, 105.2, 105.56, 106.01, 106.5, 106.85, 107.2, 107.39, 107.68, 107.99, 108.36, 108.89, 109.45, 109.76, 110.39, 111.05, 111.75, 112.34, 112.78, 113.39, 113.88, 114.24, 114.79, 115.08, 115.39, 115.72, 115.78, 116.01, 116.07, 116.09, 116.06, 116.0, 115.83, 115.91, 115.93, 115.92, 116.03, 116.33, 116.61, 116.63, 116.65, 116.65, 116.72, 116.69, 116.81, 117.07, 117.37, 117.4, 117.52, 117.83, 118.26, 118.93, 119.76, 120.61, 121.34, 122.03, 122.63, 123.12, 123.54, 123.87, 124.33, 124.75, 125.02, 125.48, 125.83, 125.92, 126.09, 126.12, 126.23, 126.22, 126.23, 125.98, 125.7, 125.52, 125.17, 125.03, 124.9, 124.75, 124.87, 124.97, 124.9, 124.7, 124.53, 124.39, 124.13, 124.02, 124.02, 124.48, 124.85, 125.41, 126.01, 126.6, 127.1, 127.33],
+      borderColor: colorMap["SMA-20"] || '#94a3b8',
+      borderWidth: "SMA-20" === 'Close' ? 2 : 1.5,
+      pointRadius: 0,
+      fill: false,
+      tension: 0.1,
+      spanGaps: true
+    });
+    
+    datasets.push({
+      label: "SMA-50",
+      data: [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, 97.87, 97.92, 97.96, 97.92, 97.86, 97.78, 97.74, 97.64, 97.5, 97.36, 97.15, 96.87, 96.59, 96.38, 96.15, 95.92, 95.62, 95.3, 94.98, 94.73, 94.47, 94.19, 93.93, 93.72, 93.4, 93.08, 92.77, 92.46, 92.15, 91.91, 91.66, 91.39, 91.17, 90.98, 90.78, 90.5, 90.24, 89.99, 89.83, 89.61, 89.4, 89.2, 89.1, 88.95, 88.73, 88.62, 88.53, 88.38, 88.25, 88.16, 87.99, 87.89, 87.78, 87.77, 87.78, 87.76, 87.72, 87.69, 87.66, 87.59, 87.46, 87.44, 87.38, 87.34, 87.38, 87.42, 87.51, 87.61, 87.7, 87.79, 87.91, 88.03, 88.15, 88.27, 88.44, 88.61, 88.8, 88.99, 89.2, 89.39, 89.59, 89.8, 89.96, 90.13, 90.32, 90.5, 90.65, 90.79, 90.94, 91.12, 91.34, 91.54, 91.74, 91.92, 92.18, 92.51, 92.87, 93.28, 93.72, 94.08, 94.44, 94.76, 95.12, 95.39, 95.63, 95.84, 96.1, 96.43, 96.84, 97.34, 97.93, 98.39, 99.0, 99.57, 100.03, 100.52, 100.96, 101.48, 102.0, 102.5, 102.98, 103.47, 103.88, 104.31, 104.72, 105.09, 105.43, 105.76, 106.21, 106.65, 107.11, 107.64, 108.17, 108.67, 109.07, 109.44, 109.85, 110.26, 110.6, 110.87, 111.1, 111.31, 111.5, 111.73, 111.95, 112.14, 112.36, 112.53, 112.75, 112.99, 113.3, 113.63, 113.88, 114.28, 114.7, 115.11, 115.43, 115.73, 116.02, 116.29, 116.59, 116.99, 117.34, 117.66, 118.02, 118.31, 118.65, 118.87, 119.1, 119.38, 119.64, 119.86, 120.17, 120.46, 120.64, 120.85, 120.94, 121.11, 121.15, 121.23, 121.28, 121.35, 121.52, 121.57, 121.74, 121.96, 122.14, 122.39, 122.65, 122.91, 123.12, 123.34, 123.56, 123.74, 123.88, 124.05, 124.2, 124.41, 124.66, 124.98, 125.26, 125.5, 125.77],
+      borderColor: colorMap["SMA-50"] || '#94a3b8',
+      borderWidth: "SMA-50" === 'Close' ? 2 : 1.5,
+      pointRadius: 0,
+      fill: false,
+      tension: 0.1,
+      spanGaps: true
+    });
+    
+    datasets.push({
+      label: "SMA-200",
+      data: [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, 98.4, 98.55, 98.69, 98.84, 98.99, 99.13, 99.25, 99.37, 99.5, 99.65, 99.78, 99.92, 100.08, 100.24, 100.39, 100.54, 100.68, 100.81, 100.95, 101.1, 101.25, 101.39, 101.53, 101.69, 101.8, 101.91, 101.99, 102.08, 102.18, 102.3, 102.41, 102.54, 102.7, 102.84, 102.98, 103.1, 103.22, 103.36, 103.5, 103.63, 103.74, 103.85, 103.97, 104.08, 104.19, 104.33, 104.49, 104.65, 104.84, 105.06, 105.25, 105.44, 105.64],
+      borderColor: colorMap["SMA-200"] || '#94a3b8',
+      borderWidth: "SMA-200" === 'Close' ? 2 : 1.5,
+      pointRadius: 0,
+      fill: false,
+      tension: 0.1,
+      spanGaps: true
+    });
+    
+    new Chart(ctx, {
+      type: 'line',
+      data: { labels: labels, datasets: datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: true,
+        aspectRatio: 2.5,
+        plugins: {
+          legend: { position: 'bottom', labels: { font: { family: 'DM Sans', size: 12 } } },
+          tooltip: { mode: 'index', intersect: false }
+        },
+        scales: {
+          x: { display: true, ticks: { maxRotation: 45, maxTicksLimit: 12, font: { family: 'DM Mono', size: 11 } }, grid: { display: false } },
+          y: { display: true, ticks: { callback: function(v) { return '$' + v.toFixed(0); }, font: { family: 'DM Mono', size: 11 } }, grid: { color: 'rgba(0,0,0,0.05)' } }
+        }
+      }
+    });
+  })();
+  
+  
+  
+  
+});
+</script>
+
+</body>
+</html>

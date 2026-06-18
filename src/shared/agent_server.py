@@ -7,7 +7,10 @@ Usage:
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Sequence
+
+logger = logging.getLogger(__name__)
 
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
@@ -95,6 +98,10 @@ def build_agent_app(
     routes.extend(create_agent_card_routes(agent_card))
     routes.extend(create_jsonrpc_routes(handler, "/a2a"))
 
+    logger.info(
+        "Building agent app for %s (auth=%s, routes=%d)",
+        service_name, accept if accept else "user+service", len(routes),
+    )
     return Starlette(
         routes=routes,
         on_startup=list(on_startup),

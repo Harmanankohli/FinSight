@@ -653,7 +653,7 @@ def generate_pptx(
     def rgb(hex_str: str) -> RGBColor:
         return RGBColor.from_string(hex_str)
 
-    logger.info("Generating PPTX report for %s", ticker)
+    logger.info("Generating PPTX report for %s (recommendation=%s, confidence=%.0f%%)", ticker, recommendation, confidence * 100)
     deck = _extract_deck_data(
         brief_data, ticker, recommendation, confidence, analysis_date, company_info=company_info
     )
@@ -838,16 +838,26 @@ def generate_pptx(
     )
 
     _pptx_slide_title(deck, h)
+    logger.debug("PPTX slide: title")
     _pptx_slide_key_metrics(deck, h)
+    logger.debug("PPTX slide: key_metrics")
     _pptx_slide_thesis(deck, h)
+    logger.debug("PPTX slide: thesis")
     _pptx_slide_financials(deck, h)
+    logger.debug("PPTX slide: financials")
     _pptx_slide_valuation(deck, h)
+    logger.debug("PPTX slide: valuation")
     _pptx_slide_scorecard(deck, h)
+    logger.debug("PPTX slide: scorecard")
     _pptx_slide_peers(deck, h)
+    logger.debug("PPTX slide: peers")
     _pptx_slide_risk_reward(deck, h)
+    logger.debug("PPTX slide: risk_reward")
     for section in deck.sections[:4]:
         _pptx_slide_extra(deck, h, section)
+        logger.debug("PPTX slide: extra (%s)", section.title)
     _pptx_slide_conclusion(deck, h)
+    logger.debug("PPTX slide: conclusion")
 
     buf = BytesIO()
     prs.save(buf)

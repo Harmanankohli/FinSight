@@ -7,9 +7,12 @@ Usage:
 
 import argparse
 import asyncio
+import logging
 import sys
 
 sys.path.insert(0, "src")
+
+logger = logging.getLogger(__name__)
 
 
 async def main(username: str, password: str, role: str) -> None:
@@ -20,10 +23,12 @@ async def main(username: str, password: str, role: str) -> None:
     username = username.strip().lower()
     existing = await get_user_by_username(username)
     if existing:
+        logger.info("Seed user %s: already exists (role=%s)", username, existing["role"])
         print(f"User '{username}' already exists (id={existing['user_id']}, role={existing['role']})")
         return
 
     user_id = await create_user(username, password, role=role)
+    logger.info("Seed user %s: created (role=%s)", username, role)
     print(f"Created user '{username}' (id={user_id}, role={role})")
 
 

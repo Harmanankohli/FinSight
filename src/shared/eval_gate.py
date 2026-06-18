@@ -28,10 +28,17 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-EVAL_DEFER_TIMEOUT = 120.0  # seconds — safety net
-
 _deferred: list[tuple[Callable[..., Coroutine], tuple, dict]] = []
 _auto_release_task: asyncio.Task | None = None
+
+
+def _get_defer_timeout() -> float:
+    try:
+        from shared.settings import get_settings
+
+        return get_settings().eval_defer_timeout
+    except Exception:
+        return 120.0
 
 
 def defer_eval(fn: Callable[..., Coroutine], *args: Any, **kwargs: Any) -> None:
@@ -41,8 +48,9 @@ def defer_eval(fn: Callable[..., Coroutine], *args: Any, **kwargs: Any) -> None:
     logger.info("[eval-gate] deferred %s (queue=%d)", fn.__name__, len(_deferred))
 
     loop = asyncio.get_event_loop()
-    if _auto_release_task is None or _auto_release_task.done():
-        _auto_release_task = loop.create_task(_auto_release())
+    if _auto_release_task is not None and not _auto_release_task.done():
+        _auto_release_task.cancel()
+    _auto_release_task = loop.create_task(_auto_release())
 
 
 async def release_evals() -> int:
@@ -65,12 +73,13 @@ async def release_evals() -> int:
 
 async def _auto_release() -> None:
     """Safety net: release evals after timeout if orchestrator never signals."""
+    timeout = _get_defer_timeout()
     try:
-        await asyncio.sleep(EVAL_DEFER_TIMEOUT)
+        await asyncio.sleep(timeout)
         n = await release_evals()
         if n:
             logger.warning(
-                "[eval-gate] auto-released %d eval(s) after %.0fs timeout", n, EVAL_DEFER_TIMEOUT
+                "[eval-gate] auto-released %d eval(s) after %.0fs timeout", n, timeout
             )
     except asyncio.CancelledError:
         pass

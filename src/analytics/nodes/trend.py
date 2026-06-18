@@ -91,6 +91,7 @@ async def _detect_trends(price_data: dict) -> dict:
                 direction = "neutral"
             strength = max(bullish_count, bearish_count) / max(total, 1)
 
+        logger.debug("Trend detection: direction=%s strength=%.2f crossover=%s", direction, strength, ma_crossover)
         return {
             "trend_direction": direction,
             "ma_crossover_signal": ma_crossover,

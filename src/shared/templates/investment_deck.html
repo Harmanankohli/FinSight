@@ -1163,6 +1163,34 @@
 </div>
 {% endif %}
 
+<!-- ─── ANALYTICS CHARTS (Moving Averages + Candlestick) ─── -->
+{% if deck.charts %}
+{% for chart in deck.charts %}
+{% if chart.chart_type == "line" and chart.datasets %}
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Analytics</div>
+    <h2 class="section-title">Price &amp; Moving Averages</h2>
+    <div class="chart-container">
+      <canvas id="maChart"></canvas>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% if chart.chart_type == "candlestick" and chart.datasets %}
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Analytics</div>
+    <h2 class="section-title">90-Day Price Action (OHLC)</h2>
+    <div class="chart-container">
+      <canvas id="ohlcChart"></canvas>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endfor %}
+{% endif %}
+
 <!-- ─── SCORECARD ─── -->
 {% if deck.scorecard|length > 1 %}
 <div class="report-section">
@@ -1601,6 +1629,125 @@ document.addEventListener('DOMContentLoaded', function() {
       }
     });
   })();
+  {% endif %}
+
+  {% if deck.charts %}
+  {% for chart in deck.charts %}
+  {% if chart.chart_type == "line" and chart.datasets %}
+  (function() {
+    var ctx = document.getElementById('maChart');
+    if (!ctx) return;
+    var labels = {{ chart.labels | tojson }};
+    var colorMap = {'Close': '#1a2236', 'SMA-20': '#3b7dfa', 'SMA-50': '#f59e0b', 'SMA-200': '#ef4444'};
+    var datasets = [];
+    {% for ds in chart.datasets %}
+    datasets.push({
+      label: {{ ds.label | tojson }},
+      data: {{ ds.data | tojson }},
+      borderColor: colorMap[{{ ds.label | tojson }}] || '#94a3b8',
+      borderWidth: {{ ds.label | tojson }} === 'Close' ? 2 : 1.5,
+      pointRadius: 0,
+      fill: false,
+      tension: 0.1,
+      spanGaps: true
+    });
+    {% endfor %}
+    new Chart(ctx, {
+      type: 'line',
+      data: { labels: labels, datasets: datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: true,
+        aspectRatio: 2.5,
+        plugins: {
+          legend: { position: 'bottom', labels: { font: { family: 'DM Sans', size: 12 } } },
+          tooltip: { mode: 'index', intersect: false }
+        },
+        scales: {
+          x: { display: true, ticks: { maxRotation: 45, maxTicksLimit: 12, font: { family: 'DM Mono', size: 11 } }, grid: { display: false } },
+          y: { display: true, ticks: { callback: function(v) { return '$' + v.toFixed(0); }, font: { family: 'DM Mono', size: 11 } }, grid: { color: 'rgba(0,0,0,0.05)' } }
+        }
+      }
+    });
+  })();
+  {% endif %}
+  {% if chart.chart_type == "candlestick" and chart.datasets %}
+  (function() {
+    var ctx = document.getElementById('ohlcChart');
+    if (!ctx) return;
+    var rawData = {{ chart.datasets[0].data | tojson }};
+    var labels = rawData.map(function(d) { return d.date; });
+    var highs = rawData.map(function(d) { return d.high; });
+    var lows = rawData.map(function(d) { return d.low; });
+    var opens = rawData.map(function(d) { return d.open; });
+    var closes = rawData.map(function(d) { return d.close; });
+    var barColors = rawData.map(function(d) { return d.close >= d.open ? 'rgba(34,197,94,0.7)' : 'rgba(239,68,68,0.7)'; });
+    var barBorders = rawData.map(function(d) { return d.close >= d.open ? '#15803d' : '#dc2626'; });
+    var barData = rawData.map(function(d) {
+      var top = Math.max(d.open, d.close);
+      var bot = Math.min(d.open, d.close);
+      return [bot, top];
+    });
+    new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: labels,
+        datasets: [
+          {
+            label: 'High',
+            data: highs,
+            type: 'line',
+            borderColor: 'rgba(34,197,94,0.25)',
+            borderWidth: 1,
+            pointRadius: 0,
+            fill: false,
+            order: 1
+          },
+          {
+            label: 'Low',
+            data: lows,
+            type: 'line',
+            borderColor: 'rgba(239,68,68,0.25)',
+            borderWidth: 1,
+            pointRadius: 0,
+            fill: false,
+            order: 1
+          },
+          {
+            label: 'OHLC',
+            data: barData,
+            backgroundColor: barColors,
+            borderColor: barBorders,
+            borderWidth: 1,
+            borderRadius: 1,
+            order: 0
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: true,
+        aspectRatio: 2.5,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: function(ctx) {
+                var i = ctx.dataIndex;
+                return 'O: $' + opens[i].toFixed(2) + '  H: $' + highs[i].toFixed(2) + '  L: $' + lows[i].toFixed(2) + '  C: $' + closes[i].toFixed(2);
+              }
+            }
+          }
+        },
+        scales: {
+          x: { display: true, ticks: { maxRotation: 45, maxTicksLimit: 10, font: { family: 'DM Mono', size: 11 } }, grid: { display: false } },
+          y: { display: true, ticks: { callback: function(v) { return '$' + v.toFixed(0); }, font: { family: 'DM Mono', size: 11 } }, grid: { color: 'rgba(0,0,0,0.05)' } }
+        }
+      }
+    });
+  })();
+  {% endif %}
+  {% endfor %}
   {% endif %}
 });
 </script>

@@ -2,7 +2,6 @@
 import asyncio
 import json
 import logging
-import os
 import time
 from pathlib import Path
 from typing import Any
@@ -61,7 +60,8 @@ from shared.trace_context import current_trace_id, current_user_id, inject_trace
 
 logger = logging.getLogger(__name__)
 
-_EVAL_TRACE_ENABLED = os.environ.get("EVAL_TRACE_ENABLED", "false").lower() == "true"
+from shared.settings import EVAL_ENABLED as _EVAL_TRACE_ENABLED
+
 _EVAL_TRACES_DIR = (
     Path(__file__).parent.parent / "tests" / "evaluation" / "eval_results" / "orchestrator_traces"
 )
@@ -320,7 +320,7 @@ class SubAgentClient:
 
         try:
             result_text = await asyncio.wait_for(_stream(), timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning("Agent '%s' timed out after %.0fs", agent_name, timeout)
             result_text = json.dumps(
                 {

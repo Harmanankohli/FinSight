@@ -11,6 +11,7 @@ from google.adk.tools.tool_context import ToolContext
 from google.genai import types as genai_types
 
 from shared.settings import ADK_MODEL, IST, get_settings
+from shared.ticker_utils import extract_ticker
 
 logger = logging.getLogger(__name__)
 
@@ -126,17 +127,27 @@ async def send_message(agent_name: str, task: str, tool_context: ToolContext) ->
                 "Use one of these exact names and retry."
             }
         )
+    # ADK may pass task as dict or string — normalize early
+    if isinstance(task, dict):
+        task = json.dumps(task)
+
     # Capture session_id from tool context for storing outputs
     session_id = tool_context.session.id if tool_context and tool_context.session else None
 
-    # Inject actual session_id into reviewer query so it can fetch agent outputs
+    # Inject session_id AND inline agent outputs into reviewer query
     if session_id and "reviewer" in resolved.lower():
         try:
             payload = json.loads(task)
-            payload["session_id"] = session_id
-            task = json.dumps(payload)
         except (json.JSONDecodeError, TypeError):
-            pass
+            payload = {"ticker": extract_ticker(task) or ""}
+        payload["session_id"] = session_id
+        entry = _agent_responses.get(session_id)
+        if entry:
+            from shared.memory.agent_output_store import _normalize_agent_key
+            payload["agent_outputs"] = {
+                _normalize_agent_key(k): v for k, v in entry[1].items()
+            }
+        task = json.dumps(payload)
 
     result = await _client.send_message(resolved, task)
     logger.info(
@@ -258,11 +269,43 @@ async def save_brief(
 
     tm = TickerMemory()
 
+    # Peek at agent responses for this session (don't pop — _store_memory handles cleanup)
+    agent_extra = {}
+    entry = _agent_responses.get(session_id)
+    if entry:
+        for agent_name, data in entry[1].items():
+            name_lower = agent_name.lower()
+            if "rag" in name_lower:
+                truncated = dict(data)
+                if "context_texts" in truncated:
+                    truncated["context_texts"] = [t[:500] for t in truncated["context_texts"][:3]]
+                agent_extra["rag_response"] = truncated
+            elif "quant" in name_lower:
+                agent_extra["quant_response"] = data
+            elif "market" in name_lower or "sentiment" in name_lower:
+                agent_extra["sentiment_response"] = data
+            elif "analytics" in name_lower:
+                agent_extra["analytics_response"] = data
+            elif "reviewer" in name_lower:
+                agent_extra["reviewer_response"] = data
+
     # Skip if a brief for this ticker was already saved today (dedup)
     existing = await tm.get_latest(ticker, user_id=user_id)
     if existing:
         ad = existing.get("analysis_date") or existing["created_at"][:10]
         if ad == datetime.now(IST).date().isoformat():
+            # If existing brief lacks agent data, patch it in
+            if agent_extra:
+                try:
+                    bj = json.loads(existing.get("brief_json", "{}"))
+                    missing_agent = not any(
+                        k in bj for k in ("quant_response", "rag_response", "sentiment_response", "analytics_response", "reviewer_response")
+                    )
+                    if missing_agent:
+                        bj.update(agent_extra)
+                        await tm.update_brief_json(existing["id"], json.dumps(bj))
+                except Exception:
+                    logger.debug("Could not patch agent data into existing brief for %s", ticker, exc_info=True)
             return (
                 f"Brief already saved today for {ticker}: "
                 f"{existing['recommendation']} (confidence: {existing['confidence']:.2f})"
@@ -279,6 +322,7 @@ async def save_brief(
         response_text=response_text,
         recommendation=recommendation.upper(),
         confidence=confidence,
+        extra_data=agent_extra if agent_extra else None,
     )
 
     pt = PerformanceTracker()
