@@ -16,6 +16,7 @@ from .agent import reviewer_agent
 from .tools.confidence import score_confidence
 from .tools.consistency_checker import check_consistency
 from .tools.contradiction import check_contradictions
+from .tools.dcf_validator import validate_dcf
 from .tools.integrity import validate_metric_integrity
 from .tools.validation import validate_recommendation
 from .tools.verification import verify_sources
@@ -101,6 +102,7 @@ class ReviewerAgent(BaseAgent):
             confidence_result = score_confidence(agent_outputs)
             validation_result = validate_recommendation(agent_outputs)
             consistency_result = check_consistency(agent_outputs)
+            dcf_validation = validate_dcf(agent_outputs.get("quant", {}))
 
             def _pct(v) -> str:
                 """Format 0-1 float as percentage string for LLM consumption."""
@@ -187,6 +189,7 @@ class ReviewerAgent(BaseAgent):
                 "confidence": formatted_confidence,
                 "validation": validation_result,
                 "consistency": consistency_result,
+                "dcf_validation": dcf_validation,
             }
             if integrity_alerts:
                 synthesis_data["integrity_alerts"] = integrity_alerts

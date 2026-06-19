@@ -1916,7 +1916,22 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
                 data.dcf_breakdown.append(("Growth Rate", _fmt_pct(dcf.growth_rate, True)))
                 data.dcf_breakdown.append(("Terminal Growth", _fmt_pct(dcf.terminal_growth, True)))
                 data.dcf_breakdown.append(("Enterprise Value", _fmt_dollar(dcf.enterprise_value)))
+                if dcf.net_debt is not None:
+                    data.dcf_breakdown.append(("Net Debt", _fmt_dollar(dcf.net_debt)))
+                if dcf.equity_value is not None:
+                    data.dcf_breakdown.append(("Equity Value", _fmt_dollar(dcf.equity_value)))
                 data.dcf_breakdown.append(("FCF Used", _fmt_dollar(dcf.fcf_used)))
+                if dcf.revenue_growth is not None:
+                    data.dcf_breakdown.append(("Revenue Growth", _fmt_pct(dcf.revenue_growth, True)))
+                if dcf.earnings_growth is not None:
+                    data.dcf_breakdown.append(("Earnings Growth", _fmt_pct(dcf.earnings_growth, True)))
+                if hasattr(dcf, "scenarios") and dcf.scenarios:
+                    for label, key in [("Bear Case", "bear"), ("Base Case", "base"), ("Bull Case", "bull")]:
+                        val = dcf.scenarios.get(key)
+                        if val is not None:
+                            data.dcf_breakdown.append((label, _fmt_dollar(val)))
+                if hasattr(dcf, "confidence") and dcf.confidence is not None:
+                    data.dcf_breakdown.append(("Confidence", f"{dcf.confidence:.0%}"))
 
         # Monte Carlo summary
         if quant.monte_carlo:

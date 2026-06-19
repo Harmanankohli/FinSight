@@ -36,7 +36,15 @@ class DCFValuation(BaseModel):
     growth_rate: Optional[float] = None
     terminal_growth: Optional[float] = None
     enterprise_value: Optional[float] = None
+    net_debt: Optional[float] = None
+    equity_value: Optional[float] = None
     fcf_used: Optional[float] = None
+    revenue_growth: Optional[float] = None
+    earnings_growth: Optional[float] = None
+    dcf_assumptions: Optional[dict] = None
+    valuation_warnings: Optional[list] = None
+    scenarios: Optional[dict] = None
+    confidence: Optional[float] = None
     pb_ratio_used: Optional[float] = None
     fair_pb_multiple: Optional[float] = None
 

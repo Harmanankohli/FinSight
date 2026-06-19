@@ -295,12 +295,24 @@ async def format_output_node(state: QuantAnalysisState) -> dict:
                 f"P/B={dcf.get('pb_ratio_used', 'N/A')}, fair_P/B={dcf.get('fair_pb_multiple', 'N/A')})"
             )
         else:
+            _net_debt = dcf.get("net_debt")
+            _net_debt_str = f", net_debt=${_net_debt:,.0f}" if _net_debt is not None else ""
             parts.append(
                 f"DCF intrinsic: ${dcf.get('intrinsic_value', 'N/A')} "
                 f"(upside: {dcf.get('upside_pct', 'N/A')}%, "
                 f"WACC: {_wacc:.1%}, "
-                f"growth: {_growth:.1%})"
+                f"growth: {_growth:.1%}{_net_debt_str})"
             )
+            scenarios = dcf.get("scenarios")
+            if scenarios:
+                parts.append(
+                    f"DCF Scenarios: bear=${scenarios.get('bear', 'N/A')}, "
+                    f"base=${scenarios.get('base', 'N/A')}, "
+                    f"bull=${scenarios.get('bull', 'N/A')}"
+                )
+            confidence = dcf.get("confidence")
+            if confidence is not None:
+                parts.append(f"DCF Confidence: {confidence:.0%}")
     elif dcf_error:
         parts.append(f"DCF: {dcf_error}")
     if fundamentals:
@@ -430,8 +442,18 @@ async def llm_summary_node(state: QuantAnalysisState) -> dict:
             prompt += (
                 f"DCF: intrinsic=${dcf.get('intrinsic_value')}, "
                 f"upside={dcf.get('upside_pct')}%, "
-                f"WACC={dcf.get('wacc')}, growth={dcf.get('growth_rate')}\n"
+                f"WACC={dcf.get('wacc')}, growth={dcf.get('growth_rate')}, "
+                f"net_debt={dcf.get('net_debt')}, equity_value={dcf.get('equity_value')}\n"
             )
+            scenarios = dcf.get("scenarios")
+            if scenarios:
+                prompt += (
+                    f"DCF Scenarios: bear=${scenarios.get('bear')}, "
+                    f"base=${scenarios.get('base')}, bull=${scenarios.get('bull')}\n"
+                )
+            confidence = dcf.get("confidence")
+            if confidence is not None:
+                prompt += f"DCF Confidence: {confidence:.0%}\n"
     if mc:
         prompt += (
             f"Price Distribution (Monte Carlo, 1yr): "
