@@ -14,7 +14,8 @@ from shared.reports.extraction import _extract_deck_data
 def _deck_to_template_context(deck: DeckData) -> dict:
     """Build Jinja2 template context from DeckData."""
     rec_colors = {"BUY": "var(--green)", "HOLD": "var(--blue)", "SELL": "var(--red)"}
-    confidence_pct = f"{deck.confidence:.0%}"
+    conf = deck.confidence / 100.0 if deck.confidence > 1.0 else deck.confidence
+    confidence_pct = f"{conf:.0%}"
 
     scenario_cards = []
     if deck.scenarios.get("bull"):

@@ -100,6 +100,12 @@ class ReviewerAgent(BaseAgent):
             confidence_result = score_confidence(agent_outputs)
             validation_result = validate_recommendation(agent_outputs)
 
+            def _pct(v) -> str:
+                """Format 0-1 float as percentage string for LLM consumption."""
+                if isinstance(v, (int, float)) and v is not True and v is not False:
+                    return f"{v:.0%}"
+                return str(v)
+
             # Build agent summaries for the LLM with key fields for synthesis
             agent_summaries = {}
             for key, data in agent_outputs.items():
@@ -113,7 +119,7 @@ class ReviewerAgent(BaseAgent):
                         "recommendation": data.get("recommendation"),
                         "reasoning": (data.get("reasoning") or "")[:500],
                         "quant_signal": metrics.get("quant_signal"),
-                        "quant_confidence": metrics.get("quant_confidence"),
+                        "quant_confidence": _pct(metrics.get("quant_confidence")),
                         "sharpe_ratio": metrics.get("sharpe_ratio"),
                         "beta": metrics.get("beta"),
                         "var_95_daily": metrics.get("var_95_daily"),
@@ -128,18 +134,18 @@ class ReviewerAgent(BaseAgent):
                         "golden_cross": technicals.get("golden_cross"),
                         "trend": technicals.get("trend"),
                         "mc_p50": mc.get("p50"),
-                        "mc_prob_profit": mc.get("prob_profit"),
+                        "mc_prob_profit": _pct(mc.get("prob_profit")),
                     }
                 elif key == "rag":
                     agent_summaries["rag"] = {
                         "summary": (data.get("summary") or "")[:600],
-                        "confidence_score": data.get("confidence_score"),
+                        "confidence_score": _pct(data.get("confidence_score")),
                         "source_count": len(data.get("sources", [])),
                     }
                 elif key == "market_context":
                     agent_summaries["market_context"] = {
                         "overall_signal": data.get("overall_signal"),
-                        "confidence_score": data.get("confidence_score"),
+                        "confidence_score": _pct(data.get("confidence_score")),
                         "narrative": (data.get("narrative") or "")[:500],
                         "tailwinds": data.get("key_tailwinds", [])[:3],
                         "headwinds": data.get("key_headwinds", [])[:3],
@@ -150,14 +156,25 @@ class ReviewerAgent(BaseAgent):
                     anomalies = data.get("anomalies") or {}
                     agent_summaries["analytics"] = {
                         "analytics_signal": data.get("analytics_signal"),
-                        "analytics_confidence": data.get("analytics_confidence"),
+                        "analytics_confidence": _pct(data.get("analytics_confidence")),
                         "trend_direction": trend.get("trend_direction"),
                         "trend_strength": trend.get("trend_strength"),
                         "ma_crossover_signal": trend.get("ma_crossover_signal"),
                         "momentum_shift": trend.get("momentum_shift"),
                         "anomaly_severity": anomalies.get("severity"),
-                        "anomaly_count": anomalies.get("anomaly_count"),
+                        "anomaly_count": int(anomalies.get("anomaly_count", 0)),
                     }
+
+            # Format confidence scores as percentages for the LLM
+            formatted_confidence = {
+                "agent_scores": {
+                    k: _pct(v)
+                    for k, v in confidence_result.get("agent_scores", {}).items()
+                },
+                "agreement_score": _pct(confidence_result.get("agreement_score", 0)),
+                "data_quality_score": _pct(confidence_result.get("data_quality_score", 0)),
+                "meta_confidence": _pct(confidence_result.get("meta_confidence", 0)),
+            }
 
             # Build synthesis prompt with tool results AND agent summaries
             synthesis_data = {
@@ -165,7 +182,7 @@ class ReviewerAgent(BaseAgent):
                 "agent_summaries": agent_summaries,
                 "contradictions": contradictions,
                 "verifications": verifications,
-                "confidence": confidence_result,
+                "confidence": formatted_confidence,
                 "validation": validation_result,
             }
             if integrity_alerts:
@@ -177,6 +194,12 @@ class ReviewerAgent(BaseAgent):
 
             output = result.final_output
             output_dict = output.model_dump() if hasattr(output, "model_dump") else output
+
+            # Attach pre-computed tool results for extraction (common store)
+            output_dict["_tool_results"] = {
+                "confidence": confidence_result,
+                "validation": validation_result,
+            }
 
             schema_checks = score_reviewer_deterministic(output_dict)
             if not schema_checks.get("passed", False):

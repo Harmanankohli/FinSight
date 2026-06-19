@@ -64,20 +64,20 @@ async def _detect_trends(price_data: dict) -> dict:
 
         signals = []
         if ma_crossover == "golden_cross":
-            signals.append("bullish")
+            signals.append("MA crossover: bullish (golden cross)")
         elif ma_crossover == "death_cross":
-            signals.append("bearish")
+            signals.append("MA crossover: bearish (death cross)")
         if macd_bullish:
-            signals.append("bullish")
+            signals.append("MACD: bullish (rising)")
         elif macd_bullish is False:
-            signals.append("bearish")
+            signals.append("MACD: bearish (falling)")
         if momentum_bullish:
-            signals.append("bullish")
+            signals.append(f"Momentum: bullish (20d ROC {roc_20d:+.1%})")
         elif roc_20d < -0.02:
-            signals.append("bearish")
+            signals.append(f"Momentum: bearish (20d ROC {roc_20d:+.1%})")
 
-        bullish_count = signals.count("bullish")
-        bearish_count = signals.count("bearish")
+        bullish_count = sum(1 for s in signals if "bullish" in s)
+        bearish_count = sum(1 for s in signals if "bearish" in s)
         total = len(signals)
         if total == 0:
             direction = "neutral"

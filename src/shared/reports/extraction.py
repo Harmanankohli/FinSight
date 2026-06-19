@@ -222,6 +222,18 @@ def _confidence_reason(agent: str, score: float) -> str:
     return f"{level} — based on {factors}"
 
 
+def _norm_conf(v: float | None) -> float:
+    """Normalize a confidence value to 0-1 range.
+
+    LLMs sometimes output percentages (e.g. 75) instead of fractions (0.75).
+    """
+    if v is None:
+        return 0.0
+    if v > 1.0:
+        return v / 100.0
+    return v
+
+
 def _extract_bullets(text: str) -> list[str]:
     """Extract bullet points from markdown-like text, labeled lines, or numbered items."""
     bullets = []
@@ -1488,15 +1500,75 @@ def _populate_from_agent_outputs(data: DeckData, brief_data: dict, response_text
         for c in reviewer.get("contradictions", []):
             if c.get("severity") == "high":
                 data.risks.append(f"Contradiction: {c.get('description', '')}")
+            data.reviewer_contradictions.append(
+                {
+                    "agents": ", ".join(c.get("agents", [])),
+                    "field": c.get("field", ""),
+                    "description": c.get("description", ""),
+                    "severity": c.get("severity", ""),
+                }
+            )
 
-        cb = reviewer.get("confidence_breakdown") or {}
+        # Prefer _tool_results (deterministic 0-1 floats) over LLM confidence_breakdown
+        tool_results = reviewer.get("_tool_results") or {}
+        cb = tool_results.get("confidence") or reviewer.get("confidence_breakdown") or {}
+        agent_scores = cb.get("agent_scores") or {}
         if cb.get("meta_confidence") is not None:
-            data.confidence = cb["meta_confidence"]
+            q = _norm_conf(agent_scores.get("quant", 0))
+            r = _norm_conf(agent_scores.get("rag", 0))
+            mc_c = _norm_conf(agent_scores.get("market_context", 0))
+            a = _norm_conf(agent_scores.get("analytics", 0))
+            ag = _norm_conf(cb.get("agreement_score", 0))
+            dq = _norm_conf(cb.get("data_quality_score", 0))
+            meta = _norm_conf(cb["meta_confidence"])
+            data.confidence = meta
+            data.reviewer_confidence = {
+                "quant": f"{q:.0%}",
+                "rag": f"{r:.0%}",
+                "market_context": f"{mc_c:.0%}",
+                "analytics": f"{a:.0%}",
+                "agreement": f"{ag:.0%}",
+                "data_quality": f"{dq:.0%}",
+                "meta": f"{meta:.0%}",
+                "quant_raw": q,
+                "rag_raw": r,
+                "market_context_raw": mc_c,
+                "analytics_raw": a,
+                "methodology": {
+                    "quant": _confidence_reason("quant", q),
+                    "rag": _confidence_reason("rag", r),
+                    "market_context": _confidence_reason("market_context", mc_c),
+                    "analytics": _confidence_reason("analytics", a),
+                    "agreement": "Proportion of agents aligned on direction (bullish/bearish/neutral)",
+                    "data_quality": f"Non-null fields across all agents ({dq:.0%} populated)",
+                    "meta": "Weighted: 40% avg agent confidence + 30% directional agreement + 30% data quality",
+                },
+            }
 
-        rv = reviewer.get("recommendation_validation") or {}
-        if rv.get("evidence_strength") == "strong":
-            data.sections.append(
-                Section("Evidence Strength", "Strong evidence supports the recommendation.")
+        rv = reviewer.get("recommendation_validation") or tool_results.get("validation") or {}
+        if rv:
+            data.reviewer_validation = {
+                "recommendation": rv.get("recommendation", ""),
+                "supports": rv.get("evidence_supports", True),
+                "strength": (rv.get("evidence_strength") or "moderate").capitalize(),
+                "supporting": rv.get("supporting_evidence", [])[:5],
+                "contradicting": rv.get("contradicting_evidence", [])[:5],
+            }
+            if rv.get("evidence_strength") == "strong":
+                data.sections.append(
+                    Section("Evidence Strength", "Strong evidence supports the recommendation.")
+                )
+
+        for sv in reviewer.get("source_verifications", []):
+            rate = sv.get("verification_rate", 0)
+            data.reviewer_verifications.append(
+                {
+                    "agent": sv.get("agent_name", ""),
+                    "checked": sv.get("claims_checked", 0),
+                    "verified": sv.get("claims_verified", 0),
+                    "rate": f"{rate:.0%}" if isinstance(rate, float) else str(rate),
+                    "unverified": sv.get("unverified_claims", [])[:3],
+                }
             )
 
         for flag in reviewer.get("flags", []):
@@ -2202,26 +2274,33 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
 
         cb = reviewer.confidence_breakdown
         if cb and cb.meta_confidence is not None:
-            data.confidence = cb.meta_confidence
+            q = _norm_conf(cb.agent_scores.quant)
+            r = _norm_conf(cb.agent_scores.rag)
+            mc = _norm_conf(cb.agent_scores.market_context)
+            a = _norm_conf(cb.agent_scores.analytics)
+            ag = _norm_conf(cb.agreement_score)
+            dq = _norm_conf(cb.data_quality_score)
+            meta = _norm_conf(cb.meta_confidence)
+            data.confidence = meta
             data.reviewer_confidence = {
-                "quant": f"{cb.agent_scores.quant:.0%}",
-                "rag": f"{cb.agent_scores.rag:.0%}",
-                "market_context": f"{cb.agent_scores.market_context:.0%}",
-                "analytics": f"{cb.agent_scores.analytics:.0%}",
-                "agreement": f"{cb.agreement_score:.0%}",
-                "data_quality": f"{cb.data_quality_score:.0%}",
-                "meta": f"{cb.meta_confidence:.0%}",
-                "quant_raw": cb.agent_scores.quant,
-                "rag_raw": cb.agent_scores.rag,
-                "market_context_raw": cb.agent_scores.market_context,
-                "analytics_raw": cb.agent_scores.analytics,
+                "quant": f"{q:.0%}",
+                "rag": f"{r:.0%}",
+                "market_context": f"{mc:.0%}",
+                "analytics": f"{a:.0%}",
+                "agreement": f"{ag:.0%}",
+                "data_quality": f"{dq:.0%}",
+                "meta": f"{meta:.0%}",
+                "quant_raw": q,
+                "rag_raw": r,
+                "market_context_raw": mc,
+                "analytics_raw": a,
                 "methodology": {
-                    "quant": _confidence_reason("quant", cb.agent_scores.quant),
-                    "rag": _confidence_reason("rag", cb.agent_scores.rag),
-                    "market_context": _confidence_reason("market_context", cb.agent_scores.market_context),
-                    "analytics": _confidence_reason("analytics", cb.agent_scores.analytics),
+                    "quant": _confidence_reason("quant", q),
+                    "rag": _confidence_reason("rag", r),
+                    "market_context": _confidence_reason("market_context", mc),
+                    "analytics": _confidence_reason("analytics", a),
                     "agreement": "Proportion of agents aligned on direction (bullish/bearish/neutral)",
-                    "data_quality": f"Non-null fields across all agents ({cb.data_quality_score:.0%} populated)",
+                    "data_quality": f"Non-null fields across all agents ({dq:.0%} populated)",
                     "meta": "Weighted: 40% avg agent confidence + 30% directional agreement + 30% data quality",
                 },
             }

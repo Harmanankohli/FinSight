@@ -81,10 +81,26 @@ class AnalyzeNode(BaseNode[AnalyticsState, AnalyticsDeps]):
                         ar.content[0].text if hasattr(ar.content[0], "text") else str(ar.content[0])
                     )
                     data = json.loads(raw)
-                    snippets = [
-                        f"{r.get('title', '')}: {r.get('snippet', '')}"
-                        for r in (data.get("results") or [])
-                    ]
+                    _boilerplate = {
+                        "yahoo finance",
+                        "sign in",
+                        "log in",
+                        "cookie",
+                        "privacy policy",
+                        "latest stock",
+                        "get the latest",
+                        "find the latest",
+                    }
+                    snippets = []
+                    for r in data.get("results") or []:
+                        snippet = r.get("snippet", "").strip()
+                        title = r.get("title", "").strip()
+                        if not snippet or len(snippet) < 20:
+                            continue
+                        combined = f"{title} {snippet}".lower()
+                        if any(bp in combined for bp in _boilerplate):
+                            continue
+                        snippets.append(f"{title}: {snippet}")
                     ctx.state.anomaly_report["catalyst_context"] = snippets
             except Exception as we:
                 logger.debug("Anomaly catalyst search failed: %s", we)

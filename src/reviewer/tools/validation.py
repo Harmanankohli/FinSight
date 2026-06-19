@@ -76,12 +76,17 @@ def validate_recommendation(agent_outputs: dict) -> dict:
             "warning",
             "deteriorat",
         ]
-        pos_count = sum(1 for w in positive_words if w in rag_summary.lower())
-        neg_count = sum(1 for w in negative_words if w in rag_summary.lower())
-        if pos_count > neg_count:
-            supporting.append(f"Positive RAG filing signals ({pos_count} positive indicators)")
-        if neg_count > pos_count:
-            contradicting.append(f"Negative RAG filing signals ({neg_count} negative indicators)")
+        summary_lower = rag_summary.lower()
+        pos_matched = [w for w in positive_words if w in summary_lower]
+        neg_matched = [w for w in negative_words if w in summary_lower]
+        if len(pos_matched) > len(neg_matched):
+            supporting.append(
+                f"Positive RAG filing signals ({', '.join(pos_matched)})"
+            )
+        if len(neg_matched) > len(pos_matched):
+            contradicting.append(
+                f"Negative RAG filing signals ({', '.join(neg_matched)})"
+            )
 
     # ── Quant signal ──
     quant_signal = _safe_get(quant, "metrics", "quant_signal", default="neutral")
@@ -93,8 +98,10 @@ def validate_recommendation(agent_outputs: dict) -> dict:
     # ── Anomaly severity ──
     anomaly_severity = _safe_get(analytics, "anomalies", "severity", default="none")
     if anomaly_severity in ("medium", "high"):
-        count = _safe_get(analytics, "anomalies", "anomaly_count", default=0)
-        contradicting.append(f"Anomaly severity: {anomaly_severity} ({count} detected)")
+        count = int(_safe_get(analytics, "anomalies", "anomaly_count", default=0))
+        contradicting.append(
+            f"Analytics anomaly severity {anomaly_severity} ({count} anomalies detected)"
+        )
 
     # ── Monte Carlo probability ──
     mc = quant.get("monte_carlo") or {}
@@ -147,11 +154,11 @@ def validate_recommendation(agent_outputs: dict) -> dict:
 
     # ── Market tailwinds/headwinds ──
     tailwinds = market.get("key_tailwinds") or []
-    if tailwinds:
-        supporting.append(f"{len(tailwinds)} macro tailwind(s) identified")
+    for tw in tailwinds[:3]:
+        supporting.append(f"Macro tailwind: {tw}")
     headwinds = market.get("key_headwinds") or []
-    if headwinds:
-        contradicting.append(f"{len(headwinds)} macro headwind(s) identified")
+    for hw in headwinds[:3]:
+        contradicting.append(f"Macro headwind: {hw}")
 
     # ── Analytics confidence ──
     analytics_conf = analytics.get("analytics_confidence")
