@@ -271,12 +271,22 @@ async def format_output_node(state: QuantAnalysisState) -> dict:
             f"Beta: {metrics.get('beta', 'N/A')}"
         )
     if dcf:
-        parts.append(
-            f"DCF intrinsic: ${dcf.get('intrinsic_value', 'N/A')} "
-            f"(upside: {dcf.get('upside_pct', 'N/A')}%, "
-            f"WACC: {dcf.get('wacc', 'N/A'):.1%}, "
-            f"growth: {dcf.get('growth_rate', 'N/A'):.1%})"
-        )
+        _method = dcf.get("method", "dcf")
+        _wacc = dcf.get("wacc")
+        _growth = dcf.get("growth_rate")
+        if _method == "pb":
+            parts.append(
+                f"P/B intrinsic: ${dcf.get('intrinsic_value', 'N/A')} "
+                f"(upside: {dcf.get('upside_pct', 'N/A')}%, "
+                f"P/B={dcf.get('pb_ratio_used', 'N/A')}, fair_P/B={dcf.get('fair_pb_multiple', 'N/A')})"
+            )
+        else:
+            parts.append(
+                f"DCF intrinsic: ${dcf.get('intrinsic_value', 'N/A')} "
+                f"(upside: {dcf.get('upside_pct', 'N/A')}%, "
+                f"WACC: {_wacc:.1%}, "
+                f"growth: {_growth:.1%})"
+            )
     elif dcf_error:
         parts.append(f"DCF: {dcf_error}")
     if fundamentals:
