@@ -57,15 +57,18 @@ const _SKIP = new Set([
 
 function extractTicker(messages: { role: string; content: string | unknown }[]): string | null {
   // Extract from assistant response — the orchestrator always uses the actual ticker symbol
-  // Look for patterns like "Investment Analysis: NVDA" or "Recommendation for TSLA"
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
     if (m.role !== "assistant") continue;
     const text = typeof m.content === "string" ? m.content : "";
-    // Try structured patterns first
-    const structured = text.match(/(?:Analysis|Recommendation|Brief|Report)[:\s]+(?:for\s+)?([A-Z]{1,5})\b/);
+    // 1. Parenthesized ticker: "JPMorgan Chase (JPM)" — highest confidence
+    const paren = text.match(/\(([A-Z]{1,5})\)/);
+    if (paren && !_SKIP.has(paren[1])) return paren[1];
+    // 2. Structured heading like "Analysis: JPM" or "Report for TSLA"
+    //    Use {2,5} to avoid capturing single initials like "J" from "J.P. Morgan"
+    const structured = text.match(/(?:Analysis|Recommendation|Brief|Report)[:\s]+(?:for\s+)?([A-Z]{2,5})\b/);
     if (structured && !_SKIP.has(structured[1])) return structured[1];
-    // Fall back to first all-caps 2-5 letter word that looks like a ticker
+    // 3. First all-caps 2-5 letter word that looks like a ticker
     const caps = text.match(/\b([A-Z]{2,5})\b/g);
     if (caps) {
       const ticker = caps.find(t => !_SKIP.has(t));

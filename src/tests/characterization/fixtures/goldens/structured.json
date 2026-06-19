@@ -111,11 +111,11 @@
       "$1,100.00"
     ],
     [
-      "Bull Case (MC p90)",
+      "95th Percentile Target",
       "$1,350.00"
     ],
     [
-      "Bear Case (MC p10)",
+      "5th Percentile Target",
       "$680.00"
     ]
   ]

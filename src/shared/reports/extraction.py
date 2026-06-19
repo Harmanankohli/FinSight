@@ -583,8 +583,15 @@ def _stage_tables(ctx: ExtractionCtx) -> None:
 
 
 def _stage_metrics(ctx: ExtractionCtx) -> None:
-    """Extract numeric metrics from text into extracted_metrics dict + KPI chips."""
+    """Extract numeric metrics from text into extracted_metrics dict + KPI chips.
+
+    Skips any metric label already present in kpi_chips (from Pydantic model fields)
+    to prevent regex values from duplicating or overwriting structured data.
+    """
+    existing_chip_labels = {c["label"] for c in ctx.data.kpi_chips}
     for label, pats, is_pct in _METRIC_PATTERNS:
+        if label in existing_chip_labels:
+            continue
         for pat in pats:
             m = re.search(pat, ctx.text, re.IGNORECASE)
             if m:
@@ -596,6 +603,8 @@ def _stage_metrics(ctx: ExtractionCtx) -> None:
         if lbl not in selected and len(selected) < 4:
             selected.append(lbl)
     for label in selected:
+        if label in existing_chip_labels:
+            continue
         val = ctx.extracted_metrics[label]
         ctx.data.kpi_chips.append(
             {
@@ -608,132 +617,154 @@ def _stage_metrics(ctx: ExtractionCtx) -> None:
 
 
 def _stage_scenarios(ctx: ExtractionCtx) -> None:
-    """Extract price targets, DCF, Monte Carlo, bull/bear prices, current price."""
+    """Extract price targets, DCF, Monte Carlo, bull/bear prices, current price.
+
+    Each extraction is guarded so it never overwrites values already populated
+    from structured Pydantic model fields (via _populate_from_validated_outputs).
+    """
     text = ctx.text
     d = ctx.data
-    target_pats = [
-        r"(?:avg\.?\s+)?(?:price\s+)?target\s*[:\s]*\$\s*([\d,]+\.?\d*)",
-        r"(?:target\s+price|price\s+target|median\s+target)\s*[:\s]*\$\s*([\d,]+\.?\d*)",
-        r"(?:average\s+)?target\s+price\s+of\s+\$\s*([\d,]+\.?\d*)",
-    ]
-    for pat in target_pats:
-        m = re.search(pat, text, re.IGNORECASE)
-        if m:
-            d.valuation_table.append(("Analyst Price Target", f"${m.group(1)}"))
-            d.scenarios["base"] = f"${m.group(1)}"
-            break
-    upside_pats = [
-        r"(\d+\.?\d*)\s*%\s+upside\s+potential",
-        r"upside\s+potential\s*[\(:]\s*(\d+\.?\d*)\s*%",
-        r"expected\s+(?:upside|return)\s*[\(:]\s*(\d+\.?\d*)\s*%",
-        r"expected\s+(?:upside|return)\s*[=:]\s*([+-]?\d+\.?\d*)\s*%",
-        r"(?:analyst|consensus)\s+upside\s*[\(:]\s*(\d+\.?\d*)\s*%",
-        r"median\s+upside[:\s]+([+-]?\d+\.?\d*)\s*%",
-        r"implying\s+(?:a\s+)?(\d+\.?\d*)\s*%\s+upside",
-    ]
-    for pat in upside_pats:
-        m = re.search(pat, text, re.IGNORECASE)
-        if m:
-            val = m.group(1)
-            prefix = "" if val.startswith(("+", "-")) else "+"
-            d.valuation_table.append(("Expected Upside", f"{prefix}{val}%"))
-            break
-    dcf_pats = [
-        r"DCF\s+(?:fair\s+value|intrinsic\s+value)\s*[:\s]*\$\s*([\d,]+\.?\d*)",
-        r"(?:fair\s+value|intrinsic\s+value)\s*[:\s]*\$\s*([\d,]+\.?\d*)",
-        r"intrinsic\s+value\s+of\s+\$\s*([\d,]+\.?\d*)",
-    ]
-    for pat in dcf_pats:
-        m = re.search(pat, text, re.IGNORECASE)
-        if m:
-            d.valuation_table.append(("DCF Fair Value", f"${m.group(1)}"))
-            d.scenarios["dcf"] = f"${m.group(1)}"
-            break
-    bull_m = re.search(r"bull\s+case[:\s]*\$\s*([\d,]+\.?\d*)", text, re.IGNORECASE)
-    if bull_m:
-        d.valuation_table.append(("95th Percentile Target", f"${bull_m.group(1)}"))
-        d.scenarios["bull"] = f"${bull_m.group(1)}"
-    bear_m = re.search(r"bear\s+case[:\s]*\$\s*([\d,]+\.?\d*)", text, re.IGNORECASE)
-    if bear_m:
-        d.valuation_table.append(("5th Percentile Target", f"${bear_m.group(1)}"))
-        d.scenarios["bear"] = f"${bear_m.group(1)}"
-    # Percentile-based Monte Carlo labels (preferred over bear/bull terminology)
-    p90_m = re.search(
-        r"(?:90th|95th)\s+percentile[:\s]*\$\s*([\d,]+\.?\d*)", text, re.IGNORECASE
-    )
-    if p90_m and not bull_m:
-        d.valuation_table.append(("95th Percentile Target", f"${p90_m.group(1)}"))
-        d.scenarios["bull"] = f"${p90_m.group(1)}"
-    p10_m = re.search(
-        r"(?:5th|10th)\s+percentile[:\s]*\$\s*([\d,]+\.?\d*)", text, re.IGNORECASE
-    )
-    if p10_m and not bear_m:
-        d.valuation_table.append(("5th Percentile Target", f"${p10_m.group(1)}"))
-        d.scenarios["bear"] = f"${p10_m.group(1)}"
-    p50_m = re.search(
-        r"median(?:\s+price)?[:\s]*\$\s*([\d,]+\.?\d*)", text, re.IGNORECASE
-    )
-    if p50_m:
-        d.valuation_table.append(("Median (50th Pct) Target", f"${p50_m.group(1)}"))
-        d.scenarios["base"] = d.scenarios.get("base") or f"${p50_m.group(1)}"
-    mc_p90_pats = [
-        r"p90\s*[=:]\s*\$\s*([\d,]+\.?\d*)",
-        r"90th\s+percentile\s*[:\s]*\$\s*([\d,]+\.?\d*)",
-        r"bull(?:ish)?\s+(?:scenario|outcome)\s*[:\s]*\$\s*([\d,]+\.?\d*)",
-    ]
-    if "bull" not in d.scenarios:
-        for pat in mc_p90_pats:
+    _existing_labels = {lbl for lbl, _ in d.valuation_table}
+
+    if "Analyst Price Target" not in _existing_labels and not d.scenarios.get("base"):
+        target_pats = [
+            r"(?:avg\.?\s+)?(?:price\s+)?target\s*[:\s]*\$\s*([\d,]+\.?\d*)",
+            r"(?:target\s+price|price\s+target|median\s+target)\s*[:\s]*\$\s*([\d,]+\.?\d*)",
+            r"(?:average\s+)?target\s+price\s+of\s+\$\s*([\d,]+\.?\d*)",
+        ]
+        for pat in target_pats:
             m = re.search(pat, text, re.IGNORECASE)
             if m:
-                d.valuation_table.append(("Bull Case (p90)", f"${m.group(1)}"))
-                d.scenarios["bull"] = f"${m.group(1)}"
-                break
-    mc_p50_pats = [
-        r"p50\s*[=:]\s*\$\s*([\d,]+\.?\d*)",
-        r"50th\s+percentile\s*[:\s]*\$\s*([\d,]+\.?\d*)",
-        r"median\s+(?:outcome|price|target|value)\s*[:\s]*\$\s*([\d,]+\.?\d*)",
-    ]
-    if "base" not in d.scenarios:
-        for pat in mc_p50_pats:
-            m = re.search(pat, text, re.IGNORECASE)
-            if m:
-                d.valuation_table.append(("Base Case (p50)", f"${m.group(1)}"))
+                d.valuation_table.append(("Analyst Price Target", f"${m.group(1)}"))
                 d.scenarios["base"] = f"${m.group(1)}"
                 break
-    mc_p10_pats = [
-        r"p10\s*[=:]\s*\$\s*([\d,]+\.?\d*)",
-        r"10th\s+percentile\s*[:\s]*\$\s*([\d,]+\.?\d*)",
-        r"bear(?:ish)?\s+(?:scenario|outcome)\s*[:\s]*\$\s*([\d,]+\.?\d*)",
-    ]
-    if "bear" not in d.scenarios:
-        for pat in mc_p10_pats:
+
+    if "Expected Upside" not in _existing_labels:
+        upside_pats = [
+            r"(\d+\.?\d*)\s*%\s+upside\s+potential",
+            r"upside\s+potential\s*[\(:]\s*(\d+\.?\d*)\s*%",
+            r"expected\s+(?:upside|return)\s*[\(:]\s*(\d+\.?\d*)\s*%",
+            r"expected\s+(?:upside|return)\s*[=:]\s*([+-]?\d+\.?\d*)\s*%",
+            r"(?:analyst|consensus)\s+upside\s*[\(:]\s*(\d+\.?\d*)\s*%",
+            r"median\s+upside[:\s]+([+-]?\d+\.?\d*)\s*%",
+            r"implying\s+(?:a\s+)?(\d+\.?\d*)\s*%\s+upside",
+        ]
+        for pat in upside_pats:
             m = re.search(pat, text, re.IGNORECASE)
             if m:
-                d.valuation_table.append(("Bear Case (p10)", f"${m.group(1)}"))
-                d.scenarios["bear"] = f"${m.group(1)}"
+                val = m.group(1)
+                prefix = "" if val.startswith(("+", "-")) else "+"
+                d.valuation_table.append(("Expected Upside", f"{prefix}{val}%"))
                 break
-    prob_pats = [
-        r"prob(?:ability)?\s+(?:of\s+)?(?:positive\s+)?(?:return|profit)\s*[:\s]+(\d+\.?\d*)\s*%",
-        r"prob(?:ability)?\s+(?:of\s+)?(?:positive\s+)?(?:return|profit)\s*[\(]\s*(\d+\.?\d*)\s*%",
-    ]
-    for pat in prob_pats:
-        m = re.search(pat, text, re.IGNORECASE)
-        if m:
-            d.valuation_table.append(("Prob. of Positive Return", f"{m.group(1)}%"))
-            break
-    cvar_m = re.search(r"CVaR\s*[\(:=]\s*(-?\d+\.?\d*)\s*%", text, re.IGNORECASE)
-    if cvar_m:
-        d.valuation_table.append(("CVaR (95%)", f"{cvar_m.group(1)}%"))
-    price_pats = [
-        r"current\s+price\s+of\s+\$\s*([\d,]+\.?\d*)",
-        r"current\s+(?:stock\s+)?price\s*[:\s]*\$\s*([\d,]+\.?\d*)",
-        r"(?:trading|priced?)\s+at\s+\$\s*([\d,]+\.?\d*)",
-    ]
-    for pat in price_pats:
-        m = re.search(pat, text, re.IGNORECASE)
-        if m:
-            d.valuation_table.insert(0, ("Current Price", f"${m.group(1)}"))
-            break
+
+    if not d.scenarios.get("dcf"):
+        dcf_pats = [
+            r"DCF\s+(?:fair\s+value|intrinsic\s+value)\s*[:\s]*\$\s*([\d,]+\.?\d*)",
+            r"(?:fair\s+value|intrinsic\s+value)\s*[:\s]*\$\s*([\d,]+\.?\d*)",
+            r"intrinsic\s+value\s+of\s+\$\s*([\d,]+\.?\d*)",
+        ]
+        for pat in dcf_pats:
+            m = re.search(pat, text, re.IGNORECASE)
+            if m:
+                d.valuation_table.append(("DCF Fair Value", f"${m.group(1)}"))
+                d.scenarios["dcf"] = f"${m.group(1)}"
+                break
+
+    if not d.scenarios.get("bull"):
+        bull_m = re.search(r"bull\s+case[:\s]*\$\s*([\d,]+\.?\d*)", text, re.IGNORECASE)
+        if bull_m:
+            d.valuation_table.append(("95th Percentile Target", f"${bull_m.group(1)}"))
+            d.scenarios["bull"] = f"${bull_m.group(1)}"
+        else:
+            p90_m = re.search(
+                r"(?:90th|95th)\s+percentile[:\s]*\$\s*([\d,]+\.?\d*)", text, re.IGNORECASE
+            )
+            if p90_m:
+                d.valuation_table.append(("95th Percentile Target", f"${p90_m.group(1)}"))
+                d.scenarios["bull"] = f"${p90_m.group(1)}"
+            else:
+                mc_p90_pats = [
+                    r"p90\s*[=:]\s*\$\s*([\d,]+\.?\d*)",
+                    r"90th\s+percentile\s*[:\s]*\$\s*([\d,]+\.?\d*)",
+                    r"bull(?:ish)?\s+(?:scenario|outcome)\s*[:\s]*\$\s*([\d,]+\.?\d*)",
+                ]
+                for pat in mc_p90_pats:
+                    m = re.search(pat, text, re.IGNORECASE)
+                    if m:
+                        d.valuation_table.append(("95th Percentile Target", f"${m.group(1)}"))
+                        d.scenarios["bull"] = f"${m.group(1)}"
+                        break
+
+    if not d.scenarios.get("bear"):
+        bear_m = re.search(r"bear\s+case[:\s]*\$\s*([\d,]+\.?\d*)", text, re.IGNORECASE)
+        if bear_m:
+            d.valuation_table.append(("5th Percentile Target", f"${bear_m.group(1)}"))
+            d.scenarios["bear"] = f"${bear_m.group(1)}"
+        else:
+            p10_m = re.search(
+                r"(?:5th|10th)\s+percentile[:\s]*\$\s*([\d,]+\.?\d*)", text, re.IGNORECASE
+            )
+            if p10_m:
+                d.valuation_table.append(("5th Percentile Target", f"${p10_m.group(1)}"))
+                d.scenarios["bear"] = f"${p10_m.group(1)}"
+            else:
+                mc_p10_pats = [
+                    r"p10\s*[=:]\s*\$\s*([\d,]+\.?\d*)",
+                    r"10th\s+percentile\s*[:\s]*\$\s*([\d,]+\.?\d*)",
+                    r"bear(?:ish)?\s+(?:scenario|outcome)\s*[:\s]*\$\s*([\d,]+\.?\d*)",
+                ]
+                for pat in mc_p10_pats:
+                    m = re.search(pat, text, re.IGNORECASE)
+                    if m:
+                        d.valuation_table.append(("5th Percentile Target", f"${m.group(1)}"))
+                        d.scenarios["bear"] = f"${m.group(1)}"
+                        break
+
+    if not d.scenarios.get("base"):
+        p50_m = re.search(r"median(?:\s+price)?[:\s]*\$\s*([\d,]+\.?\d*)", text, re.IGNORECASE)
+        if p50_m:
+            d.valuation_table.append(("Median (50th Pct) Target", f"${p50_m.group(1)}"))
+            d.scenarios["base"] = f"${p50_m.group(1)}"
+        else:
+            mc_p50_pats = [
+                r"p50\s*[=:]\s*\$\s*([\d,]+\.?\d*)",
+                r"50th\s+percentile\s*[:\s]*\$\s*([\d,]+\.?\d*)",
+                r"median\s+(?:outcome|price|target|value)\s*[:\s]*\$\s*([\d,]+\.?\d*)",
+            ]
+            for pat in mc_p50_pats:
+                m = re.search(pat, text, re.IGNORECASE)
+                if m:
+                    d.valuation_table.append(("Median Target (p50)", f"${m.group(1)}"))
+                    d.scenarios["base"] = f"${m.group(1)}"
+                    break
+
+    if "Prob. of Positive Return" not in _existing_labels:
+        prob_pats = [
+            r"prob(?:ability)?\s+(?:of\s+)?(?:positive\s+)?(?:return|profit)\s*[:\s]+(\d+\.?\d*)\s*%",
+            r"prob(?:ability)?\s+(?:of\s+)?(?:positive\s+)?(?:return|profit)\s*[\(]\s*(\d+\.?\d*)\s*%",
+        ]
+        for pat in prob_pats:
+            m = re.search(pat, text, re.IGNORECASE)
+            if m:
+                d.valuation_table.append(("Prob. of Positive Return", f"{m.group(1)}%"))
+                break
+
+    if "CVaR (95%)" not in _existing_labels:
+        cvar_m = re.search(r"CVaR\s*[\(:=]\s*(-?\d+\.?\d*)\s*%", text, re.IGNORECASE)
+        if cvar_m:
+            d.valuation_table.append(("CVaR (95%)", f"{cvar_m.group(1)}%"))
+
+    if not any(lbl == "Current Price" for lbl, _ in d.valuation_table):
+        price_pats = [
+            r"current\s+price\s+of\s+\$\s*([\d,]+\.?\d*)",
+            r"current\s+(?:stock\s+)?price\s*[:\s]*\$\s*([\d,]+\.?\d*)",
+            r"(?:trading|priced?)\s+at\s+\$\s*([\d,]+\.?\d*)",
+        ]
+        for pat in price_pats:
+            m = re.search(pat, text, re.IGNORECASE)
+            if m:
+                d.valuation_table.insert(0, ("Current Price", f"${m.group(1)}"))
+                break
 
 
 def _stage_financials_scorecard(ctx: ExtractionCtx) -> None:
@@ -863,7 +894,10 @@ def _stage_financials_scorecard(ctx: ExtractionCtx) -> None:
             _ANALYST_MAP,
         ),
     ]
+    existing_scorecard_dims = {dim for dim, _, _ in d.scorecard}
     for dim, pats, mapping in scorecard_entries:
+        if dim in existing_scorecard_dims:
+            continue
         for pat in pats:
             m = re.search(pat, text, re.IGNORECASE)
             if m:
@@ -1273,13 +1307,13 @@ def _populate_from_agent_outputs(data: DeckData, brief_data: dict, response_text
 
         mc = quant.get("monte_carlo") or {}
         if mc.get("p90") is not None:
-            data.valuation_table.append(("Bull Case (p90)", _fmt_dollar(mc["p90"])))
+            data.valuation_table.append(("95th Percentile Target", _fmt_dollar(mc["p90"])))
             data.scenarios["bull"] = _fmt_dollar(mc["p90"])
         if mc.get("p50") is not None:
-            data.valuation_table.append(("Base Case (p50)", _fmt_dollar(mc["p50"])))
+            data.valuation_table.append(("Median Target (p50)", _fmt_dollar(mc["p50"])))
             data.scenarios["base"] = _fmt_dollar(mc["p50"])
         if mc.get("p10") is not None:
-            data.valuation_table.append(("Bear Case (p10)", _fmt_dollar(mc["p10"])))
+            data.valuation_table.append(("5th Percentile Target", _fmt_dollar(mc["p10"])))
             data.scenarios["bear"] = _fmt_dollar(mc["p10"])
 
         _FUND_MAP = {
@@ -1698,13 +1732,13 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
         if quant.monte_carlo:
             mc = quant.monte_carlo
             if mc.p90 is not None:
-                data.valuation_table.append(("Bull Case (p90)", _fmt_dollar(mc.p90)))
+                data.valuation_table.append(("95th Percentile Target", _fmt_dollar(mc.p90)))
                 data.scenarios["bull"] = _fmt_dollar(mc.p90)
             if mc.p50 is not None:
-                data.valuation_table.append(("Base Case (p50)", _fmt_dollar(mc.p50)))
+                data.valuation_table.append(("Median Target (p50)", _fmt_dollar(mc.p50)))
                 data.scenarios["base"] = _fmt_dollar(mc.p50)
             if mc.p10 is not None:
-                data.valuation_table.append(("Bear Case (p10)", _fmt_dollar(mc.p10)))
+                data.valuation_table.append(("5th Percentile Target", _fmt_dollar(mc.p10)))
                 data.scenarios["bear"] = _fmt_dollar(mc.p10)
 
         # Fundamentals → financials table
@@ -1859,7 +1893,7 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
                     ("Above 200d MA", "Yes" if t.above_200d_ma else "No", "")
                 )
 
-        # DCF breakdown
+        # DCF / P/B breakdown
         if quant.dcf_valuation:
             dcf = quant.dcf_valuation
             data.dcf_breakdown.append(("Intrinsic Value", _fmt_dollar(dcf.intrinsic_value)))
@@ -1872,11 +1906,17 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
                     ),
                 )
             )
-            data.dcf_breakdown.append(("WACC", _fmt_pct(dcf.wacc, True)))
-            data.dcf_breakdown.append(("Growth Rate", _fmt_pct(dcf.growth_rate, True)))
-            data.dcf_breakdown.append(("Terminal Growth", _fmt_pct(dcf.terminal_growth, True)))
-            data.dcf_breakdown.append(("Enterprise Value", _fmt_dollar(dcf.enterprise_value)))
-            data.dcf_breakdown.append(("FCF Used", _fmt_dollar(dcf.fcf_used)))
+            if dcf.method == "pb":
+                if dcf.pb_ratio_used is not None:
+                    data.dcf_breakdown.append(("P/B Ratio (Market)", f"{dcf.pb_ratio_used:.2f}x"))
+                if dcf.fair_pb_multiple is not None:
+                    data.dcf_breakdown.append(("Fair P/B Multiple", f"{dcf.fair_pb_multiple:.2f}x"))
+            else:
+                data.dcf_breakdown.append(("WACC", _fmt_pct(dcf.wacc, True)))
+                data.dcf_breakdown.append(("Growth Rate", _fmt_pct(dcf.growth_rate, True)))
+                data.dcf_breakdown.append(("Terminal Growth", _fmt_pct(dcf.terminal_growth, True)))
+                data.dcf_breakdown.append(("Enterprise Value", _fmt_dollar(dcf.enterprise_value)))
+                data.dcf_breakdown.append(("FCF Used", _fmt_dollar(dcf.fcf_used)))
 
         # Monte Carlo summary
         if quant.monte_carlo:
@@ -2480,13 +2520,13 @@ def _extract_deck_data(
         if mc:
             if mc.get("p90") and "bull" not in data.scenarios:
                 data.scenarios["bull"] = _fmt_dollar(mc["p90"])
-                data.valuation_table.append(("Bull Case (MC p90)", _fmt_dollar(mc["p90"])))
+                data.valuation_table.append(("95th Percentile Target", _fmt_dollar(mc["p90"])))
             if mc.get("p50") and "base" not in data.scenarios:
                 data.scenarios["base"] = _fmt_dollar(mc["p50"])
-                data.valuation_table.append(("Base Case (MC p50)", _fmt_dollar(mc["p50"])))
+                data.valuation_table.append(("Median Target (p50)", _fmt_dollar(mc["p50"])))
             if mc.get("p10"):
                 data.scenarios["bear"] = _fmt_dollar(mc["p10"])
-                data.valuation_table.append(("Bear Case (MC p10)", _fmt_dollar(mc["p10"])))
+                data.valuation_table.append(("5th Percentile Target", _fmt_dollar(mc["p10"])))
 
         # Scorecard
         data.scorecard.append(
@@ -2994,7 +3034,7 @@ def _enrich_from_markdown(
         for pat in mc_p90_pats:
             m = re.search(pat, text, re.IGNORECASE)
             if m:
-                data.valuation_table.append(("Bull Case (p90)", f"${m.group(1)}"))
+                data.valuation_table.append(("95th Percentile Target", f"${m.group(1)}"))
                 data.scenarios["bull"] = f"${m.group(1)}"
                 break
 
@@ -3007,7 +3047,7 @@ def _enrich_from_markdown(
         for pat in mc_p50_pats:
             m = re.search(pat, text, re.IGNORECASE)
             if m:
-                data.valuation_table.append(("Base Case (p50)", f"${m.group(1)}"))
+                data.valuation_table.append(("Median Target (p50)", f"${m.group(1)}"))
                 data.scenarios["base"] = f"${m.group(1)}"
                 break
 
@@ -3020,7 +3060,7 @@ def _enrich_from_markdown(
         for pat in mc_p10_pats:
             m = re.search(pat, text, re.IGNORECASE)
             if m:
-                data.valuation_table.append(("Bear Case (p10)", f"${m.group(1)}"))
+                data.valuation_table.append(("5th Percentile Target", f"${m.group(1)}"))
                 data.scenarios["bear"] = f"${m.group(1)}"
                 break
 
