@@ -1,6 +1,7 @@
 import logging
 
 import numpy as np
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +57,9 @@ async def _detect_trends(price_data: dict) -> dict:
         ema12 = _ema(closes, 12)
         ema26 = _ema(closes, 26)
         macd_line = [e12 - e26 for e12, e26 in zip(ema12, ema26)]
-        macd_bullish = macd_line[-1] > macd_line[-2] if len(macd_line) >= 2 else None
+        macd_signal_line = _ema(macd_line, 9)
+        macd_histogram = [m - s for m, s in zip(macd_line, macd_signal_line)]
+        macd_bullish = macd_histogram[-1] > 0 if macd_histogram else None
 
         roc_20d = (closes[-1] - closes[-20]) / closes[-20] if len(closes) >= 20 else 0
         roc_60d = (closes[-1] - closes[-60]) / closes[-60] if len(closes) >= 60 else 0
@@ -87,12 +90,18 @@ async def _detect_trends(price_data: dict) -> dict:
         else:
             signals.append("SMA50 <= SMA200 (0)")
 
-        macd_line_list = macd_line
-        if len(macd_line_list) >= 2 and macd_line_list[-1] > macd_line_list[-2]:
+        logger.debug(
+            "MACD: line=%.4f signal=%.4f histogram=%.4f bullish=%s",
+            macd_line[-1] if macd_line else float("nan"),
+            macd_signal_line[-1] if macd_signal_line else float("nan"),
+            macd_histogram[-1] if macd_histogram else float("nan"),
+            macd_bullish,
+        )
+        if macd_bullish:
             score += 1
-            signals.append("MACD bullish (+1)")
+            signals.append(f"MACD bullish (+1, hist={macd_histogram[-1]:+.4f})")
         else:
-            signals.append("MACD not bullish (0)")
+            signals.append(f"MACD not bullish (0, hist={macd_histogram[-1]:+.4f})" if macd_histogram else "MACD not bullish (0)")
 
         if momentum_bullish:
             score += 1
@@ -100,14 +109,24 @@ async def _detect_trends(price_data: dict) -> dict:
         else:
             signals.append(f"Momentum not positive (0, ROC={roc_20d:+.1%})")
 
-        # RSI > 50 check
-        delta_arr = np.diff(closes[-15:]) if len(closes) >= 15 else np.array([])
-        if len(delta_arr) > 0:
-            gains = np.where(delta_arr > 0, delta_arr, 0)
+        # RSI > 50 check (EMA-based, matching technical.py methodology)
+        # Use up to 100 closes for EMA warmup; a 14-period EMA on 14 deltas has no
+        # warmup buffer and produces values that diverge from the full-series result.
+        rsi_val = None
+        rsi_lookback = min(len(closes), 100)
+        if rsi_lookback >= 15:
+            closes_arr = np.array(closes[-rsi_lookback:], dtype=float)
+            delta_arr = np.diff(closes_arr)
+            gains_arr = np.where(delta_arr > 0, delta_arr, 0)
             losses_arr = np.where(delta_arr < 0, -delta_arr, 0)
-            avg_g = float(np.mean(gains))
-            avg_l = float(np.mean(losses_arr))
-            rsi_val = 100 - (100 / (1 + avg_g / avg_l)) if avg_l > 0 else 100.0
+            gain_series = pd.Series(gains_arr)
+            loss_series = pd.Series(losses_arr)
+            avg_g = gain_series.ewm(alpha=1 / 14, adjust=False).mean().iloc[-1]
+            avg_l = loss_series.ewm(alpha=1 / 14, adjust=False).mean().iloc[-1]
+            if avg_l > 0:
+                rsi_val = 100 - (100 / (1 + avg_g / avg_l))
+            else:
+                rsi_val = 100.0
             if rsi_val > 50:
                 score += 1
                 signals.append(f"RSI > 50 (+1, RSI={rsi_val:.1f})")

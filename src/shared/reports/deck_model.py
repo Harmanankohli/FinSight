@@ -85,6 +85,8 @@ class DeckData:
     stress_scenarios: list[tuple[str, str, str]] = field(default_factory=list)
     # DCF valuation breakdown [(metric, value)]
     dcf_breakdown: list[tuple[str, str]] = field(default_factory=list)
+    # DCF sensitivity matrix {terminal_growth_labels, wacc_labels, values}
+    sensitivity_matrix: dict = field(default_factory=dict)
     # Statistical summary [(metric, value, interpretation)]
     stats_table: list[tuple[str, str, str]] = field(default_factory=list)
     # Anomaly alerts [{type, description, severity}]

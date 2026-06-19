@@ -13,7 +13,19 @@ def _safe_get(d: dict, *keys, default=None):
 
 
 def check_contradictions(agent_outputs: dict) -> list[dict]:
+    seen_categories: set[tuple[str, str]] = set()
     contradictions = []
+
+    def _add(agents, field, description, severity):
+        key = (field, description[:80])
+        if key not in seen_categories:
+            seen_categories.add(key)
+            contradictions.append({
+                "agents": agents,
+                "field": field,
+                "description": description,
+                "severity": severity,
+            })
 
     quant = agent_outputs.get("quant", {})
     rag = agent_outputs.get("rag", {})
@@ -30,68 +42,56 @@ def check_contradictions(agent_outputs: dict) -> list[dict]:
 
     # Quant BUY vs bearish analytics trend
     if quant_rec == "BUY" and analytics_trend == "bearish":
-        contradictions.append(
-            {
-                "agents": ["Quant Analysis Agent", "Analytics Agent"],
-                "field": "recommendation vs trend",
-                "description": f"Quant recommends BUY but analytics shows {analytics_trend} trend",
-                "severity": "high",
-            }
+        _add(
+            ["Quant Analysis Agent", "Analytics Agent"],
+            "recommendation vs trend",
+            f"Quant recommends BUY but analytics shows {analytics_trend} trend",
+            "high",
         )
 
     # Quant SELL vs bullish analytics trend
     if quant_rec == "SELL" and analytics_trend == "bullish":
-        contradictions.append(
-            {
-                "agents": ["Quant Analysis Agent", "Analytics Agent"],
-                "field": "recommendation vs trend",
-                "description": f"Quant recommends SELL but analytics shows {analytics_trend} trend",
-                "severity": "high",
-            }
+        _add(
+            ["Quant Analysis Agent", "Analytics Agent"],
+            "recommendation vs trend",
+            f"Quant recommends SELL but analytics shows {analytics_trend} trend",
+            "high",
         )
 
     # Quant BUY vs negative RAG sentiment
     if quant_rec == "BUY" and "negative" in rag_sentiment_summary.lower():
-        contradictions.append(
-            {
-                "agents": ["Quant Analysis Agent", "Financial RAG Agent"],
-                "field": "recommendation vs sentiment",
-                "description": "Quant recommends BUY but RAG filings summary is negative",
-                "severity": "medium",
-            }
+        _add(
+            ["Quant Analysis Agent", "Financial RAG Agent"],
+            "recommendation vs sentiment",
+            "Quant recommends BUY but RAG filings summary is negative",
+            "medium",
         )
 
     # Market bearish vs quant bullish signal
     if market_signal == "bearish" and quant_signal == "bullish":
-        contradictions.append(
-            {
-                "agents": ["Market Context Agent", "Quant Analysis Agent"],
-                "field": "macro signal vs quant signal",
-                "description": f"Market context is {market_signal} but quant is {quant_signal}",
-                "severity": "medium",
-            }
+        _add(
+            ["Market Context Agent", "Quant Analysis Agent"],
+            "macro signal vs quant signal",
+            f"Market context is {market_signal} but quant is {quant_signal}",
+            "medium",
         )
 
     # Market bullish vs quant bearish signal
     if market_signal == "bullish" and quant_signal == "bearish":
-        contradictions.append(
-            {
-                "agents": ["Market Context Agent", "Quant Analysis Agent"],
-                "field": "macro signal vs quant signal",
-                "description": f"Market context is {market_signal} but quant is {quant_signal}",
-                "severity": "medium",
-            }
+        _add(
+            ["Market Context Agent", "Quant Analysis Agent"],
+            "macro signal vs quant signal",
+            f"Market context is {market_signal} but quant is {quant_signal}",
+            "medium",
         )
 
     # Anomalies vs high confidence
     if anomaly_severity in ("medium", "high") and quant_confidence and quant_confidence > 0.7:
-        contradictions.append(
-            {
-                "agents": ["Analytics Agent", "Quant Analysis Agent"],
-                "field": "anomaly severity vs confidence",
-                "description": f"Analytics reports {anomaly_severity} anomalies but quant confidence is {quant_confidence:.2f}",
-                "severity": "low",
-            }
+        _add(
+            ["Analytics Agent", "Quant Analysis Agent"],
+            "anomaly severity vs confidence",
+            f"Analytics reports {anomaly_severity} anomalies but quant confidence is {quant_confidence:.2f}",
+            "low",
         )
 
     # DCF intrinsic value vs market signal
@@ -99,53 +99,43 @@ def check_contradictions(agent_outputs: dict) -> list[dict]:
     dcf_upside = dcf.get("upside_pct")
     if dcf_upside is not None:
         if dcf_upside < -30 and market_signal == "bullish":
-            contradictions.append(
-                {
-                    "agents": ["Quant Analysis Agent", "Market Context Agent"],
-                    "field": "DCF valuation vs macro signal",
-                    "description": f"DCF shows {dcf_upside:.1f}% downside but macro context is bullish",
-                    "severity": "medium",
-                }
+            _add(
+                ["Quant Analysis Agent", "Market Context Agent"],
+                "DCF valuation vs macro signal",
+                f"DCF shows {dcf_upside:.1f}% downside but macro context is bullish",
+                "medium",
             )
         if dcf_upside > 30 and market_signal == "bearish":
-            contradictions.append(
-                {
-                    "agents": ["Quant Analysis Agent", "Market Context Agent"],
-                    "field": "DCF valuation vs macro signal",
-                    "description": f"DCF shows {dcf_upside:.1f}% upside but macro context is bearish",
-                    "severity": "medium",
-                }
+            _add(
+                ["Quant Analysis Agent", "Market Context Agent"],
+                "DCF valuation vs macro signal",
+                f"DCF shows {dcf_upside:.1f}% upside but macro context is bearish",
+                "medium",
             )
 
     # Analytics trend vs market signal
     if analytics_trend == "bullish" and market_signal == "bearish":
-        contradictions.append(
-            {
-                "agents": ["Analytics Agent", "Market Context Agent"],
-                "field": "technical trend vs macro signal",
-                "description": f"Analytics trend is bullish but macro context is bearish",
-                "severity": "low",
-            }
+        _add(
+            ["Analytics Agent", "Market Context Agent"],
+            "technical trend vs macro signal",
+            "Analytics trend is bullish but macro context is bearish",
+            "low",
         )
     if analytics_trend == "bearish" and market_signal == "bullish":
-        contradictions.append(
-            {
-                "agents": ["Analytics Agent", "Market Context Agent"],
-                "field": "technical trend vs macro signal",
-                "description": f"Analytics trend is bearish but macro context is bullish",
-                "severity": "low",
-            }
+        _add(
+            ["Analytics Agent", "Market Context Agent"],
+            "technical trend vs macro signal",
+            "Analytics trend is bearish but macro context is bullish",
+            "low",
         )
 
     # Quant recommendation vs DCF signal
     if quant_rec == "BUY" and dcf_upside is not None and dcf_upside < -20:
-        contradictions.append(
-            {
-                "agents": ["Quant Analysis Agent (recommendation)", "Quant Analysis Agent (DCF)"],
-                "field": "recommendation vs DCF",
-                "description": f"Quant recommends BUY but DCF shows {dcf_upside:.1f}% downside",
-                "severity": "high",
-            }
+        _add(
+            ["Quant Analysis Agent (recommendation)", "Quant Analysis Agent (DCF)"],
+            "recommendation vs DCF",
+            f"Quant recommends BUY but DCF shows {dcf_upside:.1f}% downside",
+            "high",
         )
 
     # RSI vs recommendation contradiction
@@ -153,22 +143,18 @@ def check_contradictions(agent_outputs: dict) -> list[dict]:
     quant_rsi = quant_technicals.get("rsi_14") or quant_technicals.get("rsi")
     if quant_rsi is not None and isinstance(quant_rsi, (int, float)):
         if quant_rec == "BUY" and quant_rsi > 75:
-            contradictions.append(
-                {
-                    "agents": ["Quant Analysis Agent (recommendation)", "Quant Analysis Agent (technicals)"],
-                    "field": "RSI vs recommendation",
-                    "description": f"Quant recommends BUY but RSI is overbought at {quant_rsi:.1f}",
-                    "severity": "medium",
-                }
+            _add(
+                ["Quant Analysis Agent (recommendation)", "Quant Analysis Agent (technicals)"],
+                "RSI vs recommendation",
+                f"Quant recommends BUY but RSI is overbought at {quant_rsi:.1f}",
+                "medium",
             )
         elif quant_rec == "SELL" and quant_rsi < 25:
-            contradictions.append(
-                {
-                    "agents": ["Quant Analysis Agent (recommendation)", "Quant Analysis Agent (technicals)"],
-                    "field": "RSI vs recommendation",
-                    "description": f"Quant recommends SELL but RSI is oversold at {quant_rsi:.1f}",
-                    "severity": "medium",
-                }
+            _add(
+                ["Quant Analysis Agent (recommendation)", "Quant Analysis Agent (technicals)"],
+                "RSI vs recommendation",
+                f"Quant recommends SELL but RSI is oversold at {quant_rsi:.1f}",
+                "medium",
             )
 
     # DCF vs Monte Carlo median divergence > 40%
@@ -179,13 +165,11 @@ def check_contradictions(agent_outputs: dict) -> list[dict]:
     if dcf_intrinsic and mc_median and dcf_intrinsic > 0 and mc_median > 0:
         divergence = abs(dcf_intrinsic - mc_median) / ((dcf_intrinsic + mc_median) / 2)
         if divergence > 0.40:
-            contradictions.append(
-                {
-                    "agents": ["Quant Analysis Agent (DCF)", "Quant Analysis Agent (Monte Carlo)"],
-                    "field": "DCF vs Monte Carlo divergence",
-                    "description": f"High model disagreement: DCF=${dcf_intrinsic:.0f}, MC median=${mc_median:.0f} (divergence={divergence:.0%})",
-                    "severity": "medium",
-                }
+            _add(
+                ["Quant Analysis Agent (DCF)", "Quant Analysis Agent (Monte Carlo)"],
+                "DCF vs Monte Carlo divergence",
+                f"High model disagreement: DCF=${dcf_intrinsic:.0f}, MC median=${mc_median:.0f} (divergence={divergence:.0%})",
+                "medium",
             )
 
     # Monte Carlo vs recommendation
@@ -193,16 +177,11 @@ def check_contradictions(agent_outputs: dict) -> list[dict]:
     prob_profit = mc.get("prob_profit")
     if prob_profit is not None:
         if quant_rec == "BUY" and prob_profit < 0.5:
-            contradictions.append(
-                {
-                    "agents": [
-                        "Quant Analysis Agent (recommendation)",
-                        "Quant Analysis Agent (Monte Carlo)",
-                    ],
-                    "field": "recommendation vs Monte Carlo",
-                    "description": f"Quant recommends BUY but Monte Carlo shows only {prob_profit:.0%} probability of profit",
-                    "severity": "medium",
-                }
+            _add(
+                ["Quant Analysis Agent (recommendation)", "Quant Analysis Agent (Monte Carlo)"],
+                "recommendation vs Monte Carlo",
+                f"Quant recommends BUY but Monte Carlo shows only {prob_profit:.0%} probability of profit",
+                "medium",
             )
 
     for c in contradictions:

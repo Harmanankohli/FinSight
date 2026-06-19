@@ -98,7 +98,7 @@ def validate_dcf(quant: dict) -> dict:
             ),
         })
 
-    warnings = dcf.get("valuation_warnings", [])
+    warnings = dcf.get("valuation_warnings") or []
     for w in warnings:
         checks.append({
             "check": "valuation_warning",

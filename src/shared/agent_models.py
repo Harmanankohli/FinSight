@@ -44,9 +44,10 @@ class DCFValuation(BaseModel):
     dcf_assumptions: Optional[dict] = None
     valuation_warnings: Optional[list] = None
     scenarios: Optional[dict] = None
-    confidence: Optional[float] = None
+    valuation_reliability: Optional[float] = None
     pb_ratio_used: Optional[float] = None
     fair_pb_multiple: Optional[float] = None
+    sensitivity_matrix: Optional[dict] = None
 
 
 class MonteCarloResult(BaseModel):

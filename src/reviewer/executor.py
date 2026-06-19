@@ -222,6 +222,20 @@ class ReviewerAgent(BaseAgent):
                 logger.warning("Reviewer confidence %s out of range, clamping", review_confidence)
                 output_dict["review_confidence"] = max(0.0, min(1.0, review_confidence))
 
+            # Normalize LLM outputs that use 0–100 instead of 0.0–1.0
+            for sv in output_dict.get("source_verifications", []):
+                rate = sv.get("verification_rate")
+                if isinstance(rate, (int, float)) and rate > 1.0:
+                    sv["verification_rate"] = rate / 100.0
+            cb = output_dict.get("confidence_breakdown") or {}
+            for key in ("agreement_score", "data_quality_score", "meta_confidence"):
+                val = cb.get(key)
+                if isinstance(val, (int, float)) and val > 1.0:
+                    cb[key] = val / 100.0
+            for k, v in (cb.get("agent_scores") or {}).items():
+                if isinstance(v, (int, float)) and v > 1.0:
+                    cb["agent_scores"][k] = v / 100.0
+
             span.update(output={"ticker": ticker, "verdict": output_dict.get("verdict")})
 
             if EVAL_ENABLED:

@@ -78,6 +78,26 @@ async def peer_comparison_node(state: QuantAnalysisState) -> dict:
 
     peer_infos = dict(await asyncio.gather(*[_fetch_capped(p) for p in peer_tickers]))
 
+    # Filter peers: same sector, market cap within 5x, positive revenue, positive operating margin
+    primary_market_cap = info.get("marketCap") or 0
+    filtered_peers = []
+    for sym, pinf in peer_infos.items():
+        if not pinf:
+            continue
+        peer_cap = pinf.get("marketCap") or 0
+        if primary_market_cap > 0 and peer_cap > 0:
+            ratio = max(peer_cap, primary_market_cap) / min(peer_cap, primary_market_cap)
+            if ratio > 5:
+                continue
+        if (pinf.get("revenueGrowth") or 0) <= 0:
+            continue
+        if (pinf.get("operatingMargins") or 0) <= 0:
+            continue
+        filtered_peers.append(sym)
+    filtered_peers = filtered_peers[:5]
+
+    peer_infos = {s: peer_infos[s] for s in filtered_peers if s in peer_infos}
+
     def _extract(inf: dict) -> dict:
         return {
             "pe": inf.get("trailingPE"),
@@ -310,9 +330,9 @@ async def format_output_node(state: QuantAnalysisState) -> dict:
                     f"base=${scenarios.get('base', 'N/A')}, "
                     f"bull=${scenarios.get('bull', 'N/A')}"
                 )
-            confidence = dcf.get("confidence")
-            if confidence is not None:
-                parts.append(f"DCF Confidence: {confidence:.0%}")
+            reliability = dcf.get("valuation_reliability") or dcf.get("confidence")
+            if reliability is not None:
+                parts.append(f"Valuation Reliability: {reliability:.0%}")
     elif dcf_error:
         parts.append(f"DCF: {dcf_error}")
     if fundamentals:
@@ -451,9 +471,9 @@ async def llm_summary_node(state: QuantAnalysisState) -> dict:
                     f"DCF Scenarios: bear=${scenarios.get('bear')}, "
                     f"base=${scenarios.get('base')}, bull=${scenarios.get('bull')}\n"
                 )
-            confidence = dcf.get("confidence")
-            if confidence is not None:
-                prompt += f"DCF Confidence: {confidence:.0%}\n"
+            reliability = dcf.get("valuation_reliability") or dcf.get("confidence")
+            if reliability is not None:
+                prompt += f"Valuation Reliability: {reliability:.0%}\n"
     if mc:
         prompt += (
             f"Price Distribution (Monte Carlo, 1yr): "

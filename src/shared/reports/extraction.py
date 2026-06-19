@@ -1370,21 +1370,10 @@ def _populate_from_agent_outputs(data: DeckData, brief_data: dict, response_text
                 else "strong"
             )
             data.scorecard.append(("Momentum", signal, badge))
-        if technicals.get("macd_signal") is not None:
-            macd = technicals["macd_signal"]
-            if isinstance(macd, (int, float)):
-                macd_label = "Bullish" if macd > 0 else "Bearish"
-                macd_badge = "bullish" if macd > 0 else "expensive"
-            else:
-                macd = str(macd)
-                macd_label = macd.capitalize()
-                macd_badge = (
-                    "bullish"
-                    if "bull" in macd.lower()
-                    else "expensive"
-                    if "bear" in macd.lower()
-                    else "moderate"
-                )
+        if technicals.get("macd_bullish") is not None:
+            macd_bull = technicals["macd_bullish"]
+            macd_label = "Bullish" if macd_bull else "Bearish"
+            macd_badge = "bullish" if macd_bull else "expensive"
             data.scorecard.append(("Technical Outlook", macd_label, macd_badge))
         elif technicals.get("trend"):
             trend = str(technicals["trend"])
@@ -1395,13 +1384,18 @@ def _populate_from_agent_outputs(data: DeckData, brief_data: dict, response_text
                 if "bear" in trend.lower()
                 else "moderate"
             )
-            data.scorecard.append(("Technical Outlook", trend.capitalize(), trend_badge))
+            data.scorecard.append(("Technical Outlook", trend.replace("_", " ").title(), trend_badge))
 
         peers = quant.get("peer_comparison") or {}
         if isinstance(peers, dict) and peers.get("peers"):
-            peer_tickers = [p for p in peers["peers"] if p != data.ticker][:2]
-            data.peer_names = peer_tickers
             comparison = peers.get("comparison") or {}
+            _metric_keys = ["pe", "ev_ebitda", "rev_growth", "op_margin", "roe"]
+            peer_tickers = [
+                p for p in peers["peers"]
+                if p != data.ticker
+                and any(isinstance(comparison.get(p, {}).get(k), (int, float)) for k in _metric_keys)
+            ][:2]
+            data.peer_names = peer_tickers
             for key, label in [
                 ("pe", "P/E Ratio"),
                 ("ev_ebitda", "EV/EBITDA"),
@@ -1448,11 +1442,15 @@ def _populate_from_agent_outputs(data: DeckData, brief_data: dict, response_text
             data.executive_summary = _strip_markdown(summary[:4000])
         sources = rag.get("sources") or []
         if sources:
-            source_text = "\n".join(
-                f"- {s}" if isinstance(s, str) else f"- {s.get('title', s.get('url', ''))}"
-                for s in sources[:5]
-            )
-            data.sections.append(Section("Cited Sources", source_text))
+            seen: set[str] = set()
+            items: list[str] = []
+            for s in sources[:5]:
+                label = s if isinstance(s, str) else s.get("title", s.get("url", ""))
+                if label and label not in seen:
+                    seen.add(label)
+                    items.append(f"<li>{label}</li>")
+            if items:
+                data.sections.append(Section("Cited Sources", "<ul>" + "".join(items) + "</ul>"))
 
     # ── Sentiment response ─────────────────────────────────────────────────
     if sentiment:
@@ -1521,8 +1519,8 @@ def _populate_from_agent_outputs(data: DeckData, brief_data: dict, response_text
     if analytics:
         trend = analytics.get("trend_analysis") or {}
         td = trend.get("trend_direction") or "neutral"
-        badge = "bullish" if td == "bullish" else "expensive" if td == "bearish" else "moderate"
-        data.scorecard.append(("Analytics Trend", td.capitalize(), badge))
+        badge = "bullish" if "bull" in td else "expensive" if "bear" in td else "moderate"
+        data.scorecard.append(("Analytics Trend", td.replace("_", " ").title(), badge))
         ma_signal = trend.get("ma_crossover_signal")
         if ma_signal:
             ma_badge = "bullish" if ma_signal == "golden_cross" else "expensive"
@@ -1607,19 +1605,16 @@ def _populate_from_agent_outputs(data: DeckData, brief_data: dict, response_text
                 "supporting": rv.get("supporting_evidence", [])[:5],
                 "contradicting": rv.get("contradicting_evidence", [])[:5],
             }
-            if rv.get("evidence_strength") == "strong":
-                data.sections.append(
-                    Section("Evidence Strength", "Strong evidence supports the recommendation.")
-                )
-
         for sv in reviewer.get("source_verifications", []):
             rate = sv.get("verification_rate", 0)
+            if isinstance(rate, (int, float)) and rate > 1.0:
+                rate = rate / 100.0
             data.reviewer_verifications.append(
                 {
                     "agent": sv.get("agent_name", ""),
                     "checked": sv.get("claims_checked", 0),
                     "verified": sv.get("claims_verified", 0),
-                    "rate": f"{rate:.0%}" if isinstance(rate, float) else str(rate),
+                    "rate": f"{rate:.0%}" if isinstance(rate, (int, float)) else str(rate),
                     "unverified": sv.get("unverified_claims", [])[:3],
                 }
             )
@@ -1800,21 +1795,9 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
                 )
                 data.scorecard.append(("Momentum", signal, badge))
                 data.technicals_table.append(("RSI (14)", f"{rsi:.1f}", signal))
-            if t.macd_signal is not None:
-                macd = t.macd_signal
-                if isinstance(macd, (int, float)):
-                    macd_label = "Bullish" if macd > 0 else "Bearish"
-                    macd_badge = "bullish" if macd > 0 else "expensive"
-                else:
-                    macd_s = str(macd)
-                    macd_label = macd_s.capitalize()
-                    macd_badge = (
-                        "bullish"
-                        if "bull" in macd_s.lower()
-                        else "expensive"
-                        if "bear" in macd_s.lower()
-                        else "moderate"
-                    )
+            if t.macd_bullish is not None:
+                macd_label = "Bullish" if t.macd_bullish else "Bearish"
+                macd_badge = "bullish" if t.macd_bullish else "expensive"
                 data.scorecard.append(("Technical Outlook", macd_label, macd_badge))
             elif t.trend:
                 trend_badge = (
@@ -1824,7 +1807,7 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
                     if "bear" in t.trend.lower()
                     else "moderate"
                 )
-                data.scorecard.append(("Technical Outlook", t.trend.capitalize(), trend_badge))
+                data.scorecard.append(("Technical Outlook", t.trend.replace("_", " ").title(), trend_badge))
 
             # Full technicals table
             if t.sma_20 is not None:
@@ -1838,9 +1821,8 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
             if t.ema_26 is not None:
                 data.technicals_table.append(("EMA 26", f"${t.ema_26:,.2f}", "Long-term EMA"))
             if t.macd is not None:
-                data.technicals_table.append(
-                    ("MACD", f"{t.macd:.4f}", "Bullish" if t.macd > 0 else "Bearish")
-                )
+                macd_signal = "Bullish" if t.macd_bullish else "Bearish" if t.macd_bullish is not None else ("Bullish" if t.macd > 0 else "Bearish")
+                data.technicals_table.append(("MACD", f"{t.macd:.4f}", macd_signal))
             if t.macd_signal is not None and isinstance(t.macd_signal, (int, float)):
                 data.technicals_table.append(("MACD Signal", f"{t.macd_signal:.4f}", ""))
             if t.macd_histogram is not None:
@@ -1930,8 +1912,23 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
                         val = dcf.scenarios.get(key)
                         if val is not None:
                             data.dcf_breakdown.append((label, _fmt_dollar(val)))
-                if hasattr(dcf, "confidence") and dcf.confidence is not None:
-                    data.dcf_breakdown.append(("Confidence", f"{dcf.confidence:.0%}"))
+                reliability = dcf.valuation_reliability if hasattr(dcf, "valuation_reliability") and dcf.valuation_reliability is not None else getattr(dcf, "confidence", None)
+                if reliability is not None:
+                    data.dcf_breakdown.append(("Valuation Reliability", f"{reliability:.0%}"))
+                if hasattr(dcf, "dcf_assumptions") and dcf.dcf_assumptions:
+                    da = dcf.dcf_assumptions
+                    if da.get("risk_free_rate") is not None:
+                        data.dcf_breakdown.append(("Risk-Free Rate", f"{da['risk_free_rate']:.2%}"))
+                    if da.get("beta") is not None:
+                        data.dcf_breakdown.append(("Beta", f"{da['beta']:.2f}"))
+                    if da.get("cost_of_equity") is not None:
+                        data.dcf_breakdown.append(("Cost of Equity", f"{da['cost_of_equity']:.2%}"))
+                    if da.get("cost_of_debt") is not None:
+                        data.dcf_breakdown.append(("Cost of Debt (after-tax)", f"{da['cost_of_debt']:.2%}"))
+                    if da.get("tax_rate") is not None:
+                        data.dcf_breakdown.append(("Tax Rate", f"{da['tax_rate']:.0%}"))
+                if hasattr(dcf, "sensitivity_matrix") and dcf.sensitivity_matrix:
+                    data.sensitivity_matrix = dcf.sensitivity_matrix
 
         # Monte Carlo summary
         if quant.monte_carlo:
@@ -2041,7 +2038,12 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
         # Peer comparison from quant
         if quant.peer_comparison:
             pc = quant.peer_comparison
-            peer_tickers = [p for p in pc.peers if p != data.ticker][:2]
+            _metric_keys = ["pe", "ev_ebitda", "rev_growth", "op_margin", "roe"]
+            peer_tickers = [
+                p for p in pc.peers
+                if p != data.ticker
+                and any(isinstance((pc.comparison.get(p) or {}).get(k), (int, float)) for k in _metric_keys)
+            ][:2]
             data.peer_names = peer_tickers
             for key, label in [
                 ("pe", "P/E Ratio"),
@@ -2090,11 +2092,15 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
         if rag.summary:
             data.executive_summary = _truncate_at_sentence(_strip_markdown(rag.summary), 4000)
         if rag.sources:
-            source_text = "\n".join(
-                f"- {s}" if isinstance(s, str) else f"- {s.get('title', s.get('url', ''))}"
-                for s in rag.sources[:5]
-            )
-            data.sections.append(Section("Cited Sources", source_text))
+            seen: set[str] = set()
+            items: list[str] = []
+            for s in rag.sources[:5]:
+                label = s if isinstance(s, str) else s.get("title", s.get("url", ""))
+                if label and label not in seen:
+                    seen.add(label)
+                    items.append(f"<li>{label}</li>")
+            if items:
+                data.sections.append(Section("Cited Sources", "<ul>" + "".join(items) + "</ul>"))
 
     # ── Sentiment / Market Context ──────────────────────────────────────────────
     if sentiment:
@@ -2154,8 +2160,8 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
         trend = analytics.trend_analysis
         if trend:
             td = trend.trend_direction or "neutral"
-            badge = "bullish" if td == "bullish" else "expensive" if td == "bearish" else "moderate"
-            data.scorecard.append(("Analytics Trend", td.capitalize(), badge))
+            badge = "bullish" if "bull" in td else "expensive" if "bear" in td else "moderate"
+            data.scorecard.append(("Analytics Trend", td.replace("_", " ").title(), badge))
             if trend.ma_crossover_signal:
                 badge = "bullish" if trend.ma_crossover_signal == "golden_cross" else "expensive"
                 data.scorecard.append(
@@ -2380,12 +2386,15 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
             }
 
         for sv in reviewer.source_verifications:
+            rate = sv.verification_rate
+            if rate > 1.0:
+                rate = rate / 100.0
             data.reviewer_verifications.append(
                 {
                     "agent": sv.agent_name,
                     "checked": sv.claims_checked,
                     "verified": sv.claims_verified,
-                    "rate": f"{sv.verification_rate:.0%}",
+                    "rate": f"{rate:.0%}",
                     "unverified": sv.unverified_claims[:3],
                 }
             )
@@ -2399,11 +2408,6 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
                 "supporting": rv.supporting_evidence[:5],
                 "contradicting": rv.contradicting_evidence[:5],
             }
-            if rv.evidence_strength == "strong":
-                data.sections.append(
-                    Section("Evidence Strength", "Strong evidence supports the recommendation.")
-                )
-
         for flag in reviewer.flags:
             data.risks.append(flag)
 
@@ -2433,6 +2437,59 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
             "strong" if rec == "BUY" else "bullish" if rec == "HOLD" else "expensive",
         )
     )
+
+    # ── Recommendation Driver Summary ──────────────────────────────────────────
+    positive_drivers: list[str] = []
+    negative_drivers: list[str] = []
+
+    rv = data.reviewer_validation
+    if rv:
+        for s in rv.get("supporting") or []:
+            positive_drivers.append(s)
+        for c in rv.get("contradicting") or []:
+            negative_drivers.append(c)
+
+    if quant:
+        if hasattr(quant, "dcf_valuation") and quant.dcf_valuation:
+            dcf = quant.dcf_valuation
+            if dcf.upside_pct and dcf.upside_pct > 20:
+                positive_drivers.append(f"DCF upside of {dcf.upside_pct:.0f}%")
+            elif dcf.upside_pct and dcf.upside_pct < -10:
+                negative_drivers.append(f"DCF downside of {dcf.upside_pct:.0f}%")
+        if hasattr(quant, "technicals") and quant.technicals:
+            t = quant.technicals
+            if t.rsi_value is not None:
+                if t.rsi_value < 30:
+                    positive_drivers.append(f"RSI oversold at {t.rsi_value:.0f}")
+                elif t.rsi_value > 70:
+                    negative_drivers.append(f"RSI overbought at {t.rsi_value:.0f}")
+        if hasattr(quant, "fundamentals") and quant.fundamentals:
+            f = quant.fundamentals
+            if f.revenue_growth is not None and f.revenue_growth > 0.10:
+                positive_drivers.append(f"Revenue growth of {f.revenue_growth*100:.1f}%")
+            if f.roe is not None and f.roe < 0:
+                negative_drivers.append(f"Negative ROE of {f.roe*100:.1f}%")
+
+    if analytics and hasattr(analytics, "trend_analysis") and analytics.trend_analysis:
+        td = analytics.trend_analysis.trend_direction
+        if td in ("bullish", "strong_bullish"):
+            positive_drivers.append(f"Analytics trend is {td}")
+        elif td == "bearish":
+            negative_drivers.append("Analytics trend is bearish")
+
+    if positive_drivers or negative_drivers:
+        parts: list[str] = []
+        if positive_drivers:
+            parts.append("<strong>Positive Signals</strong><ul>")
+            for d in positive_drivers[:5]:
+                parts.append(f"<li>{d}</li>")
+            parts.append("</ul>")
+        if negative_drivers:
+            parts.append("<strong>Negative Signals</strong><ul>")
+            for d in negative_drivers[:5]:
+                parts.append(f"<li>{d}</li>")
+            parts.append("</ul>")
+        data.sections.append(Section("Recommendation Drivers", "".join(parts)))
 
 
 def _extract_deck_data(
@@ -2701,8 +2758,18 @@ def _extract_deck_data(
         if not _used_validated:
             pass  # already ran legacy path above
         else:
-            # Validated path ran but produced sparse data — try legacy as supplement
+            # Validated path ran but produced sparse data — try legacy as supplement.
+            # Snapshot additive fields to avoid duplicating reviewer/section data.
+            _pre_verifs = len(data.reviewer_verifications)
+            _pre_sections = len(data.sections)
+            _pre_scorecard = len(data.scorecard)
             _populate_from_agent_outputs(data, brief_data, response_text)
+            if _pre_verifs:
+                data.reviewer_verifications = data.reviewer_verifications[:_pre_verifs]
+            if _pre_sections:
+                data.sections = data.sections[:_pre_sections]
+            if _pre_scorecard:
+                data.scorecard = data.scorecard[:_pre_scorecard]
 
     # ── Minimal response_text path ────────────────────────────────────────────
     response_text = brief_data.get("response_text", "")

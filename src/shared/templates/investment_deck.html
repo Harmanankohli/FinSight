@@ -1496,9 +1496,9 @@
 {% for sec in deck.sections %}
 <div class="report-section">
   <div class="container">
-    <div class="section-label">{{ sec.title|upper }}</div>
+    <div class="section-label">{{ sec.title }}</div>
     <h2 class="section-title">{{ sec.title }}</h2>
-    <div class="thesis-block">{{ sec.body }}</div>
+    <div class="thesis-block">{{ sec.body|safe }}</div>
   </div>
 </div>
 {% endfor %}

@@ -61,6 +61,32 @@ def _compute_dcf_scenario(
     return equity / shares_outstanding if shares_outstanding > 0 else None
 
 
+def _compute_sensitivity_matrix(
+    latest_fcf: float, growth_rate: float, terminal_growth: float, wacc: float,
+    total_debt: float, total_cash: float, shares_outstanding: float,
+) -> dict[str, list[float | None]]:
+    """Compute a WACC x terminal growth sensitivity grid."""
+    tg_rates = [0.020, 0.025, 0.030, 0.035]
+    wacc_rates = [0.08, 0.09, 0.10, 0.11, 0.12]
+    matrix: dict[str, list[float | None]] = {}
+    for tg in tg_rates:
+        row: list[float | None] = []
+        for w in wacc_rates:
+            val = _compute_dcf_scenario(
+                latest_fcf, growth_rate, tg, w,
+                total_debt, total_cash, shares_outstanding,
+                growth_adj=0.0, wacc_adj=0.0,
+            )
+            row.append(round(val, 2) if val else None)
+        pct_label = f"{tg * 100:.1f}%"
+        matrix[pct_label] = row
+    return {
+        "terminal_growth_labels": [f"{t * 100:.1f}%" for t in tg_rates],
+        "wacc_labels": [f"{w * 100:.0f}%" for w in wacc_rates],
+        "values": matrix,
+    }
+
+
 def _compute_dcf_confidence(
     current_price: float,
     intrinsic_value: float,
@@ -324,6 +350,11 @@ async def dcf_valuation_node(state: QuantAnalysisState) -> dict:
             has_technicals=bool(state.get("technicals")),
         )
 
+        sensitivity = _compute_sensitivity_matrix(
+            latest_fcf, growth_rate, terminal_growth, wacc,
+            total_debt, total_cash, shares_outstanding,
+        )
+
         return {
             "dcf_valuation": {
                 "intrinsic_value": round(intrinsic_value, 2),
@@ -342,6 +373,11 @@ async def dcf_valuation_node(state: QuantAnalysisState) -> dict:
                 "fcf_age_days": fcf_age_days,
                 "freshness": check_freshness(fcf_age_days),
                 "dcf_assumptions": {
+                    "risk_free_rate": round(risk_free, 4),
+                    "beta": round(beta, 4),
+                    "cost_of_equity": round(cost_of_equity, 4),
+                    "cost_of_debt": round(after_tax_cod, 4),
+                    "tax_rate": round(tax_rate, 4),
                     "fcf": latest_fcf,
                     "growth_rate": round(growth_rate, 4),
                     "terminal_growth": round(terminal_growth, 4),
@@ -351,7 +387,8 @@ async def dcf_valuation_node(state: QuantAnalysisState) -> dict:
                     "fcf_age_days": fcf_age_days,
                 },
                 "scenarios": scenarios,
-                "confidence": confidence,
+                "valuation_reliability": confidence,
+                "sensitivity_matrix": sensitivity,
             },
             "monte_carlo": mc,
         }
