@@ -21,6 +21,7 @@ async function downloadReport(ticker: string, format: "html" | "pdf") {
 interface FinsightState {
   active_agents?: string[];
   active_agent?: string | null;
+  ticker?: string | null;
 }
 
 const AGENTS = [
@@ -45,50 +46,6 @@ function extractSignal(text: string): { signal: string; cls: string } | null {
   return { signal: m[1], cls: m[1].toLowerCase() };
 }
 
-// Words that appear in briefs but aren't tickers
-const _SKIP = new Set([
-  "BUY", "HOLD", "SELL", "THE", "AND", "FOR", "NOT", "ARE", "HAS",
-  "ITS", "THIS", "THAT", "WITH", "FROM", "HAVE", "BEEN", "WILL",
-  "BUT", "ALL", "CAN", "HAD", "HER", "WAS", "ONE", "OUR", "OUT",
-  "MAY", "NEW", "NOW", "OLD", "SEE", "WAY", "WHO", "DID", "GET",
-  "LET", "SAY", "SHE", "TOO", "USE", "KEY", "PER", "GDP", "YOY",
-  "CEO", "CFO", "IPO", "ROE", "ROA", "EPS", "DCF", "RSI", "ATH",
-]);
-
-function extractTicker(messages: { role: string; content: string | unknown }[]): string | null {
-  // Extract from assistant response — the orchestrator always uses the actual ticker symbol
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i];
-    if (m.role !== "assistant") continue;
-    const text = typeof m.content === "string" ? m.content : "";
-    // 1. Parenthesized ticker: "JPMorgan Chase (JPM)" — highest confidence
-    const paren = text.match(/\(([A-Z]{1,5})\)/);
-    if (paren && !_SKIP.has(paren[1])) return paren[1];
-    // 2. Structured heading like "Analysis: JPM" or "Report for TSLA"
-    //    Use {2,5} to avoid capturing single initials like "J" from "J.P. Morgan"
-    const structured = text.match(/(?:Analysis|Recommendation|Brief|Report)[:\s]+(?:for\s+)?([A-Z]{2,5})\b/);
-    if (structured && !_SKIP.has(structured[1])) return structured[1];
-    // 3. First all-caps 2-5 letter word that looks like a ticker
-    const caps = text.match(/\b([A-Z]{2,5})\b/g);
-    if (caps) {
-      const ticker = caps.find(t => !_SKIP.has(t));
-      if (ticker) return ticker;
-    }
-  }
-  // Fallback: try the user message for an explicit ticker
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i];
-    if (m.role !== "user") continue;
-    const text = typeof m.content === "string" ? m.content : "";
-    const caps = text.match(/\b([A-Z]{2,5})\b/g);
-    if (caps) {
-      const ticker = caps.find(t => !_SKIP.has(t));
-      if (ticker) return ticker;
-    }
-  }
-  return null;
-}
-
 export default function ResearchPage() {
   const { state, running } = useCoAgent<FinsightState>({ name: "finsight" });
   const { messages, sendMessage, isLoading } = useCopilotChatHeadless_c();
@@ -100,10 +57,9 @@ export default function ResearchPage() {
   const anyActive = activeAgents.length > 0;
 
   const handleDownload = async (format: "html" | "pdf") => {
-    const ticker = extractTicker(messages as { role: string; content: string | unknown }[]);
-    if (!ticker) return;
+    if (!state?.ticker) return;
     setDownloading(format);
-    await downloadReport(ticker, format);
+    await downloadReport(state.ticker, format);
     setDownloading(null);
   };
 
@@ -220,7 +176,7 @@ export default function ResearchPage() {
                 if (!text) return null;
                 const sig = extractSignal(text);
                 const isLast = idx === messages.length - 1 || messages.slice(idx + 1).every(mm => mm.role !== "assistant");
-                const showDownload = sig && !running && isLast;
+                const showDownload = sig && !running && isLast && state?.ticker;
                 return (
                   <div key={`msg-${idx}`} className="turn">
                     <div className="msg-asst">

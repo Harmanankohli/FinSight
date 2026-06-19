@@ -338,7 +338,7 @@ async def _stream(
     yield sse(
         StateSnapshotEvent(
             type=EventType.STATE_SNAPSHOT,
-            snapshot={"active_agents": [], "active_agent": None},
+            snapshot={"active_agents": [], "active_agent": None, "ticker": None},
         )
     )
 
@@ -364,6 +364,12 @@ async def _stream(
 
     ticker_hint = extract_ticker(user_text) or "unknown"
     if ticker_hint != "unknown":
+        yield sse(
+            StateDeltaEvent(
+                type=EventType.STATE_DELTA,
+                delta=[{"op": "replace", "path": "/ticker", "value": ticker_hint}],
+            )
+        )
         cached = await _get_today_cached_text(ticker_hint, user_id=user_id)
         if cached:
             yield sse(
@@ -479,17 +485,22 @@ async def _stream(
                     agent_display = _display_name(agent_raw)
                     if agent_display not in active_agents:
                         active_agents.append(agent_display)
+                    delta_ops = [
+                        {
+                            "op": "replace",
+                            "path": "/active_agents",
+                            "value": list(active_agents),
+                        },
+                        {"op": "replace", "path": "/active_agent", "value": agent_display},
+                    ]
+                    agent_ticker = args.get("ticker", "").strip().upper()
+                    if agent_ticker and ticker_hint == "unknown":
+                        ticker_hint = agent_ticker
+                        delta_ops.append({"op": "replace", "path": "/ticker", "value": agent_ticker})
                     yield sse(
                         StateDeltaEvent(
                             type=EventType.STATE_DELTA,
-                            delta=[
-                                {
-                                    "op": "replace",
-                                    "path": "/active_agents",
-                                    "value": list(active_agents),
-                                },
-                                {"op": "replace", "path": "/active_agent", "value": agent_display},
-                            ],
+                            delta=delta_ops,
                         )
                     )
 
