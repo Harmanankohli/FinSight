@@ -122,8 +122,12 @@ async def technical_analysis_node(state: QuantAnalysisState) -> dict:
         current = float(prices.iloc[-1])
 
         sma20 = float(prices.rolling(20).mean().iloc[-1]) if len(prices) >= 20 else None
-        sma50 = float(prices.rolling(50).mean().iloc[-1]) if len(prices) >= 50 else None
-        sma200 = float(prices.rolling(200).mean().iloc[-1]) if len(prices) >= 200 else None
+        sma50_series = prices.rolling(50).mean()
+        sma200_series = prices.rolling(200).mean()
+        sma50 = float(sma50_series.iloc[-1]) if len(prices) >= 50 else None
+        sma200 = float(sma200_series.iloc[-1]) if len(prices) >= 200 else None
+        sma50_prev = float(sma50_series.iloc[-2]) if len(prices) >= 51 else None
+        sma200_prev = float(sma200_series.iloc[-2]) if len(prices) >= 201 else None
 
         ema12 = float(prices.ewm(span=12).mean().iloc[-1])
         ema26 = float(prices.ewm(span=26).mean().iloc[-1])
@@ -165,7 +169,15 @@ async def technical_analysis_node(state: QuantAnalysisState) -> dict:
 
         above_50 = current > sma50 if sma50 else False
         above_200 = current > sma200 if sma200 else False
-        golden_cross = (sma50 > sma200) if (sma50 and sma200) else False
+        # True only if SMA50 crossed above SMA200 between prev and current bar (crossover event)
+        golden_cross = bool(
+            sma50 is not None
+            and sma200 is not None
+            and sma50_prev is not None
+            and sma200_prev is not None
+            and sma50_prev <= sma200_prev
+            and sma50 > sma200
+        )
 
         if above_50 and above_200 and golden_cross:
             trend = "strong_uptrend"

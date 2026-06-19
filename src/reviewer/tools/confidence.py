@@ -36,27 +36,60 @@ def _signal_to_direction(agent_outputs: dict, agent_key: str) -> str | None:
 
 
 def _derive_quant_confidence(quant: dict) -> float:
-    """Derive a confidence score from quant data when quant_confidence is missing."""
+    """Derive a confidence score weighted by data freshness, source quality, and signal agreement."""
     metrics = quant.get("metrics") or {}
     explicit = metrics.get("quant_confidence")
     if isinstance(explicit, (int, float)) and explicit > 0:
         return explicit
 
-    signals = []
+    # Data freshness: score by how many data sources are present (proxy for data coverage)
+    freshness_components = []
+    if quant.get("fundamentals"):
+        freshness_components.append(1.0)
+    if quant.get("technicals"):
+        freshness_components.append(1.0)
+    if quant.get("monte_carlo") and quant["monte_carlo"].get("p50") is not None:
+        freshness_components.append(1.0)
+    if quant.get("positioning"):
+        freshness_components.append(0.8)
+    freshness = sum(freshness_components) / max(len(freshness_components), 1) if freshness_components else 0.3
+
+    # Signal agreement: check if sub-signals align with recommendation
+    rec = quant.get("recommendation", "HOLD")
+    agreement_signals = []
     sharpe = metrics.get("sharpe_ratio")
     if isinstance(sharpe, (int, float)) and sharpe != 0:
-        signals.append(min(abs(sharpe) / 2.0, 1.0))
+        agreement_signals.append(("bullish" if sharpe > 0 else "bearish"))
+    signal_scores = metrics.get("signal_scores") or {}
+    if signal_scores:
+        total_score = sum(signal_scores.values())
+        agreement_signals.append("bullish" if total_score > 0 else ("bearish" if total_score < 0 else "neutral"))
     dcf = quant.get("dcf_valuation") or {}
-    if dcf.get("intrinsic_value") is not None:
-        signals.append(0.6)
-    mc = quant.get("monte_carlo") or {}
-    if mc.get("p50") is not None:
-        signals.append(0.7)
-    if quant.get("fundamentals"):
-        signals.append(0.5)
-    if quant.get("technicals"):
-        signals.append(0.5)
-    return sum(signals) / len(signals) if signals else 0.5
+    if dcf.get("upside_pct") is not None:
+        agreement_signals.append("bullish" if dcf["upside_pct"] > 0 else "bearish")
+    if agreement_signals:
+        rec_dir = "bullish" if rec == "BUY" else ("bearish" if rec == "SELL" else "neutral")
+        matching = sum(1 for s in agreement_signals if s == rec_dir)
+        agreement = matching / len(agreement_signals)
+    else:
+        agreement = 0.5
+
+    # Source quality: reward having more validated data sources
+    quality_score = 0.0
+    if quant.get("dcf_valuation"):
+        quality_score += 0.25
+    if quant.get("peer_comparison") and (quant["peer_comparison"] or {}).get("rankings"):
+        quality_score += 0.25
+    if quant.get("stress_test"):
+        quality_score += 0.15
+    if quant.get("insider_signals"):
+        quality_score += 0.15
+    if quant.get("options_signals") and (quant["options_signals"] or {}).get("flow_signal") != "no_data":
+        quality_score += 0.20
+    source_quality = min(quality_score, 1.0)
+
+    confidence = 0.30 * freshness + 0.25 * agreement + 0.25 * source_quality + 0.20 * 0.5
+    return round(max(0.1, min(1.0, confidence)), 2)
 
 
 def _derive_rag_confidence(rag: dict) -> float:
@@ -138,6 +171,7 @@ def score_confidence(agent_outputs: dict) -> dict:
     else:
         agreement = 0.0
 
+    # Completeness: ratio of non-empty fields across all agents
     total_fields = 0
     filled_fields = 0
     for agent_key, agent_data in [
@@ -148,14 +182,50 @@ def score_confidence(agent_outputs: dict) -> dict:
     ]:
         if isinstance(agent_data, dict):
             for k in agent_data:
+                if k.startswith("_"):
+                    continue
                 total_fields += 1
                 v = agent_data[k]
                 if v is not None and (not isinstance(v, (list, dict)) or len(v) > 0):
                     filled_fields += 1
-    data_quality = filled_fields / total_fields if total_fields > 0 else 0.0
+    completeness = filled_fields / total_fields if total_fields > 0 else 0.0
+
+    # Consistency: penalize when contradicting signals are present (use agreement as proxy)
+    consistency = agreement
+
+    # Freshness: whether key time-sensitive data is present
+    freshness_indicators = [
+        bool(quant.get("technicals")),
+        bool(quant.get("positioning")),
+        bool(market.get("macro_regime")),
+        bool(analytics.get("trend_analysis")),
+    ]
+    freshness = sum(freshness_indicators) / len(freshness_indicators)
+
+    # Verification: ratio of agents with non-empty source data
+    verified_agents = sum([
+        bool(rag.get("sources")),
+        bool(quant.get("fundamentals")),
+        bool(market.get("narrative")),
+        bool(analytics.get("statistical_summary")),
+    ])
+    verification = verified_agents / 4
+
+    data_quality = (
+        0.35 * completeness
+        + 0.35 * consistency
+        + 0.20 * freshness
+        + 0.10 * verification
+    )
+    data_quality = max(0.0, min(1.0, data_quality))
 
     avg_agent_conf = (quant_conf + rag_conf + market_conf + analytics_conf) / 4
-    meta_confidence = 0.4 * avg_agent_conf + 0.3 * agreement + 0.3 * data_quality
+    meta_confidence = (
+        0.35 * avg_agent_conf
+        + 0.25 * agreement
+        + 0.25 * consistency
+        + 0.15 * verification
+    )
     meta_confidence = max(0.0, min(1.0, meta_confidence))
 
     logger.info(

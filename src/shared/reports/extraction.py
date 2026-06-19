@@ -651,12 +651,31 @@ def _stage_scenarios(ctx: ExtractionCtx) -> None:
             break
     bull_m = re.search(r"bull\s+case[:\s]*\$\s*([\d,]+\.?\d*)", text, re.IGNORECASE)
     if bull_m:
-        d.valuation_table.append(("Bull Case Target", f"${bull_m.group(1)}"))
+        d.valuation_table.append(("95th Percentile Target", f"${bull_m.group(1)}"))
         d.scenarios["bull"] = f"${bull_m.group(1)}"
     bear_m = re.search(r"bear\s+case[:\s]*\$\s*([\d,]+\.?\d*)", text, re.IGNORECASE)
     if bear_m:
-        d.valuation_table.append(("Bear Case Target", f"${bear_m.group(1)}"))
+        d.valuation_table.append(("5th Percentile Target", f"${bear_m.group(1)}"))
         d.scenarios["bear"] = f"${bear_m.group(1)}"
+    # Percentile-based Monte Carlo labels (preferred over bear/bull terminology)
+    p90_m = re.search(
+        r"(?:90th|95th)\s+percentile[:\s]*\$\s*([\d,]+\.?\d*)", text, re.IGNORECASE
+    )
+    if p90_m and not bull_m:
+        d.valuation_table.append(("95th Percentile Target", f"${p90_m.group(1)}"))
+        d.scenarios["bull"] = f"${p90_m.group(1)}"
+    p10_m = re.search(
+        r"(?:5th|10th)\s+percentile[:\s]*\$\s*([\d,]+\.?\d*)", text, re.IGNORECASE
+    )
+    if p10_m and not bear_m:
+        d.valuation_table.append(("5th Percentile Target", f"${p10_m.group(1)}"))
+        d.scenarios["bear"] = f"${p10_m.group(1)}"
+    p50_m = re.search(
+        r"median(?:\s+price)?[:\s]*\$\s*([\d,]+\.?\d*)", text, re.IGNORECASE
+    )
+    if p50_m:
+        d.valuation_table.append(("Median (50th Pct) Target", f"${p50_m.group(1)}"))
+        d.scenarios["base"] = d.scenarios.get("base") or f"${p50_m.group(1)}"
     mc_p90_pats = [
         r"p90\s*[=:]\s*\$\s*([\d,]+\.?\d*)",
         r"90th\s+percentile\s*[:\s]*\$\s*([\d,]+\.?\d*)",

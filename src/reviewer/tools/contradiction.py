@@ -148,6 +148,46 @@ def check_contradictions(agent_outputs: dict) -> list[dict]:
             }
         )
 
+    # RSI vs recommendation contradiction
+    quant_technicals = quant.get("technicals") or {}
+    quant_rsi = quant_technicals.get("rsi_14") or quant_technicals.get("rsi")
+    if quant_rsi is not None and isinstance(quant_rsi, (int, float)):
+        if quant_rec == "BUY" and quant_rsi > 75:
+            contradictions.append(
+                {
+                    "agents": ["Quant Analysis Agent (recommendation)", "Quant Analysis Agent (technicals)"],
+                    "field": "RSI vs recommendation",
+                    "description": f"Quant recommends BUY but RSI is overbought at {quant_rsi:.1f}",
+                    "severity": "medium",
+                }
+            )
+        elif quant_rec == "SELL" and quant_rsi < 25:
+            contradictions.append(
+                {
+                    "agents": ["Quant Analysis Agent (recommendation)", "Quant Analysis Agent (technicals)"],
+                    "field": "RSI vs recommendation",
+                    "description": f"Quant recommends SELL but RSI is oversold at {quant_rsi:.1f}",
+                    "severity": "medium",
+                }
+            )
+
+    # DCF vs Monte Carlo median divergence > 40%
+    dcf = quant.get("dcf_valuation") or {}
+    mc_result = quant.get("monte_carlo") or {}
+    dcf_intrinsic = dcf.get("intrinsic_value")
+    mc_median = mc_result.get("p50")
+    if dcf_intrinsic and mc_median and dcf_intrinsic > 0 and mc_median > 0:
+        divergence = abs(dcf_intrinsic - mc_median) / ((dcf_intrinsic + mc_median) / 2)
+        if divergence > 0.40:
+            contradictions.append(
+                {
+                    "agents": ["Quant Analysis Agent (DCF)", "Quant Analysis Agent (Monte Carlo)"],
+                    "field": "DCF vs Monte Carlo divergence",
+                    "description": f"High model disagreement: DCF=${dcf_intrinsic:.0f}, MC median=${mc_median:.0f} (divergence={divergence:.0%})",
+                    "severity": "medium",
+                }
+            )
+
     # Monte Carlo vs recommendation
     mc = quant.get("monte_carlo") or {}
     prob_profit = mc.get("prob_profit")

@@ -45,6 +45,44 @@ async def dcf_valuation_node(state: QuantAnalysisState) -> dict:
         cash_flow_data = data.get("cash_flow", {})
         income_stmt = data.get("income_statement", {})
 
+        sector = info.get("sector", "")
+        _FINANCIAL_SECTORS = {"Financial Services", "Banking", "Financial"}
+        if sector in _FINANCIAL_SECTORS:
+            current_price = info.get("currentPrice") or info.get("regularMarketPrice") or 0
+            price_to_book = info.get("priceToBook")
+            prices_dict = state.get("price_data", {})
+            mc = None
+            if prices_dict:
+                prices_s = pd.Series(
+                    {pd.Timestamp(k): v for k, v in prices_dict.items()}
+                ).sort_index()
+                mc = _run_monte_carlo(prices_s)
+            if price_to_book and price_to_book > 0 and current_price > 0:
+                book_value_ps = current_price / price_to_book
+                fair_pb = 1.2  # Sector-fair P/B multiple for financial services
+                pb_fair_value = book_value_ps * fair_pb
+                pb_upside = (pb_fair_value - current_price) / current_price
+                logger.info(
+                    "P/B valuation for %s (sector=%s): P/B=%.2f, fair_P/B=%.1f, intrinsic=$%.2f, upside=%.1f%%",
+                    ticker, sector, price_to_book, fair_pb, pb_fair_value, pb_upside * 100,
+                )
+                return {
+                    "dcf_valuation": {
+                        "intrinsic_value": round(pb_fair_value, 2),
+                        "current_price": round(float(current_price), 2),
+                        "upside_pct": round(float(pb_upside * 100), 1),
+                        "method": "pb",
+                        "pb_ratio_used": round(price_to_book, 2),
+                        "fair_pb_multiple": fair_pb,
+                    },
+                    "monte_carlo": mc,
+                }
+            return {
+                "dcf_valuation": None,
+                "dcf_error": f"Valuation skipped: {sector} sector — DCF not applicable. P/B ratio unavailable.",
+                "monte_carlo": mc,
+            }
+
         if not cash_flow_data:
             return {"dcf_valuation": None, "dcf_error": "DCF skipped: no cash flow data available"}
 

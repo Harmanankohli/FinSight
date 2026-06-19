@@ -301,8 +301,12 @@ async def format_output_node(state: QuantAnalysisState) -> dict:
             tech_parts.append(f"RSI={technicals['rsi_14']:.1f}")
         if technicals.get("macd_bullish") is not None:
             tech_parts.append(f"MACD={'bull' if technicals['macd_bullish'] else 'bear'}")
-        if technicals.get("golden_cross") is not None:
-            tech_parts.append(f"GoldenCross={technicals['golden_cross']}")
+        if technicals.get("golden_cross"):
+            tech_parts.append("GoldenCrossEvent=True")
+        elif technicals.get("above_50d_ma") and technicals.get("above_200d_ma"):
+            tech_parts.append("MAAlignment=Bullish")
+        elif technicals.get("above_50d_ma") is False and technicals.get("above_200d_ma") is False:
+            tech_parts.append("MAAlignment=Bearish")
         if tech_parts:
             parts.append(f"Technicals: {', '.join(tech_parts)}")
     if peer_comp and peer_comp.get("rankings"):
@@ -382,21 +386,33 @@ async def llm_summary_node(state: QuantAnalysisState) -> dict:
             f"OpMargin={fund.get('operating_margin')}\n"
         )
     if tech:
+        ma_state = "bullish" if (tech.get("above_50d_ma") and tech.get("above_200d_ma")) else (
+            "bearish" if (not tech.get("above_50d_ma") and not tech.get("above_200d_ma")) else "mixed"
+        )
+        gc_note = " (golden cross event)" if tech.get("golden_cross") else ""
         prompt += (
-            f"Technicals: Trend={tech.get('trend')}, "
-            f"RSI={tech.get('rsi_14')}, MACD_bull={tech.get('macd_bullish')}, "
-            f"GoldenCross={tech.get('golden_cross')}\n"
+            f"Technicals: Trend={tech.get('trend')}, MA_alignment={ma_state}{gc_note}, "
+            f"RSI={tech.get('rsi_14')}, MACD_bull={tech.get('macd_bullish')}\n"
         )
     if dcf:
-        prompt += (
-            f"DCF: intrinsic=${dcf.get('intrinsic_value')}, "
-            f"upside={dcf.get('upside_pct')}%, "
-            f"WACC={dcf.get('wacc')}, growth={dcf.get('growth_rate')}\n"
-        )
+        method = dcf.get("method", "dcf").upper()
+        if method == "PB":
+            prompt += (
+                f"Valuation (P/B method): fair_value=${dcf.get('intrinsic_value')}, "
+                f"upside={dcf.get('upside_pct')}%, "
+                f"P/B_used={dcf.get('pb_ratio_used')}, fair_P/B={dcf.get('fair_pb_multiple')}\n"
+            )
+        else:
+            prompt += (
+                f"DCF: intrinsic=${dcf.get('intrinsic_value')}, "
+                f"upside={dcf.get('upside_pct')}%, "
+                f"WACC={dcf.get('wacc')}, growth={dcf.get('growth_rate')}\n"
+            )
     if mc:
         prompt += (
-            f"Monte Carlo (1yr): p10=${mc.get('p10')}, p50=${mc.get('p50')}, "
-            f"p90=${mc.get('p90')}, prob_profit={mc.get('prob_profit'):.0%}\n"
+            f"Price Distribution (Monte Carlo, 1yr): "
+            f"5th_pct=${mc.get('p10')}, median=${mc.get('p50')}, "
+            f"95th_pct=${mc.get('p90')}, prob_profit={mc.get('prob_profit'):.0%}\n"
         )
     if stress:
         prompt += f"Stress CVaR: {stress.get('cvar_95')}\n"

@@ -147,10 +147,15 @@ def validate_recommendation(agent_outputs: dict) -> dict:
         elif rsi < 30:
             supporting.append(f"RSI oversold at {rsi:.0f} (potential bounce)")
 
-    # ── Golden cross from technicals ──
+    # ── Golden cross from technicals (crossover event) ──
     golden = technicals.get("golden_cross")
     if golden is True:
-        supporting.append("Golden cross (50d > 200d MA)")
+        supporting.append("Golden cross event detected (SMA50 just crossed above SMA200)")
+    # ── Trend state from technicals (separate from crossover event) ──
+    above_50 = technicals.get("above_50d_ma")
+    above_200 = technicals.get("above_200d_ma")
+    if above_50 and above_200:
+        supporting.append("Bullish MA alignment (price above both 50d and 200d MA)")
 
     # ── Market tailwinds/headwinds ──
     tailwinds = market.get("key_tailwinds") or []

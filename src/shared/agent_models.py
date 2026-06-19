@@ -31,11 +31,14 @@ class DCFValuation(BaseModel):
     intrinsic_value: float
     current_price: float
     upside_pct: float
-    wacc: float
-    growth_rate: float
-    terminal_growth: float
-    enterprise_value: float
-    fcf_used: float
+    method: str = "dcf"
+    wacc: Optional[float] = None
+    growth_rate: Optional[float] = None
+    terminal_growth: Optional[float] = None
+    enterprise_value: Optional[float] = None
+    fcf_used: Optional[float] = None
+    pb_ratio_used: Optional[float] = None
+    fair_pb_multiple: Optional[float] = None
 
 
 class MonteCarloResult(BaseModel):

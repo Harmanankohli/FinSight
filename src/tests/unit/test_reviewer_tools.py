@@ -16,7 +16,7 @@ def _make_mock_outputs(**overrides) -> dict:
                 "sharpe_ratio": 1.5,
                 "var_95_daily": -0.02,
             },
-            "dcf_valuation": {"intrinsic_value": 200, "current_price": 150, "upside_pct": 33.33},
+            "dcf_valuation": {"intrinsic_value": 200, "current_price": 150, "upside_pct": 25.0},
         },
         "rag": {
             "confidence_score": 0.85,

@@ -94,10 +94,10 @@ async def fundamental_analysis_node(state: QuantAnalysisState) -> dict:
             "pct_from_52w_low": round((current_price - fifty2w_low) / fifty2w_low, 4)
             if fifty2w_low and current_price
             else None,
-            "golden_cross": (fifty_day_ma > two_hundred_day_ma)
-            if fifty_day_ma and two_hundred_day_ma
-            else False,
+            "golden_cross": None,
             "net_debt": total_debt - total_cash,
+            "sector": info.get("sector"),
+            "industry": info.get("industry"),
         }
         return {"fundamentals": fundamentals, "_financials_raw": data}
     except Exception as e:
