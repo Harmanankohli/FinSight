@@ -14,6 +14,7 @@ from shared.trace_context import extract_trace_context
 
 from .agent import reviewer_agent
 from .tools.confidence import score_confidence
+from .tools.consistency_checker import check_consistency
 from .tools.contradiction import check_contradictions
 from .tools.integrity import validate_metric_integrity
 from .tools.validation import validate_recommendation
@@ -99,6 +100,7 @@ class ReviewerAgent(BaseAgent):
             verifications = verify_sources(agent_outputs)
             confidence_result = score_confidence(agent_outputs)
             validation_result = validate_recommendation(agent_outputs)
+            consistency_result = check_consistency(agent_outputs)
 
             def _pct(v) -> str:
                 """Format 0-1 float as percentage string for LLM consumption."""
@@ -184,6 +186,7 @@ class ReviewerAgent(BaseAgent):
                 "verifications": verifications,
                 "confidence": formatted_confidence,
                 "validation": validation_result,
+                "consistency": consistency_result,
             }
             if integrity_alerts:
                 synthesis_data["integrity_alerts"] = integrity_alerts
@@ -199,6 +202,7 @@ class ReviewerAgent(BaseAgent):
             output_dict["_tool_results"] = {
                 "confidence": confidence_result,
                 "validation": validation_result,
+                "consistency": consistency_result,
             }
 
             schema_checks = score_reviewer_deterministic(output_dict)

@@ -264,6 +264,20 @@ async def format_output_node(state: QuantAnalysisState) -> dict:
 
     # Build reasoning string
     parts = []
+
+    # Scoring breakdown for explainability
+    score_parts = []
+    for group, score in group_scores.items():
+        weight = _SIGNAL_WEIGHTS.get(group, 0)
+        weighted = score * weight
+        label = group.replace("_", " ").title()
+        sign = "+" if weighted >= 0 else ""
+        score_parts.append(f"{label}: {sign}{weighted:.2f}")
+    composite = sum(group_scores[k] * _SIGNAL_WEIGHTS.get(k, 0) for k in group_scores)
+    score_parts.append(f"Composite: {composite:+.3f}")
+    parts.append("Scoring Breakdown: " + " | ".join(score_parts))
+    parts.append(f"Recommendation: {recommendation} (confidence: {confidence:.0%})")
+
     if metrics:
         parts.append(
             f"Sharpe: {metrics.get('sharpe_ratio', 'N/A')}, "

@@ -138,10 +138,12 @@ async def technical_analysis_node(state: QuantAnalysisState) -> dict:
         macd_bullish = macd_histogram > 0
 
         delta = prices.diff()
-        gain = delta.where(delta > 0, 0).rolling(14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-        rs = gain / loss
-        rsi_raw = 100 - 100 / (1 + rs)
+        gain = delta.where(delta > 0, 0)
+        loss = -delta.where(delta < 0, 0)
+        avg_gain = gain.ewm(alpha=1 / 14, adjust=False).mean()
+        avg_loss = loss.ewm(alpha=1 / 14, adjust=False).mean()
+        rs = avg_gain / avg_loss
+        rsi_raw = 100 - (100 / (1 + rs))
         rsi = (
             float(rsi_raw.iloc[-1])
             if not rsi_raw.empty and not np.isnan(rsi_raw.iloc[-1])

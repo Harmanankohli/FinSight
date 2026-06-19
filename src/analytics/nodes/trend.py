@@ -62,34 +62,68 @@ async def _detect_trends(price_data: dict) -> dict:
         roc_60d = (closes[-1] - closes[-60]) / closes[-60] if len(closes) >= 60 else 0
         momentum_bullish = roc_20d > 0.02
 
+        score = 0
         signals = []
-        if ma_crossover == "golden_cross":
-            signals.append("MA crossover: bullish (golden cross)")
-        elif ma_crossover == "death_cross":
-            signals.append("MA crossover: bearish (death cross)")
-        if macd_bullish:
-            signals.append("MACD: bullish (rising)")
-        elif macd_bullish is False:
-            signals.append("MACD: bearish (falling)")
-        if momentum_bullish:
-            signals.append(f"Momentum: bullish (20d ROC {roc_20d:+.1%})")
-        elif roc_20d < -0.02:
-            signals.append(f"Momentum: bearish (20d ROC {roc_20d:+.1%})")
 
-        bullish_count = sum(1 for s in signals if "bullish" in s)
-        bearish_count = sum(1 for s in signals if "bearish" in s)
-        total = len(signals)
-        if total == 0:
-            direction = "neutral"
-            strength = 0.0
+        current_close = closes[-1]
+        last_sma200 = sma200[-1] if sma200[-1] is not None else None
+        last_sma50 = sma50[-1] if sma50[-1] is not None else None
+
+        if last_sma200 is not None and current_close > last_sma200:
+            score += 3
+            signals.append("Above SMA200 (+3)")
         else:
-            if bullish_count > bearish_count:
-                direction = "bullish"
-            elif bearish_count > bullish_count:
-                direction = "bearish"
+            signals.append("Below SMA200 (0)")
+
+        if last_sma50 is not None and current_close > last_sma50:
+            score += 2
+            signals.append("Above SMA50 (+2)")
+        else:
+            signals.append("Below SMA50 (0)")
+
+        if last_sma50 is not None and last_sma200 is not None and last_sma50 > last_sma200:
+            score += 2
+            signals.append("SMA50 > SMA200 (+2)")
+        else:
+            signals.append("SMA50 <= SMA200 (0)")
+
+        macd_line_list = macd_line
+        if len(macd_line_list) >= 2 and macd_line_list[-1] > macd_line_list[-2]:
+            score += 1
+            signals.append("MACD bullish (+1)")
+        else:
+            signals.append("MACD not bullish (0)")
+
+        if momentum_bullish:
+            score += 1
+            signals.append(f"Momentum positive (+1, ROC={roc_20d:+.1%})")
+        else:
+            signals.append(f"Momentum not positive (0, ROC={roc_20d:+.1%})")
+
+        # RSI > 50 check
+        delta_arr = np.diff(closes[-15:]) if len(closes) >= 15 else np.array([])
+        if len(delta_arr) > 0:
+            gains = np.where(delta_arr > 0, delta_arr, 0)
+            losses_arr = np.where(delta_arr < 0, -delta_arr, 0)
+            avg_g = float(np.mean(gains))
+            avg_l = float(np.mean(losses_arr))
+            rsi_val = 100 - (100 / (1 + avg_g / avg_l)) if avg_l > 0 else 100.0
+            if rsi_val > 50:
+                score += 1
+                signals.append(f"RSI > 50 (+1, RSI={rsi_val:.1f})")
             else:
-                direction = "neutral"
-            strength = max(bullish_count, bearish_count) / max(total, 1)
+                signals.append(f"RSI <= 50 (0, RSI={rsi_val:.1f})")
+
+        if score >= 8:
+            direction = "strong_bullish"
+        elif score >= 5:
+            direction = "bullish"
+        elif score >= 3:
+            direction = "neutral"
+        else:
+            direction = "bearish"
+
+        strength = min(score / 10.0, 1.0)
 
         logger.debug(
             "Trend detection: direction=%s strength=%.2f crossover=%s",
