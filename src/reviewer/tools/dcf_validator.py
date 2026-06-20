@@ -78,7 +78,7 @@ def validate_dcf(quant: dict) -> dict:
             "message": f"FCF used is non-positive: {fcf}",
         })
 
-    fcf_age = dcf.get("fcf_age_days", 0)
+    fcf_age = dcf.get("fcf_age_days") or 0
     if fcf_age > 365:
         checks.append({
             "check": "stale_financials",
