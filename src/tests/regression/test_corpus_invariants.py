@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+pytest.importorskip("yfinance", reason="corpus invariant tests require yfinance")
+
 from shared.reports.extraction import _TICKER_RE, _extract_deck_data, fit_text
 
 CORPUS_DIR = Path(__file__).parent / "corpus"

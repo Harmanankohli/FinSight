@@ -66,6 +66,7 @@ def test_openapi_spec_has_required_schemas():
 
 def test_openapi_spec_is_up_to_date():
     """Regenerate and compare — ensures docs stay in sync with code."""
+    pytest.importorskip("fastapi", reason="openapi sync test requires fastapi")
     from orchestrator.api_fastapi import spec as generated_spec
 
     current = json.loads(OPENAPI_PATH.read_text(encoding="utf-8"))

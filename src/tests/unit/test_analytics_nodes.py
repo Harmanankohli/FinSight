@@ -2,6 +2,8 @@
 
 import pytest
 
+pytest.importorskip("pandas", reason="analytics nodes require pandas")
+
 from analytics.nodes.trend import _detect_trends
 from analytics.nodes.forecast import _run_forecast
 from analytics.nodes.anomaly import _detect_anomalies

@@ -5,6 +5,9 @@ from pathlib import Path
 
 import pytest
 import pytest_asyncio
+
+pytest.importorskip("argon2", reason="auth route tests require argon2-cffi")
+
 from httpx import ASGITransport, AsyncClient
 from starlette.applications import Starlette
 from starlette.middleware import Middleware

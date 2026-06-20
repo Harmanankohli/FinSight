@@ -19,6 +19,8 @@ from unittest.mock import patch
 
 import pytest
 
+pytest.importorskip("yfinance", reason="deck extraction tests require yfinance")
+
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 GOLDENS_DIR = FIXTURES_DIR / "goldens"
 UPDATE_GOLDENS = os.environ.get("UPDATE_GOLDENS", "").lower() in ("1", "true", "yes")

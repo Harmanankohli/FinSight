@@ -45,7 +45,7 @@ def test_env_file_not_required(tmp_path, monkeypatch):
 def test_llm_summary_model_falls_back_to_llm_model(monkeypatch):
     monkeypatch.setenv("LLM_MODEL", "base-model")
     monkeypatch.delenv("LLM_SUMMARY_MODEL", raising=False)
-    s = Settings()
+    s = Settings(_env_file=None)
     assert s.llm_summary_model == "base-model"
 
 

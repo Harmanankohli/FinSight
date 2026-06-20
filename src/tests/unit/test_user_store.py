@@ -6,6 +6,8 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 
+pytest.importorskip("argon2", reason="user store tests require argon2-cffi")
+
 from shared.settings import reset_settings_for_tests
 
 

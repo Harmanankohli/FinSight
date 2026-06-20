@@ -307,6 +307,7 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["src/tests"]
 pythonpath = ["src"]
+addopts = "-m 'not integration and not external'"
 markers = [
     "integration: marks tests requiring live services (deselect with -m 'not integration')",
     "external: marks tests that make real network calls",

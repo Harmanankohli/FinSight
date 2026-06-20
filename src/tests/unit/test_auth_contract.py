@@ -9,6 +9,9 @@ import uuid
 
 import pytest
 import pytest_asyncio
+
+pytest.importorskip("argon2", reason="auth contract tests require argon2-cffi")
+
 from httpx import ASGITransport, AsyncClient
 from starlette.applications import Starlette
 

@@ -8,6 +8,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+pytest.importorskip("pandas", reason="web search tests require pandas (via mcp_tools)")
+
 # Ensure ddgs is importable even when not installed, so that
 # patch("ddgs.DDGS", ...) can resolve the target module.
 if "ddgs" not in sys.modules:

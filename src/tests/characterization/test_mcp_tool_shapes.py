@@ -16,6 +16,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+pytest.importorskip("pandas", reason="MCP tool shape tests require pandas")
+pytest.importorskip("yfinance", reason="MCP tool shape tests require yfinance")
+
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
 

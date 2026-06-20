@@ -11,6 +11,10 @@ from io import BytesIO
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+pytest.importorskip("yfinance", reason="report regression tests require yfinance")
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from shared.reports import generate_docx

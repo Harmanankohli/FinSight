@@ -13,11 +13,24 @@ from shared.memory.agent_output_store import (
     prune_stale_outputs,
     store_agent_output,
 )
-from shared.memory.memory_service import SQLiteMemoryService
-from shared.memory.performance_tracker import PerformanceTracker
-from shared.memory.portfolio_store import PortfolioStore
 from shared.memory.store import DB_PATH, get_db, init_db
 from shared.memory.ticker_memory import TickerMemory
+
+_LAZY_IMPORTS = {
+    "SQLiteMemoryService": "shared.memory.memory_service",
+    "PerformanceTracker": "shared.memory.performance_tracker",
+    "PortfolioStore": "shared.memory.portfolio_store",
+}
+
+
+def __getattr__(name: str):
+    if name in _LAZY_IMPORTS:
+        import importlib
+
+        mod = importlib.import_module(_LAZY_IMPORTS[name])
+        return getattr(mod, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     "DB_PATH",
