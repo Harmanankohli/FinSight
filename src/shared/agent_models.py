@@ -40,6 +40,7 @@ class DCFValuation(BaseModel):
     growth_rate: Optional[float] = None
     terminal_growth: Optional[float] = Field(None, ge=0.0, le=0.03)
     enterprise_value: Optional[float] = Field(None, gt=0)
+    market_enterprise_value: Optional[float] = Field(None, gt=0)
     net_debt: Optional[float] = None
     equity_value: Optional[float] = Field(None, gt=0)
     fcf_used: Optional[float] = Field(None, gt=0)

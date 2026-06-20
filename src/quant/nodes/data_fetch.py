@@ -10,6 +10,48 @@ from .calculations import _parse_price_data
 logger = logging.getLogger(__name__)
 
 
+def _get_total_liquid_cash(info: dict, balance_sheet: dict) -> float:
+    """Return total liquid assets from balance sheet.
+
+    Includes cash, short-term investments, AND long-term marketable securities
+    (e.g. AAPL holds ~$92B in non-current investment securities).
+    """
+    for period_key in sorted(balance_sheet.keys(), reverse=True):
+        bs = balance_sheet.get(period_key)
+        if not isinstance(bs, dict):
+            continue
+        current_liquid = 0.0
+        combined = bs.get("Cash Cash Equivalents And Short Term Investments")
+        if combined is not None:
+            try:
+                current_liquid = float(combined)
+            except (TypeError, ValueError):
+                pass
+        if current_liquid == 0:
+            cash = bs.get("Cash And Cash Equivalents")
+            sti = bs.get("Other Short Term Investments", 0)
+            if cash is not None:
+                try:
+                    current_liquid = float(cash) + float(sti or 0)
+                except (TypeError, ValueError):
+                    pass
+        if current_liquid <= 0:
+            continue
+        lt_investments = 0.0
+        for field in ("Investments And Advances", "Long Term Equity Investment",
+                       "Other Non Current Assets"):
+            val = bs.get(field)
+            if val is not None:
+                try:
+                    lt_investments = float(val)
+                    if lt_investments > 0:
+                        break
+                except (TypeError, ValueError):
+                    continue
+        return current_liquid + lt_investments
+    return float(info.get("totalCash", 0) or 0)
+
+
 @logged()
 async def fetch_price_data_node(state: QuantAnalysisState) -> dict:
     # First graph node: fetches historical daily closes via MCP get_prices tool into state["price_data"]  # noqa: E501
@@ -60,6 +102,10 @@ async def fundamental_analysis_node(state: QuantAnalysisState) -> dict:
         two_hundred_day_ma = info.get("twoHundredDayAverage") or 0
         total_debt = info.get("totalDebt") or 0
         total_cash = info.get("totalCash") or 0
+        raw_de = info.get("debtToEquity")
+
+        balance_sheet = data.get("balance_sheet", {})
+        liquid_cash = _get_total_liquid_cash(info, balance_sheet)
 
         fundamentals = Fundamentals(
             trailing_pe=info.get("trailingPE"),
@@ -76,11 +122,11 @@ async def fundamental_analysis_node(state: QuantAnalysisState) -> dict:
             revenue_growth=info.get("revenueGrowth"),
             earnings_growth=info.get("earningsGrowth"),
             earnings_quarterly_growth=info.get("earningsQuarterlyGrowth"),
-            debt_to_equity=info.get("debtToEquity"),
+            debt_to_equity=raw_de / 100 if raw_de is not None else None,
             current_ratio=info.get("currentRatio"),
             quick_ratio=info.get("quickRatio"),
             total_debt=total_debt,
-            total_cash=total_cash,
+            total_cash=liquid_cash,
             market_cap=info.get("marketCap"),
             dividend_yield=info.get("dividendYield"),
             payout_ratio=info.get("payoutRatio"),
@@ -95,7 +141,7 @@ async def fundamental_analysis_node(state: QuantAnalysisState) -> dict:
             pct_from_52w_low=round((current_price - fifty2w_low) / fifty2w_low, 4)
             if fifty2w_low and current_price
             else None,
-            net_debt=total_debt - total_cash,
+            net_debt=total_debt - liquid_cash,
             sector=info.get("sector"),
             industry=info.get("industry"),
         ).model_dump(by_alias=True)

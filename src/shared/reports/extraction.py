@@ -1897,7 +1897,9 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
                 data.dcf_breakdown.append(("WACC", _fmt_pct(dcf.wacc, True)))
                 data.dcf_breakdown.append(("Growth Rate", _fmt_pct(dcf.growth_rate, True)))
                 data.dcf_breakdown.append(("Terminal Growth", _fmt_pct(dcf.terminal_growth, True)))
-                data.dcf_breakdown.append(("Enterprise Value", _fmt_dollar(dcf.enterprise_value)))
+                data.dcf_breakdown.append(("DCF Enterprise Value", _fmt_dollar(dcf.enterprise_value)))
+                if dcf.market_enterprise_value is not None:
+                    data.dcf_breakdown.append(("Market Enterprise Value", _fmt_dollar(dcf.market_enterprise_value)))
                 if dcf.net_debt is not None:
                     data.dcf_breakdown.append(("Net Debt", _fmt_dollar(dcf.net_debt)))
                 if dcf.equity_value is not None:

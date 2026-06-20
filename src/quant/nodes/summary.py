@@ -100,13 +100,14 @@ async def peer_comparison_node(state: QuantAnalysisState) -> dict:
     peer_infos = {s: peer_infos[s] for s in filtered_peers if s in peer_infos}
 
     def _extract(inf: dict) -> dict:
+        raw_de = inf.get("debtToEquity")
         return {
             "pe": inf.get("trailingPE"),
             "ev_ebitda": inf.get("enterpriseToEbitda"),
             "rev_growth": inf.get("revenueGrowth"),
             "op_margin": inf.get("operatingMargins"),
             "roe": inf.get("returnOnEquity"),
-            "debt_to_equity": inf.get("debtToEquity"),
+            "debt_to_equity": raw_de / 100 if raw_de is not None else None,
             "market_cap": inf.get("marketCap"),
         }
 

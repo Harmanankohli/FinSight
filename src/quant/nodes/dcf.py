@@ -14,6 +14,49 @@ from .calculations import _get_fcf_from_financials, _get_latest_field, _run_mont
 
 logger = logging.getLogger(__name__)
 
+
+def _get_total_cash(info: dict, balance_sheet: dict) -> float:
+    """Return total liquid assets from balance sheet for enterprise-value bridge.
+
+    Includes cash, short-term investments, AND long-term marketable securities
+    (e.g. AAPL holds ~$92B in non-current investment securities that are highly liquid).
+    """
+    for period_key in sorted(balance_sheet.keys(), reverse=True):
+        bs = balance_sheet.get(period_key)
+        if not isinstance(bs, dict):
+            continue
+        current_liquid = 0.0
+        combined = bs.get("Cash Cash Equivalents And Short Term Investments")
+        if combined is not None:
+            try:
+                current_liquid = float(combined)
+            except (TypeError, ValueError):
+                pass
+        if current_liquid == 0:
+            cash = bs.get("Cash And Cash Equivalents")
+            sti = bs.get("Other Short Term Investments", 0)
+            if cash is not None:
+                try:
+                    current_liquid = float(cash) + float(sti or 0)
+                except (TypeError, ValueError):
+                    pass
+        if current_liquid <= 0:
+            continue
+        lt_investments = 0.0
+        for field in ("Investments And Advances", "Long Term Equity Investment",
+                       "Other Non Current Assets"):
+            val = bs.get(field)
+            if val is not None:
+                try:
+                    lt_investments = float(val)
+                    if lt_investments > 0:
+                        break
+                except (TypeError, ValueError):
+                    continue
+        return current_liquid + lt_investments
+    return float(info.get("totalCash", 0) or 0)
+
+
 _TERMINAL_GROWTH = {
     "Technology": 0.03,
     "Communication Services": 0.03,
@@ -216,25 +259,48 @@ async def dcf_valuation_node(state: QuantAnalysisState) -> dict:
                 "dcf_error": f"DCF skipped: current price not available (value: {current_price})",
             }
 
-        # Historical CAGR: prefer 5-year FCF CAGR, fall back to 5-year revenue CAGR,
-        # then yfinance estimates, then 8%. Clamped to [-20%, 25%] per plan.
+        # Historical CAGR priority: FCF CAGR → revenue CAGR → yfinance revenueGrowth → 8%.
+        # earningsGrowth is a single-quarter YoY figure, not used for 5-year DCF growth.
         growth_rate = 0.08
         rg = None
         eg = None
         growth_method = "default_8pct"
         sorted_periods = sorted(cash_flow_data.keys())
-        fcf_vals = [
-            float(cash_flow_data[p]["Free Cash Flow"])
-            for p in sorted_periods
-            if isinstance(cash_flow_data.get(p), dict)
-            and cash_flow_data[p].get("Free Cash Flow") is not None
-            and float(cash_flow_data[p]["Free Cash Flow"]) > 0
-        ]
+        fcf_vals: list[float] = []
+        for p in sorted_periods:
+            period_data = cash_flow_data.get(p)
+            if not isinstance(period_data, dict):
+                continue
+            # Try "Free Cash Flow" directly first
+            fcf_raw = period_data.get("Free Cash Flow")
+            if fcf_raw is not None:
+                try:
+                    v = float(fcf_raw)
+                    if v > 0:
+                        fcf_vals.append(v)
+                        continue
+                except (TypeError, ValueError):
+                    pass
+            # Fall back to OCF + CapEx for this period (CapEx is stored as negative)
+            op = period_data.get("Operating Cash Flow")
+            capex = period_data.get("Capital Expenditure")
+            if op is not None and capex is not None:
+                try:
+                    v = float(op) + float(capex)
+                    if v > 0:
+                        fcf_vals.append(v)
+                except (TypeError, ValueError):
+                    pass
         if len(fcf_vals) >= 2:
             cagr = compute_cagr(fcf_vals)
-            if cagr is not None:
+            if cagr is not None and cagr >= 0:
                 growth_rate = cagr
                 growth_method = "fcf_cagr"
+            elif cagr is not None:
+                logger.info(
+                    "FCF CAGR negative (%.3f) for %s — falling through to revenue growth",
+                    cagr, ticker,
+                )
         if growth_method == "default_8pct":
             sorted_income_periods = sorted(income_stmt.keys())
             rev_vals = [
@@ -249,18 +315,18 @@ async def dcf_valuation_node(state: QuantAnalysisState) -> dict:
                 if cagr is not None:
                     growth_rate = cagr
                     growth_method = "revenue_cagr"
-        if growth_method == "default_8pct":
-            rg = info.get("revenueGrowth")
-            eg = info.get("earningsGrowth")
-            if rg is not None and eg is not None:
-                growth_rate = max(-0.20, min(rg * 0.6 + eg * 0.4, 0.25))
-                growth_method = "blended_estimate"
-            elif rg is not None:
+        # Blend historical CAGR with forward analyst estimate when both are available.
+        # Pure historical CAGR can be dragged down by temporary flat periods (e.g. AAPL FY2022-23).
+        rg = info.get("revenueGrowth")
+        eg = info.get("earningsGrowth")
+        if growth_method in ("fcf_cagr", "revenue_cagr") and rg is not None:
+            forward = max(-0.20, min(float(rg), 0.25))
+            growth_rate = 0.5 * growth_rate + 0.5 * forward
+            growth_method = f"blended_{growth_method}"
+        elif growth_method == "default_8pct":
+            if rg is not None:
                 growth_rate = max(-0.20, min(float(rg), 0.25))
                 growth_method = "revenue_estimate"
-            elif eg is not None:
-                growth_rate = max(-0.20, min(float(eg), 0.25))
-                growth_method = "earnings_estimate"
 
         growth_rate = max(-0.20, min(growth_rate, 0.25))
 
@@ -270,7 +336,7 @@ async def dcf_valuation_node(state: QuantAnalysisState) -> dict:
 
         # WACC via CAPM cost-of-equity + after-tax cost-of-debt, weighted by capital structure
         beta = (state.get("metrics") or {}).get("beta") or 1.0
-        mkt_premium = 0.055
+        mkt_premium = 0.047
         rf_annual = state.get("macro_data", {}).get("treasury_10y_yield")
         if rf_annual is None and mcp:
             try:
@@ -293,7 +359,14 @@ async def dcf_valuation_node(state: QuantAnalysisState) -> dict:
         interest_expense = _get_latest_field(income_stmt, "Interest Expense")
         total_debt = info.get("totalDebt") or 0
         market_cap = info.get("marketCap") or 0
-        tax_rate = info.get("effectiveTaxRate") or 0.21
+        tax_rate = info.get("effectiveTaxRate")
+        if not tax_rate:
+            tax_provision = _get_latest_field(income_stmt, "Tax Provision")
+            pretax_income = _get_latest_field(income_stmt, "Pretax Income")
+            if tax_provision and pretax_income and pretax_income > 0:
+                tax_rate = abs(tax_provision) / pretax_income
+        if not tax_rate or tax_rate < 0 or tax_rate > 0.50:
+            tax_rate = 0.21
 
         if interest_expense and total_debt > 0:
             after_tax_cod = (abs(interest_expense) / total_debt) * (1 - tax_rate)
@@ -329,8 +402,10 @@ async def dcf_valuation_node(state: QuantAnalysisState) -> dict:
         enterprise_value = pv_fcf + pv_terminal
 
         total_debt = info.get("totalDebt", 0) or 0
-        total_cash = info.get("totalCash", 0) or 0
+        balance_sheet = data.get("balance_sheet", {})
+        total_cash = _get_total_cash(info, balance_sheet)
         net_debt = total_debt - total_cash
+        market_ev = market_cap + total_debt - total_cash if market_cap > 0 else None
 
         equity_value = enterprise_value - net_debt
 
@@ -345,7 +420,7 @@ async def dcf_valuation_node(state: QuantAnalysisState) -> dict:
         valuation_warnings = []
         if current_price and intrinsic_value > 0:
             valuation_ratio = intrinsic_value / current_price
-            if valuation_ratio < 0.30:
+            if valuation_ratio < 0.40:
                 valuation_warnings.append(
                     "DCF value significantly below market price"
                     " — review assumptions (WACC, growth, terminal)"
@@ -415,6 +490,7 @@ async def dcf_valuation_node(state: QuantAnalysisState) -> dict:
                 growth_rate=round(growth_rate, 4),
                 terminal_growth=round(terminal_growth, 4),
                 enterprise_value=round(enterprise_value, 2),
+                market_enterprise_value=round(market_ev, 2) if market_ev else None,
                 net_debt=round(net_debt, 2),
                 equity_value=round(equity_value, 2),
                 fcf_used=latest_fcf,

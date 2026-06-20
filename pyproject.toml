@@ -30,7 +30,7 @@ dependencies = [
     # MCP
     "mcp>=1.0.0",
     # Data / Finance
-    "yfinance>=0.2.40",
+    "yfinance>=1.4.1",
     "pandas>=2.2.0",
     "numpy>=1.26.0",
     "scipy>=1.14.0",
@@ -163,7 +163,7 @@ quant = [
     "langchain-core>=0.3.0",
     "langchain-openai>=0.3.0",
     "langchain-community>=0.3.0",
-    "yfinance>=0.2.40",
+    "yfinance>=1.4.1",
     "pandas>=2.2.0",
     "numpy>=1.26.0",
     "scipy>=1.14.0",
@@ -232,7 +232,7 @@ market = [
 ]
 mcp_server = [
     "mcp>=1.0.0",
-    "yfinance>=0.2.40",
+    "yfinance>=1.4.1",
     "pandas>=2.2.0",
     "numpy>=1.26.0",
     "httpx>=0.28.0",

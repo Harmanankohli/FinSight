@@ -291,12 +291,11 @@ def _score_fundamental_quality(fund: dict | None, medians: dict | None = None) -
             # Lower D/E than sector median = better (less leveraged)
             scores.append(_relative_score(d_e, m["debt_to_equity"], higher_is_better=False))
         else:
-            # Absolute fallback — note: utilities/banks carry high D/E normally
-            if d_e < 30:
+            if d_e < 0.30:
                 scores.append(0.3)
-            elif d_e < 80:
+            elif d_e < 0.80:
                 scores.append(0.0)
-            elif d_e < 150:
+            elif d_e < 1.50:
                 scores.append(-0.2)
             else:
                 scores.append(-0.5)
