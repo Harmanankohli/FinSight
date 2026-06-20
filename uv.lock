@@ -3460,6 +3460,7 @@ dependencies = [
     { name = "transformers" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "vadersentiment" },
+    { name = "yahooquery" },
     { name = "yfinance" },
 ]
 
@@ -3537,6 +3538,7 @@ mcp-server = [
     { name = "starlette" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "vadersentiment" },
+    { name = "yahooquery" },
     { name = "yfinance" },
 ]
 orchestrator = [
@@ -3585,6 +3587,7 @@ quant = [
     { name = "scipy" },
     { name = "starlette" },
     { name = "uvicorn", extra = ["standard"] },
+    { name = "yahooquery" },
     { name = "yfinance" },
 ]
 rag = [
@@ -3850,6 +3853,9 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'reviewer'", specifier = ">=0.32.0" },
     { name = "vadersentiment", specifier = ">=3.3.2" },
     { name = "vadersentiment", marker = "extra == 'mcp-server'", specifier = ">=3.3.2" },
+    { name = "yahooquery", specifier = ">=2.4.0" },
+    { name = "yahooquery", marker = "extra == 'mcp-server'", specifier = ">=2.4.0" },
+    { name = "yahooquery", marker = "extra == 'quant'", specifier = ">=2.4.0" },
     { name = "yfinance", specifier = ">=1.4.1" },
     { name = "yfinance", marker = "extra == 'mcp-server'", specifier = ">=1.4.1" },
     { name = "yfinance", marker = "extra == 'quant'", specifier = ">=1.4.1" },
@@ -6285,6 +6291,18 @@ wheels = [
 ]
 
 [[package]]
+name = "requests-futures"
+version = "1.0.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/88/f8/175b823241536ba09da033850d66194c372c65c38804847ac9cef0239542/requests_futures-1.0.2.tar.gz", hash = "sha256:6b7eb57940336e800faebc3dab506360edec9478f7b22dc570858ad3aa7458da", size = 10356, upload-time = "2024-11-15T22:14:51.988Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/91/23/7c1096731c15c83826cb0dd42078b561a838aed44c36f370aeb815168106/requests_futures-1.0.2-py2.py3-none-any.whl", hash = "sha256:a3534af7c2bf670cd7aa730716e9e7d4386497554f87792be7514063b8912897", size = 7671, upload-time = "2024-11-15T22:14:50.255Z" },
+]
+
+[[package]]
 name = "requests-oauthlib"
 version = "2.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -7754,6 +7772,23 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/ad/95/a26baa93b5241fd7630998816a4ec47a5a0bad193b3f8fc8f3593e1a4a67/xxhash-3.7.0-cp314-cp314t-win32.whl", hash = "sha256:a04a6cab47e2166435aaf5b9e5ee41d1532cc8300efdef87f2a4d0acb7db19ed", size = 31643, upload-time = "2026-04-25T11:09:08.153Z" },
     { url = "https://files.pythonhosted.org/packages/44/36/5454f13c447e395f9b06a3e91274c59f503d31fad84e1836efe3bdb71f6a/xxhash-3.7.0-cp314-cp314t-win_amd64.whl", hash = "sha256:8653dd7c2eda020545bb2c71c7f7039b53fe7434d0fc1a0a9deb79ab3f1a4fc1", size = 32522, upload-time = "2026-04-25T11:09:09.534Z" },
     { url = "https://files.pythonhosted.org/packages/74/35/698e7e3ff38e22992ea24870a511d8762474fb6783627a2910ff22a185c2/xxhash-3.7.0-cp314-cp314t-win_arm64.whl", hash = "sha256:468f0fc114faaa4b36699f8e328bbc3bb11dc418ba94ac52c26dd736d4b6c637", size = 28807, upload-time = "2026-04-25T11:09:11.234Z" },
+]
+
+[[package]]
+name = "yahooquery"
+version = "2.4.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "beautifulsoup4" },
+    { name = "curl-cffi" },
+    { name = "lxml" },
+    { name = "pandas" },
+    { name = "requests-futures" },
+    { name = "tqdm" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/30/21/65f662871ecdcdab695ee9277b1f9299980cc23ce3edb8ff827dda25b27d/yahooquery-2.4.1.tar.gz", hash = "sha256:1903c65eae6a12d95e9450063479216c07846f013bae2a23917913531b7fae5b", size = 1112774, upload-time = "2025-05-15T14:53:34.369Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ab/98/bd176685b2175fa7a5283e2fc73a9a7338715015849c904cca6eb69b5082/yahooquery-2.4.1-py3-none-any.whl", hash = "sha256:ee6ff9b9c4ab6a34125e1d55c6412a616948559401267e61724e8dbda98a2d8b", size = 50651, upload-time = "2025-05-15T14:53:32.779Z" },
 ]
 
 [[package]]

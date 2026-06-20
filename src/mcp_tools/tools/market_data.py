@@ -13,11 +13,13 @@ from langfuse import observe
 from mcp_tools._app import app
 from mcp_tools.infra.rate_limiters import (
     _YF_LIMITER,
+    _YQ_LIMITER,
     BENCHMARK_TICKERS,
     cache_benchmark,
     cache_financials,
     cache_macro,
     cache_prices,
+    cache_valuation_ts,
 )
 from shared.logging_config import logged
 
@@ -170,7 +172,7 @@ _SECTOR_ETFS = {
 }
 
 
-async def _get_macro_impl() -> dict:
+async def _get_macro_impl_yfinance() -> dict:
     await _YF_LIMITER.acquire()
     loop = asyncio.get_event_loop()
     result: dict = {"macro": {}, "sectors": {}}
@@ -201,6 +203,68 @@ async def _get_macro_impl() -> dict:
             result["sectors"][name] = round((latest - prev) / prev * 100, 2) if prev else 0
         except Exception:
             continue
+    macro = result["macro"]
+    if "us10y" in macro and "us2y" in macro:
+        v10 = macro["us10y"].get("value", 0)
+        v2 = macro["us2y"].get("value", 0)
+        spread = v10 - v2
+        result["macro"]["yield_curve_spread"] = round(spread, 3)
+        result["macro"]["regime"] = (
+            "inverted" if spread < 0 else "flat" if spread < 0.5 else "normal"
+        )
+    return result
+
+
+async def _get_macro_impl() -> dict:
+    all_symbols = list(_MACRO_TICKERS.values()) + list(_SECTOR_ETFS.values())
+    loop = asyncio.get_event_loop()
+
+    try:
+        from yahooquery import Ticker as YQTicker  # lazy import
+        await _YQ_LIMITER.acquire()
+        all_hist = await loop.run_in_executor(
+            None, lambda: YQTicker(all_symbols).history(period="1mo")
+        )
+        if isinstance(all_hist, dict) and any("error" in str(v).lower() for v in all_hist.values()):
+            raise ValueError("yahooquery returned errors for some symbols")
+    except Exception as exc:
+        logger.warning("yahooquery batch macro fetch failed, falling back to yfinance: %s", exc)
+        return await _get_macro_impl_yfinance()
+
+    result: dict = {"macro": {}, "sectors": {}}
+    available_symbols = set(all_hist.index.get_level_values("symbol").unique())
+
+    for key, sym in _MACRO_TICKERS.items():
+        try:
+            if sym not in available_symbols:
+                continue
+            hist = all_hist.xs(sym, level="symbol")
+            if hist.empty:
+                continue
+            closes = hist["close"].sort_index()
+            latest = float(closes.iloc[-1])
+            prev = float(closes.iloc[-5]) if len(closes) >= 5 else latest
+            result["macro"][key] = {
+                "value": round(latest, 3),
+                "change_5d_pct": round((latest - prev) / prev * 100, 2) if prev else 0,
+            }
+        except Exception as exc:
+            result["macro"][key] = {"error": str(exc)}
+
+    for name, sym in _SECTOR_ETFS.items():
+        try:
+            if sym not in available_symbols:
+                continue
+            hist = all_hist.xs(sym, level="symbol")
+            if hist.empty:
+                continue
+            closes = hist["close"].sort_index()
+            latest = float(closes.iloc[-1])
+            prev = float(closes.iloc[-21]) if len(closes) >= 21 else latest
+            result["sectors"][name] = round((latest - prev) / prev * 100, 2) if prev else 0
+        except Exception:
+            continue
+
     macro = result["macro"]
     if "us10y" in macro and "us2y" in macro:
         v10 = macro["us10y"].get("value", 0)
@@ -261,3 +325,87 @@ async def get_options_chain(ticker: str, expiration: str | None = None) -> dict:
     except Exception as exc:
         logger.warning("get_options_chain failed for %s: %s", ticker, exc)
         return {"ticker": ticker, "error": str(exc)}
+
+
+# ──────────────────────────────────────────────
+# Valuation timeseries
+# ──────────────────────────────────────────────
+
+
+async def _get_valuation_ts_uncached(ticker: str) -> dict:
+    try:
+        from yahooquery import Ticker as YQTicker  # lazy import
+        await _YQ_LIMITER.acquire()
+        loop = asyncio.get_event_loop()
+
+        def _fetch() -> dict:
+            t = YQTicker(ticker.upper())
+            vm = t.valuation_measures
+            if isinstance(vm, str):
+                return {"error": vm}
+            if hasattr(vm, "empty") and vm.empty:
+                return {"periods": []}
+            records = []
+            for _, row in vm.iterrows():
+                as_of = row.get("asOfDate", "")
+                records.append({
+                    "date": as_of.isoformat()[:10] if hasattr(as_of, "isoformat") else str(as_of)[:10],
+                    "period_type": row.get("periodType", ""),
+                    "pe_ratio": _serialise_value(row.get("PeRatio")),
+                    "ps_ratio": _serialise_value(row.get("PsRatio")),
+                    "pb_ratio": _serialise_value(row.get("PbRatio")),
+                    "peg_ratio": _serialise_value(row.get("PegRatio")),
+                    "enterprise_value": _serialise_value(row.get("EnterpriseValue")),
+                    "ev_to_ebitda": _serialise_value(row.get("EnterprisesValueEBITDARatio")),
+                    "ev_to_revenue": _serialise_value(row.get("EnterprisesValueRevenueRatio")),
+                    "market_cap": _serialise_value(row.get("MarketCap")),
+                })
+            return {"periods": records}
+
+        data = await loop.run_in_executor(None, _fetch)
+        if "error" in data:
+            return {"ticker": ticker.upper(), "periods": [], "error": data["error"]}
+
+        periods = data.get("periods", [])
+        pe_values = [p["pe_ratio"] for p in periods if p["pe_ratio"] is not None]
+        summary: dict = {}
+        if pe_values:
+            summary["pe_avg_2y"] = round(sum(pe_values) / len(pe_values), 2)
+            summary["pe_current"] = pe_values[-1]
+            summary["pe_percentile"] = round(
+                sum(1 for v in pe_values if v <= pe_values[-1]) / len(pe_values) * 100, 1
+            )
+
+        return {
+            "ticker": ticker.upper(),
+            "periods": periods,
+            "n_periods": len(periods),
+            "summary": summary,
+        }
+    except Exception as exc:
+        logger.warning("get_valuation_timeseries failed for %s: %s", ticker, exc)
+        return {"ticker": ticker.upper(), "periods": [], "error": str(exc)}
+
+
+@app.tool()
+@observe()
+@logged()
+async def get_valuation_timeseries(ticker: str) -> dict:
+    """Fetch quarterly valuation multiples history (P/E, P/S, PEG, EV) for a ticker.
+
+    Returns up to ~8 quarters of trailing data with current-vs-average comparisons.
+
+    Args:
+        ticker: Stock ticker symbol (e.g. NVDA, AAPL, MSFT)
+
+    Returns:
+        dict with keys:
+          ticker, periods (list of {date, pe_ratio, ps_ratio, pb_ratio, peg_ratio,
+          enterprise_value, ev_to_ebitda, ev_to_revenue, market_cap}),
+          n_periods, summary ({pe_avg_2y, pe_current, pe_percentile})
+    """
+    logger.info("Tool called", extra={"tool": "get_valuation_timeseries", "ticker": ticker})
+    return await cache_valuation_ts.get_or_fetch(
+        f"valuation_ts:{ticker.upper()}",
+        lambda: _get_valuation_ts_uncached(ticker),
+    )

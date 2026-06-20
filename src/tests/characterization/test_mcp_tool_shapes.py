@@ -40,6 +40,7 @@ def _yf_ticker_mock(symbol: str):
     mock.options = ()
     mock.option_chain.return_value = MagicMock(calls=pd.DataFrame(), puts=pd.DataFrame())
     mock.get_earnings_dates.return_value = pd.DataFrame()
+    mock.earnings_dates = pd.DataFrame()
     mock.insider_purchases = pd.DataFrame()
     mock.insider_transactions = pd.DataFrame()
     mock.recommendations = pd.DataFrame()
@@ -241,3 +242,158 @@ async def test_find_agent_shape():
     assert isinstance(parsed, dict)
     # With an empty registry, either 'error' key or a valid agent card dict
     assert isinstance(parsed, dict)
+
+
+# ── get_macro_indicators (yahooquery batch path) ──────────────────────────────
+
+
+def _yq_batch_mock(symbols):
+    """Mock for yahooquery.Ticker([...]) with .history() returning MultiIndex DataFrame."""
+    import pandas as pd
+    mock = MagicMock()
+    rows = []
+    for sym in (symbols if isinstance(symbols, list) else [symbols]):
+        for dt in pd.date_range("2024-01-01", periods=22, freq="B"):
+            rows.append({"symbol": sym, "date": dt, "close": 100.0, "open": 99.0,
+                         "high": 101.0, "low": 98.0, "volume": 1000, "adjclose": 100.0})
+    df = pd.DataFrame(rows).set_index(["symbol", "date"])
+    mock.history.return_value = df
+    return mock
+
+
+async def test_get_macro_indicators_yahooquery_batch():
+    with patch("yahooquery.Ticker", side_effect=_yq_batch_mock):
+        from mcp_tools.tools.market_data import get_macro_indicators
+        result = await get_macro_indicators()
+    assert isinstance(result, dict)
+    assert "macro" in result
+    assert "sectors" in result
+
+
+async def test_get_macro_indicators_yahooquery_fallback():
+    with (
+        patch("yahooquery.Ticker", side_effect=ImportError("no yahooquery")),
+        patch("yfinance.Ticker", side_effect=_yf_ticker_mock),
+    ):
+        from mcp_tools.tools.market_data import get_macro_indicators
+        result = await get_macro_indicators()
+    assert isinstance(result, dict)
+    assert "macro" in result or "error" in result
+
+
+# ── get_analyst_activity ──────────────────────────────────────────────────────
+
+
+async def test_get_analyst_activity_shape():
+    import pandas as pd
+    mock_yq = MagicMock()
+    mock_yq.return_value.grading_history = pd.DataFrame({
+        "epochGradeDate": [pd.Timestamp("2024-06-01")],
+        "firm": ["Goldman Sachs"],
+        "action": ["up"],
+        "fromGrade": ["Hold"],
+        "toGrade": ["Buy"],
+        "priorPriceTarget": [150.0],
+        "currentPriceTarget": [180.0],
+        "priceTargetAction": ["Raises"],
+    })
+    with patch("yahooquery.Ticker", mock_yq):
+        from mcp_tools.tools.sentiment import get_analyst_activity
+        result = await get_analyst_activity("NVDA")
+    assert isinstance(result, dict)
+    assert "ticker" in result
+    assert "activities" in result
+    assert isinstance(result["activities"], list)
+    assert len(result["activities"]) == 1
+    assert "upgrades" in result
+    assert "downgrades" in result
+    assert result["activities"][0]["new_target"] == 180.0
+
+
+async def test_get_analyst_activity_error_shape():
+    import pandas as pd
+    mock_yq = MagicMock()
+    mock_yq.return_value.grading_history = pd.DataFrame()
+    with patch("yahooquery.Ticker", mock_yq):
+        from mcp_tools.tools.sentiment import get_analyst_activity
+        result = await get_analyst_activity("FAIL")
+    assert isinstance(result, dict)
+    assert "activities" in result
+    assert result["activities"] == []
+
+
+# ── get_earnings_history with forward estimates ───────────────────────────────
+
+
+def _yf_ticker_with_earnings(symbol: str):
+    import pandas as pd
+    mock = _yf_ticker_mock(symbol)
+    mock.earnings_dates = pd.DataFrame(
+        {"EPS Estimate": [1.5], "Reported EPS": [1.6], "Surprise(%)": [6.67]},
+        index=pd.to_datetime(["2024-03-15"]),
+    )
+    return mock
+
+
+async def test_get_earnings_history_with_forward_estimates():
+    import pandas as pd
+    with patch("yfinance.Ticker", side_effect=_yf_ticker_with_earnings):
+        mock_yq = MagicMock()
+        mock_yq.return_value.earnings_trend = {
+            "NVDA": {
+                "trend": [{
+                    "period": "0q", "endDate": "2026-06-30", "growth": 0.2,
+                    "earningsEstimate": {"avg": 1.89, "low": 1.83, "high": 1.99, "numberOfAnalysts": 31},
+                    "epsRevisions": {"upLast7days": 0, "upLast30days": 24, "downLast7Days": 0, "downLast30days": 0},
+                    "revenueEstimate": {"avg": 109000000000, "growth": 0.16},
+                }]
+            }
+        }
+        with patch("yahooquery.Ticker", mock_yq):
+            from mcp_tools.tools.sentiment import get_earnings_history
+            result = await get_earnings_history("NVDA")
+    assert isinstance(result, dict)
+    assert "quarters" in result
+    assert "forward_estimates" in result
+    assert "eps_revisions" in result
+    assert isinstance(result["forward_estimates"], list)
+
+
+# ── get_valuation_timeseries ──────────────────────────────────────────────────
+
+
+async def test_get_valuation_timeseries_shape():
+    import pandas as pd
+    mock_yq = MagicMock()
+    mock_yq.return_value.valuation_measures = pd.DataFrame({
+        "asOfDate": [pd.Timestamp("2024-01-01"), pd.Timestamp("2024-04-01")],
+        "periodType": ["TTM", "TTM"],
+        "PeRatio": [25.0, 28.0],
+        "PsRatio": [7.0, 8.0],
+        "PbRatio": [40.0, 45.0],
+        "PegRatio": [1.5, 1.8],
+        "EnterpriseValue": [3e12, 3.5e12],
+        "EnterprisesValueEBITDARatio": [22.0, 24.0],
+        "EnterprisesValueRevenueRatio": [9.0, 10.0],
+        "MarketCap": [2.8e12, 3.2e12],
+    })
+    with patch("yahooquery.Ticker", mock_yq):
+        from mcp_tools.tools.market_data import get_valuation_timeseries
+        result = await get_valuation_timeseries("AAPL")
+    assert isinstance(result, dict)
+    assert "ticker" in result
+    assert "periods" in result
+    assert isinstance(result["periods"], list)
+    assert len(result["periods"]) == 2
+    assert "summary" in result
+
+
+async def test_get_valuation_timeseries_error_shape():
+    mock_yq = MagicMock()
+    mock_yq.return_value.valuation_measures = "No data"
+    with patch("yahooquery.Ticker", mock_yq):
+        from mcp_tools.tools.market_data import get_valuation_timeseries
+        result = await get_valuation_timeseries("FAIL")
+    assert isinstance(result, dict)
+    assert "periods" in result
+    assert result["periods"] == []

@@ -107,4 +107,5 @@ class QuantAnalysisState(TypedDict):
     positioning: dict | None
     macro_data: dict
     web_context: list[dict]
+    valuation_history: dict | None
     mcp_client: Any | None

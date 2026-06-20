@@ -27,6 +27,8 @@ from mcp_tools.infra.news_fetch import (
 )
 from mcp_tools.infra.rate_limiters import (
     _YF_LIMITER,
+    _YQ_LIMITER,
+    cache_analyst_activity,
     cache_news,
     cache_peers,
     cache_shocks,
@@ -476,10 +478,59 @@ async def get_sentiment_indicators(ticker: str) -> dict:
         return {"ticker": ticker.upper(), "error": str(exc)}
 
 
+async def _fetch_forward_estimates(ticker: str) -> dict:
+    """Fetch forward EPS estimates and revision momentum from yahooquery."""
+    try:
+        from yahooquery import Ticker as YQTicker  # lazy import
+        await _YQ_LIMITER.acquire()
+        loop = asyncio.get_event_loop()
+
+        def _fetch():
+            t = YQTicker(ticker.upper())
+            et = t.earnings_trend
+            if isinstance(et, str) or not isinstance(et, dict):
+                return {}
+            data = et.get(ticker.upper(), {})
+            if not isinstance(data, dict):
+                return {}
+            trend = data.get("trend", [])
+            estimates = []
+            revisions = []
+            for period in trend:
+                ee = period.get("earningsEstimate", {})
+                er = period.get("epsRevisions", {})
+                re_ = period.get("revenueEstimate", {})
+                estimates.append({
+                    "period": period.get("period"),
+                    "end_date": period.get("endDate"),
+                    "growth": period.get("growth"),
+                    "eps_avg": ee.get("avg"),
+                    "eps_low": ee.get("low"),
+                    "eps_high": ee.get("high"),
+                    "eps_year_ago": ee.get("yearAgoEps"),
+                    "n_analysts": ee.get("numberOfAnalysts"),
+                    "revenue_avg": re_.get("avg"),
+                    "revenue_growth": re_.get("growth"),
+                })
+                revisions.append({
+                    "period": period.get("period"),
+                    "up_last_7d": er.get("upLast7days", 0),
+                    "up_last_30d": er.get("upLast30days", 0),
+                    "down_last_7d": er.get("downLast7Days", 0),
+                    "down_last_30d": er.get("downLast30days", 0),
+                })
+            return {"forward_estimates": estimates, "eps_revisions": revisions}
+
+        return await loop.run_in_executor(None, _fetch)
+    except Exception as exc:
+        logger.debug("Forward estimates fetch failed (non-fatal): %s", exc)
+        return {}
+
+
 @app.tool()
 @observe()
 async def get_earnings_history(ticker: str, limit: int = 8) -> dict:
-    """Fetch quarterly earnings history: EPS estimates vs actuals and surprise %.
+    """Fetch quarterly earnings history: EPS estimates vs actuals, surprise %, and forward estimates.
 
     Args:
         ticker: Stock ticker symbol (e.g. NVDA, AAPL, MSFT)
@@ -490,46 +541,50 @@ async def get_earnings_history(ticker: str, limit: int = 8) -> dict:
           ticker, n_quarters,
           quarters (list of {date, eps_estimate, eps_actual, surprise_pct}),
           beat_rate (fraction of quarters where actual > estimate),
-          avg_surprise_pct
+          avg_surprise_pct,
+          forward_estimates (list of {period, end_date, growth, eps_avg, ...}),
+          eps_revisions (list of {period, up_last_7d, up_last_30d, down_last_7d, down_last_30d})
     """
+    result: dict = {
+        "ticker": ticker.upper(),
+        "quarters": [],
+        "beat_rate": None,
+        "avg_surprise_pct": None,
+        "n_quarters": 0,
+        "forward_estimates": [],
+        "eps_revisions": [],
+    }
     try:
         await _YF_LIMITER.acquire()
         loop = asyncio.get_event_loop()
         ed = await loop.run_in_executor(None, lambda: yf.Ticker(ticker).earnings_dates)
-        if ed is None or ed.empty:
-            return {
-                "ticker": ticker.upper(),
-                "quarters": [],
-                "beat_rate": None,
-                "avg_surprise_pct": None,
-                "n_quarters": 0,
-            }
-        # Filter to past quarters that have a reported EPS
-        past = ed[ed["Reported EPS"].notna()].head(limit)
-        quarters = []
-        for dt, row in past.iterrows():
-            quarters.append(
-                {
+        if ed is not None and not ed.empty:
+            past = ed[ed["Reported EPS"].notna()].head(limit)
+            quarters = []
+            for dt, row in past.iterrows():
+                quarters.append({
                     "date": dt.isoformat(),
                     "eps_estimate": _serialise_value(row.get("EPS Estimate")),
                     "eps_actual": _serialise_value(row.get("Reported EPS")),
                     "surprise_pct": _serialise_value(row.get("Surprise(%)")),
-                }
+                })
+            surprise_vals = [q["surprise_pct"] for q in quarters if q["surprise_pct"] is not None]
+            beat_count = sum(1 for s in surprise_vals if s > 0)
+            result["quarters"] = quarters
+            result["beat_rate"] = round(beat_count / len(surprise_vals), 3) if surprise_vals else None
+            result["avg_surprise_pct"] = (
+                round(sum(surprise_vals) / len(surprise_vals), 2) if surprise_vals else None
             )
-        surprise_vals = [q["surprise_pct"] for q in quarters if q["surprise_pct"] is not None]
-        beat_count = sum(1 for s in surprise_vals if s > 0)
-        return {
-            "ticker": ticker.upper(),
-            "quarters": quarters,
-            "beat_rate": round(beat_count / len(surprise_vals), 3) if surprise_vals else None,
-            "avg_surprise_pct": round(sum(surprise_vals) / len(surprise_vals), 2)
-            if surprise_vals
-            else None,
-            "n_quarters": len(quarters),
-        }
+            result["n_quarters"] = len(quarters)
     except Exception as exc:
-        logger.warning("get_earnings_history failed for %s: %s", ticker, exc)
-        return {"ticker": ticker.upper(), "error": str(exc), "quarters": []}
+        logger.warning("get_earnings_history yfinance failed for %s: %s", ticker, exc)
+        result["error"] = str(exc)
+
+    forward_data = await _fetch_forward_estimates(ticker)
+    result["forward_estimates"] = forward_data.get("forward_estimates", [])
+    result["eps_revisions"] = forward_data.get("eps_revisions", [])
+
+    return result
 
 
 @app.tool()
@@ -678,4 +733,79 @@ async def get_peers(ticker: str) -> dict:
     return await cache_peers.get_or_fetch(
         f"peers:{ticker.upper()}",
         lambda: _get_peers_uncached(ticker),
+    )
+
+
+# ──────────────────────────────────────────────
+# Analyst upgrade/downgrade activity
+# ──────────────────────────────────────────────
+
+
+async def _get_analyst_activity_uncached(ticker: str, limit: int) -> dict:
+    try:
+        from yahooquery import Ticker as YQTicker  # lazy import
+        await _YQ_LIMITER.acquire()
+        loop = asyncio.get_event_loop()
+
+        def _fetch() -> list[dict]:
+            t = YQTicker(ticker.upper())
+            gh = t.grading_history
+            if isinstance(gh, str):
+                return []
+            if isinstance(gh, dict) and ticker.upper() in gh:
+                return []
+            if hasattr(gh, "empty") and gh.empty:
+                return []
+            records = gh.reset_index().to_dict(orient="records")
+            return records[:limit]
+
+        raw = await loop.run_in_executor(None, _fetch)
+        activities = []
+        for r in raw:
+            grade_date = r.get("epochGradeDate", "")
+            activities.append({
+                "date": grade_date.isoformat()[:10] if hasattr(grade_date, "isoformat") else str(grade_date)[:10],
+                "firm": r.get("firm", ""),
+                "action": r.get("action", ""),
+                "from_grade": r.get("fromGrade", ""),
+                "to_grade": r.get("toGrade", ""),
+                "prior_target": _serialise_value(r.get("priorPriceTarget")),
+                "new_target": _serialise_value(r.get("currentPriceTarget")),
+                "target_action": r.get("priceTargetAction", ""),
+            })
+        return {
+            "ticker": ticker.upper(),
+            "activities": activities,
+            "total": len(activities),
+            "upgrades": sum(1 for a in activities if a["action"] == "up"),
+            "downgrades": sum(1 for a in activities if a["action"] == "down"),
+            "initiations": sum(1 for a in activities if a["action"] == "init"),
+        }
+    except Exception as exc:
+        logger.warning("get_analyst_activity failed for %s: %s", ticker, exc)
+        return {"ticker": ticker.upper(), "activities": [], "error": str(exc), "total": 0}
+
+
+@app.tool()
+@observe()
+@logged()
+async def get_analyst_activity(ticker: str, limit: int = 20) -> dict:
+    """Fetch recent analyst upgrade/downgrade/initiation activity for a ticker.
+
+    Returns firm names, action (upgrade/downgrade/initiate/reiterate),
+    prior and new grades, and price target changes.
+
+    Args:
+        ticker: Stock ticker symbol (e.g. NVDA, AAPL, MSFT)
+        limit:  Maximum activities to return (default 20)
+
+    Returns:
+        dict with keys:
+          ticker, activities (list of {date, firm, action, from_grade, to_grade,
+          prior_target, new_target, target_action}), total, upgrades, downgrades, initiations
+    """
+    logger.info("Tool called", extra={"tool": "get_analyst_activity", "ticker": ticker})
+    return await cache_analyst_activity.get_or_fetch(
+        f"analyst_activity:{ticker.upper()}:{limit}",
+        lambda: _get_analyst_activity_uncached(ticker, limit),
     )

@@ -53,6 +53,7 @@ def _base_state(**overrides) -> dict:
         "insider_data": None,
         "analyst_data": None,
         "correlation_matrix": {},
+        "valuation_history": None,
         "recommendation": "",
         "reasoning": "",
         "mcp_client": _stub_mcp(),

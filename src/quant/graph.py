@@ -175,6 +175,7 @@ class QuantAnalysisGraph:
             "positioning": None,
             "macro_data": {},
             "web_context": [],
+            "valuation_history": None,
             "recommendation": "",
             "reasoning": "",
             "mcp_client": mcp_client,

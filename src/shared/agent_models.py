@@ -201,6 +201,15 @@ class AnalystPositioning(BaseModel):
     short_pct_float: Optional[float] = Field(None, ge=0.0, le=1.0)
     earnings_surprise_est: Optional[float] = None
     short_squeeze_risk: bool = False
+    recent_upgrades: int = Field(0, ge=0)
+    recent_downgrades: int = Field(0, ge=0)
+    recent_initiations: int = Field(0, ge=0)
+    grade_momentum: Optional[str] = None
+    latest_actions: list[dict] = Field(default_factory=list)
+    eps_revision_up_30d: Optional[int] = Field(None, ge=0)
+    eps_revision_down_30d: Optional[int] = Field(None, ge=0)
+    eps_revision_momentum: Optional[str] = None
+    forward_eps_growth: Optional[float] = None
 
 
 class QuantAgentOutput(BaseModel):

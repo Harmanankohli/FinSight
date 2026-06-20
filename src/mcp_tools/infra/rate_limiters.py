@@ -7,6 +7,7 @@ from shared.redis_cache import make_cache
 # Rate limiters
 # ──────────────────────────────────────────────
 _YF_LIMITER = TokenBucket(rate=4, burst=8)  # Yahoo Finance: no published cap, conservative
+_YQ_LIMITER = TokenBucket(rate=4, burst=8)  # yahooquery: separate bucket from yfinance
 _EDGAR_LIMITER = TokenBucket(rate=8, burst=10)  # SEC: 10 req/s hard cap; stay below
 _NEWS_LIMITER = TokenBucket(rate=2, burst=4)  # RSS + Yahoo news fallback
 _SEARCH_LIMITER = TokenBucket(rate=2, burst=4)  # Yahoo Finance ticker search
@@ -26,5 +27,8 @@ cache_macro = make_cache(900, "macro")  # 15 min — macro moves slowly
 cache_peers = make_cache(86400, "peers")  # 24 hr — peers stable intraday
 cache_shocks = make_cache(604800, "shocks")  # 7 days — historical shocks
 cache_web_search = make_cache(300, "web_search")  # 5 min — web search results
+cache_analyst_activity = make_cache(3600, "analyst_activity")  # 1 hr — analyst grades change slowly
+cache_valuation_ts = make_cache(86400, "valuation_ts")  # 24 hr — quarterly data, very stable
+cache_earnings_trend = make_cache(3600, "earnings_trend")  # 1 hr — forward estimates
 
 BENCHMARK_TICKERS = frozenset({"^GSPC", "^IXIC", "^DJI", "^RUT", "^VIX", "DXY"})

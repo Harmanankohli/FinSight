@@ -146,10 +146,23 @@ async def fundamental_analysis_node(state: QuantAnalysisState) -> dict:
             sector=info.get("sector"),
             industry=info.get("industry"),
         ).model_dump(by_alias=True)
-        return {"fundamentals": fundamentals, "_financials_raw": data}
+        valuation_history = None
+        try:
+            val_res = await mcp.call_tool_by_name("get_valuation_timeseries", {"ticker": ticker})
+            if hasattr(val_res, "content") and val_res.content:
+                val_text = (
+                    val_res.content[0].text
+                    if hasattr(val_res.content[0], "text")
+                    else str(val_res.content[0])
+                )
+                valuation_history = json.loads(val_text)
+        except Exception as e:
+            logger.debug("Valuation timeseries fetch failed (non-fatal): %s", e)
+
+        return {"fundamentals": fundamentals, "_financials_raw": data, "valuation_history": valuation_history}
     except Exception as e:
         logger.warning("Fundamentals failed for %s: %s", ticker, e)
-        return {"fundamentals": None, "_financials_raw": {}}
+        return {"fundamentals": None, "_financials_raw": {}, "valuation_history": None}
 
 
 @logged()
@@ -329,6 +342,78 @@ async def analyst_positioning_node(state: QuantAnalysisState) -> dict:
     if trailing_eps and forward_eps and trailing_eps != 0:
         earnings_surprise = round((forward_eps - trailing_eps) / abs(trailing_eps), 3)
 
+    ticker = state["ticker"]
+    mcp = state.get("mcp_client")
+
+    recent_upgrades = 0
+    recent_downgrades = 0
+    recent_initiations = 0
+    latest_actions: list[dict] = []
+    grade_momentum = "stable"
+
+    if mcp:
+        try:
+            activity_res = await mcp.call_tool_by_name(
+                "get_analyst_activity", {"ticker": ticker, "limit": 15}
+            )
+            if hasattr(activity_res, "content") and activity_res.content:
+                act_text = (
+                    activity_res.content[0].text
+                    if hasattr(activity_res.content[0], "text")
+                    else str(activity_res.content[0])
+                )
+                act_data = json.loads(act_text)
+                recent_upgrades = act_data.get("upgrades", 0)
+                recent_downgrades = act_data.get("downgrades", 0)
+                recent_initiations = act_data.get("initiations", 0)
+                latest_actions = [
+                    {"firm": a["firm"], "action": a["action"],
+                     "to_grade": a["to_grade"], "new_target": a.get("new_target")}
+                    for a in (act_data.get("activities") or [])[:5]
+                ]
+                if recent_upgrades > recent_downgrades * 1.5:
+                    grade_momentum = "improving"
+                elif recent_downgrades > recent_upgrades * 1.5:
+                    grade_momentum = "deteriorating"
+        except Exception as e:
+            logger.debug("Analyst activity enrichment failed (non-fatal): %s", e)
+
+    eps_revision_up_30d = None
+    eps_revision_down_30d = None
+    eps_revision_momentum = None
+    forward_eps_growth = None
+
+    if mcp:
+        try:
+            earn_res = await mcp.call_tool_by_name(
+                "get_earnings_history", {"ticker": ticker, "limit": 4}
+            )
+            if hasattr(earn_res, "content") and earn_res.content:
+                earn_text = (
+                    earn_res.content[0].text
+                    if hasattr(earn_res.content[0], "text")
+                    else str(earn_res.content[0])
+                )
+                earn_data = json.loads(earn_text)
+                revisions = earn_data.get("eps_revisions", [])
+                if revisions:
+                    current_q = revisions[0]
+                    eps_revision_up_30d = current_q.get("up_last_30d")
+                    eps_revision_down_30d = current_q.get("down_last_30d")
+                    up = eps_revision_up_30d or 0
+                    down = eps_revision_down_30d or 0
+                    if up > down * 2:
+                        eps_revision_momentum = "positive"
+                    elif down > up * 2:
+                        eps_revision_momentum = "negative"
+                    else:
+                        eps_revision_momentum = "flat"
+                fwd = earn_data.get("forward_estimates", [])
+                if fwd:
+                    forward_eps_growth = fwd[0].get("growth")
+        except Exception as e:
+            logger.debug("Earnings trend enrichment failed (non-fatal): %s", e)
+
     return {
         "positioning": AnalystPositioning(
             recommendation_key=rec_key,
@@ -340,5 +425,14 @@ async def analyst_positioning_node(state: QuantAnalysisState) -> dict:
             short_pct_float=short_pct_float,
             earnings_surprise_est=earnings_surprise,
             short_squeeze_risk=bool(short_ratio and short_ratio > 5),
+            recent_upgrades=recent_upgrades,
+            recent_downgrades=recent_downgrades,
+            recent_initiations=recent_initiations,
+            grade_momentum=grade_momentum,
+            latest_actions=latest_actions,
+            eps_revision_up_30d=eps_revision_up_30d,
+            eps_revision_down_30d=eps_revision_down_30d,
+            eps_revision_momentum=eps_revision_momentum,
+            forward_eps_growth=forward_eps_growth,
         ).model_dump(),
     }
