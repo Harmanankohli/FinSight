@@ -1,3 +1,5 @@
+"""Cross-validates agent outputs for contradictions before report generation."""
+
 import logging
 
 logger = logging.getLogger(__name__)

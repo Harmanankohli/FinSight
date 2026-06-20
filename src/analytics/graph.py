@@ -1,3 +1,5 @@
+"""PydanticAI DAG pipeline: FetchDataNode → AnalyzeNode → FormatOutputNode → LLMSummaryNode."""
+
 import asyncio
 import json
 import logging
@@ -18,6 +20,12 @@ logger = logging.getLogger(__name__)
 
 
 class FetchDataNode(BaseNode[AnalyticsState, AnalyticsDeps]):
+    """Graph node: fetches price history and fundamentals via MCP in parallel.
+
+    Populates state.price_data (close prices keyed by date), state.ohlcv_data
+    (full OHLCV records), and state.fundamentals_data.  Transitions to AnalyzeNode.
+    """
+
     async def run(self, ctx: GraphRunContext[AnalyticsState, AnalyticsDeps]) -> "AnalyzeNode":
         ticker = ctx.deps.ticker
         period = ctx.deps.period
@@ -40,6 +48,14 @@ class FetchDataNode(BaseNode[AnalyticsState, AnalyticsDeps]):
 
 
 class AnalyzeNode(BaseNode[AnalyticsState, AnalyticsDeps]):
+    """Graph node: runs all five analysis functions in parallel.
+
+    Executes trend detection, forecasting, statistics, anomaly detection,
+    and chart generation concurrently via asyncio.gather.  If anomalies
+    exceed medium severity, performs a web search for catalyst context.
+    Transitions to FormatOutputNode.
+    """
+
     async def run(self, ctx: GraphRunContext[AnalyticsState, AnalyticsDeps]) -> FormatOutputNode:
         trend, forecast, stats, anomalies, charts = await asyncio.gather(
             _detect_trends(ctx.state.price_data),
@@ -109,6 +125,12 @@ class AnalyzeNode(BaseNode[AnalyticsState, AnalyticsDeps]):
 
 
 class AnalyticsPipeline:
+    """PydanticAI DAG that orchestrates the full analytics workflow.
+
+    Node sequence: FetchDataNode → AnalyzeNode → FormatOutputNode → LLMSummaryNode.
+    Each node mutates `AnalyticsState` and transitions to the next via return type.
+    """
+
     def __init__(self):
         self.graph = Graph(
             nodes=[FetchDataNode, AnalyzeNode, FormatOutputNode, LLMSummaryNode],

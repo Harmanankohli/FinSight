@@ -1,3 +1,5 @@
+"""Contradiction detection tool that flags conflicting statements across agent outputs."""
+
 import logging
 
 from shared.agent_models import ContradictionFlag
@@ -6,6 +8,7 @@ logger = logging.getLogger(__name__)
 
 
 def _safe_get(d: dict, *keys, default=None):
+    """Safely traverse a nested dict returning the value at `keys` or `default` if any key is missing."""
     for k in keys:
         if isinstance(d, dict):
             d = d.get(k, {})
@@ -15,6 +18,9 @@ def _safe_get(d: dict, *keys, default=None):
 
 
 def check_contradictions(agent_outputs: dict) -> list[dict]:
+    """Compare outputs from quant, RAG, market context, and analytics agents and return a list of
+    ContradictionFlag dicts for any cross-agent conflicts (e.g. BUY rec vs bearish trend, DCF vs macro
+    signal, RSI vs recommendation). Deduplicates repeated contradictions by category."""
     seen_categories: set[tuple[str, str]] = set()
     contradictions = []
 

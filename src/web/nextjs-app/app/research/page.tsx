@@ -1,3 +1,4 @@
+/** Research chat page with CopilotKit agent orchestration, agent tiles, and AG-UI trace rail. */
 "use client";
 
 import { useRef, useState, FormEvent, useEffect } from "react";
@@ -6,6 +7,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { addRecentQuery } from "@/lib/recentQueries";
 
+/** Downloads a research report for the given ticker in the requested format. */
 async function downloadReport(ticker: string, format: "html" | "pdf") {
   const res = await fetch(`/api/orch/api/reports/ticker/${ticker}/latest/${format}`);
   if (!res.ok) return;
@@ -32,6 +34,7 @@ const AGENTS = [
   { key: "reviewer", name: "Reviewer", sub: "OpenAI SDK · validation", color: "--reviewer", match: ["reviewer"], phase: 2 },
 ] as const;
 
+/** Returns the display status ("working", "done", or "idle") for an agent tile based on active agents. */
 function tileStatus(cfg: typeof AGENTS[number], active: string[], running: boolean) {
   if (active.some((a) => cfg.match.some((m) => a.toLowerCase().includes(m)))) {
     return running ? "working" : "done";
@@ -40,12 +43,14 @@ function tileStatus(cfg: typeof AGENTS[number], active: string[], running: boole
   return "idle";
 }
 
+/** Extracts a BUY/HOLD/SELL signal from the assistant's response text. */
 function extractSignal(text: string): { signal: string; cls: string } | null {
   const m = text.match(/\b(BUY|HOLD|SELL)\b/);
   if (!m) return null;
   return { signal: m[1], cls: m[1].toLowerCase() };
 }
 
+/** Main research page. Renders CopilotKit chat composer, agent status tiles, orchestrator progress bar, and AG-UI event trail. */
 export default function ResearchPage() {
   const { state, running } = useCoAgent<FinsightState>({ name: "finsight" });
   const { messages, sendMessage, isLoading } = useCopilotChatHeadless_c();

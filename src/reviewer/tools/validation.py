@@ -1,3 +1,5 @@
+"""Recommendation validation tool that assesses buy/sell/hold proposals against criteria."""
+
 import logging
 
 from shared.agent_models import RecommendationValidation
@@ -6,6 +8,7 @@ logger = logging.getLogger(__name__)
 
 
 def _safe_get(d: dict, *keys, default=None):
+    """Safely traverse a nested dict returning the value at `keys` or `default` if any key is missing."""
     for k in keys:
         if isinstance(d, dict):
             d = d.get(k, {})
@@ -15,6 +18,9 @@ def _safe_get(d: dict, *keys, default=None):
 
 
 def validate_recommendation(agent_outputs: dict) -> dict:
+    """Evaluate the quant recommendation against evidence from DCF, technicals, macro, fundamentals,
+    Monte Carlo, and RAG sentiment. Returns a RecommendationValidation dict with supporting and
+    contradicting evidence lists, an evidence_supports flag, and an evidence_strength rating."""
     quant = agent_outputs.get("quant", {})
     rag = agent_outputs.get("rag", {})
     market = agent_outputs.get("market_context", {})

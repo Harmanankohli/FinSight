@@ -1,3 +1,9 @@
+"""Orchestrator agent definition: ADK LlmAgent, sub-agent delegation tools, and memory persistence.
+
+Provides the root_agent (LlmAgent) that coordinates specialized investment sub-agents
+via A2A protocol, along with tool functions for task delegation, memory search, and
+investment brief persistence.
+"""
 # ruff: noqa: E402, E501
 import asyncio
 import json
@@ -245,7 +251,7 @@ def pop_agent_responses(session_id: str) -> dict[str, dict]:
 
 
 def _synthesis_text_from_context(tool_context) -> str:
-    """Return the longest LLM text from the current turn in session.events."""
+    """Extract the longest LLM-generated text from the current turn in session events."""
     try:
         events = tool_context.session.events
     except AttributeError:
@@ -496,6 +502,7 @@ For general chat or non-stock queries, respond conversationally.\
 
 # Dynamically inject available sub-agents into the LLM system prompt
 def _build_instruction(session_id: str | None = None) -> str:
+    """Build the dynamic system prompt with today's date and available sub-agents."""
     today = datetime.now(IST).date().isoformat()
     agent_list = _client.list_agents()
     if agent_list:
@@ -528,6 +535,7 @@ def _build_instruction(session_id: str | None = None) -> str:
 
 # Async startup: discover sub-agents on boot
 async def discover_background() -> None:
+    """Discover available sub-agents by polling the A2A registry on startup."""
     await _client.discover()
     agent_list = _client.list_agents()
     logger.info(
@@ -538,6 +546,7 @@ async def discover_background() -> None:
 
 
 def _instruction_provider(ctx=None) -> str:
+    """Provide the dynamic system prompt, extracting session_id from the ADK context."""
     session_id = None
     if ctx and hasattr(ctx, "session") and ctx.session and hasattr(ctx.session, "id"):
         session_id = ctx.session.id
@@ -561,5 +570,5 @@ root_agent._sub_agent_client = _client
 
 
 async def start_background_discovery():
-    """Called from Starlette lifespan to avoid import-time side effects."""
+    """Discover sub-agents at startup, called from the Starlette lifespan to avoid import-time side effects."""
     await discover_background()

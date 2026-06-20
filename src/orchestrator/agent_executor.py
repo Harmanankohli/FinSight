@@ -1,3 +1,9 @@
+"""A2A agent executor that runs the ADK orchestrator with caching, guardrails, and memory.
+
+Wraps the ADK Runner in an A2A AgentExecutor interface with input/output guardrails,
+semantic caching, ticker validation, and automatic memory persistence.
+"""
+
 import asyncio
 import json
 import logging
@@ -33,6 +39,7 @@ _semantic_cache = None
 
 @logged_sync(log_result=False)
 def _get_semantic_cache():
+    """Lazy-init and return the global SemanticCache instance, or None if disabled."""
     global _semantic_cache
     if _SEMANTIC_CACHE_ENABLED and _semantic_cache is None:
         try:
@@ -71,6 +78,7 @@ class FinSightAgentExecutor(AgentExecutor):
     """
 
     def __init__(self, runner: Runner) -> None:
+        """Store the ADK runner reference and initialise task state."""
         self._runner = runner
         self._task: asyncio.Task | None = None
 
@@ -142,6 +150,7 @@ class FinSightAgentExecutor(AgentExecutor):
 
     @logged(log_args=False, log_result=False)
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
+        """Run the ADK orchestrator agent for a single A2A request with guardrails and caching."""
         self._task = asyncio.current_task()
         context_id = context.context_id
         user_id = _resolve_user_id(context)
@@ -319,6 +328,7 @@ class FinSightAgentExecutor(AgentExecutor):
         original_input: str = "",
         context_id: str = "",
     ) -> None:
+        """Validate, persist, and emit the orchestrator's final response with output guardrails."""
         if not (event.content and event.content.parts and event.content.parts[0].text):
             if span:
                 span.update(output={"error": "No text content"})
@@ -385,6 +395,7 @@ class FinSightAgentExecutor(AgentExecutor):
 
     @logged()
     async def ensure_session(self, user_id: str, context_id: str) -> None:
+        """Create an ADK session if one does not already exist for this user and context."""
         session = await self._runner.session_service.get_session(
             app_name=self._runner.app_name,
             user_id=user_id,
@@ -398,6 +409,7 @@ class FinSightAgentExecutor(AgentExecutor):
             )
 
     async def cancel(self, context, event_queue) -> None:
+        """Cancel the currently running agent task if it is still in progress."""
         if self._task and not self._task.done():
             self._task.cancel()
 
@@ -458,6 +470,7 @@ class FinSightAgentExecutor(AgentExecutor):
     # Label past analysis TODAY (return directly) vs STALE (must re-run agents)
     @logged(log_result=False)
     async def _build_memory_context(self, user_input: str, user_id: str) -> str:
+        """Fetch prior analysis and holdings for prompt injection to inform the LLM."""
         """Build compact memory context for prompt injection."""
         from datetime import datetime
 
@@ -670,6 +683,7 @@ class FinSightAgentExecutor(AgentExecutor):
 
 
 def _resolve_user_id(context: RequestContext) -> str:
+    """Extract the authenticated username from the A2A request context, falling back to a default."""
     if context.call_context and context.call_context.user.is_authenticated:
         return context.call_context.user.user_name
     return "a2a_user"

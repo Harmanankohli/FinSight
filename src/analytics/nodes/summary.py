@@ -1,3 +1,5 @@
+"""Aggregates signals into bull/bear/neutral and generates LLM prose summary."""
+
 import json
 import logging
 
@@ -16,6 +18,14 @@ logger = logging.getLogger(__name__)
 
 
 class FormatOutputNode(BaseNode[AnalyticsState, AnalyticsDeps]):
+    """Graph node: aggregates all analysis signals into a single bull/bear/neutral vote.
+
+    Each analysis dimension contributes a signal value (-1, 0, or +1):
+      trend direction, forecast change >5%, anomaly severity,
+      leptokurtic distribution.  Average signal → final classification.
+    Transitions to LLMSummaryNode for prose generation.
+    """
+
     async def run(self, ctx: GraphRunContext[AnalyticsState, AnalyticsDeps]) -> "LLMSummaryNode":
         trend = ctx.state.trend_analysis or {}
         forecast = ctx.state.forecast_result or {}
@@ -67,6 +77,13 @@ class FormatOutputNode(BaseNode[AnalyticsState, AnalyticsDeps]):
 
 
 class LLMSummaryNode(BaseNode[AnalyticsState, AnalyticsDeps]):
+    """Graph node: generates a human-readable prose summary via LLM.
+
+    Feeds all analysis data (trend, forecast, stats, anomalies, signal)
+    to a summary agent and stores the result in state.reasoning.
+    Terminal node — returns End() with AnalyticsAgentOutput dict.
+    """
+
     async def run(self, ctx: GraphRunContext[AnalyticsState, AnalyticsDeps]) -> End[dict]:
         model = OpenAIModel(
             LLM_SUMMARY_MODEL,

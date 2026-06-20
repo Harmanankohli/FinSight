@@ -1,3 +1,4 @@
+"""Abstract BaseAgent class for A2A-compatible agents. Defines the agent lifecycle, task processing, and card interface."""
 import logging
 from abc import ABC
 from collections.abc import AsyncIterable, AsyncIterator

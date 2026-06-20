@@ -1,3 +1,5 @@
+"""Pipeline for ingesting financial documents (SEC filings, earnings, news, analyst reports) into ChromaDB collections."""  # noqa: E501
+
 import logging
 from datetime import datetime, timezone
 
@@ -7,6 +9,8 @@ logger = logging.getLogger(__name__)
 
 
 class DocumentIngestionPipeline:
+    """Orchestrates ingestion of structured financial data into typed ChromaDB collections (sec_filings, earnings, news, analyst_reports)."""  # noqa: E501
+
     def __init__(self, index_manager: FinancialIndexManager):
         self._index = index_manager
 
@@ -18,6 +22,7 @@ class DocumentIngestionPipeline:
         file_name: str,
         date: str | None = None,
     ) -> dict:
+        """Build a standardized document dict with ticker, source, file_name, date metadata for ChromaDB insertion."""  # noqa: E501
         return {
             "text": text,
             "ticker": ticker.upper(),
@@ -27,7 +32,7 @@ class DocumentIngestionPipeline:
         }
 
     def ingest_sec_filing(self, ticker: str, filing: dict) -> int:
-        # Inserts into the "sec_filings" ChromaDB collection (10-K, 10-Q, 8-K documents)
+        """Insert a single SEC filing (10-K, 10-Q, 8-K) into the sec_filings collection with form metadata and truncated content."""  # noqa: E501
         form = filing.get("form", "UNKNOWN")
         description = filing.get("description", "")
         url = filing.get("edgar_url", "")
@@ -41,7 +46,7 @@ class DocumentIngestionPipeline:
         return self._index.ingest_documents("sec_filings", [doc])
 
     def ingest_earnings_transcript(self, ticker: str, transcript: dict) -> int:
-        # Inserts into the "earnings" collection (earnings call transcripts)
+        """Insert an earnings call transcript into the earnings collection with quarter/date metadata."""  # noqa: E501
         text = transcript.get("text", "")
         date = transcript.get("date", "")
         quarter = transcript.get("quarter", "")
@@ -56,7 +61,7 @@ class DocumentIngestionPipeline:
         return self._index.ingest_documents("earnings", [doc])
 
     def ingest_news_article(self, ticker: str, article: dict) -> int:
-        # Inserts into the "news" collection (financial news articles with sentiment)
+        """Insert a financial news article with sentiment into the news collection."""  # noqa: E501
         title = article.get("title", "")
         summary = article.get("summary", "")
         url = article.get("url", "")
@@ -66,7 +71,7 @@ class DocumentIngestionPipeline:
         return self._index.ingest_documents("news", [doc])
 
     def ingest_analyst_report(self, ticker: str, report: dict) -> int:
-        # Inserts into the "analyst_reports" collection (sell-side analyst research)
+        """Insert a sell-side analyst research report into the analyst_reports collection."""  # noqa: E501
         title = report.get("title", "")
         content = report.get("content", "")
         analyst = report.get("analyst", "unknown")
@@ -76,6 +81,7 @@ class DocumentIngestionPipeline:
         return self._index.ingest_documents("analyst_reports", [doc])
 
     def ingest_sec_filings_batch(self, ticker: str, filings: list[dict]) -> int:
+        """Ingest multiple SEC filings for a ticker in batch and log the total count."""  # noqa: E501
         total = 0
         for filing in filings:
             total += self.ingest_sec_filing(ticker, filing)
@@ -90,7 +96,7 @@ class DocumentIngestionPipeline:
         news: list[dict] | None = None,
         analyst_reports: list[dict] | None = None,
     ) -> dict[str, int]:
-        # Bulk ingestion router: dispatches each data source to its dedicated collection
+        """Bulk ingestion router: dispatches each data source type to its dedicated ChromaDB collection and returns per-collection counts."""  # noqa: E501
         counts: dict[str, int] = {}
         if sec_filings:
             counts["sec_filings"] = self.ingest_sec_filings_batch(ticker, sec_filings)

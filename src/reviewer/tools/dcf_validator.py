@@ -1,3 +1,5 @@
+"""DCF valuation validation tool that checks for sanity and flags unrealistic results."""
+
 import logging
 
 logger = logging.getLogger(__name__)

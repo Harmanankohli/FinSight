@@ -1,3 +1,5 @@
+"""Unit tests for the memory store database layer."""
+
 from shared.memory.store import SCHEMA_VERSION, get_db, init_db
 
 

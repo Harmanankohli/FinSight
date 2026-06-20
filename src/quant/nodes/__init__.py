@@ -1,3 +1,10 @@
+"""Public API for quant graph nodes — re-exports all node functions.
+
+Each node is a callable that takes state + MCP client and returns
+an updated state dict.  Used by QuantAnalysisGraph._build_graph()
+to register nodes in the LangGraph state machine.
+"""
+
 from .data_fetch import (
     analyst_positioning_node,
     fetch_price_data_node,

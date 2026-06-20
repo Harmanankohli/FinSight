@@ -1,3 +1,9 @@
+"""Market Context Agent — macro regime analysis and competitive peer positioning.
+
+Collects macro indicators, financial data, and web context for a ticker, then
+delegates structured analysis to a CrewAI crew for narrative generation.
+"""
+
 import asyncio
 import json
 import logging
@@ -16,6 +22,13 @@ logger = logging.getLogger(__name__)
 
 
 class MarketContextAgent(BaseAgent):
+    """Agent that gathers market context data and produces a macro/peer analysis report.
+
+    Fetches macro indicators, financials, web search results, and peer data for a
+    given ticker, then kicks off a CrewAI crew to generate a structured narrative
+    with an overall sentiment signal and confidence score.
+    """
+
     @logged_sync(log_args=False, log_result=False)
     def __init__(self):
         super().__init__(
@@ -26,6 +39,12 @@ class MarketContextAgent(BaseAgent):
 
     @logged()
     async def _collect_data_parallel(self, ticker: str, mcp) -> dict:
+        """Fetch macro, financials, web context, and peer data concurrently.
+
+        Executes four stages of parallel MCP calls — macro indicators,
+        primary financials, web search, and peer discovery — then aggregates
+        results into a single dict consumed by the crew builder.
+        """
         async def call(tool, args):
             try:
                 r = await mcp.call_tool_by_name(tool, args)
@@ -116,6 +135,12 @@ class MarketContextAgent(BaseAgent):
 
     @logged()
     async def analyze(self, ticker: str, query_text: str) -> dict:
+        """Run full market context analysis for a ticker.
+
+        Collects data via MCP calls, hands it to the CrewAI crew for
+        narrative generation, and enriches the result with peer comparison
+        metrics and retrieved context summaries.
+        """
         mcp = await get_shared_mcp()
         data = await self._collect_data_parallel(ticker, mcp)
         logger.info(
@@ -147,11 +172,21 @@ class MarketContextAgent(BaseAgent):
         return result
 
     async def stream(self, query: str, context_id: str, task_id: str) -> AsyncIterable[dict]:
+        """Stream a single market-context response for the given query.
+
+        Part of the BaseAgent interface; delegates to _build_response
+        and yields the result as a single chunk.
+        """
         logger.info("MarketContextAgent.stream() called: query=%s...", query[:80])
         yield await self._build_response(query)
 
     @logged()
     async def _build_response(self, query: str) -> dict:
+        """Resolve ticker from query, run analysis, and return a structured response.
+
+        Handles ticker resolution, analysis execution, telemetry tracing,
+        and optional evaluation deferral when EVAL_ENABLED is set.
+        """
         async with self._telemetry_span("market-context-agent-stream", query) as (
             trace_ctx,
             span,
@@ -199,6 +234,11 @@ class MarketContextAgent(BaseAgent):
 
     @staticmethod
     def _extract_retrieved_contexts(data: dict) -> list[str]:
+        """Flatten collected data into a list of human-readable context strings.
+
+        Extracts macro regime, sector performance, peer financials, and web
+        snippets from the raw data dict for downstream evaluation or logging.
+        """
         contexts: list[str] = []
 
         macro = data.get("macro", {})

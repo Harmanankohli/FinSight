@@ -1,3 +1,4 @@
+"""GenericAgentExecutor pattern used by most agent servers. Implements the A2A AgentExecutor interface with LangGraph integration."""
 import asyncio
 import logging
 

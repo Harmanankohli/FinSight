@@ -1,3 +1,4 @@
+"""Ticker resolution, validation, and MCP helpers. Parses tickers from text, validates them, and supports fuzzy matching."""
 import json
 import re
 

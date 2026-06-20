@@ -1,3 +1,5 @@
+"""Unit tests for the TokenBucket rate limiter."""
+
 import asyncio
 import time
 

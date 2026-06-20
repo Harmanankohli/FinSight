@@ -1,3 +1,5 @@
+"""Metric integrity validation tool that checks for missing or anomalous financial data."""
+
 def _safe_get(d: dict, *keys, default=None):
     for k in keys:
         if isinstance(d, dict):

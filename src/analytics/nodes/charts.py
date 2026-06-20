@@ -1,3 +1,10 @@
+"""Chart data generation for the analytics agent.
+
+Produces structured candlestick and SMA overlay chart payloads
+for frontend rendering.  The candlestick chart shows the last 90
+OHLCV records; the line chart overlays close price with SMA20/50/200.
+"""
+
 import logging
 
 from shared.agent_models import ChartPayload
@@ -6,6 +13,11 @@ logger = logging.getLogger(__name__)
 
 
 def _sma(values: list[float], window: int) -> list[float | None]:
+    """Simple moving average — pure Python (no numpy dependency).
+
+    Returns list of same length; first (window-1) entries are None
+    because fewer than `window` data points are available.
+    """
     if len(values) < window:
         return [None] * len(values)
     result = []
@@ -18,6 +30,12 @@ def _sma(values: list[float], window: int) -> list[float | None]:
 
 
 async def _generate_charts(ohlcv_data: list[dict], price_data: dict) -> list[dict]:
+    """Generate candlestick and SMA line chart payloads.
+
+    Candlestick: last 90 OHLCV records with all 5 fields (O/H/L/C/V).
+    Line chart: full close series with SMA20, SMA50, SMA200 overlays.
+    Returns list of ChartPayload model dumps or empty list on failure.
+    """
     try:
         charts = []
 

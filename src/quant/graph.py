@@ -1,3 +1,9 @@
+"""LangGraph pipeline definition for quantitative stock analysis.
+
+Builds a directed graph with parallel fan-out nodes for price data, fundamentals,
+options flow, insider signals, and web context, converging at formatting and
+LLM summarisation."""
+
 # ruff: noqa: E501
 import logging
 from typing import Any
@@ -29,6 +35,7 @@ logger = logging.getLogger(__name__)
 
 @logged_sync()
 def _route_on_volatility(state: QuantAnalysisState) -> str:
+    """Conditional edge — route to *stress_test* if volatility exceeds 35 %, otherwise to *dcf*."""
     # Conditional edge: high volatility (>35%) → stress test (tail-risk focused), low → DCF (fundamental value)  # noqa: E501
     if state.get("is_high_volatility", False):
         logger.info(
@@ -44,13 +51,21 @@ def _route_on_volatility(state: QuantAnalysisState) -> str:
 
 
 class QuantAnalysisGraph:
+    """Defines and compiles the LangGraph :class:`StateGraph` for quant analysis.
+
+    The graph fans out across independent data-fetching branches, applies
+    volatility-gated routing (stress test vs. DCF), and converges on a single
+    formatted output with an LLM-generated summary."""
+
     @logged_sync(log_args=False, log_result=False)
     def __init__(self):
+        """Initialise by building and compiling the :class:`StateGraph`."""
         self._graph = self._build_graph()
 
     @logged_sync(log_result=False)
     def _build_graph(self) -> StateGraph:
-        """
+        """Construct and compile the quant analysis LangGraph with parallel fan-out edges and a volatility-gated branch.
+
         Fan-out topology:
 
         START ──→ fetch_prices ──→ compute_base_metrics ──[conditional]──→ run_stress_test ──→ portfolio_correlation ──→ format_output  # noqa: E501
@@ -133,6 +148,10 @@ class QuantAnalysisGraph:
         mcp_client: Any | None = None,
         langfuse_handler: Any | None = None,
     ) -> dict:
+        """Execute the full graph pipeline for *ticker* and return a validated output dict.
+
+        Builds the initial state, invokes the compiled graph, validates the result
+        against :class:`QuantAgentOutput`, and falls back to a raw dict on failure."""
         initial: QuantAnalysisState = {
             "ticker": ticker.upper(),
             "period": period,

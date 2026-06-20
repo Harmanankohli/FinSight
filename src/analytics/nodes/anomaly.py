@@ -1,3 +1,11 @@
+"""Anomaly detection for the analytics agent.
+
+Detects price spikes (>2.5σ z-score on log-returns), volume anomalies
+(>3σ z-score), and fundamental outliers (PE <5 or >100, D/E >5).
+Severity is rated none/low/medium/high based on anomaly count and
+maximum z-score magnitude.
+"""
+
 import logging
 
 import numpy as np
@@ -8,6 +16,16 @@ logger = logging.getLogger(__name__)
 
 
 async def _detect_anomalies(
+    price_data: dict, ohlcv_data: list[dict], fundamentals_data: dict
+) -> dict:
+    """Detect price, volume, and fundamental anomalies via z-score.
+
+    Price spikes: z-score > 2.5 on log returns.
+    Volume spikes: z-score > 3.0 on raw volume.
+    Fundamentals: PE < 5 or > 100, D/E > 5.
+    Severity thresholds: none (0), low (≤2 anomalies, z<3.5),
+    medium (≤5, z<4.5), high (otherwise).
+    """
     price_data: dict, ohlcv_data: list[dict], fundamentals_data: dict
 ) -> dict:
     try:

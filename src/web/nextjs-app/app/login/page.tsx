@@ -1,3 +1,4 @@
+/** Login page with username/password form and redirect support. */
 "use client";
 
 import { Suspense, useState, type FormEvent } from "react";
@@ -77,6 +78,7 @@ function LoginForm() {
   );
 }
 
+/** Login page component. Renders the login card with form inside Suspense. */
 export default function LoginPage() {
   return (
     <div className="login-page">

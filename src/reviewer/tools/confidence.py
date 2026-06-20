@@ -1,3 +1,5 @@
+"""Confidence scoring tool that evaluates agent outputs for reliability."""
+
 import logging
 import re
 

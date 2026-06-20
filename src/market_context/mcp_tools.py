@@ -1,4 +1,11 @@
 # ruff: noqa: E402
+"""Dynamic MCP-to-CrewAI tool wrappers.
+
+Provides DynamicMCPTool (a CrewAI BaseTool subclass that delegates execution
+to an MCP server) and MCPClientWrapper (a caching discovery layer that
+wraps the raw MCP client for use inside a CrewAI agent context).
+"""
+
 import asyncio
 import json
 import logging
@@ -14,6 +21,11 @@ from shared.logging_config import logged, logged_sync
 
 @logged_sync()
 def _build_args_schema(name: str, input_schema: dict) -> type[BaseModel]:
+    """Dynamically generate a Pydantic model from an MCP tool's JSON input schema.
+
+    Converts the ``properties`` and ``required`` fields of the schema into
+    typed Pydantic fields so CrewAI can validate tool arguments at runtime.
+    """
     fields = {}
     props = input_schema.get("properties", {})
     required = input_schema.get("required", [])
@@ -34,7 +46,12 @@ def _build_args_schema(name: str, input_schema: dict) -> type[BaseModel]:
 
 
 class DynamicMCPTool(BaseTool):
-    # Wraps an MCP server tool as a CrewAI BaseTool so the Agent can call it directly via tool name
+    """CrewAI BaseTool wrapper around a single MCP server tool.
+
+    Dynamically builds a Pydantic args schema from the MCP tool's input
+    schema so the CrewAI agent can call it with validated parameters.
+    """
+
     name: str = ""
     description: str = ""
 
@@ -46,7 +63,11 @@ class DynamicMCPTool(BaseTool):
         input_schema: dict,
         mcp_wrapper: "MCPClientWrapper",
     ):
-        # Dynamically builds a Pydantic args_schema from the MCP tool's JSON input_schema
+        """Initialise the tool with name, description, and schema derived from the MCP tool definition.
+
+        The args_schema is built dynamically from the MCP tool's input_schema
+        to enable CrewAI parameter validation.
+        """
         args_schema = _build_args_schema(tool_name, input_schema)
         super().__init__(name=tool_name, description=tool_description, args_schema=args_schema)
         self._tool_name = tool_name
@@ -54,8 +75,11 @@ class DynamicMCPTool(BaseTool):
 
     @logged_sync()
     def _run(self, **kwargs: Any) -> str:
-        # CrewAI calls _run from a thread executor (crew.kickoff wrapped in run_in_executor),
-        # so asyncio.run() is safe here. No running loop in the worker thread.
+        """Synchronous entry point called by CrewAI from a worker thread.
+
+        Delegates to the MCP client wrapper via asyncio.run (safe because
+        CrewAI invokes _run from a thread executor, not an async loop).
+        """
         result = asyncio.run(self._mcp.call_by_name(self._tool_name, kwargs))
         if isinstance(result, str):
             return result
@@ -63,15 +87,26 @@ class DynamicMCPTool(BaseTool):
 
 
 class MCPClientWrapper:
-    # Discovers and caches MCP tools lazily; provides a synchronous call interface for CrewAI tools
+    """Caching adapter that wraps a raw MCP client for CrewAI tool discovery and invocation.
+
+    Lazily discovers available tools from the MCP server, wraps each as a
+    DynamicMCPTool, and provides async call methods accessible by tool name
+    or by server/tool pair.
+    """
+
     @logged_sync(log_args=False, log_result=False)
     def __init__(self, mcp_client: Any):
+        """Store the underlying MCP client and initialise the tool-name-to-description cache."""
         self._client = mcp_client
         self._tool_cache: dict[str, Any] = {}
 
     @logged()
     async def discover_tools(self) -> list[DynamicMCPTool]:
-        # Fetches tool list from MCP server and wraps each as a DynamicMCPTool, caching descriptions
+        """Fetch available tools from the MCP server and wrap each as a DynamicMCPTool.
+
+        Results are cached internally so subsequent calls return the same
+        wrapper instances. Logs each discovered tool name and description.
+        """
         tools = await self._client.list_tools()
         discovered = []
         for t in tools:
@@ -86,6 +121,12 @@ class MCPClientWrapper:
 
     @logged()
     async def call_by_name(self, tool_name: str, params: dict) -> Any:
+        """Call an MCP tool by name and return a serialisable result.
+
+        Handles content extraction from the MCP response object,
+        returning either joined text, the raw content list, a dict,
+        or a string representation as fallback.
+        """
         try:
             result = await self._client.call_tool_by_name(tool_name, params)
             if hasattr(result, "content") and isinstance(result.content, list):
@@ -107,6 +148,11 @@ class MCPClientWrapper:
 
     @logged()
     async def call(self, server: str, tool: str, params: dict) -> Any:
+        """Call an MCP tool by server name and tool name.
+
+        Similar to call_by_name but uses the two-parameter server/tool
+        routing provided by the underlying MCP client.
+        """
         try:
             result = await self._client.call_tool(server, tool, params)
             if hasattr(result, "content") and isinstance(result.content, list):

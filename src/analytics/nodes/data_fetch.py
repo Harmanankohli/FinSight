@@ -1,9 +1,22 @@
+"""Data-fetching helpers for the analytics graph.
+
+Retrieves price history and fundamentals from the shared MCP server.
+Both functions gracefully handle failures by returning empty dicts so
+downstream nodes never crash on missing data.
+"""
+
 import logging
 
 logger = logging.getLogger(__name__)
 
 
 async def _fetch_prices(mcp_client, ticker: str, period: str) -> dict:
+    """Fetch OHLCV price data for a ticker over the given period.
+
+    Returns dict with 'close_data' (date → price map) and 'ohlcv_data'
+    (list of OHLCV records).  Keys are normalised to lowercase for
+    compatibility with both Yahoo Finance and FMP data sources.
+    """
     try:
         import json
 
@@ -46,6 +59,10 @@ async def _fetch_prices(mcp_client, ticker: str, period: str) -> dict:
 
 
 async def _fetch_fundamentals(mcp_client, ticker: str) -> dict:
+    """Fetch fundamentals data (PE ratio, debt/equity, etc.) via MCP.
+
+    Returns parsed JSON dict or empty dict on any error.
+    """
     try:
         import json
 

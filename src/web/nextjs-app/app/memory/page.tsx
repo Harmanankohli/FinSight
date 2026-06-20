@@ -1,8 +1,10 @@
+/** Memory page displaying stored investment briefs with search, expand, and download capabilities. */
 "use client";
 
 import { Suspense, useEffect, useState, FormEvent } from "react";
 import { useSearchParams } from "next/navigation";
 
+/** Downloads a brief report by its database ID in the requested format. */
 async function downloadReportById(briefId: string, ticker: string, format: "html" | "pdf") {
   const res = await fetch(`/api/orch/api/reports/${briefId}/${format}`);
   if (!res.ok) return;
@@ -22,6 +24,7 @@ interface Brief {
 
 const COMMON_TICKERS = ["NVDA", "AAPL", "MSFT", "TSLA", "GOOGL", "AMZN", "META", "LLY"];
 
+/** Memory page component wrapped in Suspense. Renders search form and brief cards. */
 export default function MemoryPage() {
   return (
     <Suspense fallback={<div className="topbar"><div><h1>Memory</h1></div></div>}>

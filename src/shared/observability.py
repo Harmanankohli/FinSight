@@ -1,3 +1,5 @@
+"""OpenTelemetry and Langfuse instrumentation setup for tracing and observability."""
+
 import base64
 import logging
 import os

@@ -1,3 +1,4 @@
+/** Sidebar navigation component with links, recent queries, and user session info. */
 "use client";
 
 import { useEffect, useState } from "react";
@@ -14,6 +15,7 @@ const NAV = [
   { href: "/operator", label: "Operator", icon: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z" },
 ];
 
+/** Renders the sidebar: logo, navigation links, recent query shortcuts, and footer with user info and sign-out. */
 export function Sidebar() {
   const pathname = usePathname();
   const { user, logout } = useAuth();

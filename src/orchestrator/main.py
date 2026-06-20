@@ -1,3 +1,9 @@
+"""Entry point for the A2A investment orchestrator server: Starlette app, routes, and lifecycle.
+
+Builds and runs the orchestrator Starlette application with A2A protocol routes,
+REST API routes, authentication middleware, and background sub-agent discovery.
+"""
+
 # ruff: noqa: E402
 import asyncio
 import logging
@@ -99,6 +105,8 @@ request_handler = DefaultRequestHandler(
 
 
 async def health(request):
+    """Return a simple health-check JSON response."""
+
     return JSONResponse({"status": "ok", "agent": "orchestrator"})
 
 
@@ -160,6 +168,8 @@ routes.append(Route("/reports/{filename}", _authenticated_report, methods=["GET"
 
 @asynccontextmanager
 async def lifespan(app):
+    """Start background sub-agent discovery on startup and cleanly disconnect MCP clients on shutdown."""
+
     await start_background_discovery()
     yield
     from shared.mcp_client import _global_client
@@ -189,6 +199,7 @@ app = Starlette(
 
 
 async def start_server(host: str, port: int) -> None:
+    """Initialise storage, prune stale records, then start the uvicorn HTTP server."""
     # Initialize SQLite tables before accepting connections
     from shared.memory.store import get_db, prune_old_records
 

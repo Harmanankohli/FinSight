@@ -1,5 +1,7 @@
+/** Agent identifier keys used throughout the dashboard and UI for color-coding. */
 export type AgentKey = "orchestrator" | "rag" | "quant" | "market" | "analytics" | "reviewer" | "mcp";
 
+/** Maps a trace/observation name to an {@link AgentKey} based on keyword matching. */
 export function classifyAgent(name: string): AgentKey {
   const n = (name || "").toLowerCase();
   if (n.includes("rag") || n.includes("llamaindex") || n.includes("filing")) return "rag";
@@ -11,6 +13,7 @@ export function classifyAgent(name: string): AgentKey {
   return "orchestrator";
 }
 
+/** Maps each agent key to its accent CSS variable for UI color-coding. */
 export const AGENT_COLOR: Record<AgentKey, string> = {
   orchestrator: "var(--clay)",
   rag: "var(--rag)",
@@ -21,6 +24,7 @@ export const AGENT_COLOR: Record<AgentKey, string> = {
   mcp: "var(--mcp)",
 };
 
+/** Maps each agent key to its background CSS variable for UI tiles. */
 export const AGENT_BG: Record<AgentKey, string> = {
   orchestrator: "var(--orch-bg)",
   rag: "var(--rag-bg)",
@@ -31,10 +35,12 @@ export const AGENT_BG: Record<AgentKey, string> = {
   mcp: "var(--mcp-bg)",
 };
 
+/** Maps Langfuse score agent names that differ from the canonical key (e.g. market_context → market). */
 export const SCORE_AGENT_TO_KEY: Record<string, AgentKey> = {
   market_context: "market",
 };
 
+/** Normalizes Langfuse score agent names (e.g. "market_context") to the canonical {@link AgentKey}. */
 export function normalizeScoreAgent(scoreAgent: string): AgentKey {
   return SCORE_AGENT_TO_KEY[scoreAgent] ?? (scoreAgent as AgentKey);
 }

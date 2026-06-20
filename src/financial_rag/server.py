@@ -1,3 +1,5 @@
+"""FastMCP/ADK server entry point for the RAG agent."""
+
 # ruff: noqa: E402
 import asyncio
 import logging

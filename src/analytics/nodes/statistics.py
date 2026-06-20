@@ -1,3 +1,11 @@
+"""Statistical analysis for the analytics agent.
+
+Computes return distribution shape (skewness, kurtosis, Jarque-Bera
+normality test), distribution classification (lepto/platy/normal), and
+market correlation (beta vs SPY).  All numeric results are rounded to
+4 decimal places for readability.
+"""
+
 import logging
 
 import numpy as np
@@ -8,6 +16,12 @@ logger = logging.getLogger(__name__)
 
 
 async def _compute_statistics(price_data: dict, mcp_client) -> dict:
+    """Compute return distribution stats and market beta.
+
+    Uses log-returns for normality tests.  Fetches SPY prices via MCP
+    to compute stock-vs-market beta and R-squared.  SPY fetch failure
+    is non-fatal — correlations simply return empty.
+    """
     try:
         sorted_dates = sorted(price_data.keys())
         closes = [price_data[d] for d in sorted_dates if price_data[d] is not None]

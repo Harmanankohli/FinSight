@@ -1,5 +1,7 @@
+/** Landing page describing FinSight's multi-agent architecture, agent flow diagram, and platform features. */
 import Link from "next/link";
 
+/** Renders the overview landing page with hero section, A2A flow diagram, and feature cards. */
 export default function OverviewPage() {
   return (
     <>

@@ -1,3 +1,5 @@
+"""Unit tests for ticker resolution and validation utilities."""
+
 import pytest
 
 from shared.ticker_utils import (

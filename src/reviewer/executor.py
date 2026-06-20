@@ -1,3 +1,5 @@
+"""ReviewerAgent: validates investment analysis output using multiple tools."""
+
 import json
 import logging
 from collections.abc import AsyncIterable
@@ -25,6 +27,10 @@ logger = logging.getLogger(__name__)
 
 
 class ReviewerAgent(BaseAgent):
+    """Cross-validates outputs from all sub-agents, runs deterministic checks (contradictions, consistency,
+    source verification, confidence scoring, recommendation validation), then synthesises results via an LLM
+    into a structured review report with meta-confidence and integrity alerts."""
+
     @logged_sync(log_args=False, log_result=False)
     def __init__(self):
         super().__init__(
@@ -34,11 +40,15 @@ class ReviewerAgent(BaseAgent):
         )
 
     async def stream(self, query: str, context_id: str, task_id: str) -> AsyncIterable[dict]:
+        """Entry point for the A2A streaming protocol. Delegates to _build_response and yields the result."""
         logger.info("ReviewerAgent.stream() called: query=%s...", query[:80])
         yield await self._build_response(query, context_id)
 
     @logged()
     async def _build_response(self, query: str, context_id: str = "") -> dict:
+        """Parse query payload, fetch agent outputs (inline or from store), run all deterministic reviewer
+        tools, build a synthesis prompt for the LLM, return the final structured output with tool results
+        and schema validation attached."""
         async with self._telemetry_span("reviewer-agent-stream", query) as (
             trace_ctx,
             span,

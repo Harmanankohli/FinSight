@@ -1,3 +1,4 @@
+/** RAGAS quality scores API. Fetches evaluation scores from Langfuse and aggregates them by agent and metric. */
 import { NextResponse } from "next/server";
 import { langfetch, langfuseConfigured } from "@/lib/langfuse";
 import { normalizeScoreAgent } from "@/lib/agentColors";
@@ -17,6 +18,7 @@ interface MetricAgg {
   scale: "0-1" | "1-5";
 }
 
+/** Fetches RAGAS scores from Langfuse, groups them by agent/metric, computes aggregates (avg, min, max, count, recent), and returns the 15 most recent scores. */
 export async function GET() {
   if (!langfuseConfigured()) {
     return NextResponse.json({ error: "Langfuse keys not configured" }, { status: 500 });

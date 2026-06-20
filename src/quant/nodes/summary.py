@@ -1,3 +1,4 @@
+"""Summary and peer comparison node. Aggregates results, runs LLM-based narrative generation, and builds peer tables."""
 import asyncio
 import json
 import logging

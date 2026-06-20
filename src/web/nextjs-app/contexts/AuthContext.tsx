@@ -1,3 +1,4 @@
+/** Authentication context provider. Manages user session, token refresh, login/logout, and route guards. */
 "use client";
 
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react";
@@ -22,6 +23,7 @@ const AUTH_ENABLED = process.env.NEXT_PUBLIC_AUTH_ENABLED !== "false";
 
 const ANONYMOUS_USER: AuthUser = { id: "anonymous", username: "anonymous", role: "user" };
 
+/** Provides auth state to the component tree. Handles session restoration, login/logout actions, and automatic redirect for unauthenticated users. */
 export function AuthProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -74,6 +76,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 }
 
+/** Hook to access the auth context. Throws if used outside AuthProvider. */
 export function useAuth(): AuthContextValue {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error("useAuth must be used within AuthProvider");

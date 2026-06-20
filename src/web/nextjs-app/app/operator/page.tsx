@@ -1,3 +1,4 @@
+/** Operator console page displaying service health status, agent capabilities, and system configuration. */
 "use client";
 
 import { useEffect, useState } from "react";
@@ -17,6 +18,7 @@ const SERVICES: Omit<SvcStatus, "status" | "latency">[] = [
 
 const LED = { ok: "var(--quant)", warn: "var(--hold)", down: "var(--sell)", loading: "var(--sand-deep)" };
 
+/** Renders the operator console: service health grid, agent capability cards, and configuration table. */
 export default function OperatorPage() {
   const [svcs, setSvcs] = useState<SvcStatus[]>(SERVICES.map((s) => ({ ...s, status: "loading" })));
   const [agents, setAgents] = useState<AgentInfo[]>([]);

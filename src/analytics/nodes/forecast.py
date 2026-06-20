@@ -1,3 +1,10 @@
+"""30-day price forecast using Holt-Winters exponential smoothing.
+
+The model captures level, trend, and daily seasonality (period=5 for
+trading-week patterns).  Confidence bands widen linearly with the
+forecast horizon to reflect increasing uncertainty.
+"""
+
 import logging
 from datetime import datetime, timedelta
 
@@ -16,8 +23,12 @@ def _holt_winters(
     gamma: float = 0.1,
     period: int = 5,
 ) -> tuple[list[float], list[float], list[float]]:
-    n = len(series)
-    if n < 60:
+    """Holt-Winters additive model: level + trend + seasonality.
+
+    Alpha (level), beta (trend), gamma (seasonal) are smoothing factors.
+    Period=5 captures weekly trading patterns.  Returns (forecast, lower,
+    upper) confidence bands.  Requires >= 60 data points to produce output.
+    """
         return [], [], []
 
     seasonal = [0.0] * n
@@ -75,6 +86,12 @@ def _holt_winters(
 
 
 async def _run_forecast(price_data: dict) -> dict:
+    """Run Holt-Winters forecast and compute holdout MAPE accuracy.
+
+    Uses last 20% of data as holdout (capped at 30 days) to estimate
+    forecast accuracy.  Returns ForecastResult model dump or empty
+    defaults when data is insufficient (< 60 days).
+    """
     try:
         sorted_dates = sorted(price_data.keys())
         closes = [price_data[d] for d in sorted_dates if price_data[d] is not None]

@@ -1,3 +1,5 @@
+"""OpenAI Agents SDK agent definition with instructions for review."""
+
 import logging
 
 from openai import AsyncOpenAI

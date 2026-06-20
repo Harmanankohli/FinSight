@@ -1,3 +1,4 @@
+/** CopilotKit runtime API route. Handles chat requests and proxies them to the orchestrator agent over AG-UI. */
 import {
   CopilotRuntime,
   ExperimentalEmptyAdapter,
@@ -9,6 +10,7 @@ import { NextRequest } from "next/server";
 const ORCHESTRATOR_URL =
   process.env.NEXT_PUBLIC_ORCHESTRATOR_URL || "http://localhost:8001";
 
+/** Handles incoming CopilotKit chat requests. Attaches user identity from cookie/header, creates an AG-UI HttpAgent, and delegates to the CopilotRuntime. */
 export const POST = async (req: NextRequest) => {
   let userId =
     req.headers.get("x-finsight-user-id") ||

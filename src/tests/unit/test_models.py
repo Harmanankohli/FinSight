@@ -1,3 +1,5 @@
+"""Unit tests for shared/agent_models — validates schema serialisation, field defaults, and A2A contract compliance."""
+
 from datetime import datetime, timezone
 
 from shared.models import (

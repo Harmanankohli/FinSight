@@ -1,3 +1,5 @@
+"""Agent orchestrator for financial RAG: ingests filings/news, retrieves context, and streams responses."""  # noqa: E501
+
 import asyncio
 import json
 import logging
@@ -19,6 +21,8 @@ logger = logging.getLogger(__name__)
 
 
 class RAGAgent(BaseAgent):
+    """Agent that retrieves financial documents via RAG, ingests SEC filings and news on demand, and streams LLM-generated analysis."""  # noqa: E501
+
     @logged_sync(log_args=False, log_result=False)
     def __init__(self):
         super().__init__(
@@ -32,6 +36,7 @@ class RAGAgent(BaseAgent):
 
     @logged(log_result=False)
     async def _ensure_ingested(self, ticker: str) -> None:
+        """Fetch and ingest un-ingested SEC filings for a ticker via MCP; daily-dedup to avoid repeated calls."""  # noqa: E501
         # Daily dedup: skip if already ingested today (avoids re-fetching filings every call)
         today = datetime.now(UTC).date()
         if self._last_ingestion.get(ticker) == today:
@@ -179,6 +184,7 @@ class RAGAgent(BaseAgent):
         return await self.index.query(ticker, query_text)
 
     async def stream(self, query: str, context_id: str, task_id: str) -> AsyncIterable[dict]:
+        """Stream an LLM-generated financial analysis response for a query; auto-ingests documents for the extracted ticker."""  # noqa: E501
         logger.info("stream() called for query=%s...", query[:100])
         ticker = extract_ticker(query)
         if ticker:
@@ -190,6 +196,7 @@ class RAGAgent(BaseAgent):
 
     @logged()
     async def _build_response(self, query: str) -> dict:
+        """Resolve ticker, query RAG index, augment with web search snippets, return structured response (or error)."""  # noqa: E501
         async with self._telemetry_span("rag-agent-stream", query) as (trace_ctx, span, trace_id):
             ticker, company = await resolve_and_validate_ticker(query)
             if not ticker:

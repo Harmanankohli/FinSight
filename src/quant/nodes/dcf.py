@@ -1,3 +1,4 @@
+"""DCF valuation node for the quant analysis graph. Computes discounted cash flow valuation from financial statements."""
 import json
 import logging
 

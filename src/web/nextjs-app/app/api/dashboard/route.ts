@@ -1,3 +1,4 @@
+/** Dashboard metrics API. Aggregates traces, observations, and token usage from Langfuse into KPIs, agent breakdown, and time-series data. */
 import { NextRequest, NextResponse } from "next/server";
 import { langfetch, langfuseConfigured } from "@/lib/langfuse";
 import { classifyAgent, type AgentKey } from "@/lib/agentColors";
@@ -98,6 +99,7 @@ function formatBuckets(from: Date, to: Date, traces: LfTrace[], obsByTrace: Map<
   }));
 }
 
+/** Fetches trace and observation data from Langfuse for the given time range, computes KPIs (latency percentiles, error rates, token usage, TFFT), agent breakdown, and bucketed time-series. */
 export async function GET(req: NextRequest) {
   if (!langfuseConfigured()) {
     return NextResponse.json({ error: "Langfuse keys not configured" }, { status: 500 });

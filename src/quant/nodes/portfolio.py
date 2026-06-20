@@ -1,3 +1,4 @@
+"""Correlation and portfolio risk metrics node. Computes pairwise correlations, VaR, and diversification scores."""
 import logging
 
 import pandas as pd

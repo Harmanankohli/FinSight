@@ -1,3 +1,4 @@
+/** Top-level providers wrapper. Composes AuthProvider, CopilotKit, and Sidebar around child pages. */
 "use client";
 
 import { usePathname } from "next/navigation";
@@ -7,6 +8,7 @@ import { Sidebar } from "./Sidebar";
 
 const NO_SIDEBAR = ["/login"];
 
+/** Wraps the application with AuthProvider, CopilotKit runtime, and sidebar navigation. Hides sidebar on the login page. */
 export function Providers({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const showSidebar = !NO_SIDEBAR.includes(pathname);

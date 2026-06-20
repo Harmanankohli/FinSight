@@ -1,3 +1,4 @@
+"""Data fetching helpers for the quant graph. Retrieves fundamentals, insider signals, analyst positioning, and options data."""
 import json
 import logging
 

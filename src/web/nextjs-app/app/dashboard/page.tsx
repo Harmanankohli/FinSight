@@ -1,3 +1,4 @@
+/** Dashboard page displaying observability metrics, agent performance KPIs, and RAGAS quality scores from Langfuse. */
 "use client";
 
 import { Suspense, useEffect, useState, useRef, useCallback } from "react";
@@ -462,6 +463,7 @@ function DashboardContent() {
   );
 }
 
+/** Dashboard page component wrapped in Suspense. Renders KPI cards, time-series charts, agent breakdown table, and RAGAS score panels. */
 export default function DashboardPage() {
   return (
     <Suspense fallback={<div className="topbar"><div><h1>Dashboard</h1></div></div>}>

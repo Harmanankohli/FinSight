@@ -1,3 +1,4 @@
+/** Health-check proxy endpoint. Forwards requests to individual backend services and returns their status. */
 import { NextRequest, NextResponse } from "next/server";
 
 const TARGETS: Record<string, string> = {
@@ -10,6 +11,7 @@ const TARGETS: Record<string, string> = {
   mcp: "http://localhost:8010/health",
 };
 
+/** Proxies a health-check request to the service specified by the `svc` query parameter. Returns status, latency, and optional detail body. */
 export async function GET(req: NextRequest) {
   const svc = req.nextUrl.searchParams.get("svc");
   const url = svc ? TARGETS[svc] : null;

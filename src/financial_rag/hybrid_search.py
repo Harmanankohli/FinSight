@@ -1,3 +1,5 @@
+"""Hybrid search pipeline combining BM25 sparse retrieval, dense embedding similarity, RRF fusion, and CrossEncoder reranking."""  # noqa: E501
+
 import asyncio
 import logging
 
@@ -13,7 +15,8 @@ logger = logging.getLogger(__name__)
 
 
 class HybridSearchPipeline:
-    # BM25 sparse retrieval + embedding-based dense retrieval → RRF merge → CrossEncoder rerank
+    """BM25 sparse retrieval + embedding-based dense retrieval → RRF merge → CrossEncoder rerank pipeline."""  # noqa: E501
+
     @logged_sync(log_args=False, log_result=False)
     def __init__(
         self,
@@ -22,6 +25,7 @@ class HybridSearchPipeline:
         rerank_top_n: int = 5,
         rrf_k: int = 60,
     ):
+        """Configure top-k values for sparse retrieval, dense retrieval, RRF fusion constant, and final rerank count."""  # noqa: E501
         self.sparse_top_k = sparse_top_k
         self.dense_top_k = dense_top_k
         self.rerank_top_n = rerank_top_n
@@ -32,6 +36,7 @@ class HybridSearchPipeline:
 
     @property
     def reranker(self) -> CrossEncoder:
+        """Lazy-loaded CrossEncoder model for query-document pairwise relevance scoring."""  # noqa: E501
         if self._reranker is None:
             logger.info("Loading reranker model: %s", RERANKER_MODEL)
             self._reranker = CrossEncoder(
@@ -42,7 +47,7 @@ class HybridSearchPipeline:
 
     @logged_sync(log_args=False, log_result=False)
     def build_sparse_index(self, documents: list[str]) -> None:
-        # Pre-tokenize corpus for BM25 Okapi ranking (bag-of-words lexical matching)
+        """Tokenize and index a corpus of text documents for BM25 Okapi lexical retrieval."""  # noqa: E501
         tokenized = [doc.lower().split() for doc in documents]
         self._bm25 = BM25Okapi(tokenized)
         self._corpus = documents
@@ -50,7 +55,7 @@ class HybridSearchPipeline:
 
     @logged()
     async def sparse_retrieve(self, query: str, top_k: int | None = None) -> list[NodeWithScore]:
-        # BM25 lexical retrieval: keyword-based bag-of-words scoring against tokenized corpus
+        """Run BM25 keyword-based bag-of-words retrieval against the tokenized corpus; returns scored nodes."""  # noqa: E501
         if self._bm25 is None:
             return []
         k = top_k or self.sparse_top_k
@@ -71,7 +76,7 @@ class HybridSearchPipeline:
     async def dense_retrieve(
         self, query: str, nodes: list[NodeWithScore], top_k: int | None = None
     ) -> list[NodeWithScore]:
-        # Embedding-based semantic retrieval (cosine similarity via HuggingFace encoder), top-k selection  # noqa: E501
+        """Select top-k nodes by dense embedding cosine similarity score (pre-computed by the vector store)."""  # noqa: E501
         k = top_k or self.dense_top_k
         sorted_nodes = sorted(nodes, key=lambda n: n.score or 0.0, reverse=True)
         return sorted_nodes[:k]
@@ -83,7 +88,7 @@ class HybridSearchPipeline:
         dense: list[NodeWithScore],
         k: int = 60,
     ) -> list[NodeWithScore]:
-        # Reciprocal Rank Fusion: combines sparse (BM25) and dense (embedding) rankings by reciprocal rank scores  # noqa: E501
+        """Fuse sparse and dense ranked lists using Reciprocal Rank Fusion; higher k reduces score difference between ranks."""  # noqa: E501
         seen: dict[str, float] = {}
 
         for rank, node in enumerate(sparse):
@@ -99,7 +104,7 @@ class HybridSearchPipeline:
 
     @logged()
     async def rerank(self, query: str, nodes: list[NodeWithScore]) -> list[NodeWithScore]:
-        # CrossEncoder reranking: scores each (query, doc) pair jointly for finer relevance than cosine alone  # noqa: E501
+        """Jointly score each (query, document) pair via CrossEncoder for fine-grained relevance; returns top N."""  # noqa: E501
         if not nodes:
             return []
         pairs = [(query, n.node.text) for n in nodes]
@@ -111,7 +116,7 @@ class HybridSearchPipeline:
 
     @logged()
     async def retrieve(self, query: str, dense_nodes: list[NodeWithScore]) -> list[NodeWithScore]:
-        # Full hybrid pipeline: sparse → RRF merge → CrossEncoder rerank → top N
+        """Run full hybrid pipeline: sparse retrieval → RRF merge → CrossEncoder rerank → top N results."""  # noqa: E501
         sparse_nodes = await self.sparse_retrieve(query)
         merged = self._rrf_merge(sparse_nodes, dense_nodes, k=self.rrf_k)
         reranked = await self.rerank(query, merged)

@@ -1,3 +1,4 @@
+"""QuantAnalysisState TypedDict and merge helpers for the quant LangGraph agent."""
 import logging
 from typing import Annotated, Any, TypedDict
 

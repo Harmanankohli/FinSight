@@ -1,3 +1,11 @@
+"""Analytics Agent — trend detection, forecasting, chart data, statistics, and anomaly detection.
+
+Uses PydanticAI + pydantic-graph for the node-based pipeline.
+The agent resolves tickers from natural language queries, runs the full
+analytics graph, validates output against the AnalyticsAgentOutput schema,
+and optionally defers RAGAS-based evaluation.
+"""
+
 import json
 import logging
 from collections.abc import AsyncIterable
@@ -16,6 +24,12 @@ logger = logging.getLogger(__name__)
 
 
 class AnalyticsAgent(BaseAgent):
+    """Agent that executes the analytics PydanticAI graph for a given ticker.
+
+    Entry point is stream() which resolves the ticker, runs the graph,
+    validates output, and optionally defers evaluation.
+    """
+
     @logged_sync(log_args=False, log_result=False)
     def __init__(self):
         super().__init__(
@@ -27,6 +41,12 @@ class AnalyticsAgent(BaseAgent):
 
     @logged()
     async def analyze(self, ticker: str, period: str = "1y", trace_ctx: dict | None = None) -> dict:
+        """Run the full analytics pipeline for a resolved ticker.
+
+        Fetches a shared MCP client, executes the graph, validates the
+        output against the AnalyticsAgentOutput schema, and returns a
+        serialised dict ready for A2A transport.
+        """
         logger.info("Analytics analysis starting for %s (period=%s)", ticker, period)
         mcp = await get_shared_mcp()
         result = await self.pipeline.run(ticker, period=period, mcp_client=mcp)
@@ -37,11 +57,17 @@ class AnalyticsAgent(BaseAgent):
         return validated.model_dump()
 
     async def stream(self, query: str, context_id: str, task_id: str) -> AsyncIterable[dict]:
+        """BaseAgent contract — resolve query and stream a single response."""
         logger.info("AnalyticsAgent.stream() called: query=%s...", query[:80])
         yield await self._build_response(query)
 
     @logged()
     async def _build_response(self, query: str) -> dict:
+        """Parse query → resolve ticker → run graph → validate → return.
+
+        Wraps execution in a telemetry span for Langfuse tracing.
+        Runs deterministic schema checks and defers evaluation if enabled.
+        """
         async with self._telemetry_span("analytics-agent-stream", query) as (
             trace_ctx,
             span,

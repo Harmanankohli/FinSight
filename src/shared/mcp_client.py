@@ -1,3 +1,5 @@
+"""MCP client manager that discovers and exposes tools from MCP servers."""
+
 import asyncio
 import atexit
 import json

@@ -1,3 +1,5 @@
+"""JSON-structured logging with JsonFormatter and @logged/@logged_sync decorators."""
+
 import functools
 import inspect
 import json

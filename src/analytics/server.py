@@ -1,3 +1,5 @@
+"""FastMCP/ADK server entry point for the Analytics agent."""
+
 # ruff: noqa: E402
 import logging
 

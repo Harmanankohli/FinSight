@@ -1,3 +1,5 @@
+"""Off-topic guardrails that validate reviewer agent input payloads."""
+
 import json
 import logging
 

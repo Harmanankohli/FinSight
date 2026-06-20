@@ -1,3 +1,5 @@
+"""Shared pytest fixtures, hooks, and session-scoped configuration for all test suites."""
+
 import os
 import threading
 

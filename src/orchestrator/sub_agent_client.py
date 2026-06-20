@@ -1,3 +1,5 @@
+"""A2A client for dispatching tasks to sub-agents with latency tracking."""
+
 # ruff: noqa: E402
 import asyncio
 import json

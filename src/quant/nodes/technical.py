@@ -1,3 +1,4 @@
+"""Technical analysis metrics node. Computes alpha, beta, RSI, MACD, moving averages, and other price-based indicators."""
 import logging
 
 import numpy as np

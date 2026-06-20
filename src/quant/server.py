@@ -1,3 +1,4 @@
+"""Quant agent FastAPI/ADK server entry point. Bootstraps the agent, initializes instrumentation, and registers the agent routes."""
 # ruff: noqa: E402
 import logging
 

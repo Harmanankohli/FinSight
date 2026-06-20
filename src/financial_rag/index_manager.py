@@ -1,3 +1,5 @@
+"""ChromaDB-backed index manager with multi-collection retrieval, hybrid scoring, and query intent routing."""  # noqa: E501
+
 import logging
 import math
 import re
@@ -29,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 
 def _keyword_score(query_text: str, node_text: str) -> float:
-    """Term-frequency keyword overlap between query terms and node text."""
+    """Compute keyword overlap score: normalized term-frequency match between query terms and node text."""  # noqa: E501
     q_terms = set(re.findall(r"\w{3,}", query_text.lower()))  # skip stop-word length tokens
     if not q_terms:
         return 0.0
@@ -60,14 +62,14 @@ def _hybrid_score(
     w_keyword: float = 0.20,
     w_temporal: float = 0.20,
 ) -> float:
-    """Weighted combination of dense vector score, keyword overlap, and temporal decay."""
+    """Combine dense vector score, keyword overlap, and temporal decay into a single weighted hybrid relevance score."""  # noqa: E501
     kw = _keyword_score(query_text, node_text)
     td = _temporal_decay(doc_date)
     return round(w_vector * vector_score + w_keyword * kw + w_temporal * td, 4)
 
 
 def _classify_query_intent(query_text: str) -> list[str]:
-    """Return which ChromaDB collections to search based on keywords in the query."""
+    """Classify query intent by keyword heuristics and return the list of ChromaDB collections to search (sec_filings, news, earnings)."""  # noqa: E501
     q = query_text.lower()
     collections = ["sec_filings"]
     if any(
@@ -124,6 +126,8 @@ def _classify_query_intent(query_text: str) -> list[str]:
 
 
 class FinancialIndexManager:
+    """Manages ChromaDB-backed LlamaIndex collections with lazy embedding, multi-collection retrieval, and hybrid scoring."""  # noqa: E501
+
     @logged_sync(log_args=False, log_result=False)
     def __init__(self):
         self.llm = OpenAILike(
@@ -142,6 +146,7 @@ class FinancialIndexManager:
         self._index_locks: dict[str, threading.Lock] = {}
 
     def _lazy_embed(self) -> HuggingFaceEmbedding:
+        """Return the HuggingFace embedding model, initializing it once on first access."""  # noqa: E501
         if self._embed_model is None:
             model = f"sentence-transformers/{EMBED_MODEL}"
             self._embed_model = HuggingFaceEmbedding(model_name=model)
@@ -150,7 +155,7 @@ class FinancialIndexManager:
 
     @logged_sync()
     def _get_or_create_index(self, collection_name: str) -> VectorStoreIndex:
-        # Lazy index creation: one ChromaDB collection per document type (sec_filings, earnings, etc.)  # noqa: E501
+        """Return an existing VectorStoreIndex for a ChromaDB collection, or create it lazily with thread-safe locking."""  # noqa: E501
         if collection_name not in self._index_locks:
             self._index_locks[collection_name] = threading.Lock()
 
@@ -271,7 +276,7 @@ class FinancialIndexManager:
 
     @logged()
     async def query_sec_filings(self, ticker: str, query_text: str) -> dict:
-        # Same ticker filter but scoped to sec_filings collection; validates first result matches
+        """Run a ticker-filtered query scoped to the sec_filings collection; validates the first result's ticker matches."""  # noqa: E501
         filters = MetadataFilters(filters=[ExactMatchFilter(key="ticker", value=ticker)])
         index = self._get_or_create_index("sec_filings")
         engine = index.as_query_engine(similarity_top_k=3, filters=filters, response_mode="compact")
@@ -300,7 +305,7 @@ class FinancialIndexManager:
 
     @logged()
     async def query_earnings(self, ticker: str, query_text: str) -> dict:
-        # Earnings collection uses same metadata filter pattern but no cross-ticker validation
+        """Run a ticker-filtered query scoped to the earnings collection (no cross-ticker validation)."""  # noqa: E501
         index = self._get_or_create_index("earnings")
         engine = index.as_query_engine(similarity_top_k=3, response_mode="compact")
         response = await engine.aquery(
@@ -318,7 +323,7 @@ class FinancialIndexManager:
 
     @logged_sync()
     def ingest_documents(self, collection_name: str, documents: list[dict]) -> int:
-        # Batch insert: wraps each dict as a LlamaIndex Document with ticker/source/file_name metadata  # noqa: E501
+        """Insert a batch of document dicts into a ChromaDB collection, wrapping each as a LlamaIndex Document with metadata."""  # noqa: E501
         index = self._get_or_create_index(collection_name)
         docs = [
             Document(

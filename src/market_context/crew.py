@@ -1,4 +1,10 @@
 # ruff: noqa: E402
+"""CrewAI orchestration for market context narrative generation.
+
+Builds a single-agent crew that takes pre-collected macro, peer, and web data
+and produces a structured analysis with signal and confidence score.
+"""
+
 import asyncio
 import json
 import logging
@@ -20,12 +26,24 @@ _LLM = CrewLLM(model=ADK_MODEL, base_url=LLM_BASE_URL, api_key=LLM_API_KEY, temp
 
 
 class MarketContextCrew:
+    """Builds and runs a CrewAI crew for macro-regime and competitive analysis.
+
+    Constructs a single Market Context Analyst agent with a task that
+    synthesises macro regime, peer positioning, and web context into a
+    structured MarketContextOutput.
+    """
     @logged_sync(log_args=False, log_result=False)
     def __init__(self, mcp_wrapper: MCPClientWrapper):
+        """Store the MCP client wrapper for tool discovery and invocation."""
         self._mcp = mcp_wrapper
 
     @logged_sync()
     def build_crew(self, ticker: str, data: dict | None = None) -> Crew:
+        """Construct a CrewAI Crew with one analyst agent and a context-analysis task.
+
+        Formats pre-collected macro, peer, financial, and web data into a
+        prompt context, then returns a configured Crew ready for kickoff.
+        """
         data = data or {}
         macro = data.get("macro", {})
         peers = data.get("peers", {})
@@ -152,6 +170,13 @@ class MarketContextCrew:
 
     @logged()
     async def analyze(self, ticker: str, precollected_data: dict | None = None) -> dict:
+        """Execute the crew and parse its output into a MarketContextOutput dict.
+
+        Builds the crew, runs it via a thread executor (under the LLM rate-limit
+        queue), and attempts three parsing strategies — pydantic attribute,
+        model_validate_json, then json.loads fallback — before returning
+        a neutral default on total failure.
+        """
         from shared.agent_models import MarketContextOutput
 
         crew = self.build_crew(ticker, data=precollected_data)

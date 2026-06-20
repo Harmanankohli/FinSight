@@ -1,3 +1,10 @@
+"""Trend detection for the analytics agent.
+
+Computes moving average crossovers (SMA20/50/200), MACD, momentum (ROC),
+and RSI to produce a composite trend signal.  Uses a scoring system that
+weighs each indicator and maps the total to bull/neutral/bear.
+"""
+
 import logging
 
 import numpy as np
@@ -10,6 +17,11 @@ logger = logging.getLogger(__name__)
 
 
 def _sma(data: list[float], window: int) -> list[float | None]:
+    """Simple moving average via numpy convolution.
+
+    Returns None-prefixed list of same length as input; first
+    (window-1) entries are None (not enough data to compute).
+    """
     if len(data) < window:
         return [None] * len(data)
     arr = np.array(data, dtype=float)
@@ -18,7 +30,11 @@ def _sma(data: list[float], window: int) -> list[float | None]:
 
 
 def _ema(data: list[float], span: int) -> list[float]:
-    arr = np.array(data, dtype=float)
+    """Exponential moving average — recursive formulation.
+
+    EMA[i] = (price[i] - EMA[i-1]) * multiplier + EMA[i-1]
+    where multiplier = 2 / (span + 1).  Seed value is the first data point.
+    """
     multiplier = 2.0 / (span + 1)
     ema = [arr[0]]
     for i in range(1, len(arr)):
@@ -27,6 +43,18 @@ def _ema(data: list[float], span: int) -> list[float]:
 
 
 async def _detect_trends(price_data: dict) -> dict:
+    """Composite trend analysis: MA crossovers, MACD, momentum, RSI.
+
+    Scoring system (max ~10):
+      - Above/below SMA200: +3/0
+      - Above/below SMA50: +2/0
+      - SMA50 > SMA200: +2/0
+      - MACD bullish: +1/0
+      - Momentum positive: +1/0
+      - RSI > 50: +1/0
+
+    Returns TrendAnalysis model dump or empty defaults on failure.
+    """
     try:
         sorted_dates = sorted(price_data.keys())
         closes = [price_data[d] for d in sorted_dates if price_data[d] is not None]
