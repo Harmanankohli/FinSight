@@ -48,6 +48,7 @@ EvalG["RuntimeEval\nsrc/shared/runtime_eval.py\nCircuit breaker + dedup\nBurst +
 EvalD["EvalGate\nsrc/shared/eval_gate.py\nDeferred eval release\n120s auto-release"]
 Sett["Settings\nsrc/shared/settings.py\nPydantic-settings\nPer-agent timeouts + LLM config"]
 Boot["Bootstrap\nsrc/shared/bootstrap.py\nStartup: event loop, logging\nLangfuse, env vars"]
+MV["MetricValue\nsrc/shared/metrics.py\nFloat subclass w/ validation\n.status / .warning / .to_dict()"]
 end
 subgraph Storage["Storage / Memory (SQLite)"]
 SMem["SQLiteMemoryService\nBM25 + embedding RRF"]
@@ -88,6 +89,8 @@ FExec -. "track" .-> PTrack
 FExec -. "chat mem" .-> SMem
 AfterCB -. "eval" .-> EvalG
 AfterCB -. "release evals" .-> EvalD
+QuantA -. "uses" .-> MV
+AnalyticsA -. "uses" .-> MV
 FExec -. "settings" .-> Sett
 FExec -. "boot" .-> Boot
 TMem -. "SQLite" .-> DB
@@ -116,6 +119,7 @@ style EvalG fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
 style EvalD fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
 style Sett fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
 style Boot fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
+style MV fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
 style QGraph fill:#fdebd0,stroke:#e67e22,color:#1a1a1a
 style SMem fill:#abebc6,stroke:#1e8449,color:#1a1a1a
 style TMem fill:#abebc6,stroke:#1e8449,color:#1a1a1a

@@ -61,6 +61,7 @@ end
 subgraph AnalyticsAgent["Analytics Agent — PydanticAI (port 8005)"]
 A_E("AnalyticsAgent\nanalyze() → trend, forecast,\nstats, anomaly, charts")
 A_N("Analytics Nodes\ntrend_node, forecast_node\nstats_node, anomaly_node\nchart_node")
+A_M("MetricValue (shared)\nValidated float subclass\n.status / .warning / .to_dict()\nUsed for all metric outputs")
 end
 subgraph ReviewerAgent["Reviewer Agent — OpenAI Agents SDK (port 8006)"]
 R_E("ReviewerAgent\nreview() → session_id lookup")
@@ -118,6 +119,7 @@ style M_R fill:#fadbd8,stroke:#c0392b,color:#1a1a1a
 style M_EVAL fill:#fadbd8,stroke:#c0392b,color:#1a1a1a
 style A_E fill:#abebc6,stroke:#1e8449,color:#1a1a1a
 style A_N fill:#abebc6,stroke:#1e8449,color:#1a1a1a
+style A_M fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
 style R_E fill:#f5b7b1,stroke:#c0392b,color:#1a1a1a
 style R_T fill:#f5b7b1,stroke:#c0392b,color:#1a1a1a
 style R_S fill:#f5b7b1,stroke:#c0392b,color:#1a1a1a

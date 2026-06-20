@@ -92,6 +92,7 @@ Trace("TraceContext\nContextVars → Langfuse")
 MCPCli("MCPClient (SSE singleton)\nAuto-reconnect on disconnect")
 Sett("Settings\nPydantic-settings config\nPer-agent timeouts")
 Boot("Bootstrap\nStartup: event loop + logging\nLangfuse init + env vars")
+Metric("MetricValue\nFloat subclass w/ validation\n.status / .warning / .to_dict()\nQuant + Analytics metrics")
 end
 subgraph Memory["SQLite Memory Layer"]
 TMem("TickerMemory\nstore_brief / get_latest")
@@ -194,6 +195,7 @@ style Trace fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
 style MCPCli fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
 style Sett fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
 style Boot fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
+style Metric fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
 style SMem fill:#abebc6,stroke:#1e8449,color:#1a1a1a
 style TMem fill:#abebc6,stroke:#1e8449,color:#1a1a1a
 style PStore fill:#abebc6,stroke:#1e8449,color:#1a1a1a

@@ -1,4 +1,124 @@
-# Changelog
+﻿# Changelog
+
+## v2.10 — Comprehensive Codebase Documentation (46cb44e)
+
+### Docstrings & JSDoc Coverage across 181 Files (46cb44e)
+
+- **162 Python files (+4,216 lines)**: Added detailed Google-style docstrings with Args, Returns, and Examples to every function, method, and class across all agents, shared modules, MCP servers, and tests.
+- **19 Next.js files (+2,000 lines)**: Added JSDoc comments to all TypeScript functions, React components, and API route handlers in the web frontend.
+- **`src/shared/metrics.py`**: All 7 computation functions (`compute_rsi_wilder`, `compute_sharpe_ratio`, `compute_beta`, `compute_sortino_ratio`, `compute_calmar_ratio`, `compute_alpha`, `compute_information_ratio`) and `MetricValue` class documented with mathematical formulas and edge-case behavior.
+- **`src/shared/agent_models.py`**: All Pydantic model fields documented with field descriptions and validation constraints.
+- **`src/shared/reports/`**: All extraction, renderer, and template functions documented.
+- **Test files**: All test functions and fixtures documented with behavior descriptions.
+- **No behavioral changes** — documentation-only commit.
+
+## v2.9 — Metric Standardization, P/B Valuation, Extraction Guard Dedup, Valuation Label Unification (364e3b9–beadc55)
+
+### P/B Valuation Method for Banks & Financial Firms (bc9c59d, 6cc3f98)
+
+- **`src/quant/nodes/dcf.py`**: DCF node now supports a `method` field (`"dcf"` or `"pb"`). Financial institutions (banks, insurance) use P/B residual income model instead of traditional DCF. When `method == "pb"`: computes `fair_pb_multiple` from ROE-COE spread, applies P/B ratio to book value per share.
+- **`src/shared/agent_models.py`**: `DCFValuation` model extended with: `method` (str), `pb_ratio_used` (float), `fair_pb_multiple` (float), `scenarios` (dict), `valuation_reliability` (float), `dcf_assumptions` (dict), `sensitivity_matrix` (dict), `revenue_growth`, `earnings_growth`, `equity_value`, `market_enterprise_value`, `net_debt`.
+- **`src/shared/reports/extraction.py`**: New P/B-specific DCF breakdown in `_populate_from_validated_outputs()` — shows P/B Ratio and Fair P/B Multiple when method is "pb"; adds market EV, net debt, equity value, revenue/earnings growth, DCF scenarios, sensitivity matrix, risk-free rate, beta, cost of equity/debt, tax rate for DCF method.
+- **`src/shared/reports/deck_model.py`**: New `sensitivity_matrix: dict` field in `DeckData`.
+- **`src/reviewer/tools/dcf_validator.py`**: Handle `None` fcf_age_days to prevent crash. P/B validation skips FCF-specific checks.
+- **DCF input corrections**: WACC, growth rate, net debt, D/E ratio, and market enterprise value now correctly sourced from MCP data. Terminal growth, revenue growth, earnings growth fields added.
+
+### Metric Standardization with Shared `MetricValue` (5215613)
+
+- **`src/shared/metrics.py` (new)**: `MetricValue` dataclass (name, value, weight, score, metadata) providing a single computation pattern across all agents. Replaces 5 near-duplicate metric-computation code paths in analytics and quant.
+- **`src/analytics/nodes/statistics.py`**, `src/analytics/nodes/forecast.py`, `src/analytics/nodes/trend.py`, `src/analytics/nodes/anomaly.py`, `src/analytics/nodes/summary.py`, `src/analytics/nodes/charts.py`: Refactored to use `MetricValue` instead of raw dicts. All analytics node outputs now pass through `MetricValue` constructors.
+- **`src/quant/nodes/calculations.py`**, `src/quant/nodes/dcf.py`, `src/quant/nodes/technical.py`, `src/quant/nodes/monte_carlo.py`, `src/quant/nodes/summary.py`, `src/quant/nodes/bank_valuation.py`, `src/quant/nodes/data_fetch.py`: Same MetricValue refactor — quant nodes produce typed metric objects instead of dicts.
+- **`src/quant/state.py`**: `QuantAnalysisState` updated to work with `MetricValue` typed nodes.
+- **`src/reviewer/tools/confidence.py`**, `src/reviewer/tools/contradiction.py`, `src/reviewer/tools/validation.py`, `src/reviewer/tools/verification.py`: Reviewer tools consume `MetricValue` objects.
+- **`src/reviewer/executor.py`**: Updated to pass `MetricValue`-structured agent summaries to LLM.
+- **`src/shared/__init__.py`**: Re-exports `MetricValue`.
+- **Why**: Each agent previously computed and stored metrics in its own ad-hoc dict format, causing key mismatches, missing data, and inconsistent aggregation. A shared `MetricValue` class ensures every metric has a name, numeric value, weight, score threshold, and metadata dict — no more guessing whether a value is a string or float or what its valid range is.
+
+### MACD Model: String/Numeric → Boolean (5215613)
+
+- **`src/shared/agent_models.py`**: `TechnicalIndicators.macd_signal` (Union[float, str]) → `macd_bullish` (Optional[bool]). The previous type was ambiguous — float meant "MACD histogram value", string meant "Bullish" or "Bearish". Now a single `macd_bullish: bool` explicitly signals whether MACD is bullish or bearish.
+- **`src/shared/reports/extraction.py`**: Both `_populate_from_agent_outputs()` and `_populate_from_validated_outputs()` use `macd_bullish` boolean directly. Fallback: numeric MACD > 0 → bullish, else bearish.
+- **`src/quant/nodes/technical.py`**: Computes `macd_bullish` from MACD histogram sign instead of storing raw `macd_signal`.
+- **Impact**: Extraction no longer needs separate handling for float-vs-string `macd_signal`. Technicals table MACD row gets a clear bullish/bearish label.
+
+### Extraction Guard Deduplication — Structured Data Never Overwritten by Regex (0fc9c47, 2dc0466, 5215613)
+
+- **`src/shared/reports/extraction.py`** — every extraction function now checks `_existing_labels` / `existing_chip_labels` / `existing_scorecard_dims` before appending from regex fallbacks:
+  - `_stage_metrics()`: Skips KPI chip labels already populated from Pydantic model fields. Prevents regex values from duplicating structured data.
+  - `_stage_scenarios()`: All valuation table entries guarded by `_existing_labels` set. Structured Pydantic model values (via `_populate_from_validated_outputs`) are never overwritten by regex matches. Each value type (target price, upside, DCF, bull/bear, p50, prob, CVaR, current price) has its own pre-check before regex fallback.
+  - `_stage_financials_scorecard()`: Scorecard dimensions skipped if already populated from validated outputs.
+  - `_populate_from_agent_outputs()` / `_populate_from_validated_outputs()`: Legacy agent output path now respects `_pre_verifs` / `_pre_sections` / `_pre_scorecard` snapshots to avoid duplicating reviewer/section/scorecard data when validated path already populated them.
+- **Why**: The old pattern blindly appended regex-extracted values after Pydantic model data, resulting in duplicate KPI chips, duplicated valuation entries, and overwritten structured values. The guard pattern gives structured data priority — regex fallback only fires for fields the validated path didn't populate.
+
+### Valuation Label Standardization (0fc9c47)
+
+- All extraction paths now use consistent labels across all code paths:
+  - `"Bull Case (p90)"` / `"Bull Case (MC p90)"` → `"95th Percentile Target"`
+  - `"Base Case (p50)"` / `"Base Case (MC p50)"` → `"Median Target (p50)"`
+  - `"Bear Case (p10)"` / `"Bear Case (MC p10)"` → `"5th Percentile Target"`
+- **Files updated**: `_populate_from_agent_outputs()`, `_populate_from_validated_outputs()`, `_extract_deck_data()`, `_enrich_from_markdown()`, `_stage_scenarios()`.
+- **Why**: Inconsistent labels across code paths caused downstream display issues (both "Bull Case (p90)" and "95th Percentile Target" appearing in the same report). The standard labels match the institutional style of percentile-based targets.
+
+### Peer Filtering by Actual Data (5215613)
+
+- **`src/shared/reports/extraction.py`**: Peer ticker selection now filters by `_metric_keys = ["pe", "ev_ebitda", "rev_growth", "op_margin", "roe"]` — only peers with actual numeric values for at least one key metric are included. Both `_populate_from_agent_outputs()` and `_populate_from_validated_outputs()` use this filter. Previously, any peer ticker from the peer list was included even if its comparison data was empty.
+
+### Cited Sources: HTML Format + Dedup (5215613)
+
+- **`src/shared/reports/extraction.py`**: Sources section now uses `<ul><li>` HTML format instead of raw `- item` markdown. Sources are deduplicated by label within a section — duplicate sources (common when RAG agent returns the same filing from multiple queries) only appear once. Empty source labels are filtered out.
+
+### Recommendation Drivers Auto-Generated Section (5215613)
+
+- **`src/shared/reports/extraction.py`**: New `Recommendation Drivers` section auto-generated from actual metric signals:
+  - **Positive signals**: DCF upside > 20%, RSI oversold (< 30), revenue growth > 10%, bullish analytics trend, supporting reviewer validation
+  - **Negative signals**: DCF downside > 10%, RSI overbought (> 70), negative ROE, bearish analytics trend, contradicting reviewer validation
+  - Formatted as `<strong>Positive Signals</strong><ul><li>...</li></ul>` + negative mirror
+
+### Verification Rate Normalization (5215613)
+
+- **`src/shared/reports/extraction.py`**: Source verification rates > 1.0 are divided by 100 — catches the common data source mismatch where percentages are stored as `0.85` in some cases and `85` in others. Both `_populate_from_agent_outputs()` and `_populate_from_validated_outputs()` apply the normalization.
+
+### Template & Report Rendering Fixes (2dc0466, 0fc9c47)
+
+- **`src/shared/templates/investment_deck.html`**:
+  - Section title uppercasing removed: `{{ sec.title|upper }}` → `{{ sec.title }}`.
+  - Section body now supports raw HTML: `{{ sec.body|safe }}` — enables HTML rich content like `<ul>` lists in Recommendation Drivers and Cited Sources.
+  - DCF section renamed: "DCF Model" → "Valuation Model", "Discounted Cash Flow Breakdown" → "Valuation Breakdown" — generic enough to cover both DCF and P/B methods.
+  - Stress test section: "Scenario Impact Analysis" → "Historical Scenario Simulation". Added disclaimer about hypothetical projections.
+  - Confidence scores now display `methodology` text below each bar (if available) — small gray text explaining how the score was derived.
+  - Forecast chart: Added 80% confidence interval range display when `ci_low` and `ci_high` are present.
+- **`src/shared/reports/html_renderer.py`**: Unchanged (no rendering-specific fixes needed).
+
+### Analytics Trend Direction Label Fix (5215613)
+
+- **`src/shared/reports/extraction.py`**: Analytics trend direction now uses `.replace("_", " ").title()` instead of `.capitalize()`. Fixes multi-word trend labels like "strong_bullish" → "Strong Bullish" instead of "Strong_bullish".
+
+### Evidence Strength Section Removed (a703a49)
+
+- **`src/shared/reports/extraction.py`**: The "Evidence Strength" auto-generated section was removed from the report. It was redundant — the reviewer validation data already captures supporting/contradicting evidence. Eliminates the duplicate "Strong evidence supports the recommendation." text in every report.
+
+### Orchesrator Ticker Resolution Fix (0624813)
+
+- **`src/orchestrator/agui_bridge.py`**: Report ticker now read from orchestrator state instead of fragile regex extraction from response text. Fixes ticker mismatches where the regex extracted a wrong ticker symbol.
+
+### Full Commit List (beadc55..364e3b9)
+
+- `364e3b9` fix: handle None fcf_age_days in DCF validator to prevent reviewer crash
+- `6cc3f98` fix: correct DCF valuation inputs — WACC, growth, net debt, D/E, and add market EV
+- `5215613` fix: standardize metric computations with shared MetricValue and replace raw dicts with Pydantic model constructors
+- `b813204` Update generated report files: remove old JPM, add new AAPL
+- `2dc0466` fix: resolve report rendering bugs and reviewer output normalization
+- `bc9c59d` feat: implement plan.md DCF improvements — Sprints 1-3 complete
+- `6f6eda7` feat: enhance valuation, technical analysis, and reviewer consistency
+- `0624813` fix: use orchestrator state for report ticker instead of fragile regex extraction
+- `0fc9c47` fix: deduplicate extraction guards, standardize valuation labels, add P/B support
+- `24c309a` fix: handle P/B valuation in format_output_node reasoning string
+- `966be81` feat: implement plan.md metric fixes — Sprint 1 + 2 complete
+- `db152af` fix: improve report metrics quality — normalize confidence scores, enhance signal descriptions, and refine validation messages
+- `03da6de` fix: resolve report narrative inconsistencies and raw anomaly leaks
+- `46d6979` refactor: move range validations from reviewer tools to Pydantic Field constraints
+- `a703a49` fix: improve report metrics quality — remove internal scores, add methodology
+- `dceba58` fix: correct VaR(95%) validation range and forecast date check
 
 ## v2.8 — SendMessageInput Model, Pre-Reviewer Integrity Gate, Observability Dashboard, Report Calculation Fixes (1dda8cc–b3a259d)
 

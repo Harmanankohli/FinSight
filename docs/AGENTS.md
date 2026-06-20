@@ -399,6 +399,7 @@ All four agents share a common infrastructure layer:
 | **Pydantic Agent Output Models** | `src/shared/agent_models.py` (v2.5) — typed models (`QuantAgentOutput`, `MarketContextOutput`, `RAGAgentOutput`) at every agent boundary, replacing ~220 lines of fragile regex/`.get()` chains. Fixes zeroed KPI chips, raw JSON narrative from CrewAI, and DCF key mismatch. Falls back to legacy dict extraction for old briefs. |
 | **`SERVICE_AUTH_TOKEN`** | `SubAgentClient` accepts `bearer_token` from `settings.service_auth_token`. When `AUTH_ENABLED=true`, orchestrator-to-sub-agent A2A requests carry the service bearer token. |
 | **Shared Agent Output Store** | `src/shared/memory/agent_output_store.py` (v2.7) — SQLite table `agent_output_store` keyed by `(session_id, agent_name)`. Full agent outputs persisted by orchestrator `send_message` callback, fetched by reviewer executor via `get_agent_outputs()`. TTL-pruned at startup. |
+| **Shared Metrics (MetricValue)** | `src/shared/metrics.py` (v2.9) — `MetricValue` float subclass with validation metadata (status, warning, methodology, to_dict). Used by Quant and Analytics agents for all metric computations. Re-exports from `shared.__init__`. |
 
 ## Phase Map
 

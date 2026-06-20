@@ -48,6 +48,7 @@ SI_MCP("MCPClient\nsrc/shared/mcp_client.py\nSSE session singleton\nAuto-reconne
 SI_Gate("Deferred Eval Gate\nsrc/shared/eval_gate.py\nSub-agents defer evals\nOrchestrator POST /release-evals\n120s safety-net auto-release")
 SI_Sett("Settings\nsrc/shared/settings.py\nPydantic-settings config\nPer-agent A2A timeouts\nLLM queue + eval config")
 SI_Boot("Bootstrap\nsrc/shared/bootstrap.py\nStartup side-effects\nEvent loop + logging + env")
+SI_Metric("MetricValue\nsrc/shared/metrics.py\nFloat subclass w/ validation\n.status / .warning / .to_dict()\nUsed by Quant + Analytics")
 end
 subgraph DataTools["MCP Data Tools (18)"]
 T1("Market Data\nget_prices / get_financials")
@@ -88,6 +89,7 @@ style SI_MCP fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
 style SI_Gate fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
 style SI_Sett fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
 style SI_Boot fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
+style SI_Metric fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
 style T1 fill:#f0ebe3,stroke:#888,color:#1a1a1a
 style T2 fill:#f0ebe3,stroke:#888,color:#1a1a1a
 style T3 fill:#f0ebe3,stroke:#888,color:#1a1a1a

@@ -3591,3 +3591,176 @@ The original concern was startup latency — importing all shared modules (Chrom
 - ✅ Import errors fail fast at startup, not on first use
 - ✅ ~5ms startup cost — negligible
 - ✅ Source of truth: `src/shared/__init__.py` with explicit re-exports
+
+---
+
+## Why MetricValue Standardization (v2.9)
+
+### Problem
+
+Each agent computed and stored metrics in its own ad-hoc format:
+- Quant agent: raw dicts with keys like `"sharpe_ratio"`, `"beta"`, `"rsi"`
+- Analytics agent: similar dicts but with different key naming
+- Reviewer: expected yet another format from both agents
+
+This caused key mismatches (was it `"beta"` or `"stock_beta"?`), missing metadata (what methodology was used for this Sharpe ratio?), and inconsistent aggregation (is the value a float or a string? what's the valid range?). Every cross-agent metric handoff was a fragile `.get()` chain with no validation.
+
+### Solution
+
+Introduce `MetricValue` in `src/shared/metrics.py` — a `float` subclass carrying validation metadata:
+
+```python
+class MetricValue(float):
+    def __new__(cls, value, methodology, min_valid, max_valid, warning=None):
+        ...
+    @property
+    def status(self): ...  # "VALID" | "WARNING" | "ERROR"
+    @property
+    def warning(self): ...
+    def to_dict(self): ...
+```
+
+`MetricValue` behaves exactly as a float everywhere (`isinstance`, arithmetic, Pydantic fields) but adds `.status`, `.warning`, and `.methodology` properties plus a `to_dict()` serialization method. The `metric_result()` factory wraps raw floats into validated `MetricValue` instances.
+
+### Why a `float` subclass instead of a dataclass?
+
+A dataclass (`MetricValue(name, value, weight, score, metadata)` as initially designed) would break every arithmetic operation — you'd need `mv.value` everywhere, and Pydantic/NumPy wouldn't recognize it as a number. By subclassing `float`, `MetricValue` is transparently a number everywhere while carrying its metadata as extra attributes. This was the key insight: the validation metadata is *parallel* to the numeric value, not a replacement for it.
+
+### Why the 4-parameter constructor (value, methodology, min_valid, max_valid)?
+
+A simpler design would be `MetricValue(value, status, warning)`, letting callers determine validity themselves. But that would mean every caller reimplements the same range check — and callers that forget to validate produce `VALID` metrics for clearly invalid values (e.g. RSI=150). The class checks `np.isfinite(value)` (→ ERROR), `value < min_valid or value > max_valid` (→ WARNING), else VALID — consistently, every time.
+
+### Why min_valid/max_valid as constructor params instead of per-type constants?
+
+Different metrics have different valid ranges: RSI [0, 100], Sharpe [-5, 5], Beta [-3, 6], probability_of_profit [0, 1]. Making range part of the constructor keeps validation context-specific and independent of callers remembering the correct constants. The default range [-999, 999] is generous enough to not break existing computations while still catching degenerate values.
+
+### Key properties
+
+- ✅ Transparently numeric — works everywhere a float works
+- ✅ Consistent validation — every metric goes through the same finite + range checks
+- ✅ Self-documenting — `.methodology` and `.warning` tell you how the value was derived and whether to trust it
+- ✅ Serializable — `.to_dict()` produces a complete metric record for reports and APIs
+- ✅ Replaces 5 near-duplicate metric computation paths — single codebase pattern
+- ✅ Zero behavioral change — all existing computations still produce the same floats
+
+---
+
+## Why P/B Valuation for Banks (v2.9)
+
+### Problem
+
+Traditional DCF valuation discounts projected free cash flows. Banks, insurance companies, and other financial institutions don't have meaningful FCF — their "cash flow" is the spread between lending and deposit rates, not discretionary capital. Applying DCF to a bank produces absurd results (negative terminal values, meaningless growth rates) because the model assumes cash can be distributed to shareholders, whereas regulatory capital requirements prevent this.
+
+### Solution
+
+Introduce a P/B (Price-to-Book) residual income model as an alternative `method` on the DCF node. When the quant agent detects a financial sector ticker (SIC codes 60-69: banks, insurance, real estate), it sets `method="pb"` instead of `method="dcf"`. The P/B model computes:
+
+```
+fair_pb_multiple = (ROE - g) / (COE - g)
+```
+
+where ROE = return on equity, g = terminal growth rate, COE = cost of equity. The fair value is `fair_pb_multiple * book_value_per_share`, compared against the current P/B ratio.
+
+### Why not use a sector-specific ticker blacklist?
+
+SIC codes are already available from the MCP `get_financials` response. A blacklist would require maintaining a mapping of every financial ticker → `method="pb"`, which is fragile and incomplete. The SIC-based heuristic (60-69 → P/B) is a single rule that covers all current and future financial tickers automatically.
+
+### Why keep both methods in the same node instead of a separate `bank_valuation` node?
+
+DCF and P/B share the same output schema (fair value, upside/downside, scenarios, sensitivity matrix) and are consumed by the same downstream nodes (format_output, peer_comparison, report extraction). A separate node would duplicate the wiring. The `method` field on `DCFValuation` disambiguates in reports while keeping the graph topology unchanged.
+
+### Key properties
+
+- ✅ Banks get meaningful valuation instead of nonsensical DCF
+- ✅ Automatic sector detection via SIC code — no manual mapping
+- ✅ Same output schema as DCF — zero changes to downstream consumers
+- ✅ Shared report rendering — P/B-specific labels only when `method="pb"`
+- ✅ DCF input corrections included (WACC, growth, net debt, D/E actually sourced from MCP data)
+
+---
+
+## Why Extraction Guard Deduplication (v2.9)
+
+### Problem
+
+The extraction pipeline had two overlapping data sources:
+1. **Structured Pydantic model data** from agent outputs (validated, typed, accurate)
+2. **Regex fallback** that parsed raw response text for the same values
+
+Both ran unconditionally, with regex results appended AFTER model data. This produced duplicate KPI chips ("P/E Ratio: 25.3" appeared twice), overwritten structured values (regex label "Bull Case" replaced "95th Percentile Target"), and duplicated valuation sections. Every report had a manual cleanup step to remove duplicates.
+
+### Solution
+
+Every extraction function now takes a snapshot of existing labels before running, and checks `_existing_labels` / `existing_chip_labels` / `existing_scorecard_dims` before appending from regex. The pattern:
+
+```python
+_snap = set(self._existing_labels)
+# ... structured population ...
+# regex fallback:
+if label not in _snap:
+    self._existing_labels.add(label)
+    # ... append regex result ...
+```
+
+Structured data always runs first and marks labels as taken. Regex fallback only fires for labels the structured path didn't populate.
+
+### Why not remove regex extraction entirely?
+
+Some agent outputs still arrive as unstructured text (legacy briefs, non-Pydantic agent versions). Regex extraction handles these gracefully — without it, old briefs would show empty metric fields. The guard pattern keeps regex as a safety net while ensuring it never overrides structured data.
+
+### Why per-function snapshots instead of a global dedup set?
+
+Different extraction stages (`_stage_metrics`, `_stage_scenarios`, `_stage_financials_scorecard`) can produce the same label by accident. Per-function snapshots prevent cross-function dedup from hiding legitimate duplicates from different extraction stages. Each stage operates on its own domain of labels.
+
+### Key properties
+
+- ✅ Structured data always wins — regex never overwrites validated values
+- ✅ Regex fallback preserved for legacy briefs
+- ✅ No duplicate KPI chips or valuation entries
+- ✅ Per-function label isolation — no cross-stage dedup interference
+- ✅ Zero changes to report output — reports simply have correct values
+
+---
+
+## Why Valuation Label Standardization (v2.9)
+
+### Problem
+
+Different code paths in the extraction pipeline used different labels for the same Monte Carlo percentiles:
+
+| Code Path | Label Used |
+|---|---|
+| `_populate_from_agent_outputs` | "Bull Case (p90)" |
+| `_populate_from_validated_outputs` | "95th Percentile Target" |
+| `_extract_deck_data` | "Bull Case (MC p90)" |
+| `_enrich_from_markdown` | "Bear Case (p10)" |
+
+This meant the same report could show both "Bull Case (p90)" and "95th Percentile Target" for the same value, confusing users. The HTML template also used different labels depending on which extraction path populated the data.
+
+### Solution
+
+Map all legacy labels to a single standard set across all extraction paths:
+
+| Old Label | Standard Label |
+|---|---|
+| "Bull Case (p90)" / "Bull Case (MC p90)" | "95th Percentile Target" |
+| "Base Case (p50)" / "Base Case (MC p50)" | "Median Target (p50)" |
+| "Bear Case (p10)" / "Bear Case (MC p10)" | "5th Percentile Target" |
+
+The mapping is applied in every extraction path that parses agent outputs or falls back to regex. The same standard labels are used in the HTML template, so reports are consistent regardless of which extraction path fires.
+
+### Why percentile-based names instead of "Bull/Base/Bear"?
+
+"Bull Case" and "Bear Case" imply directional bias (bullish/bearish outlook), which is misleading — p90 and p10 are purely statistical percentiles from a Monte Carlo simulation. "95th Percentile Target" accurately describes what the number represents. This also matches how institutional research reports label scenario analysis (Goldman, Morgan Stanley use "p50" not "Base Case").
+
+### Why not store the label mapping in a single config dict?
+
+With 5+ extraction functions each switching on different input shapes (agent output dicts, validated Pydantic models, markdown tables, raw JSON), a centralized mapping would require every function to know about the mapping. Inline string constants with `str.replace()` are visible at the call site and don't need indirection. If a new label needs to be added, it's grep-able across the file.
+
+### Key properties
+
+- ✅ Consistent labels across all code paths
+- ✅ Institutional-standard naming (percentile-based, not directional)
+- ✅ No duplicate labels in the same report
+- ✅ grep-able inline string constants
+- ✅ Backward compatible — old labels mapped to new ones in every path

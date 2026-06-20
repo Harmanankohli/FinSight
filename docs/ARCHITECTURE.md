@@ -396,6 +396,23 @@ Timeouts configured via `.env` with `A2A_TIMEOUT=680.0`:
 
 The `agent_output_store` table (`session_id TEXT, agent_name TEXT, output_json TEXT, created_at TIMESTAMP, PRIMARY KEY (session_id, agent_name)`) was added in schema migration v5→v6.
 
+## Centralized Metrics (MetricValue)
+
+`src/shared/metrics.py` (v2.9) provides a validated `MetricValue` class — a `float` subclass that carries `.status`, `.warning`, `.methodology`, and `.to_dict()` metadata. Used by both Quant and Analytics agents for all metric computations. Replaces 5 near-duplicate metric-formatting code paths.
+
+| Function | Purpose |
+|---|---|
+| `MetricValue(value, methodology, min_valid, max_valid)` | Float subclass with auto-validation (finite check, range check) |
+| `metric_result(value, methodology, ...)` | Factory wrapping raw float into validated MetricValue |
+| `compute_rsi_wilder(prices, period)` | RSI via Wilder's smoothed EMA (returns float) |
+| `compute_sharpe_ratio(returns, risk_free_rate, periods)` | Annualised Sharpe ratio (returns float) |
+| `compute_beta(asset_returns, benchmark_returns)` | CAPM beta (returns float) |
+| `compute_sortino_ratio(returns, ...)` | Downside-volatility Sharpe variant (returns float) |
+| `compute_calmar_ratio(cagr, max_drawdown)` | CAGR / max drawdown (returns float) |
+| `compute_alpha(returns, benchmark, ...)` | Jensen's alpha (returns float) |
+| `compute_information_ratio(returns, benchmark, ...)` | Active return / tracking error (returns float) |
+| `compute_cagr(values)` | Compound annual growth rate (returns float\|None) |
+
 ## CI Pipeline
 
 A GitHub Actions CI pipeline runs on every push (v1.41, Phase 0):
