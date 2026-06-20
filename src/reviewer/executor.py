@@ -105,9 +105,9 @@ class ReviewerAgent(BaseAgent):
             dcf_validation = validate_dcf(agent_outputs.get("quant", {}))
 
             def _pct(v) -> str:
-                """Format 0-1 float as percentage string for LLM consumption."""
+                """Format 0-1 float as decimal string for LLM consumption (avoids LLM outputting 50 for '50%')."""
                 if isinstance(v, (int, float)) and v is not True and v is not False:
-                    return f"{v:.0%}"
+                    return f"{v:.2f}"
                 return str(v)
 
             # Build agent summaries for the LLM with key fields for synthesis
@@ -215,26 +215,6 @@ class ReviewerAgent(BaseAgent):
             output_dict["schema_validation"] = schema_checks
             if integrity_alerts:
                 output_dict["integrity_alerts"] = integrity_alerts
-
-            # Validate confidence range in Python (replaces output guardrail)
-            review_confidence = output_dict.get("review_confidence")
-            if review_confidence is not None and not (0.0 <= review_confidence <= 1.0):
-                logger.warning("Reviewer confidence %s out of range, clamping", review_confidence)
-                output_dict["review_confidence"] = max(0.0, min(1.0, review_confidence))
-
-            # Normalize LLM outputs that use 0–100 instead of 0.0–1.0
-            for sv in output_dict.get("source_verifications", []):
-                rate = sv.get("verification_rate")
-                if isinstance(rate, (int, float)) and rate > 1.0:
-                    sv["verification_rate"] = rate / 100.0
-            cb = output_dict.get("confidence_breakdown") or {}
-            for key in ("agreement_score", "data_quality_score", "meta_confidence"):
-                val = cb.get(key)
-                if isinstance(val, (int, float)) and val > 1.0:
-                    cb[key] = val / 100.0
-            for k, v in (cb.get("agent_scores") or {}).items():
-                if isinstance(v, (int, float)) and v > 1.0:
-                    cb["agent_scores"][k] = v / 100.0
 
             span.update(output={"ticker": ticker, "verdict": output_dict.get("verdict")})
 

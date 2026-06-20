@@ -4,7 +4,9 @@ import logging
 import pandas as pd
 
 from shared.data_freshness import get_latest_statement_date, statement_age_days, check_freshness
+from shared.agent_models import DCFValuation
 from shared.logging_config import logged
+from shared.metrics import compute_cagr
 
 from ..state import QuantAnalysisState
 from .bank_valuation import run_bank_valuation
@@ -214,29 +216,78 @@ async def dcf_valuation_node(state: QuantAnalysisState) -> dict:
                 "dcf_error": f"DCF skipped: current price not available (value: {current_price})",
             }
 
-        # Data-driven growth: blend revenue & earnings growth, bounded 2–25%
-        rg = info.get("revenueGrowth")
-        eg = info.get("earningsGrowth")
-        if rg is not None and eg is not None:
-            growth_rate = max(0.02, min(rg * 0.6 + eg * 0.4, 0.25))
-        elif rg is not None:
-            growth_rate = max(0.02, min(float(rg), 0.25))
-        elif eg is not None:
-            growth_rate = max(0.02, min(float(eg), 0.25))
-        else:
-            growth_rate = 0.08
+        # Historical CAGR: prefer 5-year FCF CAGR, fall back to 5-year revenue CAGR,
+        # then yfinance estimates, then 8%. Clamped to [-20%, 25%] per plan.
+        growth_rate = 0.08
+        rg = None
+        eg = None
+        growth_method = "default_8pct"
+        sorted_periods = sorted(cash_flow_data.keys())
+        fcf_vals = [
+            float(cash_flow_data[p]["Free Cash Flow"])
+            for p in sorted_periods
+            if isinstance(cash_flow_data.get(p), dict)
+            and cash_flow_data[p].get("Free Cash Flow") is not None
+            and float(cash_flow_data[p]["Free Cash Flow"]) > 0
+        ]
+        if len(fcf_vals) >= 2:
+            cagr = compute_cagr(fcf_vals)
+            if cagr is not None:
+                growth_rate = cagr
+                growth_method = "fcf_cagr"
+        if growth_method == "default_8pct":
+            sorted_income_periods = sorted(income_stmt.keys())
+            rev_vals = [
+                float(income_stmt[p].get("Total Revenue", 0))
+                for p in sorted_income_periods
+                if isinstance(income_stmt.get(p), dict)
+                and income_stmt[p].get("Total Revenue") is not None
+                and float(income_stmt[p]["Total Revenue"]) > 0
+            ]
+            if len(rev_vals) >= 2:
+                cagr = compute_cagr(rev_vals)
+                if cagr is not None:
+                    growth_rate = cagr
+                    growth_method = "revenue_cagr"
+        if growth_method == "default_8pct":
+            rg = info.get("revenueGrowth")
+            eg = info.get("earningsGrowth")
+            if rg is not None and eg is not None:
+                growth_rate = max(-0.20, min(rg * 0.6 + eg * 0.4, 0.25))
+                growth_method = "blended_estimate"
+            elif rg is not None:
+                growth_rate = max(-0.20, min(float(rg), 0.25))
+                growth_method = "revenue_estimate"
+            elif eg is not None:
+                growth_rate = max(-0.20, min(float(eg), 0.25))
+                growth_method = "earnings_estimate"
+
+        growth_rate = max(-0.20, min(growth_rate, 0.25))
 
         logger.info(
-            "Growth inputs for %s: revenue_growth=%s, earnings_growth=%s, final_growth=%.3f",
-            ticker, rg, eg, growth_rate,
+            "Growth for %s: method=%s, rate=%.3f", ticker, growth_method, growth_rate,
         )
 
         # WACC via CAPM cost-of-equity + after-tax cost-of-debt, weighted by capital structure
         beta = (state.get("metrics") or {}).get("beta") or 1.0
-        risk_free, mkt_premium = 0.043, 0.055
-        risk_free = (
-            state.get("macro_data", {}).get("treasury_10y_yield", 4.3) / 100
-        )
+        mkt_premium = 0.055
+        rf_annual = state.get("macro_data", {}).get("treasury_10y_yield")
+        if rf_annual is None and mcp:
+            try:
+                macro_res = await mcp.call_tool_by_name("get_macro_indicators", {})
+                if hasattr(macro_res, "content") and macro_res.content:
+                    macro_txt = (
+                        macro_res.content[0].text
+                        if hasattr(macro_res.content[0], "text")
+                        else str(macro_res.content[0])
+                    )
+                    macro_data = json.loads(macro_txt)
+                    rf_annual = macro_data.get("treasury_10y_yield")
+            except Exception as _mr:
+                logger.debug("Macro data fetch failed (non-fatal): %s", _mr)
+        if rf_annual is None:
+            rf_annual = 4.3
+        risk_free = rf_annual / 100
         cost_of_equity = risk_free + beta * mkt_premium
 
         interest_expense = _get_latest_field(income_stmt, "Interest Expense")
@@ -259,7 +310,7 @@ async def dcf_valuation_node(state: QuantAnalysisState) -> dict:
         wacc = max(0.06, min(wacc, 0.18))
 
         sector_tg = _TERMINAL_GROWTH.get(sector, 0.025)
-        terminal_growth = min(sector_tg, wacc - 0.02) if growth_rate > 0.15 else sector_tg
+        terminal_growth = min(sector_tg, wacc - 0.02) if growth_rate > 0.15 else min(sector_tg, 0.03)
 
         # Tapered projection: fades toward terminal growth in years 3-5
         pv_fcf = 0
@@ -356,23 +407,23 @@ async def dcf_valuation_node(state: QuantAnalysisState) -> dict:
         )
 
         return {
-            "dcf_valuation": {
-                "intrinsic_value": round(intrinsic_value, 2),
-                "current_price": round(float(current_price), 2),
-                "upside_pct": round(float(upside * 100), 1),
-                "wacc": round(wacc, 4),
-                "growth_rate": round(growth_rate, 4),
-                "terminal_growth": round(terminal_growth, 4),
-                "enterprise_value": round(enterprise_value, 2),
-                "net_debt": round(net_debt, 2),
-                "equity_value": round(equity_value, 2),
-                "fcf_used": latest_fcf,
-                "revenue_growth": round(rg, 4) if rg is not None else None,
-                "earnings_growth": round(eg, 4) if eg is not None else None,
-                "valuation_warnings": valuation_warnings,
-                "fcf_age_days": fcf_age_days,
-                "freshness": check_freshness(fcf_age_days),
-                "dcf_assumptions": {
+            "dcf_valuation": DCFValuation(
+                intrinsic_value=round(intrinsic_value, 2),
+                current_price=round(float(current_price), 2),
+                upside_pct=round(float(upside * 100), 1),
+                wacc=round(wacc, 4),
+                growth_rate=round(growth_rate, 4),
+                terminal_growth=round(terminal_growth, 4),
+                enterprise_value=round(enterprise_value, 2),
+                net_debt=round(net_debt, 2),
+                equity_value=round(equity_value, 2),
+                fcf_used=latest_fcf,
+                revenue_growth=round(rg, 4) if rg is not None else None,
+                earnings_growth=round(eg, 4) if eg is not None else None,
+                valuation_warnings=valuation_warnings,
+                fcf_age_days=fcf_age_days,
+                freshness=check_freshness(fcf_age_days),
+                dcf_assumptions={
                     "risk_free_rate": round(risk_free, 4),
                     "beta": round(beta, 4),
                     "cost_of_equity": round(cost_of_equity, 4),
@@ -386,10 +437,10 @@ async def dcf_valuation_node(state: QuantAnalysisState) -> dict:
                     "net_debt": round(net_debt, 2),
                     "fcf_age_days": fcf_age_days,
                 },
-                "scenarios": scenarios,
-                "valuation_reliability": confidence,
-                "sensitivity_matrix": sensitivity,
-            },
+                scenarios=scenarios,
+                valuation_reliability=confidence,
+                sensitivity_matrix=sensitivity,
+            ).model_dump(),
             "monte_carlo": mc,
         }
     except Exception as e:

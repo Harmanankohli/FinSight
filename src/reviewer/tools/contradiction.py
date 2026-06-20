@@ -1,5 +1,7 @@
 import logging
 
+from shared.agent_models import ContradictionFlag
+
 logger = logging.getLogger(__name__)
 
 
@@ -20,12 +22,12 @@ def check_contradictions(agent_outputs: dict) -> list[dict]:
         key = (field, description[:80])
         if key not in seen_categories:
             seen_categories.add(key)
-            contradictions.append({
-                "agents": agents,
-                "field": field,
-                "description": description,
-                "severity": severity,
-            })
+            contradictions.append(ContradictionFlag(
+                agents=agents,
+                field=field,
+                description=description,
+                severity=severity,
+            ).model_dump())
 
     quant = agent_outputs.get("quant", {})
     rag = agent_outputs.get("rag", {})

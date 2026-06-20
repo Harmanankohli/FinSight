@@ -2,6 +2,7 @@ import logging
 from datetime import datetime, timedelta
 
 import numpy as np
+from shared.agent_models import ForecastResult
 from scipy import signal
 
 logger = logging.getLogger(__name__)
@@ -74,37 +75,18 @@ def _holt_winters(
 
 
 async def _run_forecast(price_data: dict) -> dict:
-    import json
-
     try:
         sorted_dates = sorted(price_data.keys())
         closes = [price_data[d] for d in sorted_dates if price_data[d] is not None]
         if len(closes) < 60:
-            return {
-                "method": "exponential_smoothing",
-                "horizon_days": 30,
-                "forecast_prices": [],
-                "forecast_dates": [],
-                "confidence_lower": [],
-                "confidence_upper": [],
-                "mape": None,
-            }
+            return ForecastResult().model_dump()
 
         forecast, lower, upper = _holt_winters(closes, 30)
 
         if not forecast:
-            return {
-                "method": "exponential_smoothing",
-                "horizon_days": 30,
-                "forecast_prices": [],
-                "forecast_dates": [],
-                "confidence_lower": [],
-                "confidence_upper": [],
-                "mape": None,
-            }
+            return ForecastResult().model_dump()
 
-        raw_date = sorted_dates[-1].split("T")[0] if "T" in sorted_dates[-1] else sorted_dates[-1]
-        last_date = datetime.strptime(raw_date, "%Y-%m-%d") if "-" in raw_date else datetime.now()
+        last_date = datetime.now()
         dates = [(last_date + timedelta(days=i + 1)).strftime("%Y-%m-%d") for i in range(30)]
 
         holdout_size = min(max(1, len(closes) // 5), 30)
@@ -124,23 +106,13 @@ async def _run_forecast(price_data: dict) -> dict:
         logger.info(
             "Forecast complete: horizon=30d mape=%s", f"{mape:.2f}%" if mape is not None else "N/A"
         )
-        return {
-            "method": "exponential_smoothing",
-            "horizon_days": 30,
-            "forecast_prices": [round(f, 2) for f in forecast],
-            "forecast_dates": dates,
-            "confidence_lower": [round(l, 2) for l in lower],
-            "confidence_upper": [round(u, 2) for u in upper],
-            "mape": round(mape, 2) if mape is not None else None,
-        }
+        return ForecastResult(
+            forecast_prices=[round(f, 2) for f in forecast],
+            forecast_dates=dates,
+            confidence_lower=[round(l, 2) for l in lower],
+            confidence_upper=[round(u, 2) for u in upper],
+            mape=round(mape, 2) if mape is not None else None,
+        ).model_dump()
     except Exception as e:
         logger.warning("Forecast failed: %s", e)
-        return {
-            "method": "exponential_smoothing",
-            "horizon_days": 30,
-            "forecast_prices": [],
-            "forecast_dates": [],
-            "confidence_lower": [],
-            "confidence_upper": [],
-            "mape": None,
-        }
+        return ForecastResult().model_dump()

@@ -1,5 +1,7 @@
 import logging
 
+from shared.agent_models import SourceVerification
+
 logger = logging.getLogger(__name__)
 
 
@@ -27,17 +29,14 @@ def verify_sources(agent_outputs: dict) -> list[dict]:
     if dcf_intrinsic and dcf_current and dcf_upside is not None:
         calculated_upside = (dcf_intrinsic - dcf_current) / dcf_current * 100
         if abs(calculated_upside - dcf_upside) > 1.0:
-            verifications.append(
-                {
-                    "agent_name": "Quant Analysis Agent",
-                    "claims_checked": 1,
-                    "claims_verified": 0,
-                    "verification_rate": 0.0,
-                    "unverified_claims": [
-                        f"DCF upside_pct ({dcf_upside:.1f}%) != calculated ({calculated_upside:.1f}%)"
-                    ],
-                }
-            )
+            verifications.append(SourceVerification(
+                agent_name="Quant Analysis Agent",
+                claims_checked=1,
+                claims_verified=0,
+                unverified_claims=[
+                    f"DCF upside_pct ({dcf_upside:.1f}%) != calculated ({calculated_upside:.1f}%)"
+                ],
+            ).model_dump())
 
     # Sharpe ratio and VaR(95%) range checks are enforced by
     # QuantRiskMetrics Pydantic Field constraints.
@@ -46,15 +45,12 @@ def verify_sources(agent_outputs: dict) -> list[dict]:
     rag_sources = rag.get("sources", [])
     rag_summary = rag.get("summary", "")
     if rag_summary and not rag_sources:
-        verifications.append(
-            {
-                "agent_name": "Financial RAG Agent",
-                "claims_checked": 1,
-                "claims_verified": 0,
-                "verification_rate": 0.0,
-                "unverified_claims": ["RAG summary present but no sources listed"],
-            }
-        )
+        verifications.append(SourceVerification(
+            agent_name="Financial RAG Agent",
+            claims_checked=1,
+            claims_verified=0,
+            unverified_claims=["RAG summary present but no sources listed"],
+        ).model_dump())
 
     # Market confidence_score [0,1] is enforced by MarketContextOutput Pydantic model.
     market_signal = market.get("overall_signal")
@@ -92,15 +88,13 @@ def verify_sources(agent_outputs: dict) -> list[dict]:
             unverified.append("One or more charts have empty datasets")
     if claims_checked > 0:
         rate = claims_verified / claims_checked if claims_checked > 0 else 0.0
-        verifications.append(
-            {
-                "agent_name": "Analytics Agent",
-                "claims_checked": claims_checked,
-                "claims_verified": claims_verified,
-                "verification_rate": round(rate, 2),
-                "unverified_claims": unverified,
-            }
-        )
+        verifications.append(SourceVerification(
+            agent_name="Analytics Agent",
+            claims_checked=claims_checked,
+            claims_verified=claims_verified,
+            verification_rate=round(rate, 2),
+            unverified_claims=unverified,
+        ).model_dump())
 
     for v in verifications:
         if v.get("unverified_claims"):

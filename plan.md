@@ -1,607 +1,698 @@
-# FinSight - Codebase Verified Improvement Plan
+# FinSight Metric Correction & Standardization Specification
 
-Version: June 2026
-
-This document only includes findings verified against the actual source code.
-
----
-
-# Executive Summary
-
-Current System Assessment
-
-The system is considerably more mature than initially assumed.
-
-Major observations:
-
-* Financial metrics are accurate.
-* DCF implementation is structurally correct.
-* Net debt adjustment is already implemented.
-* DCF/Monte Carlo divergence detection already exists.
-* Most remaining issues are consistency, explainability, and reporting quality issues rather than valuation engine bugs.
-
-Priority should shift from:
-
-"Fix valuation calculations"
-
-to:
-
-"Improve consistency, transparency, and report quality"
+Version: 1.0
+Priority: High
+Target: Quant Engine, Technical Analysis Engine, Valuation Engine
 
 ---
 
-# P0 - Verified Issues
+# Objective
+
+Standardize all financial metric calculations to institutional-grade implementations and eliminate inconsistencies across agents.
 
 ---
 
-# P0.1 RSI Methodology Inconsistency
+# P0 - Critical Fixes
 
-## Verified Finding
+## P0.1 RSI Standardization
 
-Two different RSI calculations exist.
+### Problem
 
-### Technical Analysis Node
+Multiple RSI implementations currently exist.
 
-File:
+Observed issues:
 
-src/quant/nodes/technical.py
+* Trend analysis computes RSI independently.
+* Technical indicators compute RSI separately.
+* Different smoothing methods produce different values.
 
-Uses:
-
-EMA-based RSI calculation
-
----
-
-### Trend Analysis Node
-
-File:
-
-src/analytics/nodes/trend.py
-
-Uses:
-
-Simple-average RSI recomputation
+This causes report inconsistencies.
 
 ---
 
-## Impact
+### Required Implementation
 
-Same report may show:
+Create a single source of truth:
 
-RSI = 51
+```python
+compute_rsi_wilder(
+    prices: pd.Series,
+    period: int = 14
+) -> float
+```
 
-while trend scoring uses:
+Use Wilder's smoothing:
 
-RSI = 39
+```text
+Gain = max(change, 0)
+Loss = max(-change, 0)
 
-This is not a stale-cache issue.
+AvgGain_t =
+((PrevAvgGain * 13) + CurrentGain) / 14
 
-It is a methodology mismatch.
+AvgLoss_t =
+((PrevAvgLoss * 13) + CurrentLoss) / 14
+
+RS = AvgGain / AvgLoss
+
+RSI = 100 - (100 / (1 + RS))
+```
 
 ---
 
-## Recommended Fix
+### Requirements
 
-Make trend analysis consume:
+All modules must consume:
 
+```python
 state["technicals"]["rsi_14"]
+```
 
-instead of recalculating RSI.
-
----
-
-## Benefit
-
-Single source of truth.
-
-Consistent technical analysis.
+No module may recompute RSI.
 
 ---
 
-# P0.2 MACD Signal Investigation
+### Validation
 
-## Verified Finding
+Range:
 
-Original diagnosis was incorrect.
+```text
+0 <= RSI <= 100
+```
 
-technical.py already uses:
+Assertions:
 
-macd_histogram > 0
-
-which is mathematically valid.
-
----
-
-## Open Question
-
-Report shows:
-
-MACD = 1.207
-
-Signal = 3.251
-
-Histogram = -2.044
-
-but signal rendered as:
-
-Bullish
+```python
+assert 0 <= rsi <= 100
+```
 
 ---
 
-## Investigation Required
+### Interpretation Bands
 
-Trace:
-
-technical.py
-
-↓
-
-trend.py
-
-↓
-
-summary generation
-
-↓
-
-report rendering
-
-Determine where bullish classification changes.
+| Range  | Meaning    |
+| ------ | ---------- |
+| 0-30   | Oversold   |
+| 30-70  | Neutral    |
+| 70-100 | Overbought |
 
 ---
 
-## Recommended Action
+# P1 - Sharpe Ratio Improvement
 
-Add debug logging:
+## Current Issue
 
-MACD
+Some implementations may use raw returns.
 
-Signal
-
-Histogram
-
-Rendered Signal
-
-during report generation.
+Institutional Sharpe requires excess returns.
 
 ---
 
-## Expected Outcome
+## Required Formula
 
-Locate rendering or aggregation inconsistency.
+```text
+Excess Return =
+Asset Return - Risk Free Return
+```
 
----
+```text
+Sharpe =
+Mean(Excess Returns)
+/
+Std(Excess Returns)
+```
 
-# P0.3 Reviewer Contradiction Deduplication
+Annualized:
 
-## Verified Finding
-
-Duplicate contradiction categories appear.
-
-Examples:
-
-high confidence_breakdown
-
-low confidence_score
-
-multiple verification statements
-
----
-
-## Files
-
-src/reviewer/executor.py
-
-src/reviewer/tools/validation.py
-
-src/reviewer/tools/contradiction.py
+```text
+Sharpe_Annual =
+Sharpe * sqrt(252)
+```
 
 ---
 
-## Recommended Fix
+## Function
 
-Before adding contradiction:
-
-category_key = (
-contradiction_type,
-topic
+```python
+compute_sharpe_ratio(
+    returns: np.ndarray,
+    risk_free_rate: float
 )
-
-if category_key not in seen:
-add()
-
----
-
-## Benefit
-
-Cleaner reviewer output.
-
-Higher trust.
-
----
-
-# P1 - Transparency Improvements
-
----
-
-# P1.1 Export Full DCF Audit Trail
-
-## Verified Finding
-
-These values are computed internally:
-
-risk_free_rate
-
-beta
-
-cost_of_equity
-
-cost_of_debt
-
-tax_rate
-
-but are not exported.
-
----
-
-## File
-
-src/quant/nodes/dcf.py
-
----
-
-## Add To Output
-
-dcf_assumptions = {
-
-```
-"risk_free_rate": risk_free_rate,
-
-"beta": beta,
-
-"cost_of_equity": cost_of_equity,
-
-"cost_of_debt": after_tax_cod,
-
-"tax_rate": tax_rate,
-
-"shares_outstanding": shares_outstanding,
-
-"net_debt": net_debt,
-
-"fcf_used": latest_fcf,
 ```
 
-}
+---
+
+## Validation
+
+```python
+assert np.isfinite(sharpe)
+```
 
 ---
 
-## Benefit
+## Expected Range
 
-Fully auditable DCF.
+```text
+(-∞, +∞)
+```
 
-Better interview discussion.
+Typical:
 
----
-
-# P1.2 DCF Assumption Explanation
-
-## Problem
-
-Users see:
-
-DCF Fair Value = $131
-
-but do not know why.
+| Value | Meaning     |
+| ----- | ----------- |
+| <0    | Poor        |
+| 0-1   | Weak        |
+| 1-2   | Good        |
+| 2-3   | Excellent   |
+| >3    | Exceptional |
 
 ---
 
-## Recommendation
+# P1 - Beta Calculation Upgrade
 
-Add report section:
+## Current Issue
 
-DCF Assumptions
-
-Risk-Free Rate
-
-Beta
-
-Cost of Equity
-
-Cost of Debt
-
-Tax Rate
-
-Growth Rate
-
-Terminal Growth
-
-Shares Outstanding
-
-Net Debt
-
-FCF Used
+Short daily samples create unstable beta values.
 
 ---
 
-## Benefit
+## Required Formula
 
-Explainability.
-
-Trust.
-
----
-
-# P1.3 Recommendation Driver Summary
-
-## Problem
-
-Current report requires users to infer:
-
-why HOLD was selected.
+```text
+Beta =
+Covariance(
+    Asset Returns,
+    Market Returns
+)
+/
+Variance(
+    Market Returns
+)
+```
 
 ---
 
-## Recommendation
+## Required Window
 
-Generate:
+Preferred:
 
-Recommendation Drivers
+```text
+104 weeks
+```
 
-Positive Signals
+Fallback:
 
-Negative Signals
+```text
+5 years monthly returns
+```
 
-Most Influential Factors
+Minimum:
 
----
-
-## Example
-
-Positive
-
-* Revenue Growth
-* Margin Strength
-* Technical Trend
-
-Negative
-
-* DCF Downside
-* Valuation Premium
-* Elevated Anomalies
+```text
+252 trading days
+```
 
 ---
 
-## Benefit
+## Function
 
-More analyst-like reports.
-
----
-
-# P2 - Model Enhancements
-
----
-
-# P2.1 DCF Sensitivity Matrix
-
-## Current State
-
-Not implemented.
+```python
+compute_beta(
+    asset_returns,
+    benchmark_returns
+)
+```
 
 ---
 
-## Add
+## Validation
 
-Sensitivity grid:
+```python
+assert np.isfinite(beta)
+```
 
-Terminal Growth
+---
 
-2.0%
+## Range
 
+```text
+(-∞, +∞)
+```
+
+---
+
+# P1 - WACC Modernization
+
+## Current Issue
+
+Risk-free rate is hardcoded.
+
+This creates stale valuations.
+
+---
+
+## Required Change
+
+Risk-free rate must be fetched dynamically.
+
+Preferred source:
+
+US Treasury 10-Year Yield
+
+Store:
+
+```python
+state["macro"]["risk_free_rate"]
+```
+
+---
+
+## Formula
+
+```text
+CostOfEquity =
+Rf + Beta * MarketRiskPremium
+```
+
+```text
+WACC =
+(
+E/(D+E)
+*
+CostOfEquity
+)
++
+(
+D/(D+E)
+*
+CostOfDebt
+*
+(1-TaxRate)
+)
+```
+
+---
+
+## Validation
+
+```text
+0% <= WACC <= 25%
+```
+
+Alert if outside range.
+
+---
+
+# P1 - DCF Growth Model Rewrite
+
+## Current Issue
+
+Current formula:
+
+```text
+0.6 Revenue Growth
++
+0.4 Earnings Growth
+```
+
+is not finance-standard.
+
+---
+
+## Required Change
+
+Use historical CAGR.
+
+Preferred:
+
+```text
+5-Year FCF CAGR
+```
+
+Fallback:
+
+```text
+5-Year Revenue CAGR
+```
+
+---
+
+## Formula
+
+```text
+CAGR =
+(
+EndingValue
+/
+BeginningValue
+)
+^(1/N)
+-
+1
+```
+
+---
+
+## Growth Constraints
+
+```text
+-20% <= Growth <= 25%
+```
+
+Clamp values outside range.
+
+---
+
+## Storage
+
+```python
+state["valuation"]["projected_growth"]
+```
+
+---
+
+# P1 - Terminal Growth Constraints
+
+## Required Rule
+
+Terminal Growth must never exceed:
+
+```text
+Long-Term GDP Growth
+```
+
+Implementation:
+
+```python
+terminal_growth = min(
+    calculated_growth,
+    0.03
+)
+```
+
+---
+
+## Range
+
+```text
+0% - 3%
+```
+
+Default:
+
+```text
 2.5%
-
-3.0%
-
-3.5%
-
-WACC
-
-8%
-
-9%
-
-10%
-
-11%
-
-12%
+```
 
 ---
 
-## Output
+# P2 - Monte Carlo Enhancement
 
-DCF Sensitivity Matrix
+## Current Limitation
 
----
+GBM ignores:
 
-## Benefit
-
-Shows assumption risk.
-
-Industry-standard valuation output.
+* Earnings gaps
+* Black swan events
+* Jump risk
 
 ---
 
-# P2.2 DCF Confidence Redesign
+## Current Model
 
-## Current State
+Keep:
 
-Confidence based largely on:
-
-assumption reliability
-
-input availability
-
-model health
-
----
-
-## Issue
-
-Users may interpret:
-
-84% confidence
-
-as
-
-84% probability fair value is correct
-
-which is misleading.
+```text
+dS =
+μSdt
++
+σSdW
+```
 
 ---
 
-## Recommendation
+## Future Upgrade
 
-Rename
+Add:
 
-DCF Confidence
+### Option A
 
-to
+Jump Diffusion
 
-Model Reliability
+```text
+Merton Jump Diffusion
+```
 
-or
+### Option B
 
-Valuation Reliability
+Historical Bootstrap
 
----
-
-## Benefit
-
-Clearer interpretation.
-
----
-
-# P2.3 Enhanced Peer Selection
-
-## Verified Finding
-
-Peer logic currently lives in:
-
-src/quant/nodes/summary.py
-
-src/shared/peer_sets.py
+```python
+np.random.choice(
+    historical_returns
+)
+```
 
 ---
 
-## Recommendation
+# P2 - VaR Standardization
 
-Add filtering layer:
+## Historical VaR
 
-same sector
+```text
+VaR95 =
+5th percentile return
+```
 
-similar market cap
+Implementation:
 
-positive revenue
-
-positive operating margin
-
----
-
-## Goal
-
-Prevent weak peer matches.
-
----
-
-# P3 - Interview Showcase Features
+```python
+np.percentile(
+    returns,
+    5
+)
+```
 
 ---
 
-# P3.1 DCF Sensitivity Visualization
+## Validation
 
-Generate heatmap/table showing:
+Expected:
 
-WACC sensitivity
-
-Terminal growth sensitivity
-
-Intrinsic value impact
+```text
+-20% <= VaR <= 0%
+```
 
 ---
 
-# P3.2 Report Health Score
+# P2 - CVaR Standardization
 
-Score components:
+## Formula
 
-Data Quality
-
-Valuation Consistency
-
-Source Coverage
-
-Forecast Stability
-
----
-
-# P3.3 Explainable Recommendation Layer
-
-Output:
-
-Top 5 factors driving recommendation
-
-Factor contribution scores
-
-Agent influence weighting
+```text
+CVaR =
+Mean(
+Returns <= VaR95
+)
+```
 
 ---
 
-# Recommended Implementation Order
+## Validation
 
-Sprint 1
+Always enforce:
 
-1. RSI single-source-of-truth
-2. MACD signal investigation
-3. Reviewer contradiction deduplication
-
-Expected effort:
-1 day
+```python
+assert cvar <= var
+```
 
 ---
 
-Sprint 2
+# P3 - New Metrics To Add
 
-1. Export DCF audit trail
-2. Add DCF assumptions section
-3. Recommendation driver summary
+## Sortino Ratio
 
-Expected effort:
-2–3 days
+### Formula
 
----
-
-Sprint 3
-
-1. Sensitivity matrix
-2. Confidence terminology redesign
-3. Peer filtering improvements
-
-Expected effort:
-3–4 days
+```text
+(
+Mean Return
+-
+Risk Free Rate
+)
+/
+Downside Deviation
+```
 
 ---
 
-# Final Recommendation
+### Function
 
-Do not spend more time changing DCF formulas.
+```python
+compute_sortino_ratio()
+```
 
-The valuation engine is already reasonably robust.
+---
 
-The highest-value improvements are:
+### Range
 
-1. Consistency across nodes
-2. Explainability of outputs
-3. Transparency of assumptions
-4. Cleaner reviewer analysis
+```text
+(-∞,+∞)
+```
 
-These changes will improve both report quality and interview value more than additional valuation complexity.
+---
+
+## Calmar Ratio
+
+### Formula
+
+```text
+CAGR
+/
+Maximum Drawdown
+```
+
+---
+
+### Function
+
+```python
+compute_calmar_ratio()
+```
+
+---
+
+### Range
+
+```text
+(-∞,+∞)
+```
+
+---
+
+## Alpha
+
+### Formula
+
+```text
+Alpha =
+Actual Return
+-
+Expected CAPM Return
+```
+
+Where:
+
+```text
+Expected CAPM Return =
+Rf +
+Beta *
+(Market Return - Rf)
+```
+
+---
+
+### Function
+
+```python
+compute_alpha()
+```
+
+---
+
+### Range
+
+```text
+(-∞,+∞)
+```
+
+---
+
+## Information Ratio
+
+### Formula
+
+```text
+Active Return
+/
+Tracking Error
+```
+
+Where:
+
+```text
+Tracking Error =
+Std(
+Portfolio -
+Benchmark
+)
+```
+
+---
+
+### Function
+
+```python
+compute_information_ratio()
+```
+
+---
+
+### Range
+
+```text
+(-∞,+∞)
+```
+
+---
+
+# Validation Layer
+
+Every metric should expose:
+
+```python
+{
+    "value": float,
+    "methodology": str,
+    "min_valid": float,
+    "max_valid": float,
+    "status": str
+}
+```
+
+Example:
+
+```python
+{
+    "value": 1.72,
+    "methodology": "Annualized Excess Return Sharpe",
+    "min_valid": -999,
+    "max_valid": 999,
+    "status": "VALID"
+}
+```
+
+---
+
+# Acceptance Criteria
+
+## Quant Engine
+
+* Single RSI implementation
+* Dynamic risk-free rate
+* CAGR-based growth projections
+* Sharpe uses excess returns
+* Beta uses longer windows
+
+## New Metrics
+
+* Sortino Ratio
+* Calmar Ratio
+* Alpha
+* Information Ratio
+
+## Validation
+
+* All metrics contain min/max validation
+* Out-of-range values generate warnings
+* Report displays methodology used

@@ -3,6 +3,7 @@ import json
 import logging
 from datetime import date
 
+from shared.agent_models import PeerComparison, StressTestResult
 from shared.llm_queue import Priority, llm_queue
 from shared.logging_config import logged
 from shared.settings import LLM_API_KEY, LLM_BASE_URL, LLM_SUMMARY_MODEL
@@ -50,11 +51,11 @@ async def peer_comparison_node(state: QuantAnalysisState) -> dict:
 
     if not peer_tickers:
         return {
-            "peer_comparison": {
-                "note": f"Peer discovery unavailable for {ticker} — get_peers returned no results. Restart MCP server if recently deployed.",  # noqa: E501
-                "industry": industry,
-                "sector": sector,
-            }
+            "peer_comparison": PeerComparison(
+                note=f"Peer discovery unavailable for {ticker} — get_peers returned no results. Restart MCP server if recently deployed.",  # noqa: E501
+                industry=industry,
+                sector=sector,
+            ).model_dump(),
         }
 
     async def _fetch(sym: str) -> tuple[str, dict]:
@@ -152,15 +153,15 @@ async def peer_comparison_node(state: QuantAnalysisState) -> dict:
             )
 
     return {
-        "peer_comparison": {
-            "industry": industry,
-            "sector": sector,
-            "peers": peer_tickers,
-            "comparison": comparison,
-            "rankings": rankings,
-            "n_peers": len(peer_tickers),
-            "medians": medians,
-        }
+        "peer_comparison": PeerComparison(
+            industry=industry,
+            sector=sector,
+            peers=peer_tickers,
+            comparison=comparison,
+            rankings=rankings,
+            n_peers=len(peer_tickers),
+            medians=medians,
+        ).model_dump(),
     }
 
 
@@ -222,8 +223,8 @@ async def format_output_node(state: QuantAnalysisState) -> dict:
 
     # Named signal list (for display/backward compat)
     signals: list[str] = []
-    sharpe = metrics.get("sharpe_ratio", 0)
-    vol = metrics.get("annual_volatility", 0)
+    sharpe = metrics.get("sharpe_ratio") or 0
+    vol = metrics.get("annual_volatility") or 0
     if sharpe >= 1.0:
         signals.append("positive_risk_adjusted_return")
     elif sharpe < 0:
@@ -300,9 +301,9 @@ async def format_output_node(state: QuantAnalysisState) -> dict:
 
     if metrics:
         parts.append(
-            f"Sharpe: {metrics.get('sharpe_ratio', 'N/A')}, "
-            f"Vol: {metrics.get('annual_volatility', 'N/A')}, "
-            f"Beta: {metrics.get('beta', 'N/A')}"
+            f"Sharpe: {metrics.get('sharpe_ratio', 0):.3f}, "
+            f"Vol: {metrics.get('annual_volatility', 0):.3f}, "
+            f"Beta: {metrics.get('beta', 0):.3f}"
         )
     if dcf:
         _method = dcf.get("method", "dcf")
@@ -376,11 +377,11 @@ async def format_output_node(state: QuantAnalysisState) -> dict:
     )
 
     stress_test_info = stress or (
-        {
-            "note": f"Stress test skipped - volatility ({vol:.1%}) below 35% threshold",
-            "volatility": vol,
-            "threshold": 0.35,
-        }
+        StressTestResult(
+            note=f"Stress test skipped - volatility ({vol:.1%}) below 35% threshold",
+            volatility=vol,
+            threshold=0.35,
+        ).model_dump(exclude_none=True)
         if vol <= 0.35
         else None
     )
@@ -427,12 +428,16 @@ async def llm_summary_node(state: QuantAnalysisState) -> dict:
     reasoning = state.get("reasoning", "")
 
     today = date.today().isoformat()
+    _sharpe_val = metrics.get("sharpe_ratio") or 0
+    _vol_val = metrics.get("annual_volatility") or 0
+    _beta_val = metrics.get("beta") or 0
+    _maxdd_val = metrics.get("max_drawdown") or 0
     prompt = (
         f"Today: {today}. Financial analyst summary for {ticker}.\n"
         f"Recommendation: {rec}\n"
-        f"Risk: Sharpe={metrics.get('sharpe_ratio')}, "
-        f"Vol={metrics.get('annual_volatility')}, "
-        f"Beta={metrics.get('beta')}, MaxDD={metrics.get('max_drawdown')}\n"
+        f"Risk: Sharpe={_sharpe_val}, "
+        f"Vol={_vol_val}, "
+        f"Beta={_beta_val}, MaxDD={_maxdd_val}\n"
     )
     if fund:
         prompt += (

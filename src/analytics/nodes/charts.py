@@ -1,5 +1,7 @@
 import logging
 
+from shared.agent_models import ChartPayload
+
 logger = logging.getLogger(__name__)
 
 
@@ -23,10 +25,9 @@ async def _generate_charts(ohlcv_data: list[dict], price_data: dict) -> list[dic
         closes = [price_data[d] for d in sorted_dates if price_data[d] is not None]
         dates = sorted_dates[: len(closes)]
 
-        candlestick = {
-            "chart_type": "candlestick",
-            "labels": [d["date"] for d in ohlcv_data[-90:]],
-            "datasets": [
+        candlestick = ChartPayload(
+            labels=[d["date"] for d in ohlcv_data[-90:]],
+            datasets=[
                 {
                     "label": "OHLCV",
                     "data": [
@@ -42,17 +43,16 @@ async def _generate_charts(ohlcv_data: list[dict], price_data: dict) -> list[dic
                     ],
                 }
             ],
-            "annotations": [],
-        }
+        ).model_dump()
         charts.append(candlestick)
 
         sma20 = _sma(closes, 20)
         sma50 = _sma(closes, 50)
         sma200 = _sma(closes, 200)
-        line_chart = {
-            "chart_type": "line",
-            "labels": dates,
-            "datasets": [
+        line_chart = ChartPayload(
+            chart_type="line",
+            labels=dates,
+            datasets=[
                 {"label": "Close", "data": [round(c, 2) for c in closes]},
                 {
                     "label": "SMA-20",
@@ -67,8 +67,7 @@ async def _generate_charts(ohlcv_data: list[dict], price_data: dict) -> list[dic
                     "data": [round(v, 2) if v is not None else None for v in sma200],
                 },
             ],
-            "annotations": [],
-        }
+        ).model_dump()
         charts.append(line_chart)
 
         logger.debug("Chart generation complete: %d charts", len(charts))

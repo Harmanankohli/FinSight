@@ -4,6 +4,7 @@ import logging
 import numpy as np
 import pandas as pd
 
+from shared.agent_models import MonteCarloResult
 from shared.logging_config import logged_sync
 
 logger = logging.getLogger(__name__)
@@ -53,19 +54,19 @@ def _run_monte_carlo(
     terminal = current * np.exp(log_rets.sum(axis=0))
     pct_chg = (terminal - current) / current
 
-    return {
-        "p10": round(float(np.percentile(terminal, 10)), 2),
-        "p25": round(float(np.percentile(terminal, 25)), 2),
-        "p50": round(float(np.percentile(terminal, 50)), 2),
-        "p75": round(float(np.percentile(terminal, 75)), 2),
-        "p90": round(float(np.percentile(terminal, 90)), 2),
-        "prob_profit": round(float((terminal > current).mean()), 3),
-        "expected_return_pct": round(float(pct_chg.mean() * 100), 1),
-        "mc_var_95": round(float(np.percentile(pct_chg, 5)), 4),
-        "current_price": round(current, 2),
-        "n_simulations": n_simulations,
-        "horizon_days": horizon_days,
-    }
+    return MonteCarloResult(
+        p10=round(float(np.percentile(terminal, 10)), 2),
+        p25=round(float(np.percentile(terminal, 25)), 2),
+        p50=round(float(np.percentile(terminal, 50)), 2),
+        p75=round(float(np.percentile(terminal, 75)), 2),
+        p90=round(float(np.percentile(terminal, 90)), 2),
+        prob_profit=round(float((terminal > current).mean()), 3),
+        expected_return_pct=round(float(pct_chg.mean() * 100), 1),
+        mc_var_95=round(float(np.percentile(pct_chg, 5)), 4),
+        current_price=round(current, 2),
+        n_simulations=n_simulations,
+        horizon_days=horizon_days,
+    ).model_dump()
 
 
 @logged_sync()

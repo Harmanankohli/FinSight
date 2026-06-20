@@ -839,7 +839,7 @@
       </div>
       <div class="hero-metric">
         <span class="label">Confidence</span>
-        <span class="value">65%</span>
+        <span class="value">53%</span>
       </div>
       
       <div class="hero-metric">
@@ -850,7 +850,7 @@
       
       <div class="hero-metric">
         <span class="label">Analysis Date</span>
-        <span class="value" style="font-size:24px;">2026-06-19</span>
+        <span class="value" style="font-size:24px;">2026-06-20</span>
       </div>
       
     </div>
@@ -879,7 +879,7 @@
       
       <div class="kpi-chip">
         <span class="label">Beta</span>
-        <span class="value neg">1.21</span>
+        <span class="value pos">0.88</span>
         <span class="context">Mkt sensitivity</span>
       </div>
       
@@ -900,7 +900,7 @@
   <div class="container">
     <div class="section-label">Investment Thesis</div>
     <h2 class="section-title">Executive Summary</h2>
-    <div class="thesis-block">The analysis reveals a nuanced outlook: while the Quant model flags a strong DCF intrinsic value of $131.04 versus the current price of $298, suggesting a potential -56% upside, the Analytics signal warns of elevated risk metrics (Sharpe 0.592, beta 1.21) and a high anomaly count (14). Market context supports a bullish macro backdrop with a flat yield curve, yet contradictions emerge between DCF downside and Monte Carlo divergence, highlighting model uncertainty. Confidence remains moderate at 65%, driven by strong ROE and revenue growth but tempered by data quality concerns and conflicting signals. Overall, the data leans toward caution, urging careful risk assessment.</div>
+    <div class="thesis-block">The analysis reveals a stark divergence between signals: while the analytics and market context agents strongly recommend a bullish stance, the quantitative and RAG perspectives highlight significant concerns. The DCF model projects a -68.6% downside, contradicting the optimistic technical and macro narratives. Confidence in the recommendation is low (0.09), with notable discrepancies such as high anomaly severity and elevated valuation relative to peers. Despite this, the data supports caution, emphasizing that profitability probability remains low at 73%.</div>
   </div>
 </div>
 
@@ -935,7 +935,7 @@
         
         <tr>
           <td class="metric-name">Beta</td>
-          <td class="mono">1.21</td>
+          <td class="mono">0.88</td>
           <td class="mono" >vs. S&amp;P 500</td>
         </tr>
         
@@ -947,7 +947,7 @@
         
         <tr>
           <td class="metric-name">P/E Ratio</td>
-          <td class="mono">36.08</td>
+          <td class="mono">36.12</td>
           <td class="mono" >Price / Earnings</td>
         </tr>
         
@@ -1030,7 +1030,7 @@
         <tr>
           <td class="metric-name">MACD</td>
           <td class="mono">1.2074</td>
-          <td class="mono" style="color:var(--green-dark);">Bullish</td>
+          <td class="mono" style="color:var(--red);">Bearish</td>
         </tr>
         
         <tr>
@@ -1120,7 +1120,7 @@
     <div class="trend-grid">
       <div class="trend-card">
         <div class="trend-label">Trend</div>
-        <div class="trend-value trend-bullish">Strong_bullish</div>
+        <div class="trend-value trend-bullish">Bullish</div>
       </div>
       <div class="trend-card">
         <div class="trend-label">Strength</div>
@@ -1178,7 +1178,7 @@
           
           <tr>
             <td class="metric-name">DCF Fair Value</td>
-            <td class="mono">$131.04</td>
+            <td class="mono">$93.46</td>
           </tr>
           
           <tr>
@@ -1220,7 +1220,7 @@
         
         <div class="scenario-card">
           <div class="card-label">DCF Fair Value</div>
-          <div class="card-value" style="color:var(--amber);">$131.04</div>
+          <div class="card-value" style="color:var(--amber);">$93.46</div>
         </div>
         
         <div class="scenario-card">
@@ -1252,7 +1252,7 @@
         
         <tr>
           <td class="metric-name">Intrinsic Value</td>
-          <td class="mono">$131.04</td>
+          <td class="mono">$93.46</td>
         </tr>
         
         <tr>
@@ -1262,17 +1262,17 @@
         
         <tr>
           <td class="metric-name">Upside</td>
-          <td class="mono">-56.0%</td>
+          <td class="mono">-68.6%</td>
         </tr>
         
         <tr>
           <td class="metric-name">WACC</td>
-          <td class="mono">+10.8%</td>
+          <td class="mono">+9.0%</td>
         </tr>
         
         <tr>
           <td class="metric-name">Growth Rate</td>
-          <td class="mono">+18.7%</td>
+          <td class="mono">-4.0%</td>
         </tr>
         
         <tr>
@@ -1282,7 +1282,7 @@
         
         <tr>
           <td class="metric-name">Enterprise Value</td>
-          <td class="mono">$1,940,801,974,539.43</td>
+          <td class="mono">$1,388,862,401,132.73</td>
         </tr>
         
         <tr>
@@ -1292,7 +1292,7 @@
         
         <tr>
           <td class="metric-name">Equity Value</td>
-          <td class="mono">$1,924,597,977,355.43</td>
+          <td class="mono">$1,372,658,403,948.73</td>
         </tr>
         
         <tr>
@@ -1301,28 +1301,18 @@
         </tr>
         
         <tr>
-          <td class="metric-name">Revenue Growth</td>
-          <td class="mono">+16.6%</td>
-        </tr>
-        
-        <tr>
-          <td class="metric-name">Earnings Growth</td>
-          <td class="mono">+21.8%</td>
-        </tr>
-        
-        <tr>
           <td class="metric-name">Bear Case</td>
-          <td class="mono">$103.11</td>
+          <td class="mono">$82.47</td>
         </tr>
         
         <tr>
           <td class="metric-name">Base Case</td>
-          <td class="mono">$131.04</td>
+          <td class="mono">$93.46</td>
         </tr>
         
         <tr>
           <td class="metric-name">Bull Case</td>
-          <td class="mono">$168.98</td>
+          <td class="mono">$108.83</td>
         </tr>
         
         <tr>
@@ -1337,12 +1327,12 @@
         
         <tr>
           <td class="metric-name">Beta</td>
-          <td class="mono">1.21</td>
+          <td class="mono">0.88</td>
         </tr>
         
         <tr>
           <td class="metric-name">Cost of Equity</td>
-          <td class="mono">10.95%</td>
+          <td class="mono">9.13%</td>
         </tr>
         
         <tr>
@@ -1513,7 +1503,7 @@
       
       <div class="score-item">
         <span class="dim">Analytics Trend</span>
-        <span class="rating-badge badge-moderate">Strong_bullish</span>
+        <span class="rating-badge badge-bullish">Bullish</span>
       </div>
       
       <div class="score-item">
@@ -1557,7 +1547,7 @@
         
         <tr class="">
           <td class="metric-name">EV/EBITDA</td>
-          <td class="mono">27.6</td>
+          <td class="mono">27.5</td>
           <td class="mono">N/A</td>
           
           <td class="mono" style="color:var(--text-light);">N/A</td>
@@ -1588,6 +1578,42 @@
           <td class="mono">N/A</td>
           
           <td class="mono" style="color:var(--text-light);">N/A</td>
+          
+        </tr>
+        
+        <tr class="">
+          <td class="metric-name">Operating Margin</td>
+          <td class="mono">N/A</td>
+          <td class="mono">-9.1%</td>
+          
+          <td class="mono" style="color:var(--text-light);">-33.3%</td>
+          
+        </tr>
+        
+        <tr class="highlight">
+          <td class="metric-name">P/E Ratio</td>
+          <td class="mono">N/A</td>
+          <td class="mono">86.4x</td>
+          
+          <td class="mono" style="color:var(--text-light);">688.5x</td>
+          
+        </tr>
+        
+        <tr class="">
+          <td class="metric-name">ROE</td>
+          <td class="mono">N/A</td>
+          <td class="mono">6.2%</td>
+          
+          <td class="mono" style="color:var(--text-light);">1.0%</td>
+          
+        </tr>
+        
+        <tr class="highlight">
+          <td class="metric-name">Revenue Growth</td>
+          <td class="mono">N/A</td>
+          <td class="mono">8.4%</td>
+          
+          <td class="mono" style="color:var(--text-light);">-34.0%</td>
           
         </tr>
         
@@ -1703,7 +1729,7 @@
   <div class="container">
     <div class="section-label">Market Environment</div>
     <h2 class="section-title">Macro Regime</h2>
-    <div class="thesis-block">flat yield curve with moderate volatility and stable dollar</div>
+    <div class="thesis-block">flat yield curve with low volatility and stable global trade sentiment</div>
   </div>
 </div>
 
@@ -1788,17 +1814,17 @@
       
       <div class="anomaly-item severity-info">
         <span class="anomaly-badge type-Catalyst">Catalyst</span>
-        <span>Why Apple Inc. (AAPL) Is Up +9.5% in the Last 30 Days - Tickeron: What Drove AAPL Stock Price in the Last 30 Days The primary catalyst for AAPL&#39;s 9.5% gain was its fiscal Q2 2026 earnings release on April 30, which exceeded expectations with revenue of $111.2 billion, up 17% year-over-year, and diluted EPS (earnings per share) of $2.01, up 22%. iPhone revenue surged, particularly in China, while Services hit ...</span>
+        <span>Apple Inc. Stock Price: Quote, Forecast, Splits &amp; News (AAPL): 2 days ago · UBS reiterated a neutral stance, cautioning the developer conference is unlikely to be a positive near-term catalyst for shares given expected AI updates may ...</span>
       </div>
       
       <div class="anomaly-item severity-info">
         <span class="anomaly-badge type-Catalyst">Catalyst</span>
-        <span>Apple’s Sudden Price Surge: Was It a Sector Catalyst or Liquidity Push?: This divergence suggests that the move in AAPL AAPL-- wasn’t a sector rotation or broad thematic play — it was more likely individual stock-driven. Two Leading Hypotheses Based on the data, two plausible explanations for Apple’s unusual intraday spike emerge:</span>
+        <span>Apple&#39;s WWDC 2026 &#39;Key Catalyst&#39; For AAPL Stock, Will Decide AI ...: 2 days ago · Morgan Stanley analyst Erik Woodring said in a research note that WWDC 2026 could be a key catalyst for Apple stock, potentially reframing the company as an “AI ...</span>
       </div>
       
       <div class="anomaly-item severity-info">
         <span class="anomaly-badge type-Catalyst">Catalyst</span>
-        <span>AAPL News Today | Why did Apple stock go up today? $AAPL: What&#39;s going on at Apple (NASDAQ:AAPL)? Read today&#39;s AAPL news from trusted media outlets at MarketBeat.</span>
+        <span>Apple Price Hike Warning Sends Micron Stock Soaring: 2 days ago · Micron (NASDAQ:MU) shares climbed about 6% on Thursday after comments from Apple (NASDAQ:AAPL) pointed to rising costs for memory and storage components. Apple ...</span>
       </div>
       
     </div>
@@ -1896,8 +1922,8 @@
         
         <div class="confidence-bar-container">
           <span class="confidence-bar-label">RAG Agent</span>
-          <div class="confidence-bar"><div class="confidence-bar-fill" style="width: 57%;"></div></div>
-          <span class="confidence-bar-value">58%</span>
+          <div class="confidence-bar"><div class="confidence-bar-fill" style="width: 56%;"></div></div>
+          <span class="confidence-bar-value">57%</span>
         </div>
         
         <div style="font-size: 11px; color: var(--text-light); margin: -6px 0 8px 112px;">Moderate — based on Filing summary quality, number of cited sources</div>
@@ -1918,11 +1944,11 @@
         
         <div class="confidence-bar-container">
           <span class="confidence-bar-label">Analytics</span>
-          <div class="confidence-bar"><div class="confidence-bar-fill" style="width: 33%;"></div></div>
-          <span class="confidence-bar-value">33%</span>
+          <div class="confidence-bar"><div class="confidence-bar-fill" style="width: 90%;"></div></div>
+          <span class="confidence-bar-value">90%</span>
         </div>
         
-        <div style="font-size: 11px; color: var(--text-light); margin: -6px 0 8px 112px;">Low — based on Trend analysis, forecast model, statistical summary, chart generation</div>
+        <div style="font-size: 11px; color: var(--text-light); margin: -6px 0 8px 112px;">High — based on Trend analysis, forecast model, statistical summary, chart generation</div>
         
         
         
@@ -1930,8 +1956,8 @@
           
           <div class="confidence-bar-container">
             <span class="confidence-bar-label">Agreement</span>
-            <div class="confidence-bar"><div class="confidence-bar-fill" style="width: 67%; background: var(--green);"></div></div>
-            <span class="confidence-bar-value">67%</span>
+            <div class="confidence-bar"><div class="confidence-bar-fill" style="width: 33%; background: var(--green);"></div></div>
+            <span class="confidence-bar-value">33%</span>
           </div>
           
           <div style="font-size: 11px; color: var(--text-light); margin: -6px 0 8px 112px;">Proportion of agents aligned on direction (bullish/bearish/neutral)</div>
@@ -1940,18 +1966,18 @@
           
           <div class="confidence-bar-container">
             <span class="confidence-bar-label">Data Quality</span>
-            <div class="confidence-bar"><div class="confidence-bar-fill" style="width: 87%; background: var(--amber);"></div></div>
-            <span class="confidence-bar-value">87%</span>
+            <div class="confidence-bar"><div class="confidence-bar-fill" style="width: 76%; background: var(--amber);"></div></div>
+            <span class="confidence-bar-value">76%</span>
           </div>
           
-          <div style="font-size: 11px; color: var(--text-light); margin: -6px 0 8px 112px;">Non-null fields across all agents (87% populated)</div>
+          <div style="font-size: 11px; color: var(--text-light); margin: -6px 0 8px 112px;">Non-null fields across all agents (76% populated)</div>
           
           
           
           <div class="confidence-bar-container">
             <span class="confidence-bar-label" style="font-weight: 700;">Meta Score</span>
-            <div class="confidence-bar"><div class="confidence-bar-fill" style="width: 65%; background: var(--navy);"></div></div>
-            <span class="confidence-bar-value" style="font-weight: 700;">65%</span>
+            <div class="confidence-bar"><div class="confidence-bar-fill" style="width: 53%; background: var(--navy);"></div></div>
+            <span class="confidence-bar-value" style="font-weight: 700;">53%</span>
           </div>
           
           <div style="font-size: 11px; color: var(--text-light); margin: -6px 0 4px 112px;">Weighted: 40% avg agent confidence + 30% directional agreement + 30% data quality</div>
@@ -1972,11 +1998,11 @@
         <div style="margin-bottom: 12px;">
           <div style="font-size: 13px; font-weight: 600; color: var(--green-dark); margin-bottom: 6px;">Supporting Evidence</div>
           
-          <div class="evidence-item supporting">Bullish macro context (flat yield curve, stable dollar)</div>
+          <div class="evidence-item supporting">Bullish technical trend (price above MA)</div>
           
-          <div class="evidence-item supporting">Strong ROE of 141.5%, operating margin 32.3%, revenue growth 16.6%</div>
+          <div class="evidence-item supporting">Bullish macro context (flat yield, low VIX)</div>
           
-          <div class="evidence-item supporting">Technology sector tailwinds aligning with Apple’s business</div>
+          <div class="evidence-item supporting">Positive analyst sentiment in filings</div>
           
         </div>
         
@@ -1984,11 +2010,11 @@
         <div>
           <div style="font-size: 13px; font-weight: 600; color: var(--red); margin-bottom: 6px;">Contradicting Evidence</div>
           
-          <div class="evidence-item contradicting">DCF downside (-56%) vs macro bullish signals</div>
+          <div class="evidence-item contradicting">DCF downside (-68.6%) vs market optimism</div>
           
-          <div class="evidence-item contradicting">High model divergence (73% MC probability)</div>
+          <div class="evidence-item contradicting">High valuation relative to peers</div>
           
-          <div class="evidence-item contradicting">Elevated risk metrics: P/E 36.08, debt/equity 79.55</div>
+          <div class="evidence-item contradicting">Macro headwinds limiting near-term growth</div>
           
         </div>
         
@@ -2002,15 +2028,57 @@
       <h3 style="font-size: 16px; font-weight: 700; margin-bottom: 12px;">Contradictions Found</h3>
       
       <div class="contradiction-item">
-        <span class="contradiction-severity severity-medium">medium</span>
-        <strong>DCF valuation vs macro signal</strong> — DCF indicates a $131 upside but projects -56% downside; macro signals remain bullish, creating a divergence that warrants scrutiny.
-        <span style="font-size: 12px; color: var(--text-light); margin-left: 8px;">(Quant Analysis Agent, Market Context Agent)</span>
+        <span class="contradiction-severity severity-high">high</span>
+        <strong>recommendation vs trend</strong> — Quant advises SELL, whereas analytics signal bullish momentum.
+        <span style="font-size: 12px; color: var(--text-light); margin-left: 8px;">(Quant Analysis Agent, Analytics Agent)</span>
       </div>
       
       <div class="contradiction-item">
         <span class="contradiction-severity severity-medium">medium</span>
-        <strong>DCF vs Monte Carlo divergence</strong> — High model disagreement: DCF estimates $131 vs MC median $353, with a 92% divergence probability.
-        <span style="font-size: 12px; color: var(--text-light); margin-left: 8px;">(Quant Analysis Agent (DCF), Quant Analysis Agent (Monte Carlo))</span>
+        <strong>DCF valuation vs macro signal</strong> — DCF suggests a $93 intrinsic value versus a current price of $298, but macro signals favor a bullish environment.
+        <span style="font-size: 12px; color: var(--text-light); margin-left: 8px;">(Quant Analysis Agent, Market Context Agent)</span>
+      </div>
+      
+      <div class="contradiction-item">
+        <span class="contradiction-severity severity-low">low</span>
+        <strong>source_verifications</strong> — Multiple verifications confirm Apple’s strong financials and analyst optimism, though data quality flags persist.
+        <span style="font-size: 12px; color: var(--text-light); margin-left: 8px;">(RAG, Market Context)</span>
+      </div>
+      
+      <div class="contradiction-item">
+        <span class="contradiction-severity severity-medium">medium</span>
+        <strong>confidence_breakdown</strong> — Confidence score of 0.53 aligns with mixed signals across models, reinforcing uncertainty.
+        <span style="font-size: 12px; color: var(--text-light); margin-left: 8px;">(Analytics Agent)</span>
+      </div>
+      
+      <div class="contradiction-item">
+        <span class="contradiction-severity severity-high">high</span>
+        <strong>recommendation_validation</strong> — Overall evidence leans against buy, but model disagreements and valuation gaps weaken confidence.
+        <span style="font-size: 12px; color: var(--text-light); margin-left: 8px;">(Quant, RAG, Market Context)</span>
+      </div>
+      
+      <div class="contradiction-item">
+        <span class="contradiction-severity severity-low">low</span>
+        <strong>source_verifications</strong> — Verified claims about revenue growth, debt levels, and peer comparisons support the cautious stance.
+        <span style="font-size: 12px; color: var(--text-light); margin-left: 8px;">(Analytics, RAG, Market Context)</span>
+      </div>
+      
+      <div class="contradiction-item">
+        <span class="contradiction-severity severity-medium">medium</span>
+        <strong>confidence_breakdown</strong> — Meta-confidence stands at 0.53, reflecting moderate certainty amid conflicting data points.
+        <span style="font-size: 12px; color: var(--text-light); margin-left: 8px;">(Confidence Analysis)</span>
+      </div>
+      
+      <div class="contradiction-item">
+        <span class="contradiction-severity severity-high">high</span>
+        <strong>flagging_issues</strong> — Warning: Financial data is 263 days old; verify with latest filings for accuracy.
+        <span style="font-size: 12px; color: var(--text-light); margin-left: 8px;">(Market Context)</span>
+      </div>
+      
+      <div class="contradiction-item">
+        <span class="contradiction-severity severity-low">low</span>
+        <strong>recommendation</strong> — Recommendation should be HOLD given the high valuation and mixed signals, though not a clear sell signal.
+        <span style="font-size: 12px; color: var(--text-light); margin-left: 8px;">(Confidence Analysis)</span>
       </div>
       
     </div>
@@ -2037,76 +2105,6 @@
             <td class="mono" style="color:var(--green-dark);">100%</td>
           </tr>
           
-          <tr>
-            <td class="metric-name">RAG</td>
-            <td class="mono">5</td>
-            <td class="mono">5</td>
-            <td class="mono" style="color:var(--green-dark);">100%</td>
-          </tr>
-          
-          <tr>
-            <td class="metric-name">Market Context</td>
-            <td class="mono">3</td>
-            <td class="mono">3</td>
-            <td class="mono" style="color:var(--green-dark);">9200%</td>
-          </tr>
-          
-          <tr>
-            <td class="metric-name">Analytics</td>
-            <td class="mono">4</td>
-            <td class="mono">4</td>
-            <td class="mono" style="color:var(--green-dark);">6700%</td>
-          </tr>
-          
-          <tr>
-            <td class="metric-name">Confidence</td>
-            <td class="mono">1</td>
-            <td class="mono">1</td>
-            <td class="mono" style="color:var(--green-dark);">8700%</td>
-          </tr>
-          
-          <tr>
-            <td class="metric-name">Market Context</td>
-            <td class="mono">2</td>
-            <td class="mono">2</td>
-            <td class="mono" style="color:var(--green-dark);">9200%</td>
-          </tr>
-          
-          <tr>
-            <td class="metric-name">Dcf_validation</td>
-            <td class="mono">3</td>
-            <td class="mono">3</td>
-            <td class="mono" style="color:var(--green-dark);">10000%</td>
-          </tr>
-          
-          <tr>
-            <td class="metric-name">Recommendation Validation</td>
-            <td class="mono">5</td>
-            <td class="mono">5</td>
-            <td class="mono" style="color:var(--green-dark);">10000%</td>
-          </tr>
-          
-          <tr>
-            <td class="metric-name">Confidence</td>
-            <td class="mono">1</td>
-            <td class="mono">1</td>
-            <td class="mono" style="color:var(--green-dark);">6500%</td>
-          </tr>
-          
-          <tr>
-            <td class="metric-name">Confidence Breakdown</td>
-            <td class="mono">3</td>
-            <td class="mono">3</td>
-            <td class="mono" style="color:var(--green-dark);">8700%</td>
-          </tr>
-          
-          <tr>
-            <td class="metric-name">Review Confidence</td>
-            <td class="mono">2</td>
-            <td class="mono">2</td>
-            <td class="mono" style="color:var(--green-dark);">9200%</td>
-          </tr>
-          
         </tbody>
       </table>
     </div>
@@ -2128,15 +2126,13 @@
         <h3>Growth Opportunities</h3>
         <ul>
           
-          <li>Flat yield curve supports high-quality tech equities with strong margins</li>
+          <li>Strong sector rotation in technology (+8.07% in one month) aligns with AAPL’s core consumer electronics and services business</li>
           
-          <li>Technology sector rotation (8.07% 1mo gain) aligns with Apple’s core consumer electronics and services business</li>
+          <li>Flat yield curve and low VIX (16.4) suggest a stable macro environment favoring high-quality, durable earnings firms like AAPL</li>
           
-          <li>Strong fundamentals: 16.6% revenue growth, 32.3% operating margin, 141.5% ROE</li>
+          <li>Superior peer performance: AAPL outperforms SONO, TBCH, and AXIL on revenue growth, operating margins, and ROE</li>
           
-          <li>Market optimism around AI strategy and record iPhone forecasts</li>
-          
-          <li>Peer weakness in SONO and TBCH highlights Apple’s relative strength</li>
+          <li>Ecosystem and services revenue diversification provide long-term resilience and recurring cash flows</li>
           
         </ul>
       </div>
@@ -2146,15 +2142,15 @@
         <h3>Key Risks</h3>
         <ul>
           
-          <li>High P/E (36.1x) reflects elevated valuation and potential overreach in current macro</li>
+          <li>Limited direct exposure to AI-driven innovation, which may limit near-term growth tailwinds in a rapidly evolving tech landscape</li>
           
-          <li>Supply constraints may cap near-term growth in consumer electronics</li>
+          <li>Marginal index allocation headwinds due to reduced weighting in broad tech indices as AI-focused firms gain prominence</li>
           
-          <li>China demand weakness and regional market sensitivity remain risks</li>
+          <li>High valuation (PE = 36.1) relative to peers like AXIL, which may pressure upside if earnings fail to meet expectations</li>
           
-          <li>AI strategy remains underdeveloped and details are unclear, limiting near-term impact</li>
+          <li>Contradiction: Quant advises SELL, whereas analytics signal bullish momentum.</li>
           
-          <li>Sector volatility in consumer discretionary and global demand fluctuations</li>
+          <li>Contradiction: Overall evidence leans against buy, but model disagreements and valuation gaps weaken confidence.</li>
           
         </ul>
       </div>
@@ -2168,51 +2164,29 @@
 
 <div class="report-section">
   <div class="container">
-    <div class="section-label">CITED SOURCES</div>
+    <div class="section-label">Cited Sources</div>
     <h2 class="section-title">Cited Sources</h2>
-    <div class="thesis-block">- AAPL_10-Q_2026-01-30.html
-- AAPL_10-Q_2026-01-30.html
-- AAPL_news_Fri, 19 Jun 2026 16:03:00 +0000.txt
-- AAPL_10-Q_2025-05-02.html
-- AAPL_10-Q_2025-08-01.html</div>
+    <div class="thesis-block"><ul><li>AAPL_news_Fri, 19 Jun 2026 22:13:34 +0000.txt</li><li>AAPL_10-Q_2026-01-30.html</li><li>AAPL_news_Fri, 19 Jun 2026 21:10:12 +0000.txt</li><li>AAPL_news_Sat, 20 Jun 2026 11:30:56 +0000.txt</li></ul></div>
   </div>
 </div>
 
 <div class="report-section">
   <div class="container">
-    <div class="section-label">MARKET NARRATIVE</div>
+    <div class="section-label">Market Narrative</div>
     <h2 class="section-title">Market Narrative</h2>
-    <div class="thesis-block">The current macro regime is characterized by a flat yield curve, with a 10-year Treasury yield of 4.487% and a 2-year–10-year spread of just 0.274%, signaling a low expectation of rate hikes and a potential stabilization in monetary policy. The VIX stands at 16.78, indicating moderate volatility and investor calm, while the DXY shows a slight uptick of 1.13% over five days, reflecting a stable but slightly strengthening U.S. dollar. Sector rotation has favored technology, which surged 8.07% in the past month, aligning strongly with Apple’s core business in consumer electronics and services. This environment supports tech equities, particularly those with durable revenue growth, strong margins, and brand resilience. Apple’s fundamentals remain robust: a 16.6% revenue growth, 32.3% operating margin, and a 141.5% ROE demonstrate exceptional profitability and capital efficiency. Despite a high P/E of 36.1, the company’s growth and margin profile are well-protected, especially in a regime where investors are seeking defensive, high-quality growth. In contrast, peers like SONO and TBCH show significant weaknesses—SONO with negative operating margins and a sky-high PE of 86.4, and TBCH with negative growth and margins and a PE of 688.5, suggesting severe distress. AXIL, while more balanced, lags in both growth and margins, with only 5.4% revenue growth and 2.9% operating margin, and a lower market cap, indicating a less scalable position. Apple’s AI strategy, though still evolving and not yet fully materializing in product form, is generating market optimism, especially with record iPhone forecasts and strong service revenue. This narrative supports a favorable positioning in a tech-led rotation, where Apple’s brand strength, ecosystem lock-in, and financial health provide a tailwind.
+    <div class="thesis-block">The current macro regime is characterized by a flat yield curve (10Y = 4.487%, spread = 0.274%), low VIX (16.4, down -7.24% over 5 days), and a modestly stable DXY (up +1.22% in 5 days), signaling a risk-off environment with limited volatility and stable global trade sentiment. This environment favors defensive and high-quality growth names with durable earnings, such as AAPL. The sector rotation shows strong momentum in technology (+8.07% in one month), which aligns with Apple’s core business in consumer electronics, services, and ecosystem-driven revenue. Despite the flat yield curve, which typically dampens growth stock valuations, Apple’s high operating margin (32.3%), strong return on equity (141.5%), and robust revenue growth (16.6%) provide resilience. The broader tech sector rally reflects investor confidence in innovation and long-term cash flows, creating a tailwind for AAPL.
 
-Apple is clearly outperforming its peers in both profitability and growth sustainability. While SONO and TBCH are in deep trouble—operating at losses and facing negative growth—Apple maintains a clear competitive edge in operational efficiency and revenue expansion. The market’s recent focus on Apple’s AI push, even if details remain unclear, has driven sentiment, with investors interpreting it as a strategic pivot that could unlock long-term value. However, the recent volatility in the market, particularly the sharp sell-off following weak China data, highlights sensitivity to geopolitical and regional demand shifts. Apple’s exposure to global consumer electronics markets, especially in China, remains a risk, as supply constraints and shifting demand patterns could cap near-term growth. Moreover, the high valuation—36.1x P/E—reflects elevated expectations, which may not be fully justified by near-term earnings momentum. The flat yield curve reduces the discounting pressure on high-growth names, but it also limits the return on capital from yield-seeking investors, which could pressure equity valuations if macro conditions shift.
+In peer comparison, AAPL stands out significantly. SONO (PE = 86.4, RevGrowth = 8.4%, OpMargin = -9.1%) and TBCH (PE = 688.5, RevGrowth = -34.0%, OpMargin = -33.3%) are both overvalued and operating at significant losses, making them poor comparables. AXIL (PE = 51.5, RevGrowth = 5.4%, OpMargin = 2.9%) is more modest in growth and profitability, reflecting a lower-risk, lower-growth profile. AAPL’s superior fundamentals—especially its margins, revenue growth, and ROE—place it in a clear leadership position among peers. While Apple lacks direct exposure to AI-driven hardware or generative models, its ecosystem strength, services revenue diversification, and brand loyalty provide a durable competitive moat.
 
-The macro regime and peer landscape collectively favor Apple, not because of explosive growth, but due to its structural advantages in profitability, brand strength, and sector alignment. In a low-rate, stable-growth environment where technology is the preferred sector, Apple’s defensive yet growth-oriented profile stands out. Its ability to generate consistent operating margins and maintain high ROE, even in a competitive landscape, makes it a resilient holding. The peer comparison underscores that Apple is not just a tech stock—it is a high-quality, margin-protected, and brand-led leader. While AI remains a speculative catalyst, the fundamentals are solid and the sector rotation supports its position. The combination of strong fundamentals, sector alignment, and market sentiment creates a compelling case for long-term holding.</div>
+Overall, the macro regime supports AAPL through its alignment with the tech sector rotation and its resilience in a low-volatility, flat-yield environment. The peer landscape confirms that AAPL is not only more profitable and growth-oriented than its peers but also significantly more resilient in terms of valuation and earnings quality. Despite headwinds related to limited AI exposure and marginal index allocation, these are outweighed by the strength of its business model and macro tailwinds. The combination of strong fundamentals, sector momentum, and macro stability supports a bullish outlook for AAPL in the near term.</div>
   </div>
 </div>
 
 <div class="report-section">
   <div class="container">
-    <div class="section-label">EVIDENCE STRENGTH</div>
-    <h2 class="section-title">Evidence Strength</h2>
-    <div class="thesis-block">Strong evidence supports the recommendation.</div>
-  </div>
-</div>
-
-<div class="report-section">
-  <div class="container">
-    <div class="section-label">RECOMMENDATION DRIVERS</div>
+    <div class="section-label">Recommendation Drivers</div>
     <h2 class="section-title">Recommendation Drivers</h2>
-    <div class="thesis-block">**Positive Signals**
-- Bullish macro context (flat yield curve, stable dollar)
-- Strong ROE of 141.5%, operating margin 32.3%, revenue growth 16.6%
-- Technology sector tailwinds aligning with Apple’s business
-- Revenue growth of 16.6%
-- Analytics trend is strong_bullish
-**Negative Signals**
-- DCF downside (-56%) vs macro bullish signals
-- High model divergence (73% MC probability)
-- Elevated risk metrics: P/E 36.08, debt/equity 79.55
-- DCF downside of -56%</div>
+    <div class="thesis-block"><strong>Positive Signals</strong><ul><li>Bullish technical trend (price above MA)</li><li>Bullish macro context (flat yield, low VIX)</li><li>Positive analyst sentiment in filings</li><li>Revenue growth of 16.6%</li><li>Analytics trend is bullish</li></ul><strong>Negative Signals</strong><ul><li>DCF downside (-68.6%) vs market optimism</li><li>High valuation relative to peers</li><li>Macro headwinds limiting near-term growth</li><li>DCF downside of -69%</li></ul></div>
   </div>
 </div>
 
@@ -2223,9 +2197,9 @@ The macro regime and peer landscape collectively favor Apple, not because of exp
     <div class="section-label">Conclusion</div>
     <div class="divider"></div>
     <div class="rec-badge">SELL</div>
-    <div class="rec-conf">65% Confidence</div>
+    <div class="rec-conf">53% Confidence</div>
     
-    <p class="rec-text">The analysis reveals a nuanced outlook: while the Quant model flags a strong DCF intrinsic value of $131.04 versus the current price of $298, suggesting a potential -56% upside, the Analytics signal warns of elevated risk metrics (Sharpe 0.592, beta 1.21) and a high anomaly count (14). Market context supports a bullish macro backdrop with a flat yield curve, yet contradictions emerge between DCF downside and Monte Carlo divergence, highlighting model uncertainty. Confidence remains moderate at 65%, driven by strong ROE and revenue growth but tempered by data quality concerns and conflicting signals. Overall, the data leans toward caution, urging careful risk assessment.</p>
+    <p class="rec-text">The analysis reveals a stark divergence between signals: while the analytics and market context agents strongly recommend a bullish stance, the quantitative and RAG perspectives highlight significant concerns. The DCF model projects a -68.6% downside, contradicting the optimistic technical and macro narratives. Confidence in the recommendation is low (0.09), with notable discrepancies such as high anomaly severity and elevated valuation relative to peers. Despite this, the data supports caution, emphasizing that profitability probability remains low at 73%.</p>
     
   </div>
 </div>
@@ -2247,7 +2221,7 @@ document.addEventListener('DOMContentLoaded', function() {
   (function() {
     var ctx = document.getElementById('forecastChart');
     if (!ctx) return;
-    var dates = ["2026-06-19", "2026-06-20", "2026-06-21", "2026-06-22", "2026-06-23", "2026-06-24", "2026-06-25", "2026-06-26", "2026-06-27", "2026-06-28", "2026-06-29", "2026-06-30", "2026-07-01", "2026-07-02", "2026-07-03", "2026-07-04", "2026-07-05", "2026-07-06", "2026-07-07", "2026-07-08", "2026-07-09", "2026-07-10", "2026-07-11", "2026-07-12", "2026-07-13", "2026-07-14", "2026-07-15", "2026-07-16", "2026-07-17", "2026-07-18"];
+    var dates = ["2026-06-21", "2026-06-22", "2026-06-23", "2026-06-24", "2026-06-25", "2026-06-26", "2026-06-27", "2026-06-28", "2026-06-29", "2026-06-30", "2026-07-01", "2026-07-02", "2026-07-03", "2026-07-04", "2026-07-05", "2026-07-06", "2026-07-07", "2026-07-08", "2026-07-09", "2026-07-10", "2026-07-11", "2026-07-12", "2026-07-13", "2026-07-14", "2026-07-15", "2026-07-16", "2026-07-17", "2026-07-18", "2026-07-19", "2026-07-20"];
     var prices = [295.54, 295.6, 293.72, 292.85, 295.01, 293.27, 293.34, 291.46, 290.59, 292.75, 291.01, 291.08, 289.2, 288.33, 290.49, 288.75, 288.82, 286.93, 286.07, 288.23, 286.49, 286.56, 284.67, 283.81, 285.97, 284.23, 284.3, 282.41, 281.55, 283.71];
     var lower = [288.66, 288.39, 286.16, 284.95, 286.76, 284.69, 284.41, 282.18, 280.97, 282.79, 280.71, 280.43, 278.2, 276.99, 278.81, 276.73, 276.45, 274.22, 273.01, 274.83, 272.75, 272.47, 270.24, 269.03, 270.85, 268.77, 268.5, 266.27, 265.05, 266.87];
     var upper = [302.41, 302.82, 301.28, 300.75, 303.26, 301.86, 302.28, 300.73, 300.21, 302.71, 301.32, 301.73, 300.19, 299.66, 302.17, 300.78, 301.19, 299.65, 299.12, 301.63, 300.24, 300.65, 299.1, 298.58, 301.08, 299.69, 300.1, 298.56, 298.04, 300.54];
@@ -2368,7 +2342,7 @@ document.addEventListener('DOMContentLoaded', function() {
   (function() {
     var ctx = document.getElementById('ohlcChart');
     if (!ctx) return;
-    var rawData = [{"close": 273.4280700683594, "date": "2026-02-10T00:00:00-05:00", "high": 275.11651686144285, "low": 272.68876099546605, "open": 274.6369782150198, "volume": 34376900.0}, {"close": 275.24639892578125, "date": "2026-02-11T00:00:00-05:00", "high": 279.92208361183503, "low": 274.1973776592452, "open": 274.44714753122867, "volume": 51931300.0}, {"close": 261.4891052246094, "date": "2026-02-12T00:00:00-05:00", "high": 275.46621856633783, "low": 259.94051360693726, "open": 275.3363333447182, "volume": 81077200.0}, {"close": 255.5445556640625, "date": "2026-02-13T00:00:00-05:00", "high": 261.9886306947134, "low": 255.21485759663088, "open": 261.7688319830923, "volume": 56290700.0}, {"close": 263.6371154785156, "date": "2026-02-17T00:00:00-05:00", "high": 266.0449008431299, "low": 255.30478047881587, "open": 257.8124646511843, "volume": 58469100.0}, {"close": 264.106689453125, "date": "2026-02-18T00:00:00-05:00", "high": 266.57441720150126, "low": 262.20844437502524, "open": 263.35737977838915, "volume": 34203300.0}, {"close": 260.3401184082031, "date": "2026-02-19T00:00:00-05:00", "high": 264.2365527856389, "low": 259.81060750150084, "open": 262.35827847824623, "volume": 30845300.0}, {"close": 264.3364562988281, "date": "2026-02-20T00:00:00-05:00", "high": 264.5063132392292, "low": 257.9223826043077, "open": 258.73163460792017, "volume": 42070500.0}, {"close": 265.9349670410156, "date": "2026-02-23T00:00:00-05:00", "high": 269.1819753311392, "low": 263.13755670993424, "open": 263.24744081710827, "volume": 37308200.0}, {"close": 271.8895263671875, "date": "2026-02-24T00:00:00-05:00", "high": 274.6369951599546, "low": 267.46358073991865, "open": 267.61343657617186, "volume": 47014600.0}, {"close": 273.97760009765625, "date": "2026-02-25T00:00:00-05:00", "high": 274.6869380517792, "low": 270.8005039088116, "open": 271.5298429675081, "volume": 33714300.0}, {"close": 272.6987609863281, "date": "2026-02-26T00:00:00-05:00", "high": 275.8558253670768, "low": 270.55071567552415, "open": 274.6969199809464, "volume": 32345100.0}, {"close": 263.93682861328125, "date": "2026-02-27T00:00:00-05:00", "high": 272.5588900215503, "low": 262.6480379442022, "open": 272.5588900215503, "volume": 72366500.0}, {"close": 264.476318359375, "date": "2026-03-02T00:00:00-05:00", "high": 266.2846497598317, "low": 259.960490133898, "open": 262.16844722421786, "volume": 41827900.0}, {"close": 263.5072326660156, "date": "2026-03-03T00:00:00-05:00", "high": 265.31556422164516, "low": 259.8905695547566, "open": 263.23749216234586, "volume": 38568900.0}, {"close": 262.2783508300781, "date": "2026-03-04T00:00:00-05:00", "high": 265.9050144519466, "low": 261.179387723623, "open": 264.4063951364299, "volume": 39803100.0}, {"close": 260.0504150390625, "date": "2026-03-05T00:00:00-05:00", "high": 261.3192350446657, "low": 257.01320478174756, "open": 260.54995479568396, "volume": 49658600.0}, {"close": 257.2229919433594, "date": "2026-03-06T00:00:00-05:00", "high": 258.53178361058343, "low": 254.13584003818684, "open": 258.39192833924307, "volume": 41120000.0}, {"close": 259.6407775878906, "date": "2026-03-09T00:00:00-04:00", "high": 260.9095975388004, "low": 253.44647267699952, "open": 255.45463216869055, "volume": 38218500.0}, {"close": 260.58990478515625, "date": "2026-03-10T00:00:00-04:00", "high": 262.2384104290217, "low": 256.71350175461305, "open": 257.4128391437035, "volume": 30590800.0}, {"close": 260.5699157714844, "date": "2026-03-11T00:00:00-04:00", "high": 261.888707997661, "low": 259.3110658747261, "open": 260.8496568052655, "volume": 26218900.0}, {"close": 255.52456665039062, "date": "2026-03-12T00:00:00-04:00", "high": 258.71164792954545, "low": 253.94601921584928, "open": 258.4219063383753, "volume": 40794000.0}, {"close": 249.8897705078125, "date": "2026-03-13T00:00:00-04:00", "high": 256.0940459350445, "low": 249.29033192864068, "open": 255.24483747003174, "volume": 36930000.0}, {"close": 252.58729553222656, "date": "2026-03-16T00:00:00-04:00", "high": 253.6563027081548, "low": 249.6499992581203, "open": 251.87794235419486, "volume": 32074200.0}, {"close": 253.99598693847656, "date": "2026-03-17T00:00:00-04:00", "high": 254.89516767044782, "low": 251.94787083452104, "open": 252.72716690012706, "volume": 32361600.0}, {"close": 249.70994567871094, "date": "2026-03-18T00:00:00-04:00", "high": 254.70534343896443, "low": 248.7708084606242, "open": 252.3974721128864, "volume": 35757900.0}, {"close": 248.73085021972656, "date": "2026-03-19T00:00:00-04:00", "high": 251.5982036354298, "low": 247.0723745163624, "open": 249.17043241392184, "volume": 34864100.0}, {"close": 247.76173400878906, "date": "2026-03-20T00:00:00-04:00", "high": 248.97061168291066, "low": 245.77356028907465, "open": 247.7517334570195, "volume": 88331100.0}, {"close": 251.25851440429688, "date": "2026-03-23T00:00:00-04:00", "high": 254.3656523266213, "low": 250.0496214753341, "open": 253.73622734962268, "volume": 40546100.0}, {"close": 251.4083709716797, "date": "2026-03-24T00:00:00-04:00", "high": 254.5954370944537, "low": 249.32029842391177, "open": 250.1195650925759, "volume": 45152300.0}, {"close": 252.38746643066406, "date": "2026-03-25T00:00:00-04:00", "high": 254.76528059453105, "low": 251.3684162845015, "open": 253.86611511385965, "volume": 28476700.0}, {"close": 252.6572265625, "date": "2026-03-26T00:00:00-04:00", "high": 256.76344411909713, "low": 250.53918279672283, "open": 251.88793104116345, "volume": 41796700.0}, {"close": 248.57098388671875, "date": "2026-03-27T00:00:00-04:00", "high": 255.2548282141602, "low": 247.8416601166152, "open": 253.666280215245, "volume": 47900000.0}, {"close": 246.40298461914062, "date": "2026-03-30T00:00:00-04:00", "high": 250.63907198816298, "low": 245.28400520065438, "open": 249.83982057534305, "volume": 39446200.0}, {"close": 253.55638122558594, "date": "2026-03-31T00:00:00-04:00", "high": 255.24482803058763, "low": 246.87255213324852, "open": 247.6818040942864, "volume": 49598100.0}, {"close": 255.3946990966797, "date": "2026-04-01T00:00:00-04:00", "high": 255.94418062939917, "low": 253.096813183035, "open": 253.8461228128272, "volume": 40059400.0}, {"close": 255.68443298339844, "date": "2026-04-02T00:00:00-04:00", "high": 255.89424639361263, "low": 250.4192795609811, "open": 253.96601496217014, "volume": 31289400.0}, {"close": 258.6217041015625, "date": "2026-04-06T00:00:00-04:00", "high": 261.9186847371787, "low": 256.2239194053331, "open": 256.27389167390277, "volume": 29329900.0}, {"close": 253.26666259765625, "date": "2026-04-07T00:00:00-04:00", "high": 255.96418954301222, "low": 245.47383916108728, "open": 255.92421782448065, "volume": 62148000.0}, {"close": 258.66168212890625, "date": "2026-04-08T00:00:00-04:00", "high": 259.51090582044134, "low": 256.29386854025813, "open": 258.2121146377317, "volume": 41032800.0}, {"close": 260.2502136230469, "date": "2026-04-09T00:00:00-04:00", "high": 260.879638597066, "low": 255.8342992320816, "open": 258.7615948993736, "volume": 28121600.0}, {"close": 260.240234375, "date": "2026-04-10T00:00:00-04:00", "high": 261.94865175168746, "low": 258.78155637925676, "open": 259.7406946341393, "volume": 31291500.0}, {"close": 258.96142578125, "date": "2026-04-13T00:00:00-04:00", "high": 259.9405042051452, "low": 256.4237552437805, "open": 259.49093671136296, "volume": 36234700.0}, {"close": 258.59173583984375, "date": "2026-04-14T00:00:00-04:00", "high": 261.68888841493145, "low": 256.9532612999924, "open": 259.01136264890187, "volume": 48370700.0}, {"close": 266.18475341796875, "date": "2026-04-15T00:00:00-04:00", "high": 266.3146386359468, "low": 257.57269269729437, "open": 257.92237663273806, "volume": 49913500.0}, {"close": 263.15753173828125, "date": "2026-04-16T00:00:00-04:00", "high": 266.91408037974617, "low": 261.0294875448873, "open": 266.55439590858066, "volume": 43323100.0}, {"close": 269.98126220703125, "date": "2026-04-17T00:00:00-04:00", "high": 272.0493335842862, "low": 266.47448343207725, "open": 266.7142527536172, "volume": 61436200.0}, {"close": 272.79864501953125, "date": "2026-04-20T00:00:00-04:00", "high": 274.0275237795767, "low": 270.04120633500696, "open": 270.08114756253855, "volume": 36590200.0}, {"close": 265.9250183105469, "date": "2026-04-21T00:00:00-04:00", "high": 272.5488901425708, "low": 265.1557075406741, "open": 271.250098918132, "volume": 50209800.0}, {"close": 272.9185791015625, "date": "2026-04-22T00:00:00-04:00", "high": 273.48803128351057, "low": 266.62435952726383, "open": 267.5734973129919, "volume": 43249200.0}, {"close": 273.1783142089844, "date": "2026-04-23T00:00:00-04:00", "high": 275.5161566987003, "low": 271.39995382845746, "open": 274.79681820267325, "volume": 33399600.0}, {"close": 270.81048583984375, "date": "2026-04-24T00:00:00-04:00", "high": 272.80864483253174, "low": 269.4017800912603, "open": 272.50893317942314, "volume": 38157100.0}, {"close": 267.3636474609375, "date": "2026-04-27T00:00:00-04:00", "high": 268.1129570778125, "low": 264.8260075108844, "open": 265.84505761361925, "volume": 41466800.0}, {"close": 270.4608154296875, "date": "2026-04-28T00:00:00-04:00", "high": 272.97851539952296, "low": 268.4127145556596, "open": 272.0893199684016, "volume": 40018900.0}, {"close": 269.92132568359375, "date": "2026-04-29T00:00:00-04:00", "high": 270.7905199823619, "low": 266.7942019267937, "open": 267.3037117460274, "volume": 30047900.0}, {"close": 271.1002502441406, "date": "2026-04-30T00:00:00-04:00", "high": 275.7459641951834, "low": 267.893213328058, "open": 270.25102650288807, "volume": 91848200.0}, {"close": 279.88214111328125, "date": "2026-05-01T00:00:00-04:00", "high": 286.95561044034525, "low": 278.1137509144006, "open": 278.6032901046287, "volume": 79915400.0}, {"close": 276.5751647949219, "date": "2026-05-04T00:00:00-04:00", "high": 280.3716851917065, "low": 274.60697695873915, "open": 279.4025768563376, "volume": 46668400.0}, {"close": 283.9184265136719, "date": "2026-05-05T00:00:00-04:00", "high": 284.30808218316156, "low": 276.2455026895375, "open": 276.6750995896243, "volume": 49311700.0}, {"close": 287.245361328125, "date": "2026-05-06T00:00:00-04:00", "high": 287.76487170009636, "low": 280.8112868075762, "open": 281.66051049385584, "volume": 58336100.0}, {"close": 287.1754150390625, "date": "2026-05-07T00:00:00-04:00", "high": 291.8611003514943, "low": 285.5169394038565, "open": 289.00371711581823, "volume": 45224300.0}, {"close": 293.0500183105469, "date": "2026-05-08T00:00:00-04:00", "high": 294.4886952888782, "low": 289.7330669166447, "open": 289.7430674686918, "volume": 52692800.0}, {"close": 292.67999267578125, "date": "2026-05-11T00:00:00-04:00", "high": 293.8800048828125, "low": 290.2300109863281, "open": 291.9800109863281, "volume": 42247300.0}, {"close": 294.79998779296875, "date": "2026-05-12T00:00:00-04:00", "high": 295.2699890136719, "low": 292.55999755859375, "open": 292.55999755859375, "volume": 45748100.0}, {"close": 298.8699951171875, "date": "2026-05-13T00:00:00-04:00", "high": 300.9200134277344, "low": 293.5, "open": 293.5, "volume": 52684300.0}, {"close": 298.2099914550781, "date": "2026-05-14T00:00:00-04:00", "high": 300.45001220703125, "low": 295.3800048828125, "open": 299.82000732421875, "volume": 35324900.0}, {"close": 300.2300109863281, "date": "2026-05-15T00:00:00-04:00", "high": 303.20001220703125, "low": 296.5199890136719, "open": 297.8999938964844, "volume": 54862800.0}, {"close": 297.8399963378906, "date": "2026-05-18T00:00:00-04:00", "high": 300.6600036621094, "low": 294.9100036621094, "open": 300.239990234375, "volume": 34483000.0}, {"close": 298.9700012207031, "date": "2026-05-19T00:00:00-04:00", "high": 300.510009765625, "low": 296.3500061035156, "open": 296.9700012207031, "volume": 42243600.0}, {"close": 302.25, "date": "2026-05-20T00:00:00-04:00", "high": 302.79998779296875, "low": 298.0799865722656, "open": 298.17999267578125, "volume": 38229800.0}, {"close": 304.989990234375, "date": "2026-05-21T00:00:00-04:00", "high": 305.5400085449219, "low": 300.3999938964844, "open": 301.05999755859375, "volume": 42965100.0}, {"close": 308.82000732421875, "date": "2026-05-22T00:00:00-04:00", "high": 311.3999938964844, "low": 305.8399963378906, "open": 306.1199951171875, "volume": 43670200.0}, {"close": 308.3299865722656, "date": "2026-05-26T00:00:00-04:00", "high": 311.82000732421875, "low": 307.6700134277344, "open": 309.55999755859375, "volume": 48000500.0}, {"close": 310.8500061035156, "date": "2026-05-27T00:00:00-04:00", "high": 313.260009765625, "low": 308.29998779296875, "open": 308.3299865722656, "volume": 50430900.0}, {"close": 312.510009765625, "date": "2026-05-28T00:00:00-04:00", "high": 312.79998779296875, "low": 309.57000732421875, "open": 310.67999267578125, "volume": 48220400.0}, {"close": 312.05999755859375, "date": "2026-05-29T00:00:00-04:00", "high": 315.0, "low": 309.5299987792969, "open": 311.7799987792969, "volume": 70026800.0}, {"close": 306.30999755859375, "date": "2026-06-01T00:00:00-04:00", "high": 310.94000244140625, "low": 305.0199890136719, "open": 309.6300048828125, "volume": 48849900.0}, {"close": 315.20001220703125, "date": "2026-06-02T00:00:00-04:00", "high": 315.45001220703125, "low": 306.69000244140625, "open": 307.4599914550781, "volume": 44534700.0}, {"close": 310.260009765625, "date": "2026-06-03T00:00:00-04:00", "high": 316.94000244140625, "low": 308.8500061035156, "open": 314.17999267578125, "volume": 50836700.0}, {"close": 311.2300109863281, "date": "2026-06-04T00:00:00-04:00", "high": 313.5400085449219, "low": 309.6499938964844, "open": 313.2300109863281, "volume": 44869100.0}, {"close": 307.3399963378906, "date": "2026-06-05T00:00:00-04:00", "high": 315.1700134277344, "low": 307.1499938964844, "open": 312.8599853515625, "volume": 65310500.0}, {"close": 301.5400085449219, "date": "2026-06-08T00:00:00-04:00", "high": 317.3999938964844, "low": 301.1700134277344, "open": 308.739990234375, "volume": 77949100.0}, {"close": 290.54998779296875, "date": "2026-06-09T00:00:00-04:00", "high": 300.75, "low": 287.7799987792969, "open": 300.2799987792969, "volume": 70108800.0}, {"close": 291.5799865722656, "date": "2026-06-10T00:00:00-04:00", "high": 294.75, "low": 287.3800048828125, "open": 290.739990234375, "volume": 52793300.0}, {"close": 295.6300048828125, "date": "2026-06-11T00:00:00-04:00", "high": 297.0, "low": 289.5899963378906, "open": 293.7200012207031, "volume": 42572500.0}, {"close": 291.1300048828125, "date": "2026-06-12T00:00:00-04:00", "high": 297.1400146484375, "low": 289.6199951171875, "open": 296.0299987792969, "volume": 38742100.0}, {"close": 296.4200134277344, "date": "2026-06-15T00:00:00-04:00", "high": 297.7799987792969, "low": 291.70001220703125, "open": 294.1199951171875, "volume": 45732600.0}, {"close": 299.239990234375, "date": "2026-06-16T00:00:00-04:00", "high": 300.4800109863281, "low": 293.9700012207031, "open": 295.25, "volume": 39874400.0}, {"close": 295.95001220703125, "date": "2026-06-17T00:00:00-04:00", "high": 302.07000732421875, "low": 294.3599853515625, "open": 300.8500061035156, "volume": 42745100.0}, {"close": 298.010009765625, "date": "2026-06-18T00:00:00-04:00", "high": 300.57000732421875, "low": 295.6199951171875, "open": 298.1099853515625, "volume": 85921000.0}];
+    var rawData = [{"close": 273.4280700683594, "date": "2026-02-10T00:00:00-05:00", "high": 275.11651686144285, "low": 272.68876099546605, "open": 274.6369782150198, "volume": 34376900.0}, {"close": 275.24639892578125, "date": "2026-02-11T00:00:00-05:00", "high": 279.92208361183503, "low": 274.1973776592452, "open": 274.44714753122867, "volume": 51931300.0}, {"close": 261.4891052246094, "date": "2026-02-12T00:00:00-05:00", "high": 275.46621856633783, "low": 259.94051360693726, "open": 275.3363333447182, "volume": 81077200.0}, {"close": 255.5445556640625, "date": "2026-02-13T00:00:00-05:00", "high": 261.9886306947134, "low": 255.21485759663088, "open": 261.7688319830923, "volume": 56290700.0}, {"close": 263.6371154785156, "date": "2026-02-17T00:00:00-05:00", "high": 266.0449008431299, "low": 255.30478047881587, "open": 257.8124646511843, "volume": 58469100.0}, {"close": 264.106689453125, "date": "2026-02-18T00:00:00-05:00", "high": 266.57441720150126, "low": 262.20844437502524, "open": 263.35737977838915, "volume": 34203300.0}, {"close": 260.3401184082031, "date": "2026-02-19T00:00:00-05:00", "high": 264.2365527856389, "low": 259.81060750150084, "open": 262.35827847824623, "volume": 30845300.0}, {"close": 264.3364562988281, "date": "2026-02-20T00:00:00-05:00", "high": 264.5063132392292, "low": 257.9223826043077, "open": 258.73163460792017, "volume": 42070500.0}, {"close": 265.9349670410156, "date": "2026-02-23T00:00:00-05:00", "high": 269.1819753311392, "low": 263.13755670993424, "open": 263.24744081710827, "volume": 37308200.0}, {"close": 271.8895263671875, "date": "2026-02-24T00:00:00-05:00", "high": 274.6369951599546, "low": 267.46358073991865, "open": 267.61343657617186, "volume": 47014600.0}, {"close": 273.97760009765625, "date": "2026-02-25T00:00:00-05:00", "high": 274.6869380517792, "low": 270.8005039088116, "open": 271.5298429675081, "volume": 33714300.0}, {"close": 272.6987609863281, "date": "2026-02-26T00:00:00-05:00", "high": 275.8558253670768, "low": 270.55071567552415, "open": 274.6969199809464, "volume": 32345100.0}, {"close": 263.93682861328125, "date": "2026-02-27T00:00:00-05:00", "high": 272.5588900215503, "low": 262.6480379442022, "open": 272.5588900215503, "volume": 72366500.0}, {"close": 264.476318359375, "date": "2026-03-02T00:00:00-05:00", "high": 266.2846497598317, "low": 259.960490133898, "open": 262.16844722421786, "volume": 41827900.0}, {"close": 263.5072326660156, "date": "2026-03-03T00:00:00-05:00", "high": 265.31556422164516, "low": 259.8905695547566, "open": 263.23749216234586, "volume": 38568900.0}, {"close": 262.2783508300781, "date": "2026-03-04T00:00:00-05:00", "high": 265.9050144519466, "low": 261.179387723623, "open": 264.4063951364299, "volume": 39803100.0}, {"close": 260.0504150390625, "date": "2026-03-05T00:00:00-05:00", "high": 261.3192350446657, "low": 257.01320478174756, "open": 260.54995479568396, "volume": 49658600.0}, {"close": 257.2229919433594, "date": "2026-03-06T00:00:00-05:00", "high": 258.53178361058343, "low": 254.13584003818684, "open": 258.39192833924307, "volume": 41120000.0}, {"close": 259.6407775878906, "date": "2026-03-09T00:00:00-04:00", "high": 260.9095975388004, "low": 253.44647267699952, "open": 255.45463216869055, "volume": 38218500.0}, {"close": 260.58990478515625, "date": "2026-03-10T00:00:00-04:00", "high": 262.2384104290217, "low": 256.71350175461305, "open": 257.4128391437035, "volume": 30590800.0}, {"close": 260.5699157714844, "date": "2026-03-11T00:00:00-04:00", "high": 261.888707997661, "low": 259.3110658747261, "open": 260.8496568052655, "volume": 26218900.0}, {"close": 255.52456665039062, "date": "2026-03-12T00:00:00-04:00", "high": 258.71164792954545, "low": 253.94601921584928, "open": 258.4219063383753, "volume": 40794000.0}, {"close": 249.8897705078125, "date": "2026-03-13T00:00:00-04:00", "high": 256.0940459350445, "low": 249.29033192864068, "open": 255.24483747003174, "volume": 36930000.0}, {"close": 252.58729553222656, "date": "2026-03-16T00:00:00-04:00", "high": 253.6563027081548, "low": 249.6499992581203, "open": 251.87794235419486, "volume": 32074200.0}, {"close": 253.99598693847656, "date": "2026-03-17T00:00:00-04:00", "high": 254.89516767044782, "low": 251.94787083452104, "open": 252.72716690012706, "volume": 32361600.0}, {"close": 249.70994567871094, "date": "2026-03-18T00:00:00-04:00", "high": 254.70534343896443, "low": 248.7708084606242, "open": 252.3974721128864, "volume": 35757900.0}, {"close": 248.73085021972656, "date": "2026-03-19T00:00:00-04:00", "high": 251.5982036354298, "low": 247.0723745163624, "open": 249.17043241392184, "volume": 34864100.0}, {"close": 247.76173400878906, "date": "2026-03-20T00:00:00-04:00", "high": 248.97061168291066, "low": 245.77356028907465, "open": 247.7517334570195, "volume": 88331100.0}, {"close": 251.25851440429688, "date": "2026-03-23T00:00:00-04:00", "high": 254.3656523266213, "low": 250.0496214753341, "open": 253.73622734962268, "volume": 40546100.0}, {"close": 251.4083709716797, "date": "2026-03-24T00:00:00-04:00", "high": 254.5954370944537, "low": 249.32029842391177, "open": 250.1195650925759, "volume": 45152300.0}, {"close": 252.38746643066406, "date": "2026-03-25T00:00:00-04:00", "high": 254.76528059453105, "low": 251.3684162845015, "open": 253.86611511385965, "volume": 28476700.0}, {"close": 252.6572265625, "date": "2026-03-26T00:00:00-04:00", "high": 256.76344411909713, "low": 250.53918279672283, "open": 251.88793104116345, "volume": 41796700.0}, {"close": 248.57098388671875, "date": "2026-03-27T00:00:00-04:00", "high": 255.2548282141602, "low": 247.8416601166152, "open": 253.666280215245, "volume": 47900000.0}, {"close": 246.40298461914062, "date": "2026-03-30T00:00:00-04:00", "high": 250.63907198816298, "low": 245.28400520065438, "open": 249.83982057534305, "volume": 39446200.0}, {"close": 253.55638122558594, "date": "2026-03-31T00:00:00-04:00", "high": 255.24482803058763, "low": 246.87255213324852, "open": 247.6818040942864, "volume": 49598100.0}, {"close": 255.3946990966797, "date": "2026-04-01T00:00:00-04:00", "high": 255.94418062939917, "low": 253.096813183035, "open": 253.8461228128272, "volume": 40059400.0}, {"close": 255.68443298339844, "date": "2026-04-02T00:00:00-04:00", "high": 255.89424639361263, "low": 250.4192795609811, "open": 253.96601496217014, "volume": 31289400.0}, {"close": 258.6217041015625, "date": "2026-04-06T00:00:00-04:00", "high": 261.9186847371787, "low": 256.2239194053331, "open": 256.27389167390277, "volume": 29329900.0}, {"close": 253.26666259765625, "date": "2026-04-07T00:00:00-04:00", "high": 255.96418954301222, "low": 245.47383916108728, "open": 255.92421782448065, "volume": 62148000.0}, {"close": 258.66168212890625, "date": "2026-04-08T00:00:00-04:00", "high": 259.51090582044134, "low": 256.29386854025813, "open": 258.2121146377317, "volume": 41032800.0}, {"close": 260.2502136230469, "date": "2026-04-09T00:00:00-04:00", "high": 260.879638597066, "low": 255.8342992320816, "open": 258.7615948993736, "volume": 28121600.0}, {"close": 260.240234375, "date": "2026-04-10T00:00:00-04:00", "high": 261.94865175168746, "low": 258.78155637925676, "open": 259.7406946341393, "volume": 31291500.0}, {"close": 258.96142578125, "date": "2026-04-13T00:00:00-04:00", "high": 259.9405042051452, "low": 256.4237552437805, "open": 259.49093671136296, "volume": 36234700.0}, {"close": 258.59173583984375, "date": "2026-04-14T00:00:00-04:00", "high": 261.68888841493145, "low": 256.9532612999924, "open": 259.01136264890187, "volume": 48370700.0}, {"close": 266.18475341796875, "date": "2026-04-15T00:00:00-04:00", "high": 266.3146386359468, "low": 257.57269269729437, "open": 257.92237663273806, "volume": 49913500.0}, {"close": 263.15753173828125, "date": "2026-04-16T00:00:00-04:00", "high": 266.91408037974617, "low": 261.0294875448873, "open": 266.55439590858066, "volume": 43323100.0}, {"close": 269.98126220703125, "date": "2026-04-17T00:00:00-04:00", "high": 272.0493335842862, "low": 266.47448343207725, "open": 266.7142527536172, "volume": 61436200.0}, {"close": 272.79864501953125, "date": "2026-04-20T00:00:00-04:00", "high": 274.0275237795767, "low": 270.04120633500696, "open": 270.08114756253855, "volume": 36590200.0}, {"close": 265.9250183105469, "date": "2026-04-21T00:00:00-04:00", "high": 272.5488901425708, "low": 265.1557075406741, "open": 271.250098918132, "volume": 50209800.0}, {"close": 272.9185791015625, "date": "2026-04-22T00:00:00-04:00", "high": 273.48803128351057, "low": 266.62435952726383, "open": 267.5734973129919, "volume": 43249200.0}, {"close": 273.1783142089844, "date": "2026-04-23T00:00:00-04:00", "high": 275.5161566987003, "low": 271.39995382845746, "open": 274.79681820267325, "volume": 33399600.0}, {"close": 270.81048583984375, "date": "2026-04-24T00:00:00-04:00", "high": 272.80864483253174, "low": 269.4017800912603, "open": 272.50893317942314, "volume": 38157100.0}, {"close": 267.3636474609375, "date": "2026-04-27T00:00:00-04:00", "high": 268.1129570778125, "low": 264.8260075108844, "open": 265.84505761361925, "volume": 41466800.0}, {"close": 270.4608154296875, "date": "2026-04-28T00:00:00-04:00", "high": 272.97851539952296, "low": 268.4127145556596, "open": 272.0893199684016, "volume": 40018900.0}, {"close": 269.92132568359375, "date": "2026-04-29T00:00:00-04:00", "high": 270.7905199823619, "low": 266.7942019267937, "open": 267.3037117460274, "volume": 30047900.0}, {"close": 271.1002502441406, "date": "2026-04-30T00:00:00-04:00", "high": 275.7459641951834, "low": 267.893213328058, "open": 270.25102650288807, "volume": 91848200.0}, {"close": 279.88214111328125, "date": "2026-05-01T00:00:00-04:00", "high": 286.95561044034525, "low": 278.1137509144006, "open": 278.6032901046287, "volume": 79915400.0}, {"close": 276.5751647949219, "date": "2026-05-04T00:00:00-04:00", "high": 280.3716851917065, "low": 274.60697695873915, "open": 279.4025768563376, "volume": 46668400.0}, {"close": 283.9184265136719, "date": "2026-05-05T00:00:00-04:00", "high": 284.30808218316156, "low": 276.2455026895375, "open": 276.6750995896243, "volume": 49311700.0}, {"close": 287.245361328125, "date": "2026-05-06T00:00:00-04:00", "high": 287.76487170009636, "low": 280.8112868075762, "open": 281.66051049385584, "volume": 58336100.0}, {"close": 287.1754150390625, "date": "2026-05-07T00:00:00-04:00", "high": 291.8611003514943, "low": 285.5169394038565, "open": 289.00371711581823, "volume": 45224300.0}, {"close": 293.0500183105469, "date": "2026-05-08T00:00:00-04:00", "high": 294.4886952888782, "low": 289.7330669166447, "open": 289.7430674686918, "volume": 52692800.0}, {"close": 292.67999267578125, "date": "2026-05-11T00:00:00-04:00", "high": 293.8800048828125, "low": 290.2300109863281, "open": 291.9800109863281, "volume": 42247300.0}, {"close": 294.79998779296875, "date": "2026-05-12T00:00:00-04:00", "high": 295.2699890136719, "low": 292.55999755859375, "open": 292.55999755859375, "volume": 45748100.0}, {"close": 298.8699951171875, "date": "2026-05-13T00:00:00-04:00", "high": 300.9200134277344, "low": 293.5, "open": 293.5, "volume": 52684300.0}, {"close": 298.2099914550781, "date": "2026-05-14T00:00:00-04:00", "high": 300.45001220703125, "low": 295.3800048828125, "open": 299.82000732421875, "volume": 35324900.0}, {"close": 300.2300109863281, "date": "2026-05-15T00:00:00-04:00", "high": 303.20001220703125, "low": 296.5199890136719, "open": 297.8999938964844, "volume": 54862800.0}, {"close": 297.8399963378906, "date": "2026-05-18T00:00:00-04:00", "high": 300.6600036621094, "low": 294.9100036621094, "open": 300.239990234375, "volume": 34483000.0}, {"close": 298.9700012207031, "date": "2026-05-19T00:00:00-04:00", "high": 300.510009765625, "low": 296.3500061035156, "open": 296.9700012207031, "volume": 42243600.0}, {"close": 302.25, "date": "2026-05-20T00:00:00-04:00", "high": 302.79998779296875, "low": 298.0799865722656, "open": 298.17999267578125, "volume": 38229800.0}, {"close": 304.989990234375, "date": "2026-05-21T00:00:00-04:00", "high": 305.5400085449219, "low": 300.3999938964844, "open": 301.05999755859375, "volume": 42965100.0}, {"close": 308.82000732421875, "date": "2026-05-22T00:00:00-04:00", "high": 311.3999938964844, "low": 305.8399963378906, "open": 306.1199951171875, "volume": 43670200.0}, {"close": 308.3299865722656, "date": "2026-05-26T00:00:00-04:00", "high": 311.82000732421875, "low": 307.6700134277344, "open": 309.55999755859375, "volume": 48000500.0}, {"close": 310.8500061035156, "date": "2026-05-27T00:00:00-04:00", "high": 313.260009765625, "low": 308.29998779296875, "open": 308.3299865722656, "volume": 50430900.0}, {"close": 312.510009765625, "date": "2026-05-28T00:00:00-04:00", "high": 312.79998779296875, "low": 309.57000732421875, "open": 310.67999267578125, "volume": 48220400.0}, {"close": 312.05999755859375, "date": "2026-05-29T00:00:00-04:00", "high": 315.0, "low": 309.5299987792969, "open": 311.7799987792969, "volume": 70026800.0}, {"close": 306.30999755859375, "date": "2026-06-01T00:00:00-04:00", "high": 310.94000244140625, "low": 305.0199890136719, "open": 309.6300048828125, "volume": 48849900.0}, {"close": 315.20001220703125, "date": "2026-06-02T00:00:00-04:00", "high": 315.45001220703125, "low": 306.69000244140625, "open": 307.4599914550781, "volume": 44534700.0}, {"close": 310.260009765625, "date": "2026-06-03T00:00:00-04:00", "high": 316.94000244140625, "low": 308.8500061035156, "open": 314.17999267578125, "volume": 50836700.0}, {"close": 311.2300109863281, "date": "2026-06-04T00:00:00-04:00", "high": 313.5400085449219, "low": 309.6499938964844, "open": 313.2300109863281, "volume": 44869100.0}, {"close": 307.3399963378906, "date": "2026-06-05T00:00:00-04:00", "high": 315.1700134277344, "low": 307.1499938964844, "open": 312.8599853515625, "volume": 65310500.0}, {"close": 301.5400085449219, "date": "2026-06-08T00:00:00-04:00", "high": 317.3999938964844, "low": 301.1700134277344, "open": 308.739990234375, "volume": 77949100.0}, {"close": 290.54998779296875, "date": "2026-06-09T00:00:00-04:00", "high": 300.75, "low": 287.7799987792969, "open": 300.2799987792969, "volume": 70108800.0}, {"close": 291.5799865722656, "date": "2026-06-10T00:00:00-04:00", "high": 294.75, "low": 287.3800048828125, "open": 290.739990234375, "volume": 52793300.0}, {"close": 295.6300048828125, "date": "2026-06-11T00:00:00-04:00", "high": 297.0, "low": 289.5899963378906, "open": 293.7200012207031, "volume": 42572500.0}, {"close": 291.1300048828125, "date": "2026-06-12T00:00:00-04:00", "high": 297.1400146484375, "low": 289.6199951171875, "open": 296.0299987792969, "volume": 38742100.0}, {"close": 296.4200134277344, "date": "2026-06-15T00:00:00-04:00", "high": 297.7799987792969, "low": 291.70001220703125, "open": 294.1199951171875, "volume": 45732600.0}, {"close": 299.239990234375, "date": "2026-06-16T00:00:00-04:00", "high": 300.4800109863281, "low": 293.9700012207031, "open": 295.25, "volume": 39874400.0}, {"close": 295.95001220703125, "date": "2026-06-17T00:00:00-04:00", "high": 302.07000732421875, "low": 294.3599853515625, "open": 300.8500061035156, "volume": 42745100.0}, {"close": 298.010009765625, "date": "2026-06-18T00:00:00-04:00", "high": 300.57000732421875, "low": 295.6199951171875, "open": 298.1099853515625, "volume": 85962200.0}];
     var labels = rawData.map(function(d) { return d.date; });
     var highs = rawData.map(function(d) { return d.high; });
     var lows = rawData.map(function(d) { return d.low; });

@@ -8,6 +8,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 
 from analytics.deps import AnalyticsDeps
 from analytics.state import AnalyticsState
+from shared.agent_models import AnalyticsAgentOutput
 from shared.llm_queue import Priority, llm_queue
 from shared.settings import LLM_BASE_URL, LLM_SUMMARY_MODEL
 
@@ -97,14 +98,15 @@ class LLMSummaryNode(BaseNode[AnalyticsState, AnalyticsDeps]):
         return End(self._build_output(ctx.state))
 
     def _build_output(self, state: AnalyticsState) -> dict:
-        return {
-            "ticker": state.ticker,
-            "trend_analysis": state.trend_analysis,
-            "forecast": state.forecast_result,
-            "charts": state.chart_payloads,
-            "statistical_summary": state.statistical_summary,
-            "anomalies": state.anomaly_report,
-            "analytics_signal": state.analytics_signal,
-            "analytics_confidence": state.analytics_confidence,
-            "reasoning": state.reasoning,
-        }
+        output = AnalyticsAgentOutput(
+            ticker=state.ticker,
+            trend_analysis=state.trend_analysis,
+            forecast=state.forecast_result,
+            charts=state.chart_payloads,
+            statistical_summary=state.statistical_summary,
+            anomalies=state.anomaly_report,
+            analytics_signal=state.analytics_signal,
+            analytics_confidence=state.analytics_confidence,
+        ).model_dump()
+        output["reasoning"] = state.reasoning
+        return output

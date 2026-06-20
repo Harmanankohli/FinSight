@@ -2180,7 +2180,7 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
             else:
                 strength_label = "N/A"
             data.trend_data = {
-                "direction": td.capitalize(),
+                "direction": td.replace("_", " ").title(),
                 "strength": strength_label,
                 "crossover": trend.ma_crossover_signal.replace("_", " ").title()
                 if trend.ma_crossover_signal
@@ -2473,7 +2473,7 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
     if analytics and hasattr(analytics, "trend_analysis") and analytics.trend_analysis:
         td = analytics.trend_analysis.trend_direction
         if td in ("bullish", "strong_bullish"):
-            positive_drivers.append(f"Analytics trend is {td}")
+            positive_drivers.append(f"Analytics trend is {td.replace('_', ' ')}")
         elif td == "bearish":
             negative_drivers.append("Analytics trend is bearish")
 

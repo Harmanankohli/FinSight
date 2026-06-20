@@ -1,6 +1,20 @@
 import logging
+import re
+
+from shared.agent_models import AgentScores, ConfidenceBreakdown
 
 logger = logging.getLogger(__name__)
+
+_ERROR_PATTERNS = re.compile(
+    r"error|failed|exception|traceback|could not|unable to|no data|timed?\s*out",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_error(text: str) -> bool:
+    if not text or len(text) < 10:
+        return False
+    return bool(_ERROR_PATTERNS.search(text[:300]))
 
 
 def _safe_get(d: dict, *keys, default=None):
@@ -37,6 +51,11 @@ def _signal_to_direction(agent_outputs: dict, agent_key: str) -> str | None:
 
 def _derive_quant_confidence(quant: dict) -> float:
     """Derive a confidence score weighted by data freshness, source quality, and signal agreement."""
+    reasoning = quant.get("reasoning") or ""
+    if _looks_like_error(reasoning) and not quant.get("metrics"):
+        logger.warning("Quant reasoning looks like an error with no metrics, assigning near-zero confidence")
+        return 0.05
+
     metrics = quant.get("metrics") or {}
     explicit = metrics.get("quant_confidence")
     if isinstance(explicit, (int, float)) and explicit > 0:
@@ -94,12 +113,17 @@ def _derive_quant_confidence(quant: dict) -> float:
 
 def _derive_rag_confidence(rag: dict) -> float:
     """Derive a confidence score from RAG data."""
+    summary = rag.get("summary") or ""
+    if _looks_like_error(summary):
+        logger.warning("RAG summary looks like an error, assigning near-zero confidence")
+        return 0.05
+
     explicit = rag.get("confidence_score")
     if isinstance(explicit, (int, float)) and explicit > 0:
         return explicit
 
     score = 0.3
-    if rag.get("summary"):
+    if summary and len(summary) > 50:
         score += 0.2
     sources = rag.get("sources") or []
     if sources:
@@ -109,12 +133,17 @@ def _derive_rag_confidence(rag: dict) -> float:
 
 def _derive_market_confidence(market: dict) -> float:
     """Derive a confidence score from market context data."""
+    narrative = market.get("narrative") or ""
+    if _looks_like_error(narrative):
+        logger.warning("Market context narrative looks like an error, assigning near-zero confidence")
+        return 0.05
+
     explicit = market.get("confidence_score")
     if isinstance(explicit, (int, float)) and explicit > 0:
         return explicit
 
     score = 0.3
-    if market.get("narrative"):
+    if narrative:
         score += 0.2
     if market.get("overall_signal") and market["overall_signal"] != "neutral":
         score += 0.1
@@ -238,14 +267,14 @@ def score_confidence(agent_outputs: dict) -> dict:
         market_conf,
         analytics_conf,
     )
-    return {
-        "agent_scores": {
-            "quant": round(quant_conf, 2),
-            "rag": round(rag_conf, 2),
-            "market_context": round(market_conf, 2),
-            "analytics": round(analytics_conf, 2),
-        },
-        "agreement_score": round(agreement, 2),
-        "data_quality_score": round(data_quality, 2),
-        "meta_confidence": round(meta_confidence, 2),
-    }
+    return ConfidenceBreakdown(
+        agent_scores=AgentScores(
+            quant=round(quant_conf, 2),
+            rag=round(rag_conf, 2),
+            market_context=round(market_conf, 2),
+            analytics=round(analytics_conf, 2),
+        ),
+        agreement_score=round(agreement, 2),
+        data_quality_score=round(data_quality, 2),
+        meta_confidence=round(meta_confidence, 2),
+    ).model_dump()

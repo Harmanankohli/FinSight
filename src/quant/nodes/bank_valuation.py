@@ -1,5 +1,7 @@
 import logging
 
+from shared.agent_models import DCFValuation
+
 logger = logging.getLogger(__name__)
 
 
@@ -32,13 +34,13 @@ def run_bank_valuation(
     )
 
     return {
-        "dcf_valuation": {
-            "intrinsic_value": round(pb_fair_value, 2),
-            "current_price": round(current_price, 2),
-            "upside_pct": round(pb_upside * 100, 1),
-            "method": "pb",
-            "pb_ratio_used": round(price_to_book, 2),
-            "fair_pb_multiple": fair_pb,
-        },
+        "dcf_valuation": DCFValuation(
+            intrinsic_value=round(pb_fair_value, 2),
+            current_price=round(current_price, 2),
+            upside_pct=round(pb_upside * 100, 1),
+            method="pb",
+            pb_ratio_used=round(price_to_book, 2),
+            fair_pb_multiple=fair_pb,
+        ).model_dump(),
         "monte_carlo": monte_carlo,
     }

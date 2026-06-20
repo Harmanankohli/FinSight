@@ -3,17 +3,31 @@ import logging
 import numpy as np
 import pandas as pd
 
+from shared.agent_models import QuantRiskMetrics, TechnicalIndicators
 from shared.logging_config import logged
+from shared.metrics import (
+    compute_alpha,
+    compute_beta,
+    compute_calmar_ratio,
+    compute_information_ratio,
+    compute_rsi_wilder,
+    compute_sharpe_ratio,
+    compute_sortino_ratio,
+    metric_result,
+)
 
 from ..state import QuantAnalysisState
 from .calculations import _parse_price_data
 
 logger = logging.getLogger(__name__)
 
+RF_ANNUAL = 0.043
+
 
 @logged()
 async def compute_metrics_node(state: QuantAnalysisState) -> dict:
-    # Computes Sharpe ratio, annualized volatility, VaR (95%), max drawdown, and beta vs S&P 500
+    # Computes Sharpe, Sortino, Calmar, Alpha, IR, annualized volatility, VaR (95%),
+    # max drawdown, and beta vs S&P 500 — all via shared/metrics.py
     prices_dict = state.get("price_data", {})
     ticker = state.get("ticker", "?")
     if not prices_dict:
@@ -21,13 +35,17 @@ async def compute_metrics_node(state: QuantAnalysisState) -> dict:
         return {
             "volatility": 0.0,
             "is_high_volatility": False,
-            "metrics": {
-                "sharpe_ratio": 0.0,
-                "annual_volatility": 0.0,
-                "beta": 0.0,
-                "var_95_daily": 0.0,
-                "max_drawdown": 0.0,
-            },
+            "metrics": QuantRiskMetrics(
+                sharpe_ratio=metric_result(0.0, "Annualized Excess Return Sharpe", -999, 999),
+                annual_volatility=metric_result(0.0, "Annualized Std Daily Returns", 0, 10),
+                beta=metric_result(0.0, "Covariance vs ^GSPC (252d min)", -10, 10),
+                var_95_daily=metric_result(0.0, "Historical 5th Percentile", -1, 0),
+                max_drawdown=metric_result(0.0, "Peak-to-Trough Decline", -1, 0),
+                sortino_ratio=metric_result(0.0, "Annualized Downside Deviation Sharpe", -999, 999),
+                calmar_ratio=metric_result(0.0, "CAGR / Max Drawdown", -999, 999),
+                alpha=metric_result(0.0, "CAPM Excess Return (annualized)", -10, 10),
+                information_ratio=metric_result(0.0, "Annualized Active Return / Tracking Error", -999, 999),
+            ).model_dump(exclude={"quant_confidence", "quant_signal", "signals", "signal_scores"}),
         }
 
     prices = pd.Series({pd.Timestamp(k): v for k, v in prices_dict.items()}).sort_index()
@@ -40,44 +58,52 @@ async def compute_metrics_node(state: QuantAnalysisState) -> dict:
         return {
             "volatility": 0.0,
             "is_high_volatility": False,
-            "metrics": {
-                "sharpe_ratio": 0.0,
-                "annual_volatility": 0.0,
-                "beta": 0.0,
-                "var_95_daily": 0.0,
-                "max_drawdown": 0.0,
-            },
+            "metrics": QuantRiskMetrics(
+                sharpe_ratio=metric_result(0.0, "Annualized Excess Return Sharpe", -999, 999),
+                annual_volatility=metric_result(0.0, "Annualized Std Daily Returns", 0, 10),
+                beta=metric_result(0.0, "Covariance vs ^GSPC (252d min)", -10, 10),
+                var_95_daily=metric_result(0.0, "Historical 5th Percentile", -1, 0),
+                max_drawdown=metric_result(0.0, "Peak-to-Trough Decline", -1, 0),
+                sortino_ratio=metric_result(0.0, "Annualized Downside Deviation Sharpe", -999, 999),
+                calmar_ratio=metric_result(0.0, "CAGR / Max Drawdown", -999, 999),
+                alpha=metric_result(0.0, "CAPM Excess Return (annualized)", -10, 10),
+                information_ratio=metric_result(0.0, "Annualized Active Return / Tracking Error", -999, 999),
+            ).model_dump(exclude={"quant_confidence", "quant_signal", "signals", "signal_scores"}),
         }
 
-    annual_vol = float(returns.std() * np.sqrt(252))
-    rf_daily = 0.043 / 252
-    sharpe = (
-        float(((returns.mean() - rf_daily) / returns.std()) * np.sqrt(252))
-        if returns.std() > 0
-        else 0.0
-    )
-    var_95 = float(np.percentile(returns, 5))
+    returns_arr = returns.values
+    annual_vol = float(np.std(returns_arr, ddof=1) * np.sqrt(252))
+    sharpe = compute_sharpe_ratio(returns_arr, RF_ANNUAL)
+
+    var_95 = float(np.percentile(returns_arr, 5))
 
     running_max = prices.expanding().max()
     drawdown = (prices - running_max) / running_max
     max_dd = float(drawdown.min())
 
+    # CAGR for Calmar — use rolling year return as CAGR proxy
+    n_year = min(252, len(returns_arr))
+    trailing_cagr = float(prices.iloc[-1] / prices.iloc[-n_year] - 1) if len(prices) >= n_year else 0.0
+
     try:
         mcp = state.get("mcp_client")
         sp_data = {}
         if mcp:
+            sp_period = state.get("period", "5y")
             sp_result = await mcp.call_tool_by_name(
                 "get_prices",
-                {"ticker": "^GSPC", "period": state.get("period", "5y"), "interval": "1d"},
+                {"ticker": "^GSPC", "period": sp_period, "interval": "1d"},
             )
             sp_data = _parse_price_data(sp_result, "^GSPC")
         if sp_data:
             sp_series = pd.Series({pd.Timestamp(k): v for k, v in sp_data.items()}).sort_index()
             sp_returns = sp_series.pct_change().dropna()
             common = returns.align(sp_returns, join="inner")
-            if len(common[0]) > 1:
-                cov = np.cov(common[0], common[1])
-                beta = float(cov[0, 1] / cov[1, 1]) if cov[1, 1] > 0 else 1.0
+            if len(common[0]) > 252:
+                common_252 = (common[0].iloc[-252:], common[1].iloc[-252:])
+                beta = compute_beta(common_252[0].values, common_252[1].values)
+            elif len(common[0]) > 1:
+                beta = compute_beta(common[0].values, common[1].values)
             else:
                 beta = 1.0
         else:
@@ -88,16 +114,32 @@ async def compute_metrics_node(state: QuantAnalysisState) -> dict:
 
     is_high = annual_vol > 0.35
 
+    sortino = compute_sortino_ratio(returns_arr, RF_ANNUAL)
+    calmar = compute_calmar_ratio(trailing_cagr, max_dd)
+    alpha = 0.0
+    information_ratio = 0.0
+    if sp_data:
+        sp_series_loc = pd.Series({pd.Timestamp(k): v for k, v in sp_data.items()}).sort_index()
+        sp_ret = sp_series_loc.pct_change().dropna()
+        common_ar = returns.align(sp_ret, join="inner")
+        if len(common_ar[0]) > 1:
+            alpha = compute_alpha(common_ar[0].values, common_ar[1].values, RF_ANNUAL, beta)
+            information_ratio = compute_information_ratio(common_ar[0].values, common_ar[1].values)
+
     result = {
         "volatility": annual_vol,
         "is_high_volatility": is_high,
-        "metrics": {
-            "sharpe_ratio": round(sharpe, 3),
-            "annual_volatility": round(annual_vol, 3),
-            "beta": round(beta, 3),
-            "var_95_daily": round(var_95, 4),
-            "max_drawdown": round(max_dd, 4),
-        },
+        "metrics": QuantRiskMetrics(
+            sharpe_ratio=metric_result(sharpe, "Annualized Excess Return Sharpe", -999, 999),
+            annual_volatility=metric_result(annual_vol, "Annualized Std Daily Returns", 0, 10),
+            beta=metric_result(beta, "Covariance vs ^GSPC (252d min)", -10, 10),
+            var_95_daily=metric_result(var_95, "Historical 5th Percentile", -1, 0),
+            max_drawdown=metric_result(max_dd, "Peak-to-Trough Decline", -1, 0),
+            sortino_ratio=metric_result(sortino, "Annualized Downside Deviation Sharpe", -999, 999),
+            calmar_ratio=metric_result(calmar, "CAGR / Max Drawdown", -999, 999),
+            alpha=metric_result(alpha, "CAPM Excess Return (annualized)", -10, 10),
+            information_ratio=metric_result(information_ratio, "Annualized Active Return / Tracking Error", -999, 999),
+        ).model_dump(exclude={"quant_confidence", "quant_signal", "signals", "signal_scores"}),
     }
     if is_high:
         result["dcf_error"] = (
@@ -137,18 +179,7 @@ async def technical_analysis_node(state: QuantAnalysisState) -> dict:
         macd_histogram = macd_line - signal_line
         macd_bullish = macd_histogram > 0
 
-        delta = prices.diff()
-        gain = delta.where(delta > 0, 0)
-        loss = -delta.where(delta < 0, 0)
-        avg_gain = gain.ewm(alpha=1 / 14, adjust=False).mean()
-        avg_loss = loss.ewm(alpha=1 / 14, adjust=False).mean()
-        rs = avg_gain / avg_loss
-        rsi_raw = 100 - (100 / (1 + rs))
-        rsi = (
-            float(rsi_raw.iloc[-1])
-            if not rsi_raw.empty and not np.isnan(rsi_raw.iloc[-1])
-            else 50.0
-        )
+        rsi = compute_rsi_wilder(prices, 14)
 
         bb_mid = prices.rolling(20).mean()
         bb_std = prices.rolling(20).std()
@@ -193,29 +224,29 @@ async def technical_analysis_node(state: QuantAnalysisState) -> dict:
             trend = "downtrend"
 
         return {
-            "technicals": {
-                "sma_20": round(sma20, 2) if sma20 else None,
-                "sma_50": round(sma50, 2) if sma50 else None,
-                "sma_200": round(sma200, 2) if sma200 else None,
-                "ema_12": round(ema12, 2),
-                "ema_26": round(ema26, 2),
-                "macd": round(macd_line, 4),
-                "macd_signal": round(signal_line, 4),
-                "macd_histogram": round(macd_histogram, 4),
-                "macd_bullish": macd_bullish,
-                "rsi_14": round(rsi, 1),
-                "bb_upper": round(bb_upper, 2),
-                "bb_lower": round(bb_lower, 2),
-                "bb_position": round(bb_position, 3),
-                "momentum_20d": round(mom_20d, 2) if mom_20d is not None else None,
-                "momentum_60d": round(mom_60d, 2) if mom_60d is not None else None,
-                "support": round(support, 2) if support is not None else None,
-                "resistance": round(resistance, 2) if resistance is not None else None,
-                "trend": trend,
-                "golden_cross": golden_cross,
-                "above_50d_ma": above_50,
-                "above_200d_ma": above_200,
-            }
+            "technicals": TechnicalIndicators(
+                sma_20=round(sma20, 2) if sma20 else None,
+                sma_50=round(sma50, 2) if sma50 else None,
+                sma_200=round(sma200, 2) if sma200 else None,
+                ema_12=round(ema12, 2),
+                ema_26=round(ema26, 2),
+                macd=round(macd_line, 4),
+                macd_signal=round(signal_line, 4),
+                macd_histogram=round(macd_histogram, 4),
+                macd_bullish=macd_bullish,
+                rsi_14=round(rsi, 1),
+                bb_upper=round(bb_upper, 2),
+                bb_lower=round(bb_lower, 2),
+                bb_position=round(bb_position, 3),
+                momentum_20d=round(mom_20d, 2) if mom_20d is not None else None,
+                momentum_60d=round(mom_60d, 2) if mom_60d is not None else None,
+                support=round(support, 2) if support is not None else None,
+                resistance=round(resistance, 2) if resistance is not None else None,
+                trend=trend,
+                golden_cross=golden_cross,
+                above_50d_ma=above_50,
+                above_200d_ma=above_200,
+            ).model_dump(),
         }
     except Exception as e:
         logger.warning("Technical analysis failed for %s: %s", ticker, e)

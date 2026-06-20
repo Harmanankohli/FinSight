@@ -1,6 +1,7 @@
 import json
 import logging
 
+from shared.agent_models import AnalystPositioning, Fundamentals, InsiderSignals, OptionsSignals
 from shared.logging_config import logged
 
 from ..state import QuantAnalysisState
@@ -60,45 +61,44 @@ async def fundamental_analysis_node(state: QuantAnalysisState) -> dict:
         total_debt = info.get("totalDebt") or 0
         total_cash = info.get("totalCash") or 0
 
-        fundamentals = {
-            "trailing_pe": info.get("trailingPE"),
-            "forward_pe": info.get("forwardPE"),
-            "price_to_book": info.get("priceToBook"),
-            "price_to_sales": info.get("priceToSalesTrailing12Months"),
-            "ev_to_ebitda": info.get("enterpriseToEbitda"),
-            "ev_to_revenue": info.get("enterpriseToRevenue"),
-            "gross_margin": info.get("grossMargins"),
-            "operating_margin": info.get("operatingMargins"),
-            "profit_margin": info.get("profitMargins"),
-            "roe": info.get("returnOnEquity"),
-            "roa": info.get("returnOnAssets"),
-            "revenue_growth": info.get("revenueGrowth"),
-            "earnings_growth": info.get("earningsGrowth"),
-            "earnings_quarterly_growth": info.get("earningsQuarterlyGrowth"),
-            "debt_to_equity": info.get("debtToEquity"),
-            "current_ratio": info.get("currentRatio"),
-            "quick_ratio": info.get("quickRatio"),
-            "total_debt": total_debt,
-            "total_cash": total_cash,
-            "market_cap": info.get("marketCap"),
-            "dividend_yield": info.get("dividendYield"),
-            "payout_ratio": info.get("payoutRatio"),
-            "52w_high": fifty2w_high,
-            "52w_low": fifty2w_low,
-            "50d_avg": fifty_day_ma,
-            "200d_avg": two_hundred_day_ma,
-            "current_price": current_price,
-            "pct_from_52w_high": round((current_price - fifty2w_high) / fifty2w_high, 4)
+        fundamentals = Fundamentals(
+            trailing_pe=info.get("trailingPE"),
+            forward_pe=info.get("forwardPE"),
+            price_to_book=info.get("priceToBook"),
+            price_to_sales=info.get("priceToSalesTrailing12Months"),
+            ev_to_ebitda=info.get("enterpriseToEbitda"),
+            ev_to_revenue=info.get("enterpriseToRevenue"),
+            gross_margin=info.get("grossMargins"),
+            operating_margin=info.get("operatingMargins"),
+            profit_margin=info.get("profitMargins"),
+            roe=info.get("returnOnEquity"),
+            roa=info.get("returnOnAssets"),
+            revenue_growth=info.get("revenueGrowth"),
+            earnings_growth=info.get("earningsGrowth"),
+            earnings_quarterly_growth=info.get("earningsQuarterlyGrowth"),
+            debt_to_equity=info.get("debtToEquity"),
+            current_ratio=info.get("currentRatio"),
+            quick_ratio=info.get("quickRatio"),
+            total_debt=total_debt,
+            total_cash=total_cash,
+            market_cap=info.get("marketCap"),
+            dividend_yield=info.get("dividendYield"),
+            payout_ratio=info.get("payoutRatio"),
+            high_52w=fifty2w_high,
+            low_52w=fifty2w_low,
+            avg_50d=fifty_day_ma,
+            avg_200d=two_hundred_day_ma,
+            current_price=current_price,
+            pct_from_52w_high=round((current_price - fifty2w_high) / fifty2w_high, 4)
             if fifty2w_high and current_price
             else None,
-            "pct_from_52w_low": round((current_price - fifty2w_low) / fifty2w_low, 4)
+            pct_from_52w_low=round((current_price - fifty2w_low) / fifty2w_low, 4)
             if fifty2w_low and current_price
             else None,
-            "golden_cross": None,
-            "net_debt": total_debt - total_cash,
-            "sector": info.get("sector"),
-            "industry": info.get("industry"),
-        }
+            net_debt=total_debt - total_cash,
+            sector=info.get("sector"),
+            industry=info.get("industry"),
+        ).model_dump(by_alias=True)
         return {"fundamentals": fundamentals, "_financials_raw": data}
     except Exception as e:
         logger.warning("Fundamentals failed for %s: %s", ticker, e)
@@ -135,15 +135,10 @@ async def options_flow_node(state: QuantAnalysisState) -> dict:
         if total_vol == 0:
             # No volume — market closed or no active options chain; don't produce misleading ratios
             return {
-                "options_signals": {
-                    "put_call_volume_ratio": None,
-                    "put_call_oi_ratio": round(put_oi / call_oi, 3) if call_oi > 0 else None,
-                    "call_volume": 0,
-                    "put_volume": 0,
-                    "total_volume": 0,
-                    "flow_signal": "no_data",
-                    "note": "No options volume — market may be closed or chain is illiquid",
-                }
+                "options_signals": OptionsSignals(
+                    put_call_oi_ratio=round(put_oi / call_oi, 3) if call_oi > 0 else None,
+                    note="No options volume — market may be closed or chain is illiquid",
+                ).model_dump(),
             }
 
         pc_vol = round(put_vol / call_vol, 3) if call_vol > 0 else None
@@ -159,14 +154,14 @@ async def options_flow_node(state: QuantAnalysisState) -> dict:
             flow_signal = "neutral"
 
         return {
-            "options_signals": {
-                "put_call_volume_ratio": pc_vol,
-                "put_call_oi_ratio": pc_oi,
-                "call_volume": call_vol,
-                "put_volume": put_vol,
-                "total_volume": total_vol,
-                "flow_signal": flow_signal,
-            }
+            "options_signals": OptionsSignals(
+                put_call_volume_ratio=pc_vol,
+                put_call_oi_ratio=pc_oi,
+                call_volume=call_vol,
+                put_volume=put_vol,
+                total_volume=total_vol,
+                flow_signal=flow_signal,
+            ).model_dump(),
         }
     except Exception as e:
         logger.warning("Options flow failed for %s: %s", ticker, e)
@@ -201,16 +196,16 @@ async def insider_signals_node(state: QuantAnalysisState) -> dict:
 
         total = summary.get("total", 0)
         return {
-            "insider_signals": {
-                "recent_transaction_count": total,
-                "buy_signals": buys,
-                "sell_signals": sells,
-                "direction": direction,
-                "net_shares": summary.get("net_shares"),
-                "net_value": summary.get("net_value"),
-                "insider_pct_held": insider_pct,
-                "activity_level": "high" if total >= 5 else "moderate" if total >= 2 else "low",
-            }
+            "insider_signals": InsiderSignals(
+                recent_transaction_count=total,
+                buy_signals=buys,
+                sell_signals=sells,
+                direction=direction,
+                net_shares=summary.get("net_shares"),
+                net_value=summary.get("net_value"),
+                insider_pct_held=insider_pct,
+                activity_level="high" if total >= 5 else "moderate" if total >= 2 else "low",
+            ).model_dump(),
         }
     except Exception as e:
         logger.warning("Insider signals failed for %s: %s", ticker, e)
@@ -288,15 +283,15 @@ async def analyst_positioning_node(state: QuantAnalysisState) -> dict:
         earnings_surprise = round((forward_eps - trailing_eps) / abs(trailing_eps), 3)
 
     return {
-        "positioning": {
-            "recommendation_key": rec_key,
-            "consensus_score": consensus_score,
-            "n_analysts": n_analysts,
-            "analyst_target_price": target_mean,
-            "analyst_upside_pct": analyst_upside,
-            "short_ratio": short_ratio,
-            "short_pct_float": short_pct_float,
-            "earnings_surprise_est": earnings_surprise,
-            "short_squeeze_risk": bool(short_ratio and short_ratio > 5),
-        }
+        "positioning": AnalystPositioning(
+            recommendation_key=rec_key,
+            consensus_score=consensus_score,
+            n_analysts=n_analysts,
+            analyst_target_price=target_mean or None,
+            analyst_upside_pct=analyst_upside,
+            short_ratio=short_ratio,
+            short_pct_float=short_pct_float,
+            earnings_surprise_est=earnings_surprise,
+            short_squeeze_risk=bool(short_ratio and short_ratio > 5),
+        ).model_dump(),
     }

@@ -2,6 +2,8 @@ import logging
 
 import numpy as np
 
+from shared.agent_models import AnomalyReport
+
 logger = logging.getLogger(__name__)
 
 
@@ -81,19 +83,13 @@ async def _detect_anomalies(
             severity = "high"
 
         logger.info("Anomaly detection: count=%d severity=%s", anomaly_count, severity)
-        return {
-            "price_anomalies": price_anomalies,
-            "volume_anomalies": volume_anomalies,
-            "fundamental_anomalies": fundamental_anomalies,
-            "anomaly_count": anomaly_count,
-            "severity": severity,
-        }
+        return AnomalyReport(
+            price_anomalies=price_anomalies,
+            volume_anomalies=volume_anomalies,
+            fundamental_anomalies=fundamental_anomalies,
+            anomaly_count=anomaly_count,
+            severity=severity,
+        ).model_dump()
     except Exception as e:
         logger.warning("Anomaly detection failed: %s", e)
-        return {
-            "price_anomalies": [],
-            "volume_anomalies": [],
-            "fundamental_anomalies": [],
-            "anomaly_count": 0,
-            "severity": "none",
-        }
+        return AnomalyReport().model_dump()

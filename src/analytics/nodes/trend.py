@@ -3,6 +3,9 @@ import logging
 import numpy as np
 import pandas as pd
 
+from shared.agent_models import TrendAnalysis
+from shared.metrics import compute_rsi_wilder
+
 logger = logging.getLogger(__name__)
 
 
@@ -28,13 +31,9 @@ async def _detect_trends(price_data: dict) -> dict:
         sorted_dates = sorted(price_data.keys())
         closes = [price_data[d] for d in sorted_dates if price_data[d] is not None]
         if len(closes) < 50:
-            return {
-                "trend_direction": "neutral",
-                "ma_crossover_signal": None,
-                "momentum_shift": None,
-                "trend_strength": 0.0,
-                "supporting_indicators": ["insufficient_data"],
-            }
+            return TrendAnalysis(
+                supporting_indicators=["insufficient_data"],
+            ).model_dump()
 
         sma20 = _sma(closes, 20)
         sma50 = _sma(closes, 50)
@@ -109,24 +108,10 @@ async def _detect_trends(price_data: dict) -> dict:
         else:
             signals.append(f"Momentum not positive (0, ROC={roc_20d:+.1%})")
 
-        # RSI > 50 check (EMA-based, matching technical.py methodology)
-        # Use up to 100 closes for EMA warmup; a 14-period EMA on 14 deltas has no
-        # warmup buffer and produces values that diverge from the full-series result.
+        # RSI via shared compute_rsi_wilder (single source of truth)
         rsi_val = None
-        rsi_lookback = min(len(closes), 100)
-        if rsi_lookback >= 15:
-            closes_arr = np.array(closes[-rsi_lookback:], dtype=float)
-            delta_arr = np.diff(closes_arr)
-            gains_arr = np.where(delta_arr > 0, delta_arr, 0)
-            losses_arr = np.where(delta_arr < 0, -delta_arr, 0)
-            gain_series = pd.Series(gains_arr)
-            loss_series = pd.Series(losses_arr)
-            avg_g = gain_series.ewm(alpha=1 / 14, adjust=False).mean().iloc[-1]
-            avg_l = loss_series.ewm(alpha=1 / 14, adjust=False).mean().iloc[-1]
-            if avg_l > 0:
-                rsi_val = 100 - (100 / (1 + avg_g / avg_l))
-            else:
-                rsi_val = 100.0
+        if len(closes) >= 15:
+            rsi_val = compute_rsi_wilder(pd.Series(closes), 14)
             if rsi_val > 50:
                 score += 1
                 signals.append(f"RSI > 50 (+1, RSI={rsi_val:.1f})")
@@ -134,7 +119,7 @@ async def _detect_trends(price_data: dict) -> dict:
                 signals.append(f"RSI <= 50 (0, RSI={rsi_val:.1f})")
 
         if score >= 8:
-            direction = "strong_bullish"
+            direction = "bullish"
         elif score >= 5:
             direction = "bullish"
         elif score >= 3:
@@ -150,23 +135,17 @@ async def _detect_trends(price_data: dict) -> dict:
             strength,
             ma_crossover,
         )
-        return {
-            "trend_direction": direction,
-            "ma_crossover_signal": ma_crossover,
-            "momentum_shift": "accelerating"
+        return TrendAnalysis(
+            trend_direction=direction,
+            ma_crossover_signal=ma_crossover,
+            momentum_shift="accelerating"
             if roc_20d > roc_60d
             else "decelerating"
             if roc_20d < roc_60d
             else None,
-            "trend_strength": round(strength, 2),
-            "supporting_indicators": signals if signals else ["neutral"],
-        }
+            trend_strength=round(strength, 2),
+            supporting_indicators=signals if signals else ["neutral"],
+        ).model_dump()
     except Exception as e:
         logger.warning("Trend detection failed: %s", e)
-        return {
-            "trend_direction": "neutral",
-            "ma_crossover_signal": None,
-            "momentum_shift": None,
-            "trend_strength": 0.0,
-            "supporting_indicators": [],
-        }
+        return TrendAnalysis().model_dump()

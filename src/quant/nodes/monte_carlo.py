@@ -4,6 +4,7 @@ import logging
 import numpy as np
 import pandas as pd
 
+from shared.agent_models import StressScenario, StressTestResult
 from shared.logging_config import logged
 
 from ..state import QuantAnalysisState
@@ -54,16 +55,26 @@ async def stress_test_node(state: QuantAnalysisState) -> dict:
         except Exception as _se:
             logger.warning("get_scenario_shocks failed for %s: %s — using fallback", ticker, _se)
 
+    # Use log-return model: projected = price * exp(beta * ln(1 + market_decline)).
+    # This naturally prevents negative prices (exp() is always positive) and
+    # produces realistic non-linear scaling for high-beta stocks in tail events.
+    # Also cap the decline using the stock's own historical max drawdown as a
+    # reality check — a stock shouldn't be projected to do worse in a simulation
+    # than its actual worst observed drawdown, scaled modestly.
+    hist_max_dd = abs((state.get("metrics") or {}).get("max_drawdown") or 0)
+    dd_floor = max(hist_max_dd * 1.5, 0.60)
+
     results = {}
     for scenario, mkt_decline in market_scenarios.items():
-        adj_decline = mkt_decline * beta
+        log_decline = beta * np.log(1 + mkt_decline)
+        adj_decline = max(np.exp(log_decline) - 1, -dd_floor)
         projected = current_price * (1 + adj_decline)
-        results[scenario] = {
-            "market_decline_pct": round(mkt_decline, 4),
-            "beta_adj_decline_pct": round(adj_decline, 4),
-            "projected_price": round(projected, 2),
-            "loss_per_share": round(projected - current_price, 2),
-        }
+        results[scenario] = StressScenario(
+            market_decline_pct=round(mkt_decline, 4),
+            beta_adj_decline_pct=round(adj_decline, 4),
+            projected_price=round(projected, 2),
+            loss_per_share=round(projected - current_price, 2),
+        )
 
     var_95 = float(np.percentile(returns, 5))
     cvar_95 = (
@@ -73,12 +84,11 @@ async def stress_test_node(state: QuantAnalysisState) -> dict:
     mc = _run_monte_carlo(prices)
 
     return {
-        "stress_test_result": {
-            "scenarios": results,
-            "var_95": round(var_95, 4),
-            "cvar_95": round(cvar_95, 4),
-            "beta_used": round(beta, 3),
-            "beta_adjusted": True,
-        },
+        "stress_test_result": StressTestResult(
+            scenarios=results,
+            var_95=round(var_95, 4),
+            cvar_95=round(cvar_95, 4),
+            beta_used=round(beta, 3),
+        ).model_dump(),
         "monte_carlo": mc,
     }

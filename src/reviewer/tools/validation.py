@@ -1,5 +1,7 @@
 import logging
 
+from shared.agent_models import RecommendationValidation
+
 logger = logging.getLogger(__name__)
 
 
@@ -205,10 +207,10 @@ def validate_recommendation(agent_outputs: dict) -> dict:
         len(supporting),
         len(contradicting),
     )
-    return {
-        "recommendation": recommendation,
-        "evidence_supports": evidence_supports,
-        "supporting_evidence": supporting,
-        "contradicting_evidence": contradicting,
-        "evidence_strength": strength,
-    }
+    return RecommendationValidation(
+        recommendation=recommendation,
+        evidence_supports=evidence_supports,
+        supporting_evidence=supporting,
+        contradicting_evidence=contradicting,
+        evidence_strength=strength,
+    ).model_dump()

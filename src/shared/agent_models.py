@@ -7,7 +7,7 @@ before passing to report generation, replacing ~220 lines of manual dict extract
 
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # ── Quant Agent nested models ────────────────────────────────────────────────
@@ -17,91 +17,97 @@ class QuantRiskMetrics(BaseModel):
     """Risk metrics from compute_metrics_node + signal scores from format_output_node."""
 
     sharpe_ratio: float = Field(0.0, ge=-5, le=5)
-    annual_volatility: float = 0.0
+    annual_volatility: float = Field(0.0, ge=0)
     beta: float = Field(0.0, ge=-3, le=6)
     var_95_daily: float = Field(0.0, ge=-1, le=0)
-    max_drawdown: float = 0.0
-    quant_confidence: Optional[float] = None
+    max_drawdown: float = Field(0.0, ge=-1, le=0)
+    sortino_ratio: float = Field(0.0, ge=-5, le=5)
+    calmar_ratio: float = Field(0.0, ge=-5, le=5)
+    alpha: float = Field(0.0, ge=-5, le=5)
+    information_ratio: float = Field(0.0, ge=-5, le=5)
+    quant_confidence: Optional[float] = Field(None, ge=0.0, le=1.0)
     quant_signal: Optional[str] = None
     signals: list[str] = Field(default_factory=list)
     signal_scores: dict[str, float] = Field(default_factory=dict)
 
 
 class DCFValuation(BaseModel):
-    intrinsic_value: float
-    current_price: float
+    intrinsic_value: float = Field(gt=0)
+    current_price: float = Field(gt=0)
     upside_pct: float
     method: str = "dcf"
-    wacc: Optional[float] = None
+    wacc: Optional[float] = Field(None, ge=0.0, le=1.0)
     growth_rate: Optional[float] = None
-    terminal_growth: Optional[float] = None
-    enterprise_value: Optional[float] = None
+    terminal_growth: Optional[float] = Field(None, ge=0.0, le=0.03)
+    enterprise_value: Optional[float] = Field(None, gt=0)
     net_debt: Optional[float] = None
-    equity_value: Optional[float] = None
-    fcf_used: Optional[float] = None
+    equity_value: Optional[float] = Field(None, gt=0)
+    fcf_used: Optional[float] = Field(None, gt=0)
     revenue_growth: Optional[float] = None
     earnings_growth: Optional[float] = None
     dcf_assumptions: Optional[dict] = None
+    fcf_age_days: Optional[float] = Field(None, ge=0)
+    freshness: Optional[dict] = None
     valuation_warnings: Optional[list] = None
     scenarios: Optional[dict] = None
-    valuation_reliability: Optional[float] = None
-    pb_ratio_used: Optional[float] = None
-    fair_pb_multiple: Optional[float] = None
+    valuation_reliability: Optional[float] = Field(None, ge=0.0, le=1.0)
+    pb_ratio_used: Optional[float] = Field(None, gt=0)
+    fair_pb_multiple: Optional[float] = Field(None, gt=0)
     sensitivity_matrix: Optional[dict] = None
 
 
 class MonteCarloResult(BaseModel):
-    p10: float
-    p25: Optional[float] = None
-    p50: float
-    p75: Optional[float] = None
-    p90: float
+    p10: float = Field(gt=0)
+    p25: Optional[float] = Field(None, gt=0)
+    p50: float = Field(gt=0)
+    p75: Optional[float] = Field(None, gt=0)
+    p90: float = Field(gt=0)
     prob_profit: float = Field(ge=0.0, le=1.0)
     expected_return_pct: Optional[float] = None
-    mc_var_95: Optional[float] = None
-    current_price: Optional[float] = None
-    n_simulations: Optional[int] = None
-    horizon_days: Optional[int] = None
+    mc_var_95: Optional[float] = Field(None, le=0)
+    current_price: Optional[float] = Field(None, gt=0)
+    n_simulations: Optional[int] = Field(None, gt=0)
+    horizon_days: Optional[int] = Field(None, gt=0)
 
 
 class StressScenario(BaseModel):
-    market_decline_pct: Optional[float] = None
-    beta_adj_decline_pct: Optional[float] = None
-    projected_price: Optional[float] = None
-    loss_per_share: Optional[float] = None
+    market_decline_pct: Optional[float] = Field(None, le=0)
+    beta_adj_decline_pct: Optional[float] = Field(None, le=0)
+    projected_price: Optional[float] = Field(None, gt=0)
+    loss_per_share: Optional[float] = Field(None, le=0)
 
 
 class StressTestResult(BaseModel):
     scenarios: dict[str, StressScenario] = Field(default_factory=dict)
-    var_95: Optional[float] = None
-    cvar_95: Optional[float] = None
-    beta_used: Optional[float] = None
+    var_95: Optional[float] = Field(None, le=0)
+    cvar_95: Optional[float] = Field(None, le=0)
+    beta_used: Optional[float] = Field(None, ge=-3, le=6)
     beta_adjusted: bool = True
     # When stress test was skipped:
     note: Optional[str] = None
-    volatility: Optional[float] = None
-    threshold: Optional[float] = None
+    volatility: Optional[float] = Field(None, ge=0)
+    threshold: Optional[float] = Field(None, ge=0)
 
 
 class TechnicalIndicators(BaseModel):
-    sma_20: Optional[float] = None
-    sma_50: Optional[float] = None
-    sma_200: Optional[float] = None
-    ema_12: Optional[float] = None
-    ema_26: Optional[float] = None
+    sma_20: Optional[float] = Field(None, gt=0)
+    sma_50: Optional[float] = Field(None, gt=0)
+    sma_200: Optional[float] = Field(None, gt=0)
+    ema_12: Optional[float] = Field(None, gt=0)
+    ema_26: Optional[float] = Field(None, gt=0)
     macd: Optional[float] = None
     macd_signal: Optional[float] = None
     macd_histogram: Optional[float] = None
     macd_bullish: Optional[bool] = None
     rsi: Optional[float] = Field(None, ge=0, le=100)
     rsi_14: Optional[float] = Field(None, ge=0, le=100)
-    bb_upper: Optional[float] = None
-    bb_lower: Optional[float] = None
-    bb_position: Optional[float] = None
+    bb_upper: Optional[float] = Field(None, gt=0)
+    bb_lower: Optional[float] = Field(None, gt=0)
+    bb_position: Optional[float] = Field(None, ge=0.0, le=1.0)
     momentum_20d: Optional[float] = None
     momentum_60d: Optional[float] = None
-    support: Optional[float] = None
-    resistance: Optional[float] = None
+    support: Optional[float] = Field(None, gt=0)
+    resistance: Optional[float] = Field(None, gt=0)
     trend: Optional[str] = None
     golden_cross: Optional[bool] = None
     above_50d_ma: Optional[bool] = None
@@ -118,34 +124,34 @@ class Fundamentals(BaseModel):
 
     trailing_pe: Optional[float] = None
     forward_pe: Optional[float] = None
-    price_to_book: Optional[float] = None
-    price_to_sales: Optional[float] = None
+    price_to_book: Optional[float] = Field(None, gt=0)
+    price_to_sales: Optional[float] = Field(None, gt=0)
     ev_to_ebitda: Optional[float] = None
-    ev_to_revenue: Optional[float] = None
-    gross_margin: Optional[float] = None
-    operating_margin: Optional[float] = None
-    profit_margin: Optional[float] = None
+    ev_to_revenue: Optional[float] = Field(None, gt=0)
+    gross_margin: Optional[float] = Field(None, ge=-1.0, le=1.0)
+    operating_margin: Optional[float] = Field(None, ge=-1.0, le=1.0)
+    profit_margin: Optional[float] = Field(None, ge=-1.0, le=1.0)
     roe: Optional[float] = None
     roa: Optional[float] = None
     revenue_growth: Optional[float] = None
     earnings_growth: Optional[float] = None
     earnings_quarterly_growth: Optional[float] = None
     debt_to_equity: Optional[float] = None
-    current_ratio: Optional[float] = None
-    quick_ratio: Optional[float] = None
-    total_debt: Optional[float] = None
-    total_cash: Optional[float] = None
-    market_cap: Optional[float] = None
-    dividend_yield: Optional[float] = None
+    current_ratio: Optional[float] = Field(None, ge=0)
+    quick_ratio: Optional[float] = Field(None, ge=0)
+    total_debt: Optional[float] = Field(None, ge=0)
+    total_cash: Optional[float] = Field(None, ge=0)
+    market_cap: Optional[float] = Field(None, gt=0)
+    dividend_yield: Optional[float] = Field(None, ge=0.0, le=1.0)
     payout_ratio: Optional[float] = None
     # Digit-prefixed keys — alias matches the actual dict key from quant/nodes/data_fetch.py
-    high_52w: Optional[float] = Field(None, alias="52w_high")
-    low_52w: Optional[float] = Field(None, alias="52w_low")
-    avg_50d: Optional[float] = Field(None, alias="50d_avg")
-    avg_200d: Optional[float] = Field(None, alias="200d_avg")
-    current_price: Optional[float] = None
+    high_52w: Optional[float] = Field(None, alias="52w_high", gt=0)
+    low_52w: Optional[float] = Field(None, alias="52w_low", gt=0)
+    avg_50d: Optional[float] = Field(None, alias="50d_avg", gt=0)
+    avg_200d: Optional[float] = Field(None, alias="200d_avg", gt=0)
+    current_price: Optional[float] = Field(None, gt=0)
     pct_from_52w_high: Optional[float] = None
-    pct_from_52w_low: Optional[float] = None
+    pct_from_52w_low: Optional[float] = Field(None, ge=0)
     golden_cross: Optional[bool] = None
     net_debt: Optional[float] = None
     sector: Optional[str] = None
@@ -158,7 +164,7 @@ class PeerComparison(BaseModel):
     peers: list[str] = Field(default_factory=list)
     comparison: dict[str, dict] = Field(default_factory=dict)
     rankings: dict[str, int] = Field(default_factory=dict)
-    n_peers: int = 0
+    n_peers: int = Field(0, ge=0)
     medians: dict[str, float] = Field(default_factory=dict)
     note: Optional[str] = None
 
@@ -166,32 +172,32 @@ class PeerComparison(BaseModel):
 class OptionsSignals(BaseModel):
     put_call_volume_ratio: Optional[float] = None
     put_call_oi_ratio: Optional[float] = None
-    call_volume: int = 0
-    put_volume: int = 0
-    total_volume: int = 0
+    call_volume: int = Field(0, ge=0)
+    put_volume: int = Field(0, ge=0)
+    total_volume: int = Field(0, ge=0)
     flow_signal: str = "no_data"
     note: Optional[str] = None
 
 
 class InsiderSignals(BaseModel):
-    recent_transaction_count: int = 0
-    buy_signals: int = 0
-    sell_signals: int = 0
+    recent_transaction_count: int = Field(0, ge=0)
+    buy_signals: int = Field(0, ge=0)
+    sell_signals: int = Field(0, ge=0)
     direction: str = "neutral"
     net_shares: Optional[float] = None
     net_value: Optional[float] = None
-    insider_pct_held: Optional[float] = None
+    insider_pct_held: Optional[float] = Field(None, ge=0.0, le=1.0)
     activity_level: str = "low"
 
 
 class AnalystPositioning(BaseModel):
     recommendation_key: Optional[str] = None
     consensus_score: int = 0
-    n_analysts: Optional[int] = None
-    analyst_target_price: Optional[float] = None
+    n_analysts: Optional[int] = Field(None, ge=0)
+    analyst_target_price: Optional[float] = Field(None, gt=0)
     analyst_upside_pct: Optional[float] = None
-    short_ratio: Optional[float] = None
-    short_pct_float: Optional[float] = None
+    short_ratio: Optional[float] = Field(None, ge=0)
+    short_pct_float: Optional[float] = Field(None, ge=0.0, le=1.0)
     earnings_surprise_est: Optional[float] = None
     short_squeeze_risk: bool = False
 
@@ -227,8 +233,8 @@ class RAGAgentOutput(BaseModel):
     summary: str = ""
     sources: list = Field(default_factory=list)
     relevance_scores: list[float] = Field(default_factory=list)
-    confidence_score: float = Field(0.0, ge=0.0, le=1.0)
     context_texts: list[str] = Field(default_factory=list)
+    confidence_score: float = Field(0.0, ge=0.0, le=1.0)
 
 
 # ── Market Context Agent models ──────────────────────────────────────────────
@@ -259,13 +265,13 @@ class TrendAnalysis(BaseModel):
     trend_direction: str = "neutral"
     ma_crossover_signal: Optional[str] = None
     momentum_shift: Optional[str] = None
-    trend_strength: float = 0.0
+    trend_strength: float = Field(0.0, ge=0.0, le=1.0)
     supporting_indicators: list[str] = Field(default_factory=list)
 
 
 class ForecastResult(BaseModel):
     method: str = "exponential_smoothing"
-    horizon_days: int = 30
+    horizon_days: int = Field(30, gt=0)
     forecast_prices: list[float] = Field(default_factory=list)
     forecast_dates: list[str] = Field(default_factory=list)
     confidence_lower: list[float] = Field(default_factory=list)
@@ -322,24 +328,45 @@ class ContradictionFlag(BaseModel):
 
 class SourceVerification(BaseModel):
     agent_name: str
-    claims_checked: int = 0
-    claims_verified: int = 0
-    verification_rate: float = 0.0
+    claims_checked: int = Field(0, ge=0)
+    claims_verified: int = Field(0, ge=0)
+    verification_rate: float = Field(0.0, ge=0.0, le=1.0)
     unverified_claims: list[str] = Field(default_factory=list)
+
+    @field_validator("verification_rate", mode="before")
+    @classmethod
+    def normalize_rate(cls, v):
+        if isinstance(v, (int, float)) and v > 1.0:
+            return v / 100.0
+        return v
 
 
 class AgentScores(BaseModel):
-    quant: float = 0.0
-    rag: float = 0.0
-    market_context: float = 0.0
-    analytics: float = 0.0
+    quant: float = Field(0.0, ge=0.0, le=1.0)
+    rag: float = Field(0.0, ge=0.0, le=1.0)
+    market_context: float = Field(0.0, ge=0.0, le=1.0)
+    analytics: float = Field(0.0, ge=0.0, le=1.0)
+
+    @field_validator("quant", "rag", "market_context", "analytics", mode="before")
+    @classmethod
+    def normalize_agent_scores(cls, v):
+        if isinstance(v, (int, float)) and v > 1.0:
+            return v / 100.0
+        return v
 
 
 class ConfidenceBreakdown(BaseModel):
     agent_scores: AgentScores = Field(default_factory=AgentScores)
-    agreement_score: float = 0.0
-    data_quality_score: float = 0.0
-    meta_confidence: float = 0.0
+    agreement_score: float = Field(0.0, ge=0.0, le=1.0)
+    data_quality_score: float = Field(0.0, ge=0.0, le=1.0)
+    meta_confidence: float = Field(0.0, ge=0.0, le=1.0)
+
+    @field_validator("agreement_score", "data_quality_score", "meta_confidence", mode="before")
+    @classmethod
+    def normalize_confidence_scores(cls, v):
+        if isinstance(v, (int, float)) and v > 1.0:
+            return v / 100.0
+        return v
 
 
 class RecommendationValidation(BaseModel):
@@ -359,7 +386,14 @@ class ReviewerAgentOutput(BaseModel):
     confidence_breakdown: Optional[ConfidenceBreakdown] = None
     recommendation_validation: Optional[RecommendationValidation] = None
     flags: list[str] = Field(default_factory=list)
-    review_confidence: float = 0.0
+    review_confidence: float = Field(0.0, ge=0.0, le=1.0)
+
+    @field_validator("review_confidence", mode="before")
+    @classmethod
+    def normalize_review_confidence(cls, v):
+        if isinstance(v, (int, float)) and v > 1.0:
+            return v / 100.0
+        return v
 
 
 # ── Combined report-level model ──────────────────────────────────────────────

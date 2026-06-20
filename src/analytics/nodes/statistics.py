@@ -1,6 +1,7 @@
 import logging
 
 import numpy as np
+from shared.agent_models import StatisticalSummary
 from scipy import stats as scipy_stats
 
 logger = logging.getLogger(__name__)
@@ -11,28 +12,12 @@ async def _compute_statistics(price_data: dict, mcp_client) -> dict:
         sorted_dates = sorted(price_data.keys())
         closes = [price_data[d] for d in sorted_dates if price_data[d] is not None]
         if len(closes) < 10:
-            return {
-                "return_distribution": None,
-                "skewness": None,
-                "kurtosis": None,
-                "jarque_bera_pvalue": None,
-                "correlations": {},
-                "regression_beta": None,
-                "regression_r_squared": None,
-            }
+            return StatisticalSummary().model_dump()
 
         prices = np.array(closes, dtype=float)
         log_returns = np.diff(np.log(prices))
         if len(log_returns) < 5:
-            return {
-                "return_distribution": None,
-                "skewness": None,
-                "kurtosis": None,
-                "jarque_bera_pvalue": None,
-                "correlations": {},
-                "regression_beta": None,
-                "regression_r_squared": None,
-            }
+            return StatisticalSummary().model_dump()
 
         skew = float(scipy_stats.skew(log_returns))
         kurt = float(scipy_stats.kurtosis(log_returns, fisher=True))
@@ -105,23 +90,15 @@ async def _compute_statistics(price_data: dict, mcp_client) -> dict:
             kurt,
             regression_beta,
         )
-        return {
-            "return_distribution": dist_class,
-            "skewness": round(skew, 4),
-            "kurtosis": round(kurt, 4),
-            "jarque_bera_pvalue": round(float(jb_p), 4),
-            "correlations": correlations,
-            "regression_beta": regression_beta,
-            "regression_r_squared": regression_r2,
-        }
+        return StatisticalSummary(
+            return_distribution=dist_class,
+            skewness=round(skew, 4),
+            kurtosis=round(kurt, 4),
+            jarque_bera_pvalue=round(float(jb_p), 4),
+            correlations=correlations,
+            regression_beta=regression_beta,
+            regression_r_squared=regression_r2,
+        ).model_dump()
     except Exception as e:
         logger.warning("Statistical analysis failed: %s", e)
-        return {
-            "return_distribution": None,
-            "skewness": None,
-            "kurtosis": None,
-            "jarque_bera_pvalue": None,
-            "correlations": {},
-            "regression_beta": None,
-            "regression_r_squared": None,
-        }
+        return StatisticalSummary().model_dump()

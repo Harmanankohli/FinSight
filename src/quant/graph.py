@@ -154,6 +154,7 @@ class QuantAnalysisGraph:
             "options_signals": None,
             "insider_signals": None,
             "positioning": None,
+            "macro_data": {},
             "web_context": [],
             "recommendation": "",
             "reasoning": "",
