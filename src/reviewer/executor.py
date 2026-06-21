@@ -27,28 +27,38 @@ logger = logging.getLogger(__name__)
 
 
 class ReviewerAgent(BaseAgent):
-    """Cross-validates outputs from all sub-agents, runs deterministic checks (contradictions, consistency,
-    source verification, confidence scoring, recommendation validation), then synthesises results via an LLM
-    into a structured review report with meta-confidence and integrity alerts."""
+    """Cross-validates outputs from all sub-agents, runs deterministic checks
+    (contradictions, consistency, source verification, confidence scoring,
+    recommendation validation), then synthesises results via an LLM into a
+    structured review report with meta-confidence and integrity alerts."""
 
     @logged_sync(log_args=False, log_result=False)
     def __init__(self):
         super().__init__(
             agent_name="Reviewer Agent",
-            description="Cross-validates all agent outputs, checks contradictions, and produces calibrated meta-confidence",
+            description=(
+                "Cross-validates all agent outputs, checks contradictions,"
+                " and produces calibrated meta-confidence"
+            ),
             content_types=["text", "application/json"],
         )
 
-    async def stream(self, query: str, context_id: str, task_id: str) -> AsyncIterable[dict]:
-        """Entry point for the A2A streaming protocol. Delegates to _build_response and yields the result."""
+    async def stream(
+        self, query: str, context_id: str, task_id: str
+    ) -> AsyncIterable[dict]:
+        """Entry point for the A2A streaming protocol.
+
+        Delegates to _build_response and yields the result.
+        """
         logger.info("ReviewerAgent.stream() called: query=%s...", query[:80])
         yield await self._build_response(query, context_id)
 
     @logged()
     async def _build_response(self, query: str, context_id: str = "") -> dict:
-        """Parse query payload, fetch agent outputs (inline or from store), run all deterministic reviewer
-        tools, build a synthesis prompt for the LLM, return the final structured output with tool results
-        and schema validation attached."""
+        """Parse query payload, fetch agent outputs (inline or from store),
+        run all deterministic reviewer tools, build a synthesis prompt for
+        the LLM, return the final structured output with tool results and
+        schema validation attached."""
         async with self._telemetry_span("reviewer-agent-stream", query) as (
             trace_ctx,
             span,
@@ -115,7 +125,10 @@ class ReviewerAgent(BaseAgent):
             dcf_validation = validate_dcf(agent_outputs.get("quant", {}))
 
             def _pct(v) -> str:
-                """Format 0-1 float as decimal string for LLM consumption (avoids LLM outputting 50 for '50%')."""
+                """Format 0-1 float as decimal string for LLM consumption.
+
+                Avoids LLM outputting 50 for '50%'.
+                """
                 if isinstance(v, (int, float)) and v is not True and v is not False:
                     return f"{v:.2f}"
                 return str(v)

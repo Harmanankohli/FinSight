@@ -32,7 +32,10 @@ class MetricValue(float):
             obj._warning = obj._warning or f"Non-finite value ({value})"
         elif value < min_valid or value > max_valid:
             obj._status = "WARNING"
-            obj._warning = obj._warning or f"Value {value} outside valid range [{min_valid}, {max_valid}]"
+            obj._warning = (
+                obj._warning
+                or f"Value {value} outside valid range [{min_valid}, {max_valid}]"
+            )
         else:
             obj._status = "VALID"
         return obj

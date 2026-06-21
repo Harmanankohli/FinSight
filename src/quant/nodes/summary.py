@@ -1,4 +1,8 @@
-"""Summary and peer comparison node. Aggregates results, runs LLM-based narrative generation, and builds peer tables."""
+"""Summary and peer comparison node.
+
+Aggregates results, runs LLM-based narrative generation,
+and builds peer tables.
+"""
 import asyncio
 import json
 import logging
@@ -315,11 +319,16 @@ async def format_output_node(state: QuantAnalysisState) -> dict:
             parts.append(
                 f"P/B intrinsic: ${dcf.get('intrinsic_value', 'N/A')} "
                 f"(upside: {dcf.get('upside_pct', 'N/A')}%, "
-                f"P/B={dcf.get('pb_ratio_used', 'N/A')}, fair_P/B={dcf.get('fair_pb_multiple', 'N/A')})"
+                f"P/B={dcf.get('pb_ratio_used', 'N/A')}, "
+                f"fair_P/B={dcf.get('fair_pb_multiple', 'N/A')})"
             )
         else:
             _net_debt = dcf.get("net_debt")
-            _net_debt_str = f", net_debt=${_net_debt:,.0f}" if _net_debt is not None else ""
+            if _net_debt is not None:
+                _nd_label = "net_cash" if _net_debt < 0 else "net_debt"
+                _net_debt_str = f", {_nd_label}=${abs(_net_debt):,.0f}"
+            else:
+                _net_debt_str = ""
             parts.append(
                 f"DCF intrinsic: ${dcf.get('intrinsic_value', 'N/A')} "
                 f"(upside: {dcf.get('upside_pct', 'N/A')}%, "
@@ -449,9 +458,14 @@ async def llm_summary_node(state: QuantAnalysisState) -> dict:
             f"OpMargin={fund.get('operating_margin')}\n"
         )
     if tech:
-        ma_state = "bullish" if (tech.get("above_50d_ma") and tech.get("above_200d_ma")) else (
-            "bearish" if (not tech.get("above_50d_ma") and not tech.get("above_200d_ma")) else "mixed"
-        )
+        above_50 = tech.get("above_50d_ma")
+        above_200 = tech.get("above_200d_ma")
+        if above_50 and above_200:
+            ma_state = "bullish"
+        elif not above_50 and not above_200:
+            ma_state = "bearish"
+        else:
+            ma_state = "mixed"
         gc_note = " (golden cross event)" if tech.get("golden_cross") else ""
         prompt += (
             f"Technicals: Trend={tech.get('trend')}, MA_alignment={ma_state}{gc_note}, "
@@ -466,11 +480,13 @@ async def llm_summary_node(state: QuantAnalysisState) -> dict:
                 f"P/B_used={dcf.get('pb_ratio_used')}, fair_P/B={dcf.get('fair_pb_multiple')}\n"
             )
         else:
+            _nd = dcf.get("net_debt")
+            _nd_str = f"({'net_cash' if _nd < 0 else 'net_debt'}=${abs(_nd):,.0f})" if _nd is not None else "N/A"
             prompt += (
                 f"DCF: intrinsic=${dcf.get('intrinsic_value')}, "
                 f"upside={dcf.get('upside_pct')}%, "
                 f"WACC={dcf.get('wacc')}, growth={dcf.get('growth_rate')}, "
-                f"net_debt={dcf.get('net_debt')}, equity_value={dcf.get('equity_value')}\n"
+                f"{_nd_str}, equity_value={dcf.get('equity_value')}\n"
             )
             scenarios = dcf.get("scenarios")
             if scenarios:

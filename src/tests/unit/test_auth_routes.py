@@ -76,7 +76,7 @@ async def test_login_success(app_with_user):
     assert resp.status_code == 200
     data = resp.json()
     assert "access_token" in data
-    assert data["token_type"] == "Bearer"
+    assert data["token_type"] == "Bearer"  # noqa: S105 — OAuth2 standard, not a secret
     assert data["user"]["username"] == uname
     assert "refresh_token" in resp.cookies
 

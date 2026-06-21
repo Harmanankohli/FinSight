@@ -10,7 +10,6 @@ import logging
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +28,7 @@ class PerformanceTracker:
         user_id: str,
         recommendation: str,
         confidence: float,
-        price: Optional[float] = None,
+        price: float | None = None,
     ) -> str:
         """Record a new recommendation with a live price snapshot.
 
@@ -125,7 +124,7 @@ class PerformanceTracker:
         return results
 
     # Computes win rate per recommendation type. BUY correct if price rose (ret > 0), SELL correct if price fell (ret < 0). HOLD always counted as correct.  # noqa: E501
-    async def get_accuracy_stats(self, user_id: Optional[str] = None) -> dict:
+    async def get_accuracy_stats(self, user_id: str | None = None) -> dict:
         """Return win rate by recommendation type.
 
         A BUY is 'correct' if realized_return > 0.
@@ -178,7 +177,7 @@ class PerformanceTracker:
         return stats
 
     async def get_past_recommendations(
-        self, ticker: str, days: int = 30, user_id: Optional[str] = None
+        self, ticker: str, days: int = 30, user_id: str | None = None
     ) -> list[dict]:
         """Get recommendations for a ticker in the last N days."""
         conn = await get_db(self._db_path)
@@ -218,7 +217,7 @@ class PerformanceTracker:
         ]
 
     @staticmethod
-    def _fetch_current_price(ticker: str) -> Optional[float]:
+    def _fetch_current_price(ticker: str) -> float | None:
         """Fetch current price via yfinance. Returns None on failure."""
         try:
             import yfinance as yf

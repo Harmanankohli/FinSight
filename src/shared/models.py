@@ -9,7 +9,7 @@ Each model represents data flowing between agents/stages:
 """
 
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -30,7 +30,11 @@ class QueryContext(BaseModel):
 # Re-exported here for backward compatibility with existing imports.
 from shared.agent_models import (  # noqa: E402
     MarketContextOutput as MarketContext,
+)
+from shared.agent_models import (  # noqa: E402
     QuantAgentOutput as QuantMetrics,
+)
+from shared.agent_models import (  # noqa: E402
     RAGAgentOutput as RAGInsights,
 )
 

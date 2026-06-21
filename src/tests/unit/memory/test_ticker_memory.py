@@ -1,6 +1,6 @@
 """Unit tests for the TickerMemory persistence layer."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from shared.memory.ticker_memory import TickerMemory
 from shared.models import (
@@ -11,7 +11,7 @@ from shared.models import (
     RAGInsights,
 )
 
-_BASE_TS = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+_BASE_TS = datetime(2025, 1, 1, 12, 0, 0, tzinfo=UTC)
 
 
 def _make_brief(ticker="AAPL", rec="BUY", confidence=0.8, offset_hours=0):

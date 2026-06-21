@@ -10,7 +10,9 @@ DOCS = Path(__file__).resolve().parent.parent / "docs"
 
 CSS = """\
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:1.7;color:#2c2c2c;background:#faf8f5;padding:2rem 1rem}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,
+Arial,sans-serif;font-size:16px;line-height:1.7;
+color:#2c2c2c;background:#faf8f5;padding:2rem 1rem}
 .container{max-width:740px;margin:0 auto}
 h1,h2,h3,h4{font-family:Georgia,"Times New Roman",serif;color:#1a1a1a;line-height:1.3}
 h1{font-size:2.2rem;margin-bottom:.25rem;border-bottom:2px solid #e8dcc8;padding-bottom:.5rem}
@@ -20,7 +22,8 @@ h4{font-size:1.05rem;margin-top:1.2rem;margin-bottom:.4rem}
 p{margin-bottom:1rem;color:#444}
 a{color:#8b6f4e;text-decoration:none;font-weight:500}
 a:hover{text-decoration:underline}
-code{background:#f0ebe3;padding:.15em .4em;border-radius:3px;font-size:.875em;font-family:"SF Mono","Fira Code","Fira Mono",monospace}
+code{background:#f0ebe3;padding:.15em .4em;border-radius:3px;
+font-size:.875em;font-family:"SF Mono","Fira Code","Fira Mono",monospace}
 pre{background:#f0ebe3;padding:1rem;border-radius:6px;overflow-x:auto;margin-bottom:1rem;font-size:.875em;line-height:1.5}
 pre code{background:0 0;padding:0}
 table{width:100%;border-collapse:collapse;margin-bottom:1rem;font-size:.925rem}
@@ -90,7 +93,8 @@ def convert(md_path: Path) -> str:
 {html_body}
 
 <hr>
-<p style="font-size:0.85rem;color:#888;margin-top:1rem">FinSight &mdash; Multi-Agent Investment Research System</p>
+<p style="font-size:0.85rem;color:#888;margin-top:1rem">
+FinSight &mdash; Multi-Agent Investment Research System</p>
 </div>
 </body>
 </html>

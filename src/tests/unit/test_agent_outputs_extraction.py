@@ -37,7 +37,7 @@ QUANT_RESPONSE = {
         "revenue_growth": 1.22,
         "current_ratio": 4.17,
     },
-    "technicals": {"rsi": 58.0, "macd_signal": "Bullish"},
+    "technicals": {"rsi": 58.0, "macd_bullish": True},
     "peer_comparison": {
         "peers": ["NVDA", "AMD", "INTC"],
         "comparison": {

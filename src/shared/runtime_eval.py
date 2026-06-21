@@ -78,7 +78,7 @@ _burst_count = 0
 
 def _dedup_seen(user_input: str, response: str) -> bool:
     """True if this exact (input, response) was scored within the last hour."""
-    digest = hashlib.sha256(f"{user_input}\x1f{response}".encode("utf-8")).hexdigest()
+    digest = hashlib.sha256(f"{user_input}\x1f{response}".encode()).hexdigest()
     now = time.monotonic()
     # Opportunistic GC: drop expired entries on read
     if len(_dedup_cache) > 256:
@@ -246,7 +246,7 @@ async def _run_metrics(
                 )
                 _push_scores({metric_name: scores[metric_name]}, trace_id, agent)
                 _record_eval_success()
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning(
                     "[%s] RAGAS metric '%s' timed out after %ss",
                     agent,

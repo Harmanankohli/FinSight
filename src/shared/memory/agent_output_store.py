@@ -7,7 +7,7 @@ token waste and avoiding the OpenAI Agents SDK tool-call limitation.
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from shared.memory.store import get_db, write_lock
 
@@ -32,12 +32,14 @@ async def store_agent_output(session_id: str, agent_name: str, output: dict) -> 
     async with write_lock():
         conn = await get_db()
         await conn.execute(
-            "INSERT OR REPLACE INTO agent_output_store (session_id, agent_name, output_json, created_at) VALUES (?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO agent_output_store"
+            " (session_id, agent_name, output_json, created_at)"
+            " VALUES (?, ?, ?, ?)",
             (
                 session_id,
                 agent_name,
                 json.dumps(output, default=str),
-                datetime.now(timezone.utc).isoformat(),
+                datetime.now(UTC).isoformat(),
             ),
         )
         await conn.commit()
@@ -67,8 +69,8 @@ async def get_agent_outputs(session_id: str) -> dict[str, dict]:
 
 async def prune_stale_outputs(max_age_seconds: int = 600) -> int:
     """Delete agent outputs older than max_age_seconds. Returns count deleted."""
-    cutoff = datetime.now(timezone.utc).timestamp() - max_age_seconds
-    cutoff_iso = datetime.fromtimestamp(cutoff, tz=timezone.utc).isoformat()
+    cutoff = datetime.now(UTC).timestamp() - max_age_seconds
+    cutoff_iso = datetime.fromtimestamp(cutoff, tz=UTC).isoformat()
     async with write_lock():
         conn = await get_db()
         cursor = await conn.execute(

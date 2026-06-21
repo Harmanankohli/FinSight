@@ -2,17 +2,18 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-COPY pyproject.toml .
-RUN pip install --no-cache-dir ".[orchestrator]"
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-COPY src/orchestrator/ ./orchestrator/
-COPY src/shared/ ./shared/
+COPY pyproject.toml uv.lock ./
+COPY src/orchestrator/ ./src/orchestrator/
+COPY src/shared/ ./src/shared/
+RUN uv pip install --system --no-cache --extra-index-url https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match ".[orchestrator]" \
+    && useradd -r -u 1001 appuser \
+    && chown -R appuser:appuser /app
 
-RUN useradd -r -u 1001 appuser && chown -R appuser /app
 USER appuser
 
 ENV HOST="0.0.0.0"
-
 EXPOSE 8001
 
 CMD ["python", "-m", "orchestrator.main"]

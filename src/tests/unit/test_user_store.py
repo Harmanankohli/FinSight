@@ -1,7 +1,6 @@
 """Tests for shared/memory/user_store.py — user CRUD, password hashing, refresh token lifecycle."""
 
 import uuid
-from pathlib import Path
 
 import pytest
 import pytest_asyncio

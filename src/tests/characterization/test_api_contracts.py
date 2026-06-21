@@ -34,6 +34,7 @@ async def _health(request):
 async def api_app(tmp_path):
     """Build a minimal Starlette app with API routes + health, isolated DB."""
     import os
+
     from shared.settings import reset_settings_for_tests
 
     old_auth = os.environ.get("AUTH_ENABLED")

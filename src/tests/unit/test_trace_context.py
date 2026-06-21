@@ -1,4 +1,7 @@
-"""Unit tests for trace context propagation — JSON-prefix protocol for Langfuse trace IDs across A2A boundaries."""
+"""Unit tests for trace context propagation.
+
+JSON-prefix protocol for Langfuse trace IDs across A2A boundaries.
+"""
 
 from shared.trace_context import (
     current_trace_id,

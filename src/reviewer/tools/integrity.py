@@ -31,7 +31,11 @@ def validate_metric_integrity(agent_outputs: dict) -> list[dict]:
                     "agent": "quant",
                     "metric": "dcf_valuation.upside_pct",
                     "severity": "critical",
-                    "message": f"Reported upside {upside:.1f}% != calculated {expected:.1f}% from intrinsic={intrinsic:.2f}, price={current:.2f}",
+                    "message": (
+                        f"Reported upside {upside:.1f}% != calculated"
+                        f" {expected:.1f}% from intrinsic={intrinsic:.2f},"
+                        f" price={current:.2f}"
+                    ),
                 }
             )
 
@@ -48,7 +52,10 @@ def validate_metric_integrity(agent_outputs: dict) -> list[dict]:
                         "agent": "quant",
                         "metric": "monte_carlo.prob_profit vs p50",
                         "severity": "warning",
-                        "message": f"Median outcome p50={p50:.2f} > current price {current:.2f} but prob_profit={prob_profit:.2f}",
+                        "message": (
+                            f"Median outcome p50={p50:.2f} > current price"
+                            f" {current:.2f} but prob_profit={prob_profit:.2f}"
+                        ),
                     }
                 )
             elif p50 < current and prob_profit > 0.7:
@@ -57,7 +64,10 @@ def validate_metric_integrity(agent_outputs: dict) -> list[dict]:
                         "agent": "quant",
                         "metric": "monte_carlo.prob_profit vs p50",
                         "severity": "warning",
-                        "message": f"Median outcome p50={p50:.2f} < current price {current:.2f} but prob_profit={prob_profit:.2f}",
+                        "message": (
+                            f"Median outcome p50={p50:.2f} < current price"
+                            f" {current:.2f} but prob_profit={prob_profit:.2f}"
+                        ),
                     }
                 )
 
@@ -75,7 +85,7 @@ def validate_metric_integrity(agent_outputs: dict) -> list[dict]:
                     "agent": "quant",
                     "metric": "recommendation vs quant_signal",
                     "severity": "warning",
-                    "message": f"Recommendation is BUY but quant_signal is bearish",
+                    "message": "Recommendation is BUY but quant_signal is bearish",
                 }
             )
         elif rec == "SELL" and signal == "bullish":
@@ -84,7 +94,7 @@ def validate_metric_integrity(agent_outputs: dict) -> list[dict]:
                     "agent": "quant",
                     "metric": "recommendation vs quant_signal",
                     "severity": "warning",
-                    "message": f"Recommendation is SELL but quant_signal is bullish",
+                    "message": "Recommendation is SELL but quant_signal is bullish",
                 }
             )
 

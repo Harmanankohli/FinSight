@@ -1167,7 +1167,7 @@
 </div>
 {% endif %}
 
-<!-- ─── ANALYTICS CHARTS (Moving Averages + Candlestick) ─── -->
+<!-- ─── ANALYTICS CHARTS (Moving Averages first, then Candlestick) ─── -->
 {% if deck.charts %}
 {% for chart in deck.charts %}
 {% if chart.chart_type == "line" and chart.datasets %}
@@ -1181,6 +1181,8 @@
   </div>
 </div>
 {% endif %}
+{% endfor %}
+{% for chart in deck.charts %}
 {% if chart.chart_type == "candlestick" and chart.datasets %}
 <div class="report-section">
   <div class="container">
@@ -1280,7 +1282,12 @@
   <div class="container">
     <div class="section-label">Market Environment</div>
     <h2 class="section-title">Macro Regime</h2>
-    <div class="thesis-block">{{ deck.macro_regime }}</div>
+    <div class="trend-grid">
+      <div class="trend-card" style="grid-column: span 2;">
+        <div class="trend-label">Current Regime</div>
+        <div class="trend-value" style="text-transform: capitalize;">{{ deck.macro_regime }}</div>
+      </div>
+    </div>
   </div>
 </div>
 {% endif %}
@@ -1346,7 +1353,7 @@
         {% if deck.reviewer_confidence.get(key) %}
         <div class="confidence-bar-container">
           <span class="confidence-bar-label">{{ label }}</span>
-          <div class="confidence-bar"><div class="confidence-bar-fill" style="width: {{ (deck.reviewer_confidence.get(key ~ '_raw', 0) * 100)|int }}%;"></div></div>
+          <div class="confidence-bar"><div class="confidence-bar-fill" style="width: {{ (deck.reviewer_confidence.get(key ~ '_raw', 0) * 100)|round|int }}%;"></div></div>
           <span class="confidence-bar-value">{{ deck.reviewer_confidence[key] }}</span>
         </div>
         {% if deck.reviewer_confidence.get('methodology') and deck.reviewer_confidence.methodology.get(key) %}

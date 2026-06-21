@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from langfuse import observe
 
@@ -63,7 +63,7 @@ async def _web_search_uncached(query: str, max_results: int, time_filter: str) -
             "query": query,
             "total_results": len(results),
             "results": results,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
     except Exception as exc:
         logger.warning("Web search failed for query '%s': %s", query, exc)

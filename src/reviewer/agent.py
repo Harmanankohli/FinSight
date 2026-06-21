@@ -2,10 +2,9 @@
 
 import logging
 
-from openai import AsyncOpenAI
-
 from agents import Agent
 from agents.models.openai_chatcompletions import OpenAIChatCompletionsModel
+from openai import AsyncOpenAI
 
 from shared.agent_models import ReviewerAgentOutput
 from shared.settings import LLM_BASE_URL, LLM_SUMMARY_MODEL
@@ -36,7 +35,12 @@ reviewer_agent = Agent(
         "8. Add flags for any concerns (e.g. data quality issues, conflicting signals).\n\n"
         "The review_summary should be 3-5 sentences synthesizing the key findings across "
         "all agents, citing specific numbers. Do NOT just restate that evidence is weak — "
-        "reference the actual data."
+        "reference the actual data.\n\n"
+        "CRITICAL: When discussing confidence, always distinguish between individual agent "
+        "confidence (e.g. 'Quant Agent confidence: 9%') and the overall meta-confidence "
+        "(e.g. 'meta-confidence: 53%'). Never conflate a single agent's low confidence "
+        "with the overall confidence. The meta-confidence is the weighted aggregate across "
+        "all agents — reference it as the overall confidence, not any individual agent's score."
     ),
     output_type=ReviewerAgentOutput,
 )

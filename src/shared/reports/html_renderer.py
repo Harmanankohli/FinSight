@@ -35,10 +35,10 @@ def _deck_to_template_context(deck: DeckData) -> dict:
     }
 
 
-_jinja_env: "jinja2.Environment | None" = None  # noqa: F821
+_jinja_env: jinja2.Environment | None = None  # noqa: F821
 
 
-def _get_jinja_env() -> "jinja2.Environment":  # noqa: F821
+def _get_jinja_env() -> jinja2.Environment:  # noqa: F821
     global _jinja_env
     if _jinja_env is None:
         from pathlib import Path

@@ -54,8 +54,7 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
       - run: uv venv .venv
-      - run: uv pip install --no-deps -e .
-      - run: uv pip install pytest pytest-asyncio httpx pydantic pydantic-settings pyjwt starlette aiosqlite numpy python-pptx python-docx jinja2 python-dotenv argon2-cffi
+      - run: uv pip install -e ".[test,orchestrator,rag,quant,market,analytics,reviewer,mcp_server]"
       - name: Run unit tests
         run: .venv/bin/python -m pytest src/tests/unit -m "not integration and not external and not openapi" -q
         timeout-minutes: 5
@@ -107,6 +106,10 @@ jobs:
             context: src/quant
           - name: market-agent
             context: src/market_context
+          - name: analytics-agent
+            context: src/analytics
+          - name: reviewer-agent
+            context: src/reviewer
           - name: mcp-server
             context: src/mcp_tools
     steps:

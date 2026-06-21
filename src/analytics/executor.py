@@ -34,7 +34,10 @@ class AnalyticsAgent(BaseAgent):
     def __init__(self):
         super().__init__(
             agent_name="Analytics Agent",
-            description="Trend detection, forecasting, chart data, statistical analysis, and anomaly detection using PydanticAI",
+            description=(
+                "Trend detection, forecasting, chart data,"
+                " statistical analysis, and anomaly detection using PydanticAI"
+            ),
             content_types=["text", "application/json"],
         )
         self.pipeline = AnalyticsPipeline()

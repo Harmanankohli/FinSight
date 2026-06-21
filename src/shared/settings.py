@@ -10,7 +10,6 @@ import os
 import shutil
 import sys
 from datetime import timedelta, timezone
-from typing import Optional
 
 import pydantic
 from pydantic import AliasChoices, model_validator
@@ -76,8 +75,8 @@ class Settings(BaseSettings):
     memory_retention_days: int = 90
 
     # ── Observability ─────────────────────────────────────────────────────
-    langfuse_public_key: Optional[str] = None  # None → Langfuse disabled
-    langfuse_secret_key: Optional[str] = None
+    langfuse_public_key: str | None = None  # None → Langfuse disabled
+    langfuse_secret_key: str | None = None
     langfuse_host: str = pydantic.Field(
         default="https://cloud.langfuse.com",
         validation_alias=AliasChoices("LANGFUSE_HOST", "LANGFUSE_BASE_URL"),
@@ -117,7 +116,7 @@ class Settings(BaseSettings):
     reports_offline: bool = False
 
     @model_validator(mode="after")
-    def _resolve_back_compat(self) -> "Settings":
+    def _resolve_back_compat(self) -> Settings:
         # A2A_TIMEOUT_SENTINEL → a2a_timeout_market_context (old env var name)
         if "A2A_TIMEOUT_MARKET_CONTEXT" not in os.environ and "A2A_TIMEOUT_SENTIMENT" in os.environ:
             try:
@@ -163,7 +162,7 @@ class Settings(BaseSettings):
                     "SANDBOX_MODE=container requires Docker to be installed and running"
                 )
         if problems:
-            raise EnvironmentError(
+            raise OSError(
                 "FinSight config errors:\n" + "\n".join(f"  - {p}" for p in problems)
             )
 

@@ -26,8 +26,6 @@ async def _detect_anomalies(
     Severity thresholds: none (0), low (≤2 anomalies, z<3.5),
     medium (≤5, z<4.5), high (otherwise).
     """
-    price_data: dict, ohlcv_data: list[dict], fundamentals_data: dict
-) -> dict:
     try:
         price_anomalies = []
         volume_anomalies = []

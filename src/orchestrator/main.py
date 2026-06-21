@@ -168,7 +168,8 @@ routes.append(Route("/reports/{filename}", _authenticated_report, methods=["GET"
 
 @asynccontextmanager
 async def lifespan(app):
-    """Start background sub-agent discovery on startup and cleanly disconnect MCP clients on shutdown."""
+    """Start background sub-agent discovery on startup and cleanly
+    disconnect MCP clients on shutdown."""
 
     await start_background_discovery()
     yield

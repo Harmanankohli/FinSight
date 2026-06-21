@@ -9,7 +9,6 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +21,7 @@ class PortfolioStore:
     def __init__(self, db_path: Path = DB_PATH):
         self._db_path = db_path
 
-    async def get_profile(self, user_id: str) -> Optional[dict]:
+    async def get_profile(self, user_id: str) -> dict | None:
         """Get a user's profile including holdings, risk profile, and horizon."""
         conn = await get_db(self._db_path)
         cursor = await conn.execute(

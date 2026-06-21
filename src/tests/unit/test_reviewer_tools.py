@@ -1,9 +1,9 @@
 """Tests for reviewer tool functions with mock agent outputs."""
 
-from reviewer.tools.contradiction import check_contradictions
-from reviewer.tools.verification import verify_sources
 from reviewer.tools.confidence import score_confidence
+from reviewer.tools.contradiction import check_contradictions
 from reviewer.tools.validation import validate_recommendation
+from reviewer.tools.verification import verify_sources
 
 
 def _make_mock_outputs(**overrides) -> dict:

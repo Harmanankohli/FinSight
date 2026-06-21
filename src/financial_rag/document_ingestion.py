@@ -1,7 +1,7 @@
 """Pipeline for ingesting financial documents (SEC filings, earnings, news, analyst reports) into ChromaDB collections."""  # noqa: E501
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from .index_manager import FinancialIndexManager
 
@@ -28,7 +28,7 @@ class DocumentIngestionPipeline:
             "ticker": ticker.upper(),
             "source": source,
             "file_name": file_name,
-            "date": date or datetime.now(timezone.utc).isoformat(),
+            "date": date or datetime.now(UTC).isoformat(),
         }
 
     def ingest_sec_filing(self, ticker: str, filing: dict) -> int:

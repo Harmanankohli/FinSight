@@ -40,7 +40,8 @@ async def _release_sub_agent_evals() -> None:
 
 
 async def _memory_cache_callback(callback_context) -> types.Content | None:
-    """Before-agent callback: discover sub-agents on first call, then short-circuit with today's cached brief if available."""
+    """Before-agent callback: discover sub-agents on first call,
+    then short-circuit with today's cached brief if available."""
     global _discovery_done
     if not _discovery_done:
         _discovery_done = True
@@ -205,6 +206,7 @@ def _is_analysis_turn(events) -> bool:
                 if fn_call.name == "send_message":
                     return True
         except Exception:
+            logger.debug("Failed to parse function calls from event")
             continue
 
     # Fallback: check if the LLM response contains a BUY/HOLD/SELL signal

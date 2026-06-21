@@ -110,7 +110,7 @@ class HybridSearchPipeline:
         pairs = [(query, n.node.text) for n in nodes]
         loop = asyncio.get_running_loop()
         scores = await loop.run_in_executor(None, self.reranker.predict, pairs)
-        for node, score in zip(nodes, scores):
+        for node, score in zip(nodes, scores, strict=False):
             node.score = float(score)
         return sorted(nodes, key=lambda n: n.score or 0.0, reverse=True)[: self.rerank_top_n]
 

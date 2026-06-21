@@ -10,7 +10,6 @@ import logging
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -151,7 +150,7 @@ class TickerMemory:
         return True
 
     # Fetches most recent brief for a ticker, ordered by analysis_date then created_at descending.
-    async def get_latest(self, ticker: str, user_id: Optional[str] = None) -> Optional[dict]:
+    async def get_latest(self, ticker: str, user_id: str | None = None) -> dict | None:
         """Get the most recent brief for a ticker."""
         conn = await get_db(self._db_path)
         if user_id:
@@ -190,7 +189,7 @@ class TickerMemory:
 
     # Returns last N briefs for a ticker, newest first. Used for trend detection and context building.  # noqa: E501
     async def get_history(
-        self, ticker: str, limit: int = 10, user_id: Optional[str] = None
+        self, ticker: str, limit: int = 10, user_id: str | None = None
     ) -> list[dict]:
         """Get last N briefs for a ticker, newest first."""
         conn = await get_db(self._db_path)
@@ -231,8 +230,8 @@ class TickerMemory:
 
     # Compares latest two briefs on a given field (default: recommendation). Detects upgrades/downgrades across analyses.  # noqa: E501
     async def has_changed(
-        self, ticker: str, field: str = "recommendation", *, user_id: Optional[str] = None
-    ) -> Optional[dict]:
+        self, ticker: str, field: str = "recommendation", *, user_id: str | None = None
+    ) -> dict | None:
         """Compare latest vs previous brief on a field. Returns {old, new, changed}."""
         history = await self.get_history(ticker, limit=2, user_id=user_id)
         if len(history) < 2:
@@ -250,7 +249,7 @@ class TickerMemory:
 
     # Builds a compact ~300-token summary for prompt injection. Keeps rec, confidence, date, change delta, and truncated rationale.  # noqa: E501
     async def format_context(
-        self, ticker: str, max_tokens: int = 300, *, user_id: Optional[str] = None
+        self, ticker: str, max_tokens: int = 300, *, user_id: str | None = None
     ) -> str:
         """Generate a compact memory summary for prompt injection.
 

@@ -35,6 +35,13 @@ from mcp_tools.infra.rate_limiters import (
 )
 from mcp_tools.tools.edgar import _edgar
 from mcp_tools.tools.market_data import _serialise_value
+from shared.agent_models import (
+    AnalystAction,
+    AnalystActivityResponse,
+    EPSRevision,
+    ForwardEstimate,
+    ForwardEstimatesResponse,
+)
 from shared.logging_config import logged
 from shared.settings import SEC_USER_AGENT
 
@@ -114,7 +121,7 @@ async def _get_news_sentiment_impl(ticker: str, limit: int) -> dict:
             return_exceptions=True,
         )
 
-        for source, result in zip(all_feeds.keys(), rss_results):
+        for source, result in zip(all_feeds.keys(), rss_results, strict=False):
             if isinstance(result, Exception):
                 feed_status[source] = f"error: {result}"
                 continue
@@ -170,7 +177,7 @@ async def _get_news_sentiment_impl(ticker: str, limit: int) -> dict:
                 try:
                     company_name = await _edgar.get_company_title(ticker.upper())
                 except Exception:
-                    pass
+                    logger.debug("Failed to get company title for %s", ticker, exc_info=True)
                 ddg_articles = await fetch_ddg_news(ticker, company_name, limit=limit)
                 if ddg_articles:
                     articles = ddg_articles[:limit]
@@ -266,7 +273,7 @@ async def _get_scenario_shocks_uncached(sector: str) -> dict:
                     shocks[name] = round(float(window.iloc[-1] / window.iloc[0] - 1), 4)
                     continue
             except Exception:
-                pass
+                logger.debug("Failed to compute shock for window %s", name, exc_info=True)
         # Per-window fallback to known S&P values
         shocks[name] = _SHOCK_FALLBACKS[name]
 
@@ -485,46 +492,55 @@ async def _fetch_forward_estimates(ticker: str) -> dict:
         await _YQ_LIMITER.acquire()
         loop = asyncio.get_event_loop()
 
-        def _fetch():
+        def _raw(val):
+            if isinstance(val, dict):
+                return val.get("raw")
+            return val if isinstance(val, (int, float)) else None
+
+        def _fetch() -> ForwardEstimatesResponse:
             t = YQTicker(ticker.upper())
             et = t.earnings_trend
             if isinstance(et, str) or not isinstance(et, dict):
-                return {}
+                return ForwardEstimatesResponse()
             data = et.get(ticker.upper(), {})
             if not isinstance(data, dict):
-                return {}
+                return ForwardEstimatesResponse()
             trend = data.get("trend", [])
-            estimates = []
-            revisions = []
+            estimates: list[ForwardEstimate] = []
+            revisions: list[EPSRevision] = []
             for period in trend:
                 ee = period.get("earningsEstimate", {})
                 er = period.get("epsRevisions", {})
                 re_ = period.get("revenueEstimate", {})
-                estimates.append({
-                    "period": period.get("period"),
-                    "end_date": period.get("endDate"),
-                    "growth": period.get("growth"),
-                    "eps_avg": ee.get("avg"),
-                    "eps_low": ee.get("low"),
-                    "eps_high": ee.get("high"),
-                    "eps_year_ago": ee.get("yearAgoEps"),
-                    "n_analysts": ee.get("numberOfAnalysts"),
-                    "revenue_avg": re_.get("avg"),
-                    "revenue_growth": re_.get("growth"),
-                })
-                revisions.append({
-                    "period": period.get("period"),
-                    "up_last_7d": er.get("upLast7days", 0),
-                    "up_last_30d": er.get("upLast30days", 0),
-                    "down_last_7d": er.get("downLast7Days", 0),
-                    "down_last_30d": er.get("downLast30days", 0),
-                })
-            return {"forward_estimates": estimates, "eps_revisions": revisions}
+                estimates.append(ForwardEstimate(
+                    period=period.get("period"),
+                    end_date=period.get("endDate"),
+                    growth=_raw(period.get("growth")),
+                    eps_avg=_raw(ee.get("avg")),
+                    eps_low=_raw(ee.get("low")),
+                    eps_high=_raw(ee.get("high")),
+                    eps_year_ago=_raw(ee.get("yearAgoEps")),
+                    n_analysts=_raw(ee.get("numberOfAnalysts")),
+                    revenue_avg=_raw(re_.get("avg")),
+                    revenue_growth=_raw(re_.get("growth")),
+                ))
+                revisions.append(EPSRevision(
+                    period=period.get("period"),
+                    up_last_7d=_raw(er.get("upLast7days")) or 0,
+                    up_last_30d=_raw(er.get("upLast30days")) or 0,
+                    down_last_7d=_raw(er.get("downLast7Days")) or 0,
+                    down_last_30d=_raw(er.get("downLast30days")) or 0,
+                ))
+            return ForwardEstimatesResponse(
+                forward_estimates=estimates,
+                eps_revisions=revisions,
+            )
 
-        return await loop.run_in_executor(None, _fetch)
+        result = await loop.run_in_executor(None, _fetch)
+        return result.model_dump()
     except Exception as exc:
         logger.debug("Forward estimates fetch failed (non-fatal): %s", exc)
-        return {}
+        return ForwardEstimatesResponse().model_dump()
 
 
 @app.tool()
@@ -740,6 +756,22 @@ async def get_peers(ticker: str) -> dict:
 # Analyst upgrade/downgrade activity
 # ──────────────────────────────────────────────
 
+_GRADE_RANK = {
+    "strong sell": 1, "sell": 2, "underweight": 3, "underperform": 3,
+    "reduce": 3, "sector underperform": 3,
+    "hold": 4, "neutral": 4, "equal-weight": 4, "market perform": 4,
+    "sector perform": 4, "peer perform": 4,
+    "overweight": 5, "outperform": 5, "buy": 5, "accumulate": 5,
+    "market outperform": 5, "sector outperform": 5,
+    "strong buy": 6, "top pick": 6,
+}
+
+
+def _grade_rank(grade: str) -> int:
+    if not grade:
+        return 0
+    return _GRADE_RANK.get(grade.lower().strip(), 4)
+
 
 async def _get_analyst_activity_uncached(ticker: str, limit: int) -> dict:
     try:
@@ -760,30 +792,43 @@ async def _get_analyst_activity_uncached(ticker: str, limit: int) -> dict:
             return records[:limit]
 
         raw = await loop.run_in_executor(None, _fetch)
-        activities = []
+        actions: list[AnalystAction] = []
         for r in raw:
             grade_date = r.get("epochGradeDate", "")
-            activities.append({
-                "date": grade_date.isoformat()[:10] if hasattr(grade_date, "isoformat") else str(grade_date)[:10],
-                "firm": r.get("firm", ""),
-                "action": r.get("action", ""),
-                "from_grade": r.get("fromGrade", ""),
-                "to_grade": r.get("toGrade", ""),
-                "prior_target": _serialise_value(r.get("priorPriceTarget")),
-                "new_target": _serialise_value(r.get("currentPriceTarget")),
-                "target_action": r.get("priceTargetAction", ""),
-            })
-        return {
-            "ticker": ticker.upper(),
-            "activities": activities,
-            "total": len(activities),
-            "upgrades": sum(1 for a in activities if a["action"] == "up"),
-            "downgrades": sum(1 for a in activities if a["action"] == "down"),
-            "initiations": sum(1 for a in activities if a["action"] == "init"),
-        }
+            actions.append(AnalystAction(
+                date=grade_date.isoformat()[:10] if hasattr(grade_date, "isoformat") else str(grade_date)[:10],
+                firm=r.get("firm", ""),
+                action=r.get("action", ""),
+                from_grade=r.get("fromGrade", ""),
+                to_grade=r.get("toGrade", ""),
+                prior_target=_serialise_value(r.get("priorPriceTarget")),
+                new_target=_serialise_value(r.get("currentPriceTarget")),
+                target_action=r.get("priceTargetAction", ""),
+            ))
+
+        upgrades = 0
+        downgrades = 0
+        for a in actions:
+            fg = _grade_rank(a.from_grade)
+            tg = _grade_rank(a.to_grade)
+            if tg > fg:
+                upgrades += 1
+            elif tg < fg:
+                downgrades += 1
+
+        return AnalystActivityResponse(
+            ticker=ticker.upper(),
+            activities=actions,
+            total=len(actions),
+            upgrades=upgrades,
+            downgrades=downgrades,
+            initiations=sum(1 for a in actions if a.action == "init"),
+        ).model_dump()
     except Exception as exc:
         logger.warning("get_analyst_activity failed for %s: %s", ticker, exc)
-        return {"ticker": ticker.upper(), "activities": [], "error": str(exc), "total": 0}
+        return AnalystActivityResponse(
+            ticker=ticker.upper(), error=str(exc)
+        ).model_dump()
 
 
 @app.tool()

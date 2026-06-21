@@ -7,14 +7,14 @@ import logging
 from pydantic_graph import BaseNode, Graph, GraphRunContext
 
 from analytics.deps import AnalyticsDeps
-from analytics.state import AnalyticsState
-from analytics.nodes.data_fetch import _fetch_fundamentals, _fetch_prices
-from analytics.nodes.trend import _detect_trends
-from analytics.nodes.forecast import _run_forecast
-from analytics.nodes.charts import _generate_charts
-from analytics.nodes.statistics import _compute_statistics
 from analytics.nodes.anomaly import _detect_anomalies
+from analytics.nodes.charts import _generate_charts
+from analytics.nodes.data_fetch import _fetch_fundamentals, _fetch_prices
+from analytics.nodes.forecast import _run_forecast
+from analytics.nodes.statistics import _compute_statistics
 from analytics.nodes.summary import FormatOutputNode, LLMSummaryNode
+from analytics.nodes.trend import _detect_trends
+from analytics.state import AnalyticsState
 
 logger = logging.getLogger(__name__)
 

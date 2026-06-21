@@ -150,12 +150,12 @@ class _EdgarClient:
                 result = resp.json()
                 cache_submissions.set(cik, result)
                 return result
-            except Exception:
+            except Exception as exc:
                 # Exponential backoff (1s, 2s) before raising on the 3rd failure.
                 if attempt < 2:
                     await asyncio.sleep(2**attempt)
                 else:
-                    raise RuntimeError(f"get_company_filings failed for {ticker} after 3 retries")
+                    raise RuntimeError(f"get_company_filings failed for {ticker} after 3 retries") from exc
         return {}
 
     async def get_company_filings(

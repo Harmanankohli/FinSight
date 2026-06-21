@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from argon2 import PasswordHasher
 
@@ -57,7 +57,7 @@ async def create_user(username: str, password: str, role: str = "user") -> str:
     username = username.strip().lower()
     user_id = str(uuid.uuid4())
     pw_hash = _ph.hash(password)
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     async with write_lock():
         conn = await get_db()
         try:
@@ -210,7 +210,7 @@ async def revoke_user_refresh_tokens(user_id: str) -> int:
 async def update_rotated_at(jti: str) -> None:
     """Mark when a refresh token was rotated (for grace-window logic)."""
     await ensure_schema_v4()
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     async with write_lock():
         conn = await get_db()
         await conn.execute("UPDATE refresh_tokens SET rotated_at = ? WHERE jti = ?", (now, jti))

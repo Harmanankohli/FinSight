@@ -313,6 +313,28 @@ async def test_get_analyst_activity_shape():
     assert result["activities"][0]["new_target"] == 180.0
 
 
+async def test_get_analyst_activity_grade_comparison():
+    """Upgrades/downgrades should be determined by grade change, not action field."""
+    import pandas as pd
+    mock_yq = MagicMock()
+    mock_yq.return_value.grading_history = pd.DataFrame({
+        "epochGradeDate": [pd.Timestamp("2024-06-01"), pd.Timestamp("2024-06-02"), pd.Timestamp("2024-06-03")],
+        "firm": ["Goldman Sachs", "Morgan Stanley", "JP Morgan"],
+        "action": ["main", "reit", "main"],  # none are "up"/"down"
+        "fromGrade": ["Hold", "Buy", "Buy"],
+        "toGrade": ["Buy", "Hold", "Buy"],  # upgrade, downgrade, no change
+        "priorPriceTarget": [150.0, 200.0, 180.0],
+        "currentPriceTarget": [180.0, 190.0, 180.0],
+        "priceTargetAction": ["Raises", "Lowers", "Maintains"],
+    })
+    with patch("yahooquery.Ticker", mock_yq):
+        from mcp_tools.tools.sentiment import get_analyst_activity
+        result = await get_analyst_activity("TESTGRADE")
+    assert result["upgrades"] == 1
+    assert result["downgrades"] == 1
+    assert result["total"] == 3
+
+
 async def test_get_analyst_activity_error_shape():
     import pandas as pd
     mock_yq = MagicMock()
@@ -339,15 +361,19 @@ def _yf_ticker_with_earnings(symbol: str):
 
 
 async def test_get_earnings_history_with_forward_estimates():
-    import pandas as pd
     with patch("yfinance.Ticker", side_effect=_yf_ticker_with_earnings):
         mock_yq = MagicMock()
         mock_yq.return_value.earnings_trend = {
             "NVDA": {
                 "trend": [{
                     "period": "0q", "endDate": "2026-06-30", "growth": 0.2,
-                    "earningsEstimate": {"avg": 1.89, "low": 1.83, "high": 1.99, "numberOfAnalysts": 31},
-                    "epsRevisions": {"upLast7days": 0, "upLast30days": 24, "downLast7Days": 0, "downLast30days": 0},
+                    "earningsEstimate": {
+                        "avg": 1.89, "low": 1.83, "high": 1.99, "numberOfAnalysts": 31
+                    },
+                    "epsRevisions": {
+                        "upLast7days": 0, "upLast30days": 24,
+                        "downLast7Days": 0, "downLast30days": 0
+                    },
                     "revenueEstimate": {"avg": 109000000000, "growth": 0.16},
                 }]
             }

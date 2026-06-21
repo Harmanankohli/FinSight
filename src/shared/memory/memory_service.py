@@ -15,7 +15,6 @@ import re
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 from google.adk.events import Event
 from google.adk.memory import BaseMemoryService
@@ -39,7 +38,7 @@ class SQLiteMemoryService(BaseMemoryService):
 
     def __init__(self, db_path: Path = DB_PATH):
         self._db_path = db_path
-        self._model: Optional[SentenceTransformer] = None
+        self._model: SentenceTransformer | None = None
 
     # Lazy-loads SentenceTransformer on first search to avoid heavy import cost at service initialization.  # noqa: E501
     def _get_model(self) -> SentenceTransformer:
@@ -90,11 +89,11 @@ class SQLiteMemoryService(BaseMemoryService):
     async def add_events_to_memory(
         self,
         *,
-        app_name: Optional[str] = None,
-        user_id: Optional[str] = None,
+        app_name: str | None = None,
+        user_id: str | None = None,
         events: list[Event] | None = None,
-        session_id: Optional[str] = None,
-        custom_metadata: Optional[dict] = None,
+        session_id: str | None = None,
+        custom_metadata: dict | None = None,
     ) -> None:
         """Add a delta of events to memory without re-ingesting the full session.
 
@@ -247,7 +246,7 @@ class SQLiteMemoryService(BaseMemoryService):
         bm25 = BM25Okapi(corpus)
         scores = bm25.get_scores(query_tokens)
 
-        return {p["entry"].id: float(s) for p, s in zip(parsed, scores)}
+        return {p["entry"].id: float(s) for p, s in zip(parsed, scores, strict=False)}
 
     # Encodes query and all entry texts with sentence-transformers, computes pairwise cosine similarity.  # noqa: E501
     def _embedding_score(self, query: str, parsed: list[dict]) -> dict[str, float]:
@@ -258,7 +257,7 @@ class SQLiteMemoryService(BaseMemoryService):
             texts = [p["search_text"] for p in parsed]
             entry_embs = model.encode(texts, convert_to_tensor=True)
             sims = util.cos_sim(query_emb, entry_embs)[0].cpu().numpy()
-            return {p["entry"].id: float(s) for p, s in zip(parsed, sims)}
+            return {p["entry"].id: float(s) for p, s in zip(parsed, sims, strict=False)}
         except Exception:
             logger.debug("Embedding search failed, using BM25 only", exc_info=True)
             return {}

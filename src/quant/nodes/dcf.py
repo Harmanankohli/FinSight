@@ -1,11 +1,14 @@
-"""DCF valuation node for the quant analysis graph. Computes discounted cash flow valuation from financial statements."""
+"""DCF valuation node for the quant analysis graph.
+
+Computes discounted cash flow valuation from financial statements.
+"""
 import json
 import logging
 
 import pandas as pd
 
-from shared.data_freshness import get_latest_statement_date, statement_age_days, check_freshness
 from shared.agent_models import DCFValuation
+from shared.data_freshness import check_freshness, get_latest_statement_date, statement_age_days
 from shared.logging_config import logged
 from shared.metrics import compute_cagr
 
@@ -384,7 +387,11 @@ async def dcf_valuation_node(state: QuantAnalysisState) -> dict:
         wacc = max(0.06, min(wacc, 0.18))
 
         sector_tg = _TERMINAL_GROWTH.get(sector, 0.025)
-        terminal_growth = min(sector_tg, wacc - 0.02) if growth_rate > 0.15 else min(sector_tg, 0.03)
+        terminal_growth = (
+            min(sector_tg, wacc - 0.02)
+            if growth_rate > 0.15
+            else min(sector_tg, 0.03)
+        )
 
         # Tapered projection: fades toward terminal growth in years 3-5
         pv_fcf = 0

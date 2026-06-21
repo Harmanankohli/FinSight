@@ -8,7 +8,8 @@ logger = logging.getLogger(__name__)
 
 
 def _safe_get(d: dict, *keys, default=None):
-    """Safely traverse a nested dict returning the value at `keys` or `default` if any key is missing."""
+    """Safely traverse a nested dict returning the value at `keys` or
+    `default` if any key is missing."""
     for k in keys:
         if isinstance(d, dict):
             d = d.get(k, {})
@@ -18,9 +19,10 @@ def _safe_get(d: dict, *keys, default=None):
 
 
 def check_contradictions(agent_outputs: dict) -> list[dict]:
-    """Compare outputs from quant, RAG, market context, and analytics agents and return a list of
-    ContradictionFlag dicts for any cross-agent conflicts (e.g. BUY rec vs bearish trend, DCF vs macro
-    signal, RSI vs recommendation). Deduplicates repeated contradictions by category."""
+    """Compare outputs from quant, RAG, market context, and analytics agents
+    and return a list of ContradictionFlag dicts for any cross-agent conflicts
+    (e.g. BUY rec vs bearish trend, DCF vs macro signal, RSI vs recommendation).
+    Deduplicates repeated contradictions by category."""
     seen_categories: set[tuple[str, str]] = set()
     contradictions = []
 
@@ -98,7 +100,8 @@ def check_contradictions(agent_outputs: dict) -> list[dict]:
         _add(
             ["Analytics Agent", "Quant Analysis Agent"],
             "anomaly severity vs confidence",
-            f"Analytics reports {anomaly_severity} anomalies but quant confidence is {quant_confidence:.2f}",
+            f"Analytics reports {anomaly_severity} anomalies"
+            f" but quant confidence is {quant_confidence:.2f}",
             "low",
         )
 
@@ -176,7 +179,8 @@ def check_contradictions(agent_outputs: dict) -> list[dict]:
             _add(
                 ["Quant Analysis Agent (DCF)", "Quant Analysis Agent (Monte Carlo)"],
                 "DCF vs Monte Carlo divergence",
-                f"High model disagreement: DCF=${dcf_intrinsic:.0f}, MC median=${mc_median:.0f} (divergence={divergence:.0%})",
+                f"High model disagreement: DCF=${dcf_intrinsic:.0f},"
+                f" MC median=${mc_median:.0f} (divergence={divergence:.0%})",
                 "medium",
             )
 
@@ -188,7 +192,8 @@ def check_contradictions(agent_outputs: dict) -> list[dict]:
             _add(
                 ["Quant Analysis Agent (recommendation)", "Quant Analysis Agent (Monte Carlo)"],
                 "recommendation vs Monte Carlo",
-                f"Quant recommends BUY but Monte Carlo shows only {prob_profit:.0%} probability of profit",
+                f"Quant recommends BUY but Monte Carlo shows only"
+                f" {prob_profit:.0%} probability of profit",
                 "medium",
             )
 

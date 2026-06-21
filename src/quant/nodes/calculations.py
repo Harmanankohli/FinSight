@@ -1,4 +1,7 @@
-"""Financial calculations node for the quant graph. Contains price parsing, CAGR computation, and ratio math."""
+"""Financial calculations node for the quant graph.
+
+Contains price parsing, CAGR computation, and ratio math.
+"""
 import json
 import logging
 

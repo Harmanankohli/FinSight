@@ -3,10 +3,10 @@
 import json
 import logging
 
-from pydantic_graph import BaseNode, End, GraphRunContext
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_graph import BaseNode, End, GraphRunContext
 
 from analytics.deps import AnalyticsDeps
 from analytics.state import AnalyticsState
@@ -92,7 +92,11 @@ class LLMSummaryNode(BaseNode[AnalyticsState, AnalyticsDeps]):
         summary_agent = Agent(
             model=model,
             output_type=str,
-            system_prompt="You are an analytics summary generator. Produce 3-4 sentences summarizing trend, forecast, statistical findings, and anomaly detections.",
+            system_prompt=(
+                "You are an analytics summary generator."
+                " Produce 3-4 sentences summarizing trend, forecast,"
+                " statistical findings, and anomaly detections."
+            ),
         )
 
         analysis_data = {
@@ -105,7 +109,10 @@ class LLMSummaryNode(BaseNode[AnalyticsState, AnalyticsDeps]):
             "confidence": ctx.state.analytics_confidence,
         }
 
-        prompt = f"Summarize this analysis for {ctx.state.ticker}:\n{json.dumps(analysis_data, indent=2)}"
+        prompt = (
+            f"Summarize this analysis for {ctx.state.ticker}:\n"
+            f"{json.dumps(analysis_data, indent=2)}"
+        )
 
         async with llm_queue.acquire(Priority.CRITICAL, "analytics-summary"):
             result = await summary_agent.run(prompt)

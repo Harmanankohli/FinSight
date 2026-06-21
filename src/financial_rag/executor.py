@@ -12,7 +12,6 @@ from shared.mcp_client import get_shared_mcp
 from shared.memory.store import is_filing_ingested, mark_filing_ingested
 from shared.settings import EVAL_ENABLED
 from shared.ticker_utils import extract_ticker, resolve_and_validate_ticker
-from shared.trace_context import extract_trace_context
 
 from .document_ingestion import DocumentIngestionPipeline
 from .index_manager import FinancialIndexManager

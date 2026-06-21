@@ -1,4 +1,8 @@
-"""Technical analysis metrics node. Computes alpha, beta, RSI, MACD, moving averages, and other price-based indicators."""
+"""Technical analysis metrics node.
+
+Computes alpha, beta, RSI, MACD, moving averages,
+and other price-based indicators.
+"""
 import logging
 
 import numpy as np
@@ -42,11 +46,20 @@ async def compute_metrics_node(state: QuantAnalysisState) -> dict:
                 beta=metric_result(0.0, "Covariance vs ^GSPC (252d min)", -10, 10),
                 var_95_daily=metric_result(0.0, "Historical 5th Percentile", -1, 0),
                 max_drawdown=metric_result(0.0, "Peak-to-Trough Decline", -1, 0),
-                sortino_ratio=metric_result(0.0, "Annualized Downside Deviation Sharpe", -999, 999),
+                sortino_ratio=metric_result(
+                    0.0, "Annualized Downside Deviation Sharpe",
+                    -999, 999,
+                ),
                 calmar_ratio=metric_result(0.0, "CAGR / Max Drawdown", -999, 999),
                 alpha=metric_result(0.0, "CAPM Excess Return (annualized)", -10, 10),
-                information_ratio=metric_result(0.0, "Annualized Active Return / Tracking Error", -999, 999),
-            ).model_dump(exclude={"quant_confidence", "quant_signal", "signals", "signal_scores"}),
+                information_ratio=metric_result(
+                    0.0, "Annualized Active Return / Tracking Error",
+                    -999, 999,
+                ),
+            ).model_dump(exclude={
+                "quant_confidence", "quant_signal",
+                "signals", "signal_scores",
+            }),
         }
 
     prices = pd.Series({pd.Timestamp(k): v for k, v in prices_dict.items()}).sort_index()
@@ -65,11 +78,20 @@ async def compute_metrics_node(state: QuantAnalysisState) -> dict:
                 beta=metric_result(0.0, "Covariance vs ^GSPC (252d min)", -10, 10),
                 var_95_daily=metric_result(0.0, "Historical 5th Percentile", -1, 0),
                 max_drawdown=metric_result(0.0, "Peak-to-Trough Decline", -1, 0),
-                sortino_ratio=metric_result(0.0, "Annualized Downside Deviation Sharpe", -999, 999),
+                sortino_ratio=metric_result(
+                    0.0, "Annualized Downside Deviation Sharpe",
+                    -999, 999,
+                ),
                 calmar_ratio=metric_result(0.0, "CAGR / Max Drawdown", -999, 999),
                 alpha=metric_result(0.0, "CAPM Excess Return (annualized)", -10, 10),
-                information_ratio=metric_result(0.0, "Annualized Active Return / Tracking Error", -999, 999),
-            ).model_dump(exclude={"quant_confidence", "quant_signal", "signals", "signal_scores"}),
+                information_ratio=metric_result(
+                    0.0, "Annualized Active Return / Tracking Error",
+                    -999, 999,
+                ),
+            ).model_dump(exclude={
+                "quant_confidence", "quant_signal",
+                "signals", "signal_scores",
+            }),
         }
 
     returns_arr = returns.values
@@ -84,7 +106,11 @@ async def compute_metrics_node(state: QuantAnalysisState) -> dict:
 
     # CAGR for Calmar — use rolling year return as CAGR proxy
     n_year = min(252, len(returns_arr))
-    trailing_cagr = float(prices.iloc[-1] / prices.iloc[-n_year] - 1) if len(prices) >= n_year else 0.0
+    trailing_cagr = (
+        float(prices.iloc[-1] / prices.iloc[-n_year] - 1)
+        if len(prices) >= n_year
+        else 0.0
+    )
 
     try:
         mcp = state.get("mcp_client")
@@ -139,7 +165,9 @@ async def compute_metrics_node(state: QuantAnalysisState) -> dict:
             sortino_ratio=metric_result(sortino, "Annualized Downside Deviation Sharpe", -999, 999),
             calmar_ratio=metric_result(calmar, "CAGR / Max Drawdown", -999, 999),
             alpha=metric_result(alpha, "CAPM Excess Return (annualized)", -10, 10),
-            information_ratio=metric_result(information_ratio, "Annualized Active Return / Tracking Error", -999, 999),
+            information_ratio=metric_result(
+                information_ratio, "Annualized Active Return / Tracking Error", -999, 999
+            ),
         ).model_dump(exclude={"quant_confidence", "quant_signal", "signals", "signal_scores"}),
     }
     if is_high:

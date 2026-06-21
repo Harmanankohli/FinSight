@@ -29,7 +29,7 @@ def _price_data(
     prices = 100.0 * np.cumprod(1.0 + log_rets)
     start = date(2020, 1, 3)
     dates = [str(start + timedelta(days=i)) for i in range(n)]
-    return {d: float(p) for d, p in zip(dates, prices)}
+    return {d: float(p) for d, p in zip(dates, prices, strict=False)}
 
 
 def _base_state(**overrides) -> dict:

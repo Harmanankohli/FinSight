@@ -16,8 +16,6 @@ import logging
 
 from fastapi import FastAPI, HTTPException
 
-logger = logging.getLogger(__name__)
-
 from shared.models import (
     AgentHealthResponse,
     AgentListItem,
@@ -33,6 +31,8 @@ from shared.models import (
     SessionListItem,
     TokenResponse,
 )
+
+logger = logging.getLogger(__name__)
 
 fastapi_app = FastAPI(
     title="FinSight API",

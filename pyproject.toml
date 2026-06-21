@@ -278,6 +278,7 @@ select = ["E", "F", "I", "W", "S", "B", "C4", "UP"]
 
 [tool.ruff.lint.per-file-ignores]
 "src/shared/**/*.py" = ["S110", "BLE001"]
+"src/tests/**/*.py" = ["S101"]
 
 [tool.mypy]
 python_version = "3.12"

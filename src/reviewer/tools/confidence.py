@@ -52,10 +52,13 @@ def _signal_to_direction(agent_outputs: dict, agent_key: str) -> str | None:
 
 
 def _derive_quant_confidence(quant: dict) -> float:
-    """Derive a confidence score weighted by data freshness, source quality, and signal agreement."""
+    """Derive a confidence score weighted by data freshness, source quality,
+    and signal agreement."""
     reasoning = quant.get("reasoning") or ""
     if _looks_like_error(reasoning) and not quant.get("metrics"):
-        logger.warning("Quant reasoning looks like an error with no metrics, assigning near-zero confidence")
+        logger.warning(
+            "Quant reasoning looks like an error with no metrics, assigning near-zero confidence"
+        )
         return 0.05
 
     metrics = quant.get("metrics") or {}
@@ -73,18 +76,24 @@ def _derive_quant_confidence(quant: dict) -> float:
         freshness_components.append(1.0)
     if quant.get("positioning"):
         freshness_components.append(0.8)
-    freshness = sum(freshness_components) / max(len(freshness_components), 1) if freshness_components else 0.3
+    freshness = (
+        sum(freshness_components) / max(len(freshness_components), 1)
+        if freshness_components
+        else 0.3
+    )
 
     # Signal agreement: check if sub-signals align with recommendation
     rec = quant.get("recommendation", "HOLD")
     agreement_signals = []
     sharpe = metrics.get("sharpe_ratio")
     if isinstance(sharpe, (int, float)) and sharpe != 0:
-        agreement_signals.append(("bullish" if sharpe > 0 else "bearish"))
+        agreement_signals.append("bullish" if sharpe > 0 else "bearish")
     signal_scores = metrics.get("signal_scores") or {}
     if signal_scores:
         total_score = sum(signal_scores.values())
-        agreement_signals.append("bullish" if total_score > 0 else ("bearish" if total_score < 0 else "neutral"))
+        agreement_signals.append(
+            "bullish" if total_score > 0 else ("bearish" if total_score < 0 else "neutral")
+        )
     dcf = quant.get("dcf_valuation") or {}
     if dcf.get("upside_pct") is not None:
         agreement_signals.append("bullish" if dcf["upside_pct"] > 0 else "bearish")
@@ -105,7 +114,9 @@ def _derive_quant_confidence(quant: dict) -> float:
         quality_score += 0.15
     if quant.get("insider_signals"):
         quality_score += 0.15
-    if quant.get("options_signals") and (quant["options_signals"] or {}).get("flow_signal") != "no_data":
+    if quant.get("options_signals") and (
+        quant["options_signals"] or {}
+    ).get("flow_signal") != "no_data":
         quality_score += 0.20
     source_quality = min(quality_score, 1.0)
 
@@ -137,7 +148,9 @@ def _derive_market_confidence(market: dict) -> float:
     """Derive a confidence score from market context data."""
     narrative = market.get("narrative") or ""
     if _looks_like_error(narrative):
-        logger.warning("Market context narrative looks like an error, assigning near-zero confidence")
+        logger.warning(
+            "Market context narrative looks like an error, assigning near-zero confidence"
+        )
         return 0.05
 
     explicit = market.get("confidence_score")
@@ -205,7 +218,7 @@ def score_confidence(agent_outputs: dict) -> dict:
     # Completeness: ratio of non-empty fields across all agents
     total_fields = 0
     filled_fields = 0
-    for agent_key, agent_data in [
+    for _, agent_data in [
         ("quant", quant),
         ("rag", rag),
         ("market_context", market),
@@ -260,7 +273,8 @@ def score_confidence(agent_outputs: dict) -> dict:
     meta_confidence = max(0.0, min(1.0, meta_confidence))
 
     logger.info(
-        "Confidence: meta=%.2f (agreement=%.2f, quality=%.2f, agents=[quant=%.2f, rag=%.2f, market=%.2f, analytics=%.2f])",
+        "Confidence: meta=%.2f (agreement=%.2f, quality=%.2f,"
+        " agents=[quant=%.2f, rag=%.2f, market=%.2f, analytics=%.2f])",
         meta_confidence,
         agreement,
         data_quality,

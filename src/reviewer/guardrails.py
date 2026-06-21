@@ -3,7 +3,7 @@
 import json
 import logging
 
-from agents import InputGuardrail, GuardrailFunctionOutput
+from agents import GuardrailFunctionOutput, InputGuardrail
 
 logger = logging.getLogger(__name__)
 

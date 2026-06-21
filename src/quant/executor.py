@@ -71,13 +71,15 @@ class QuantAgent(BaseAgent):
         return result
 
     async def stream(self, query: str, context_id: str, task_id: str) -> AsyncIterable[dict]:
-        """Stream interface required by :class:`BaseAgent` — resolves the ticker and yields a single response dict."""
+        """Stream interface required by :class:`BaseAgent` --
+        resolves the ticker and yields a single response dict."""
         logger.info("QuantAgent.stream() called: query=%s...", query[:80])
         yield await self._build_response(query)
 
     @logged()
     async def _build_response(self, query: str) -> dict:
-        """Resolve the ticker, run analysis, attach schema validation, and return a data or error response."""
+        """Resolve the ticker, run analysis, attach schema
+        validation, and return a data or error response."""
         async with self._telemetry_span("quant-agent-stream", query) as (trace_ctx, span, trace_id):
             ticker, company = await resolve_and_validate_ticker(query)
             if not ticker:

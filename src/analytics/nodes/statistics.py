@@ -9,8 +9,9 @@ market correlation (beta vs SPY).  All numeric results are rounded to
 import logging
 
 import numpy as np
-from shared.agent_models import StatisticalSummary
 from scipy import stats as scipy_stats
+
+from shared.agent_models import StatisticalSummary
 
 logger = logging.getLogger(__name__)
 

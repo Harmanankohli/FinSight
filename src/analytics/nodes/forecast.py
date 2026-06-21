@@ -9,8 +9,8 @@ import logging
 from datetime import datetime, timedelta
 
 import numpy as np
+
 from shared.agent_models import ForecastResult
-from scipy import signal
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +29,8 @@ def _holt_winters(
     Period=5 captures weekly trading patterns.  Returns (forecast, lower,
     upper) confidence bands.  Requires >= 60 data points to produce output.
     """
+    n = len(series)
+    if n < 60:
         return [], [], []
 
     seasonal = [0.0] * n
@@ -113,7 +115,11 @@ async def _run_forecast(price_data: dict) -> dict:
             f_holdout, _, _ = _holt_winters(train, holdout_size)
             if f_holdout and actual:
                 mape = (
-                    np.mean([abs((a - f) / a) for a, f in zip(actual, f_holdout) if a != 0]) * 100
+                    np.mean([
+                        abs((a - f) / a)
+                        for a, f in zip(actual, f_holdout, strict=False)
+                        if a != 0
+                    ]) * 100
                 )
             else:
                 mape = None
@@ -126,7 +132,7 @@ async def _run_forecast(price_data: dict) -> dict:
         return ForecastResult(
             forecast_prices=[round(f, 2) for f in forecast],
             forecast_dates=dates,
-            confidence_lower=[round(l, 2) for l in lower],
+            confidence_lower=[round(val, 2) for val in lower],
             confidence_upper=[round(u, 2) for u in upper],
             mape=round(mape, 2) if mape is not None else None,
         ).model_dump()

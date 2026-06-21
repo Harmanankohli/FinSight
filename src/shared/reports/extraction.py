@@ -341,7 +341,7 @@ def _parse_markdown_tables(text: str) -> tuple[str, list[dict], list[ParsedTable
         for line in data_lines[1:]:
             cells = [c.strip() for c in line.split("|")[1:-1]]
             if len(cells) == len(headers):
-                rows.append(dict(zip(headers, cells)))
+                rows.append(dict(zip(headers, cells, strict=False)))
         if rows:
             parsed_tables.append(rows)
             structured_tables.append(ParsedTable(headers=headers, rows=rows))
@@ -502,6 +502,7 @@ _FIN_CONTEXT = {
     "ROE": "Return on Equity",
     "Operating Margin": "Profitability",
     "P/E Ratio": "Price / Earnings",
+    "Forward P/E": "Next 12 months consensus",
     "Beta": "Market sensitivity",
     "Sharpe Ratio": "Risk-adjusted return",
     "RSI": "Momentum (14-day)",
@@ -1396,6 +1397,16 @@ def _populate_from_agent_outputs(data: DeckData, brief_data: dict, response_text
                 and any(isinstance(comparison.get(p, {}).get(k), (int, float)) for k in _metric_keys)
             ][:2]
             data.peer_names = peer_tickers
+            # Fallback to fundamentals for self-ticker column
+            _fund_key_map = {
+                "pe": "trailing_pe",
+                "ev_ebitda": "ev_to_ebitda",
+                "rev_growth": "revenue_growth",
+                "op_margin": "operating_margin",
+                "roe": "roe",
+            }
+            fund = quant.get("fundamentals") or {}
+            own_comp = comparison.get(data.ticker, {})
             for key, label in [
                 ("pe", "P/E Ratio"),
                 ("ev_ebitda", "EV/EBITDA"),
@@ -1404,7 +1415,9 @@ def _populate_from_agent_outputs(data: DeckData, brief_data: dict, response_text
                 ("roe", "ROE"),
             ]:
                 row = {"metric": label}
-                tv = comparison.get(data.ticker, {}).get(key)
+                tv = own_comp.get(key)
+                if tv is None:
+                    tv = fund.get(_fund_key_map.get(key, ""))
                 is_pct_key = "growth" in key or "margin" in key or "roe" in key
                 row["col0"] = (
                     f"{tv * 100:.1f}%"
@@ -1479,6 +1492,21 @@ def _populate_from_agent_outputs(data: DeckData, brief_data: dict, response_text
                 for ci, pc in enumerate(si_peers[:2]):
                     row[f"col{ci + 1}"] = str((pc.get("metrics") or {}).get(mn, "N/A"))
                 data.peers.append(row)
+
+        # Merge duplicate peer rows (quant col0 + sentiment col1/col2 for same metric)
+        if len(data.peers) > 5:
+            _merged: dict[str, dict] = {}
+            _order: list[str] = []
+            for _r in data.peers:
+                _m = _r.get("metric", "")
+                if _m not in _merged:
+                    _merged[_m] = dict(_r)
+                    _order.append(_m)
+                else:
+                    for _k, _v in _r.items():
+                        if _k != "metric" and (_k not in _merged[_m] or _merged[_m][_k] == "N/A"):
+                            _merged[_m][_k] = _v
+            data.peers = [_merged[_m] for _m in _order]
 
         narrative = sentiment.get("narrative") or ""
         if isinstance(narrative, list):
@@ -1901,7 +1929,8 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
                 if dcf.market_enterprise_value is not None:
                     data.dcf_breakdown.append(("Market Enterprise Value", _fmt_dollar(dcf.market_enterprise_value)))
                 if dcf.net_debt is not None:
-                    data.dcf_breakdown.append(("Net Debt", _fmt_dollar(dcf.net_debt)))
+                    _nd_label = "Net Cash" if dcf.net_debt < 0 else "Net Debt"
+                    data.dcf_breakdown.append((_nd_label, _fmt_dollar(abs(dcf.net_debt))))
                 if dcf.equity_value is not None:
                     data.dcf_breakdown.append(("Equity Value", _fmt_dollar(dcf.equity_value)))
                 data.dcf_breakdown.append(("FCF Used", _fmt_dollar(dcf.fcf_used)))
@@ -2047,6 +2076,17 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
                 and any(isinstance((pc.comparison.get(p) or {}).get(k), (int, float)) for k in _metric_keys)
             ][:2]
             data.peer_names = peer_tickers
+            # Build fallback from fundamentals for self-ticker when comparison
+            # dict doesn't include the ticker's own data.
+            _fund_key_map = {
+                "pe": "trailing_pe",
+                "ev_ebitda": "ev_to_ebitda",
+                "rev_growth": "revenue_growth",
+                "op_margin": "operating_margin",
+                "roe": "roe",
+            }
+            own_comp = pc.comparison.get(data.ticker) or {}
+            fund = quant.fundamentals
             for key, label in [
                 ("pe", "P/E Ratio"),
                 ("ev_ebitda", "EV/EBITDA"),
@@ -2056,7 +2096,9 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
             ]:
                 row = {"metric": label}
                 is_pct_key = "growth" in key or "margin" in key or "roe" in key
-                tv = (pc.comparison.get(data.ticker) or {}).get(key)
+                tv = own_comp.get(key)
+                if tv is None and fund:
+                    tv = getattr(fund, _fund_key_map.get(key, ""), None)
                 row["col0"] = (
                     f"{tv * 100:.1f}%"
                     if is_pct_key and isinstance(tv, (int, float))
@@ -2133,6 +2175,21 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
                 for ci, pc in enumerate(sentiment.peer_comparison[:2]):
                     row[f"col{ci + 1}"] = pc.metrics.get(mn, "N/A")
                 data.peers.append(row)
+
+        # Merge duplicate peer rows (quant col0 + sentiment col1/col2 for same metric)
+        if len(data.peers) > 5:
+            merged: dict[str, dict] = {}
+            order: list[str] = []
+            for row in data.peers:
+                m = row.get("metric", "")
+                if m not in merged:
+                    merged[m] = dict(row)
+                    order.append(m)
+                else:
+                    for k, v in row.items():
+                        if k != "metric" and (k not in merged[m] or merged[m][k] == "N/A"):
+                            merged[m][k] = v
+            data.peers = [merged[m] for m in order]
 
         # Narrative — already clean text (CrewAI output_pydantic strips code blocks)
         if sentiment.narrative:
@@ -2479,6 +2536,18 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
         elif td == "bearish":
             negative_drivers.append("Analytics trend is bearish")
 
+    # Deduplicate drivers (e.g. reviewer + quant may both flag DCF downside)
+    positive_drivers = list(dict.fromkeys(positive_drivers))
+    negative_drivers = list(dict.fromkeys(negative_drivers))
+    _dedup_neg: list[str] = []
+    for d in negative_drivers:
+        if not any(
+            d != existing and "DCF downside" in d and "DCF downside" in existing
+            for existing in _dedup_neg
+        ):
+            _dedup_neg.append(d)
+    negative_drivers = _dedup_neg
+
     if positive_drivers or negative_drivers:
         parts: list[str] = []
         if positive_drivers:
@@ -2721,7 +2790,7 @@ def _extract_deck_data(
         # if validation fails (e.g., briefs stored before models were introduced).
         _used_validated = False
         try:
-            from pydantic import ValidationError
+
             from shared.agent_models import (
                 AnalyticsAgentOutput,
                 MarketContextOutput,
@@ -2761,10 +2830,11 @@ def _extract_deck_data(
             pass  # already ran legacy path above
         else:
             # Validated path ran but produced sparse data — try legacy as supplement.
-            # Snapshot additive fields to avoid duplicating reviewer/section data.
+            # Snapshot additive fields to avoid duplicating reviewer/section/peer data.
             _pre_verifs = len(data.reviewer_verifications)
             _pre_sections = len(data.sections)
             _pre_scorecard = len(data.scorecard)
+            _pre_peers = len(data.peers)
             _populate_from_agent_outputs(data, brief_data, response_text)
             if _pre_verifs:
                 data.reviewer_verifications = data.reviewer_verifications[:_pre_verifs]
@@ -2772,6 +2842,8 @@ def _extract_deck_data(
                 data.sections = data.sections[:_pre_sections]
             if _pre_scorecard:
                 data.scorecard = data.scorecard[:_pre_scorecard]
+            if _pre_peers:
+                data.peers = data.peers[:_pre_peers]
 
     # ── Minimal response_text path ────────────────────────────────────────────
     response_text = brief_data.get("response_text", "")

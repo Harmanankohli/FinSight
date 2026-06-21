@@ -288,7 +288,7 @@ class MCPClient:
                 else:
                     raise MCPClientError(
                         f"Tool call '{server_name}/{tool_name}' failed after {self.max_retries} attempts: {e}"  # noqa: E501
-                    )
+                    ) from e
             except MCPClientError:
                 raise
             except Exception as e:

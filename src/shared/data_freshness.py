@@ -1,4 +1,7 @@
-"""Data staleness tracking utilities. Provides helpers to check statement age and data freshness thresholds."""
+"""Data staleness tracking utilities.
+
+Provides helpers to check statement age and data freshness thresholds.
+"""
 from datetime import date, datetime
 
 

@@ -8,7 +8,8 @@ logger = logging.getLogger(__name__)
 
 
 def _safe_get(d: dict, *keys, default=None):
-    """Safely traverse a nested dict returning the value at `keys` or `default` if any key is missing."""
+    """Safely traverse a nested dict returning the value at `keys` or
+    `default` if any key is missing."""
     for k in keys:
         if isinstance(d, dict):
             d = d.get(k, {})
@@ -18,9 +19,10 @@ def _safe_get(d: dict, *keys, default=None):
 
 
 def verify_sources(agent_outputs: dict) -> list[dict]:
-    """Check factual claims across agent outputs: DCF upside consistency, RAG sources presence, market
-    signal enum validity, and analytics forecast dates / chart data. Returns a list of SourceVerification
-    dicts with claim-level pass/fail detail per agent."""
+    """Check factual claims across agent outputs: DCF upside consistency,
+    RAG sources presence, market signal enum validity, and analytics forecast
+    dates / chart data. Returns a list of SourceVerification dicts with
+    claim-level pass/fail detail per agent."""
     verifications = []
 
     quant = agent_outputs.get("quant", {})
@@ -67,7 +69,9 @@ def verify_sources(agent_outputs: dict) -> list[dict]:
                 "claims_checked": 1,
                 "claims_verified": 0,
                 "verification_rate": 0.0,
-                "unverified_claims": [f"Market signal '{market_signal}' not one of bullish/bearish/neutral"],
+                "unverified_claims": [
+                    f"Market signal '{market_signal}' not one of bullish/bearish/neutral"
+                ],
             }
         )
 

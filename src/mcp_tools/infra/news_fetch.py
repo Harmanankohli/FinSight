@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re as _re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from urllib.parse import quote as urlquote
 
 import feedparser
@@ -138,7 +138,7 @@ async def fetch_yf_news(ticker: str, client: httpx.AsyncClient, limit: int = 15)
             summary = item.get("summary", "") or ""
             pub = item.get("providerPublishTime", 0)
             try:
-                published = datetime.fromtimestamp(pub, tz=timezone.utc).isoformat() if pub else ""
+                published = datetime.fromtimestamp(pub, tz=UTC).isoformat() if pub else ""
             except Exception:
                 published = ""
             title_score = _sa.polarity_scores(title)["compound"]

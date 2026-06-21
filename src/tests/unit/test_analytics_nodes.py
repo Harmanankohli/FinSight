@@ -4,10 +4,10 @@ import pytest
 
 pytest.importorskip("pandas", reason="analytics nodes require pandas")
 
-from analytics.nodes.trend import _detect_trends
-from analytics.nodes.forecast import _run_forecast
 from analytics.nodes.anomaly import _detect_anomalies
 from analytics.nodes.charts import _generate_charts
+from analytics.nodes.forecast import _run_forecast
+from analytics.nodes.trend import _detect_trends
 
 
 def _make_price_data(close_values: list[float]) -> dict:

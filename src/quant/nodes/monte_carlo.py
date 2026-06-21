@@ -1,4 +1,7 @@
-"""Monte Carlo simulation and stress testing node. Runs stochastic price projections and scenario-based risk analysis."""
+"""Monte Carlo simulation and stress testing node.
+
+Runs stochastic price projections and scenario-based risk analysis.
+"""
 import json
 import logging
 

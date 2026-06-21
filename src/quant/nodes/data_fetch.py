@@ -1,8 +1,18 @@
-"""Data fetching helpers for the quant graph. Retrieves fundamentals, insider signals, analyst positioning, and options data."""
+"""Data fetching helpers for the quant graph.
+
+Retrieves fundamentals, insider signals, analyst positioning,
+and options data.
+"""
 import json
 import logging
 
-from shared.agent_models import AnalystPositioning, Fundamentals, InsiderSignals, OptionsSignals
+from shared.agent_models import (
+    AnalystAction,
+    AnalystPositioning,
+    Fundamentals,
+    InsiderSignals,
+    OptionsSignals,
+)
 from shared.logging_config import logged
 
 from ..state import QuantAnalysisState
@@ -102,7 +112,7 @@ async def fundamental_analysis_node(state: QuantAnalysisState) -> dict:
         fifty_day_ma = info.get("fiftyDayAverage") or 0
         two_hundred_day_ma = info.get("twoHundredDayAverage") or 0
         total_debt = info.get("totalDebt") or 0
-        total_cash = info.get("totalCash") or 0
+        _total_cash = info.get("totalCash") or 0
         raw_de = info.get("debtToEquity")
 
         balance_sheet = data.get("balance_sheet", {})
@@ -159,7 +169,11 @@ async def fundamental_analysis_node(state: QuantAnalysisState) -> dict:
         except Exception as e:
             logger.debug("Valuation timeseries fetch failed (non-fatal): %s", e)
 
-        return {"fundamentals": fundamentals, "_financials_raw": data, "valuation_history": valuation_history}
+        return {
+            "fundamentals": fundamentals,
+            "_financials_raw": data,
+            "valuation_history": valuation_history,
+        }
     except Exception as e:
         logger.warning("Fundamentals failed for %s: %s", ticker, e)
         return {"fundamentals": None, "_financials_raw": {}, "valuation_history": None}
@@ -255,6 +269,7 @@ async def insider_signals_node(state: QuantAnalysisState) -> dict:
         insider_pct = (raw_fin.get("info") or {}).get("heldPercentInsiders")
 
         total = summary.get("total", 0)
+        trade_count = buys + sells
         return {
             "insider_signals": InsiderSignals(
                 recent_transaction_count=total,
@@ -264,7 +279,7 @@ async def insider_signals_node(state: QuantAnalysisState) -> dict:
                 net_shares=summary.get("net_shares"),
                 net_value=summary.get("net_value"),
                 insider_pct_held=insider_pct,
-                activity_level="high" if total >= 5 else "moderate" if total >= 2 else "low",
+                activity_level="high" if trade_count >= 5 else "moderate" if trade_count >= 2 else "low",
             ).model_dump(),
         }
     except Exception as e:
@@ -348,7 +363,7 @@ async def analyst_positioning_node(state: QuantAnalysisState) -> dict:
     recent_upgrades = 0
     recent_downgrades = 0
     recent_initiations = 0
-    latest_actions: list[dict] = []
+    latest_actions: list[AnalystAction] = []
     grade_momentum = "stable"
 
     if mcp:
@@ -367,8 +382,12 @@ async def analyst_positioning_node(state: QuantAnalysisState) -> dict:
                 recent_downgrades = act_data.get("downgrades", 0)
                 recent_initiations = act_data.get("initiations", 0)
                 latest_actions = [
-                    {"firm": a["firm"], "action": a["action"],
-                     "to_grade": a["to_grade"], "new_target": a.get("new_target")}
+                    AnalystAction(
+                        firm=a.get("firm", ""),
+                        action=a.get("action", ""),
+                        to_grade=a.get("to_grade", ""),
+                        new_target=a.get("new_target"),
+                    )
                     for a in (act_data.get("activities") or [])[:5]
                 ]
                 if recent_upgrades > recent_downgrades * 1.5:
@@ -410,7 +429,8 @@ async def analyst_positioning_node(state: QuantAnalysisState) -> dict:
                         eps_revision_momentum = "flat"
                 fwd = earn_data.get("forward_estimates", [])
                 if fwd:
-                    forward_eps_growth = fwd[0].get("growth")
+                    g = fwd[0].get("growth")
+                    forward_eps_growth = g if isinstance(g, (int, float)) else None
         except Exception as e:
             logger.debug("Earnings trend enrichment failed (non-fatal): %s", e)
 

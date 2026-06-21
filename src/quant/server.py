@@ -1,4 +1,7 @@
-"""Quant agent FastAPI/ADK server entry point. Bootstraps the agent, initializes instrumentation, and registers the agent routes."""
+"""Quant agent FastAPI/ADK server entry point.
+
+Bootstraps the agent, initializes instrumentation, and registers the agent routes.
+"""
 # ruff: noqa: E402
 import logging
 
@@ -130,4 +133,4 @@ app = build_agent_app(
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=_settings.agent_port_quant)
+    uvicorn.run(app, host=_settings.host, port=_settings.agent_port_quant)

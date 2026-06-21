@@ -1,6 +1,9 @@
-"""Unit tests for shared/agent_models — validates schema serialisation, field defaults, and A2A contract compliance."""
+"""Unit tests for shared/agent_models.
 
-from datetime import datetime, timezone
+Validates schema serialisation, field defaults, and A2A contract compliance.
+"""
+
+from datetime import UTC, datetime
 
 from shared.models import (
     InvestmentBrief,
@@ -10,7 +13,7 @@ from shared.models import (
     RAGInsights,
 )
 
-_NOW = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+_NOW = datetime(2025, 1, 1, 12, 0, 0, tzinfo=UTC)
 
 
 def _make_query_context(**kw):

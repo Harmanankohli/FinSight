@@ -12,14 +12,12 @@ import threading
 import time
 from datetime import datetime
 
-from pydantic import BaseModel, Field
-
 from google.adk.agents import LlmAgent
 from google.adk.tools.tool_context import ToolContext
 from google.genai import types as genai_types
+from pydantic import BaseModel, Field
 
 from shared.settings import ADK_MODEL, IST, get_settings
-from shared.ticker_utils import extract_ticker
 
 logger = logging.getLogger(__name__)
 

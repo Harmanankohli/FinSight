@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from shared.settings import Settings
 
 
-def bootstrap(service_name: str) -> "Settings":
+def bootstrap(service_name: str) -> Settings:
     """Initialise the process: env vars, stdio, event loop, logging, langfuse.
 
     Returns the Settings singleton so callers can read config after bootstrapping.
@@ -43,7 +43,10 @@ def bootstrap(service_name: str) -> "Settings":
 
     setup_file_logging(service_name)
 
-    _log_level = os.environ.get(f"LOG_LEVEL_{service_name.upper().replace('-', '_')}") or os.environ.get("LOG_LEVEL", "INFO")
+    _log_level = (
+        os.environ.get(f"LOG_LEVEL_{service_name.upper().replace('-', '_')}")
+        or os.environ.get("LOG_LEVEL", "INFO")
+    )
     logger.info("Bootstrapping %s: LOG_LEVEL=%s, env=%s", service_name, _log_level, s.env)
 
     # Langfuse is a no-op when keys are not configured

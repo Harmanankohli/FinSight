@@ -1,6 +1,12 @@
-"""Ticker resolution, validation, and MCP helpers. Parses tickers from text, validates them, and supports fuzzy matching."""
+"""Ticker resolution, validation, and MCP helpers.
+
+Parses tickers from text, validates them, and supports fuzzy matching.
+"""
 import json
+import logging
 import re
+
+logger = logging.getLogger(__name__)
 
 _STOCK_TICKER_RE = re.compile(r"^[A-Z]{1,5}(\.[A-Z]{1,2})?$")
 
@@ -308,6 +314,7 @@ async def validate_ticker_via_mcp(mcp, ticker: str) -> tuple[bool, str, str]:
                     return True, v.get("ticker", ticker), v.get("company_name", "")
                 return False, ticker, v.get("error", "Ticker not found in SEC database")
             except Exception:
+                logger.debug("Failed to parse SEC ticker response item")
                 continue
     return False, ticker, "Ticker not found in SEC database"
 
@@ -330,6 +337,7 @@ async def resolve_ticker_via_mcp(mcp, query: str, exclude_ticker: str = "") -> t
                 if ticker and is_valid_ticker_format(ticker):
                     return ticker, v.get("company_name", "")
             except Exception:
+                logger.debug("Failed to parse MCP ticker response item")
                 continue
     return "", ""
 
@@ -397,7 +405,8 @@ async def resolve_and_validate_ticker(query: str) -> tuple[str | None, str | Non
     if not ticker:
         return (
             None,
-            "Could not identify a stock ticker from the query. Try using parentheses (AAPL) or $ prefix ($V).",
+            "Could not identify a stock ticker from the query."
+            " Try using parentheses (AAPL) or $ prefix ($V).",
         )
 
     valid, validated_ticker, company = await validate_ticker(ticker)

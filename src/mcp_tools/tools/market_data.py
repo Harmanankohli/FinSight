@@ -202,6 +202,7 @@ async def _get_macro_impl_yfinance() -> dict:
             prev = float(hist["Close"].iloc[-21]) if len(hist) >= 21 else latest
             result["sectors"][name] = round((latest - prev) / prev * 100, 2) if prev else 0
         except Exception:
+            logger.debug("Failed to fetch sector data for %s", name, exc_info=True)
             continue
     macro = result["macro"]
     if "us10y" in macro and "us2y" in macro:
@@ -263,6 +264,7 @@ async def _get_macro_impl() -> dict:
             prev = float(closes.iloc[-21]) if len(closes) >= 21 else latest
             result["sectors"][name] = round((latest - prev) / prev * 100, 2) if prev else 0
         except Exception:
+            logger.debug("Failed to fetch yahooquery sector data for %s", name, exc_info=True)
             continue
 
     macro = result["macro"]
@@ -349,7 +351,11 @@ async def _get_valuation_ts_uncached(ticker: str) -> dict:
             for _, row in vm.iterrows():
                 as_of = row.get("asOfDate", "")
                 records.append({
-                    "date": as_of.isoformat()[:10] if hasattr(as_of, "isoformat") else str(as_of)[:10],
+                    "date": (
+                        as_of.isoformat()[:10]
+                        if hasattr(as_of, "isoformat")
+                        else str(as_of)[:10]
+                    ),
                     "period_type": row.get("periodType", ""),
                     "pe_ratio": _serialise_value(row.get("PeRatio")),
                     "ps_ratio": _serialise_value(row.get("PsRatio")),

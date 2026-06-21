@@ -10,8 +10,6 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Sequence
 
-logger = logging.getLogger(__name__)
-
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
 from a2a.types import AgentCard
@@ -22,6 +20,8 @@ from starlette.routing import Route
 from shared.a2a_store import SQLiteTaskStore
 from shared.base_agent import BaseAgent
 from shared.generic_executor import GenericAgentExecutor
+
+logger = logging.getLogger(__name__)
 
 
 def build_auth_middleware(settings, accept=None) -> list:  # type: ignore[type-arg]

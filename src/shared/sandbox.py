@@ -185,7 +185,7 @@ async def _run_container(code: str, timeout: int = 30) -> dict:
         "1",
         "--read-only",
         "--tmpfs",
-        "/tmp:size=64m",
+        "/tmp:size=64m",  # noqa: S108
         "--user",
         "65534:65534",
         "--label",
@@ -202,7 +202,7 @@ async def _run_container(code: str, timeout: int = 30) -> dict:
     try:
         proc = await loop.run_in_executor(
             None,
-            lambda: subprocess.run(
+            lambda: subprocess.run(  # noqa: S603
                 docker_cmd,
                 input=code,
                 capture_output=True,
@@ -212,7 +212,7 @@ async def _run_container(code: str, timeout: int = 30) -> dict:
         )
     except subprocess.TimeoutExpired:
         try:
-            subprocess.run(
+            subprocess.run(  # noqa: S602
                 f"docker kill $(docker ps -q --filter label=finsight-sandbox={tag})",
                 shell=True,
                 capture_output=True,
@@ -439,7 +439,7 @@ async def _run_ast(code: str, timeout: int = 30) -> dict:
 
         preexec = _sandbox_preexec if sys.platform != "win32" else None
 
-        proc = subprocess.run(
+        proc = subprocess.run(  # noqa: S603
             [sys.executable, "-I", "-S", runner_path],
             input=code,
             capture_output=True,

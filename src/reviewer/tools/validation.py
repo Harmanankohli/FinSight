@@ -8,7 +8,8 @@ logger = logging.getLogger(__name__)
 
 
 def _safe_get(d: dict, *keys, default=None):
-    """Safely traverse a nested dict returning the value at `keys` or `default` if any key is missing."""
+    """Safely traverse a nested dict returning the value at `keys` or
+    `default` if any key is missing."""
     for k in keys:
         if isinstance(d, dict):
             d = d.get(k, {})

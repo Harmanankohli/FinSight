@@ -509,7 +509,7 @@ class FinSightAgentExecutor(AgentExecutor):
                             )
                         )
                     except Exception:
-                        pass
+                        logger.debug("Failed to parse cached analysis context", exc_info=True)
                     if analysis_date == today and has_agent_data:
                         parts.append(
                             f"[TODAY — analysis is current, you may return it directly without calling agents again] {context}"  # noqa: E501
@@ -683,7 +683,8 @@ class FinSightAgentExecutor(AgentExecutor):
 
 
 def _resolve_user_id(context: RequestContext) -> str:
-    """Extract the authenticated username from the A2A request context, falling back to a default."""
+    """Extract the authenticated username from the A2A request
+    context, falling back to a default."""
     if context.call_context and context.call_context.user.is_authenticated:
         return context.call_context.user.user_name
     return "a2a_user"

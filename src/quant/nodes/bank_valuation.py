@@ -1,4 +1,7 @@
-"""Bank-specific valuation using P/TBV and P/E multiples. Provides an alternative to DCF for financial institutions."""
+"""Bank-specific valuation using P/TBV and P/E multiples.
+
+Provides an alternative to DCF for financial institutions.
+"""
 import logging
 
 from shared.agent_models import DCFValuation

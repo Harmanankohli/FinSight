@@ -36,9 +36,9 @@ def _ema(data: list[float], span: int) -> list[float]:
     where multiplier = 2 / (span + 1).  Seed value is the first data point.
     """
     multiplier = 2.0 / (span + 1)
-    ema = [arr[0]]
-    for i in range(1, len(arr)):
-        ema.append((arr[i] - ema[-1]) * multiplier + ema[-1])
+    ema = [data[0]]
+    for i in range(1, len(data)):
+        ema.append((data[i] - ema[-1]) * multiplier + ema[-1])
     return ema
 
 
@@ -63,7 +63,6 @@ async def _detect_trends(price_data: dict) -> dict:
                 supporting_indicators=["insufficient_data"],
             ).model_dump()
 
-        sma20 = _sma(closes, 20)
         sma50 = _sma(closes, 50)
         sma200 = _sma(closes, 200)
 
@@ -83,9 +82,9 @@ async def _detect_trends(price_data: dict) -> dict:
 
         ema12 = _ema(closes, 12)
         ema26 = _ema(closes, 26)
-        macd_line = [e12 - e26 for e12, e26 in zip(ema12, ema26)]
+        macd_line = [e12 - e26 for e12, e26 in zip(ema12, ema26, strict=False)]
         macd_signal_line = _ema(macd_line, 9)
-        macd_histogram = [m - s for m, s in zip(macd_line, macd_signal_line)]
+        macd_histogram = [m - s for m, s in zip(macd_line, macd_signal_line, strict=False)]
         macd_bullish = macd_histogram[-1] > 0 if macd_histogram else None
 
         roc_20d = (closes[-1] - closes[-20]) / closes[-20] if len(closes) >= 20 else 0
@@ -128,7 +127,12 @@ async def _detect_trends(price_data: dict) -> dict:
             score += 1
             signals.append(f"MACD bullish (+1, hist={macd_histogram[-1]:+.4f})")
         else:
-            signals.append(f"MACD not bullish (0, hist={macd_histogram[-1]:+.4f})" if macd_histogram else "MACD not bullish (0)")
+            if macd_histogram:
+                signals.append(
+                    f"MACD not bullish (0, hist={macd_histogram[-1]:+.4f})"
+                )
+            else:
+                signals.append("MACD not bullish (0)")
 
         if momentum_bullish:
             score += 1

@@ -9,7 +9,7 @@ in the same SQLite database file.
 import asyncio
 import logging
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import aiosqlite
@@ -237,7 +237,7 @@ async def prune_old_records(days: int | None = None) -> dict[str, int]:
     """
     if days is None:
         days = int(os.environ.get("MEMORY_RETENTION_DAYS", "90"))
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
     conn = await get_db()
     _ALLOWED_TABLES: frozenset[str] = frozenset(
         {
@@ -250,7 +250,7 @@ async def prune_old_records(days: int | None = None) -> dict[str, int]:
     async with write_lock():
         deleted: dict[str, int] = {}
         for table in _ALLOWED_TABLES:
-            cur = await conn.execute(f"DELETE FROM {table} WHERE created_at < ?", (cutoff,))
+            cur = await conn.execute(f"DELETE FROM {table} WHERE created_at < ?", (cutoff,))  # noqa: S608
             deleted[table] = cur.rowcount
         await conn.commit()
     logger.info("Pruned old records: %s", str(deleted))

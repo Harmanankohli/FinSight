@@ -10,7 +10,7 @@ import asyncio
 import logging
 import time
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -129,7 +129,7 @@ async def login(request: Request) -> JSONResponse:
     jti = str(uuid.uuid4())
     s = get_settings()
     refresh_ttl = s.auth_refresh_ttl_seconds
-    expires_at = (datetime.now(timezone.utc) + timedelta(seconds=refresh_ttl)).isoformat()
+    expires_at = (datetime.now(UTC) + timedelta(seconds=refresh_ttl)).isoformat()
     refresh_token = issue_refresh_token(jti, user["user_id"])
     await store_refresh_token(jti, user["user_id"], expires_at)
 
@@ -181,7 +181,7 @@ async def refresh(request: Request) -> JSONResponse:
         rotated = record.get("rotated_at")
         if rotated:
             rotated_dt = datetime.fromisoformat(rotated)
-            age = (datetime.now(timezone.utc) - rotated_dt).total_seconds()
+            age = (datetime.now(UTC) - rotated_dt).total_seconds()
             if age <= 30:
                 # Concurrent refresh race — allow it, just issue a new pair
                 logger.info("Refresh race detected for jti=%s, granting grace", jti[:8])
@@ -210,7 +210,7 @@ async def refresh(request: Request) -> JSONResponse:
     new_jti = str(uuid.uuid4())
     s = get_settings()
     refresh_ttl = s.auth_refresh_ttl_seconds
-    expires_at = (datetime.now(timezone.utc) + timedelta(seconds=refresh_ttl)).isoformat()
+    expires_at = (datetime.now(UTC) + timedelta(seconds=refresh_ttl)).isoformat()
     new_refresh = issue_refresh_token(new_jti, user_id)
     await store_refresh_token(new_jti, user_id, expires_at)
 

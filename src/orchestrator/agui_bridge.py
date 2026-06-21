@@ -18,7 +18,7 @@ import json
 import logging
 import re
 import uuid
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
 from ag_ui.core import (
     EventType,
@@ -172,7 +172,7 @@ async def _build_memory_context(user_input: str, user_id: str) -> str:
                         )
                     )
                 except Exception:
-                    pass
+                    logger.debug("Failed to load cached agent data for date %s", analysis_date)
                 if analysis_date == today and has_agent_data:
                     parts.append(
                         f"[TODAY — analysis is current, you may return it directly without calling agents again] {context}"  # noqa: E501
@@ -457,14 +457,19 @@ async def _stream(
                 break
             if event is None:
                 logger.error(
-                    "Orchestrator timed out after %ds (awaiting_tools=%d, model may be unavailable)",
+                    "Orchestrator timed out after %ds "
+                    "(awaiting_tools=%d, model may be unavailable)",
                     deadline,
                     _awaiting_tool_response,
                 )
                 yield sse(
                     RunErrorEvent(
                         type=EventType.RUN_ERROR,
-                        message="Orchestrator timed out — the LLM model may be unavailable. Check that the model is loaded.",
+                        message=(
+                            "Orchestrator timed out — the LLM model"
+                            " may be unavailable. Check that the"
+                            " model is loaded."
+                        ),
                         code=None,
                     )
                 )
@@ -496,7 +501,11 @@ async def _stream(
                     agent_ticker = args.get("ticker", "").strip().upper()
                     if agent_ticker and ticker_hint == "unknown":
                         ticker_hint = agent_ticker
-                        delta_ops.append({"op": "replace", "path": "/ticker", "value": agent_ticker})
+                        delta_ops.append({
+                            "op": "replace",
+                            "path": "/ticker",
+                            "value": agent_ticker,
+                        })
                     yield sse(
                         StateDeltaEvent(
                             type=EventType.STATE_DELTA,
@@ -598,7 +607,7 @@ async def _stream(
 
                     trace_id = get_langfuse_client().get_current_trace_id()
                 except Exception:
-                    pass
+                    logger.debug("Failed to get Langfuse trace ID for eval")
                 asyncio.create_task(_eval_score(user_text, response_text, trace_id))
                 asyncio.create_task(_release_sub_agent_evals())
                 logger.info("Orchestrator eval scheduled (trace=%s)", trace_id)

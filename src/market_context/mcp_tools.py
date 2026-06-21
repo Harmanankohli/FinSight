@@ -63,7 +63,8 @@ class DynamicMCPTool(BaseTool):
         input_schema: dict,
         mcp_wrapper: "MCPClientWrapper",
     ):
-        """Initialise the tool with name, description, and schema derived from the MCP tool definition.
+        """Initialise the tool with name, description, and schema
+        derived from the MCP tool definition.
 
         The args_schema is built dynamically from the MCP tool's input_schema
         to enable CrewAI parameter validation.
