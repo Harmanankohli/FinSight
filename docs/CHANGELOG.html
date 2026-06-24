@@ -50,6 +50,36 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 </div>
 
 <p>﻿# Changelog</p>
+<h2>v2.15 — Type Safety, Import Standardization, Frontend React Patterns (bd3e242–d5c9ecb)</h2>
+<h3>Type Annotation Modernization (bd3e242, 30d8796)</h3>
+<ul>
+<li><strong><code>src/orchestrator/api_fastapi.py</code></strong>: All unimplemented endpoint stubs annotated with <code>-&gt; NoReturn</code> to satisfy FastAPI OpenAPI generation. Endpoints: <code>memory_ticker_history</code>, <code>memory_ticker_latest</code>, <code>memory_ticker_changed</code>, <code>sessions_list</code>, <code>session_events</code>, <code>agents_list</code>, <code>agent_health</code>.</li>
+<li><strong><code>src/shared/agent_models.py</code></strong>: Removed <code>Optional</code> from <code>typing</code> imports — all <code>Optional[X]</code> replaced with <code>X | None</code> throughout (<code>macro_regime</code>, <code>relative_peer_positioning</code>). Dict types tightened to <code>dict[str, Any]</code>.</li>
+<li><strong><code>src/shared/memory/memory_service.py</code></strong>: <code>add_events_to_memory()</code> signature tightened — <code>app_name</code>, <code>user_id</code>, <code>events</code> changed from optional to required positional params. Internal write logic now resolves metadata into local variables before write.</li>
+<li><strong><code>src/shared/reports/extraction.py</code></strong>: <code>_enrich_from_markdown</code> renamed to <code>_enrich_from_markdown_staged</code>. All internal <code>dict</code> types annotated as <code>dict[str, Any]</code>.</li>
+</ul>
+<h3>Import Path Standardization (30d8796)</h3>
+<ul>
+<li><strong><code>src/orchestrator/agent_executor.py</code></strong>, <strong><code>agui_bridge.py</code></strong>, <strong><code>web/agent.py</code></strong>: <code>from shared.memory import X</code> replaced with direct submodule imports (<code>from shared.memory.ticker_memory import TickerMemory</code>, etc.).</li>
+<li><strong><code>src/orchestrator/main.py</code></strong>, <strong><code>services.py</code></strong>: <code>from shared.memory import SQLiteMemoryService</code> → <code>from shared.memory.memory_service import SQLiteMemoryService</code>.</li>
+</ul>
+<h3>Protobuf Enum for A2A Role (30d8796)</h3>
+<ul>
+<li><strong><code>src/orchestrator/sub_agent_client.py</code></strong>: <code>new_text_message(task_str, role=1)</code> replaced with <code>new_text_message(task_str, role=Role.ROLE_USER)</code> — uses protobuf enum instead of magic number, imports <code>Role</code> from <code>a2a.types.a2a_pb2</code>.</li>
+</ul>
+<h3>Frontend: React Patterns &amp; Type Safety (6bf6a5a)</h3>
+<ul>
+<li><strong><code>app/dashboard/page.tsx</code></strong>: Replaced <code>useState</code>+<code>useCallback</code>+<code>useEffect</code> fetch pattern with <code>useSyncExternalStore</code> external store (<code>fetchStore</code>), eliminating set-state-in-effect. Added <code>TooltipEntry</code> interface; typed <code>ChartTooltip</code> props (replaces <code>any</code>).</li>
+<li><strong><code>components/Sidebar.tsx</code></strong>: Replaced <code>useEffect</code>+<code>setRecent</code> with <code>useSyncExternalStore</code> for localStorage sync — matches the same pattern as the dashboard page.</li>
+<li><strong><code>lib/langfuse.ts</code></strong>: Made <code>langfetch</code> generic <code>&lt;T&gt;</code> (<code>Promise&lt;T&gt;</code> instead of <code>Promise&lt;any&gt;</code>). All 5 call sites in <code>dashboard/route.ts</code> and <code>scores/route.ts</code> updated.</li>
+<li><strong><code>contexts/AuthContext.tsx</code></strong>: Removed unused <code>fetchMe</code> import; removed <code>router</code> from <code>useEffect</code> dependency array (logout callback no longer depends on router instance).</li>
+</ul>
+<h3>Minor Fixes (d5c9ecb, 30d8796)</h3>
+<ul>
+<li><strong><code>src/orchestrator/api_fastapi.py</code></strong>: <code>report_latest</code> and <code>report_by_id</code> return type changed from <code>-&gt; NoReturn</code> to <code>-&gt; None</code> — corrects OpenAPI spec generation rejecting <code>NoReturn</code> on a route that returns HTTP 501.</li>
+<li><strong><code>src/orchestrator/agent.py</code></strong>: <code>load_memory</code> now returns <code>"No memories found."</code> early when <code>tool_context is None</code> — prevents <code>AttributeError</code> on missing tool context.</li>
+<li><strong><code>src/orchestrator/agui_bridge.py</code></strong>: <code>input=payload.model_dump(by_alias=True)</code> → <code>input=payload</code> in <code>RunStartedEvent</code> construction — fixes CopilotKit null field injection issue.</li>
+</ul>
 <h2>v2.14 — Model Change to liquid/lfm2.5 + qwen3-4b</h2>
 <h3>LLM Model Switch (local .env override)</h3>
 <ul>

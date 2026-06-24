@@ -1,5 +1,36 @@
 ﻿# Changelog
 
+## v2.15 — Type Safety, Import Standardization, Frontend React Patterns (bd3e242–d5c9ecb)
+
+### Type Annotation Modernization (bd3e242, 30d8796)
+
+- **`src/orchestrator/api_fastapi.py`**: All unimplemented endpoint stubs annotated with `-> NoReturn` to satisfy FastAPI OpenAPI generation. Endpoints: `memory_ticker_history`, `memory_ticker_latest`, `memory_ticker_changed`, `sessions_list`, `session_events`, `agents_list`, `agent_health`.
+- **`src/shared/agent_models.py`**: Removed `Optional` from `typing` imports — all `Optional[X]` replaced with `X | None` throughout (`macro_regime`, `relative_peer_positioning`). Dict types tightened to `dict[str, Any]`.
+- **`src/shared/memory/memory_service.py`**: `add_events_to_memory()` signature tightened — `app_name`, `user_id`, `events` changed from optional to required positional params. Internal write logic now resolves metadata into local variables before write.
+- **`src/shared/reports/extraction.py`**: `_enrich_from_markdown` renamed to `_enrich_from_markdown_staged`. All internal `dict` types annotated as `dict[str, Any]`.
+
+### Import Path Standardization (30d8796)
+
+- **`src/orchestrator/agent_executor.py`**, **`agui_bridge.py`**, **`web/agent.py`**: `from shared.memory import X` replaced with direct submodule imports (`from shared.memory.ticker_memory import TickerMemory`, etc.).
+- **`src/orchestrator/main.py`**, **`services.py`**: `from shared.memory import SQLiteMemoryService` → `from shared.memory.memory_service import SQLiteMemoryService`.
+
+### Protobuf Enum for A2A Role (30d8796)
+
+- **`src/orchestrator/sub_agent_client.py`**: `new_text_message(task_str, role=1)` replaced with `new_text_message(task_str, role=Role.ROLE_USER)` — uses protobuf enum instead of magic number, imports `Role` from `a2a.types.a2a_pb2`.
+
+### Frontend: React Patterns & Type Safety (6bf6a5a)
+
+- **`app/dashboard/page.tsx`**: Replaced `useState`+`useCallback`+`useEffect` fetch pattern with `useSyncExternalStore` external store (`fetchStore`), eliminating set-state-in-effect. Added `TooltipEntry` interface; typed `ChartTooltip` props (replaces `any`).
+- **`components/Sidebar.tsx`**: Replaced `useEffect`+`setRecent` with `useSyncExternalStore` for localStorage sync — matches the same pattern as the dashboard page.
+- **`lib/langfuse.ts`**: Made `langfetch` generic `<T>` (`Promise<T>` instead of `Promise<any>`). All 5 call sites in `dashboard/route.ts` and `scores/route.ts` updated.
+- **`contexts/AuthContext.tsx`**: Removed unused `fetchMe` import; removed `router` from `useEffect` dependency array (logout callback no longer depends on router instance).
+
+### Minor Fixes (d5c9ecb, 30d8796)
+
+- **`src/orchestrator/api_fastapi.py`**: `report_latest` and `report_by_id` return type changed from `-> NoReturn` to `-> None` — corrects OpenAPI spec generation rejecting `NoReturn` on a route that returns HTTP 501.
+- **`src/orchestrator/agent.py`**: `load_memory` now returns `"No memories found."` early when `tool_context is None` — prevents `AttributeError` on missing tool context.
+- **`src/orchestrator/agui_bridge.py`**: `input=payload.model_dump(by_alias=True)` → `input=payload` in `RunStartedEvent` construction — fixes CopilotKit null field injection issue.
+
 ## v2.14 — Model Change to liquid/lfm2.5 + qwen3-4b
 
 ### LLM Model Switch (local .env override)
