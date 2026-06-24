@@ -111,13 +111,13 @@ export async function GET(req: NextRequest) {
 
   try {
     const tracePages: LfTrace[][] = [];
-    let tracesData: LfResponse = await langfetch(`/api/public/traces?limit=200&fromTimestamp=${fromTimestamp}`);
+    const tracesData: LfResponse = await langfetch<LfResponse>(`/api/public/traces?limit=200&fromTimestamp=${fromTimestamp}`);
     tracePages.push((tracesData.data || []) as LfTrace[]);
 
     const totalPages = tracesData.meta?.totalPages ?? 1;
     const maxPages = Math.min(totalPages, 5);
     for (let p = 2; p <= maxPages; p++) {
-      const page: LfResponse = await langfetch(`/api/public/traces?limit=200&fromTimestamp=${fromTimestamp}&page=${p}`);
+      const page: LfResponse = await langfetch<LfResponse>(`/api/public/traces?limit=200&fromTimestamp=${fromTimestamp}&page=${p}`);
       tracePages.push((page.data || []) as LfTrace[]);
     }
 
@@ -127,13 +127,13 @@ export async function GET(req: NextRequest) {
     const traceMap = new Map<string, AgentKey>();
     for (const t of allTraces) traceMap.set(t.id, classifyAgent(t.name || ""));
 
-    const obsData: LfResponse = await langfetch(`/api/public/observations?limit=500&fromTimestamp=${fromTimestamp}`);
+    const obsData: LfResponse = await langfetch<LfResponse>(`/api/public/observations?limit=500&fromTimestamp=${fromTimestamp}`);
     let allObs = (obsData.data || []) as LfObs[];
     if (allObs.length === 0 && obsData.meta?.totalItems) {
       const obsPages = [allObs];
       const obsTotalPages = Math.min(obsData.meta.totalPages ?? 1, 5);
       for (let p = 2; p <= obsTotalPages; p++) {
-        const page: LfResponse = await langfetch(`/api/public/observations?limit=500&fromTimestamp=${fromTimestamp}&page=${p}`);
+        const page: LfResponse = await langfetch<LfResponse>(`/api/public/observations?limit=500&fromTimestamp=${fromTimestamp}&page=${p}`);
         obsPages.push((page.data || []) as LfObs[]);
       }
       allObs = obsPages.flat();

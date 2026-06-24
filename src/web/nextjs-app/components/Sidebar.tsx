@@ -1,7 +1,7 @@
 /** Sidebar navigation component with links, recent queries, and user session info. */
 "use client";
 
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { getRecentQueries, RecentQuery } from "@/lib/recentQueries";
@@ -19,14 +19,14 @@ const NAV = [
 export function Sidebar() {
   const pathname = usePathname();
   const { user, logout } = useAuth();
-  const [recent, setRecent] = useState<RecentQuery[]>([]);
-
-  useEffect(() => {
-    setRecent(getRecentQueries());
-    const h = () => setRecent(getRecentQueries());
-    window.addEventListener("finsight:recent-queries-changed", h);
-    return () => window.removeEventListener("finsight:recent-queries-changed", h);
-  }, []);
+  const recent = useSyncExternalStore(
+    (cb) => {
+      window.addEventListener("finsight:recent-queries-changed", cb);
+      return () => window.removeEventListener("finsight:recent-queries-changed", cb);
+    },
+    getRecentQueries,
+    () => [] as RecentQuery[],
+  );
 
   return (
     <aside className="sidebar">

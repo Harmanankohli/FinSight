@@ -10,11 +10,11 @@ export function langfuseConfigured(): boolean {
 }
 
 /** Makes an authenticated GET request to the Langfuse public API at the given path. */
-export async function langfetch(path: string): Promise<any> {
+export async function langfetch<T>(path: string): Promise<T> {
   const r = await fetch(`${LF_BASE}${path}`, {
     headers: { Authorization: `Basic ${AUTH}` },
     signal: AbortSignal.timeout(15000),
   });
   if (!r.ok) throw new Error(`Langfuse ${r.status}: ${await r.text()}`);
-  return r.json();
+  return r.json() as Promise<T>;
 }

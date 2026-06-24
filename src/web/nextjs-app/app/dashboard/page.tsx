@@ -1,7 +1,7 @@
 /** Dashboard page displaying observability metrics, agent performance KPIs, and RAGAS quality scores from Langfuse. */
 "use client";
 
-import { Suspense, useEffect, useState, useRef, useCallback } from "react";
+import { Suspense, useEffect, useState, useRef, useSyncExternalStore } from "react";
 import { LineChart, Line, AreaChart, Area, BarChart, Bar, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from "recharts";
 import { AGENT_COLOR, type AgentKey } from "@/lib/agentColors";
 
@@ -85,7 +85,13 @@ function LoadingSkeleton() {
   );
 }
 
-function ChartTooltip({ active, payload, label }: any) {
+interface TooltipEntry {
+  name: string;
+  value: number | string;
+  color?: string;
+}
+
+function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: TooltipEntry[]; label?: string }) {
   if (!active || !payload?.length) return null;
   return (
     <div style={{
@@ -93,54 +99,82 @@ function ChartTooltip({ active, payload, label }: any) {
       padding: "8px 12px", fontSize: 12, fontFamily: "var(--mono)",
     }}>
       <div style={{ color: "var(--text-muted)", marginBottom: 4 }}>{label}</div>
-      {payload.map((p: any, i: number) => (
+      {payload.map((p, i) => (
         <div key={i} style={{ color: p.color }}>{p.name}: {typeof p.value === "number" ? p.value.toLocaleString() : p.value}</div>
       ))}
     </div>
   );
 }
 
-function DashboardContent() {
-  const [hours, setHours] = useState(24);
-  const [data, setData] = useState<DashboardData | null>(null);
-  const [scores, setScores] = useState<ScoresData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [autoRefresh, setAutoRefresh] = useState(false);
-  const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
-  const [secondsAgo, setSecondsAgo] = useState(0);
-  const controllerRef = useRef<AbortController | null>(null);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
+interface FetchState {
+  data: DashboardData | null;
+  scores: ScoresData | null;
+  loading: boolean;
+  error: string | null;
+  lastRefresh: Date;
+}
 
-  const fetchData = useCallback(async (h: number, signal?: AbortSignal) => {
+const fetchStore = {
+  snapshot: {
+    data: null as DashboardData | null,
+    scores: null as ScoresData | null,
+    loading: true,
+    error: null as string | null,
+    lastRefresh: new Date(),
+  } satisfies FetchState as FetchState,
+  listeners: new Set<() => void>(),
+  controller: null as AbortController | null,
+
+  subscribe(cb: () => void) {
+    this.listeners.add(cb);
+    return () => { this.listeners.delete(cb); };
+  },
+  getSnapshot() {
+    return this.snapshot;
+  },
+  update(partial: Partial<FetchState>) {
+    this.snapshot = { ...this.snapshot, ...partial };
+    queueMicrotask(() => { for (const cb of this.listeners) cb(); });
+  },
+  async fetch(h: number) {
+    this.controller?.abort();
+    const c = new AbortController();
+    this.controller = c;
+    this.update({ loading: true });
     try {
       const [dashRes, scoreRes] = await Promise.all([
-        fetch(`/api/dashboard?hours=${h}`, { signal }),
-        fetch("/api/dashboard/scores", { signal }),
+        fetch(`/api/dashboard?hours=${h}`, { signal: c.signal }),
+        fetch("/api/dashboard/scores", { signal: c.signal }),
       ]);
       if (!dashRes.ok || !scoreRes.ok) throw new Error("API error");
       const dashJson = await dashRes.json();
       const scoreJson = await scoreRes.json();
       if (dashJson.error) throw new Error(dashJson.error);
       if (scoreJson.error) throw new Error(scoreJson.error);
-      setData(dashJson);
-      setScores(scoreJson);
-      setError(null);
-      setLastRefresh(new Date());
-    } catch (e: any) {
-      if (e.name !== "AbortError") setError(e.message);
+      this.update({ data: dashJson, scores: scoreJson, error: null, lastRefresh: new Date(), loading: false });
+    } catch (e: unknown) {
+      if (e instanceof Error && e.name !== "AbortError") {
+        this.update({ error: e.message, loading: false });
+      }
     }
-  }, []);
+  },
+};
+
+function DashboardContent() {
+  const [hours, setHours] = useState(24);
+  const [autoRefresh, setAutoRefresh] = useState(false);
+  const [secondsAgo, setSecondsAgo] = useState(0);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const { data, scores, loading, error, lastRefresh } = useSyncExternalStore(
+    fetchStore.subscribe.bind(fetchStore),
+    fetchStore.getSnapshot.bind(fetchStore),
+  );
 
   useEffect(() => {
-    setLoading(true);
-    controllerRef.current?.abort();
-    const c = new AbortController();
-    controllerRef.current = c;
-    fetchData(hours, c.signal).finally(() => setLoading(false));
-    return () => c.abort();
-  }, [hours, fetchData]);
+    fetchStore.fetch(hours);
+  }, [hours]);
 
   useEffect(() => {
     if (tickRef.current) clearInterval(tickRef.current);
@@ -154,14 +188,11 @@ function DashboardContent() {
     if (intervalRef.current) clearInterval(intervalRef.current);
     if (autoRefresh) {
       intervalRef.current = setInterval(() => {
-        controllerRef.current?.abort();
-        const c = new AbortController();
-        controllerRef.current = c;
-        fetchData(hours, c.signal);
+        fetchStore.fetch(hours);
       }, 30000);
     }
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-  }, [autoRefresh, hours, fetchData]);
+  }, [autoRefresh, hours]);
 
   const kpi = data?.kpi;
   const errorColor = kpi ? (kpi.errorRate < 5 ? "var(--quant)" : kpi.errorRate <= 15 ? "var(--hold)" : "var(--sell)") : "var(--text-muted)";

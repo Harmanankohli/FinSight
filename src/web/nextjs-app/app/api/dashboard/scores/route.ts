@@ -25,7 +25,7 @@ export async function GET() {
   }
 
   try {
-    const data = await langfetch("/api/public/scores?limit=500");
+    const data = await langfetch<{ data: LfScore[] }>("/api/public/scores?limit=500");
     const allScores = (data.data || []) as LfScore[];
 
     const ragasScores = allScores.filter(s => {
