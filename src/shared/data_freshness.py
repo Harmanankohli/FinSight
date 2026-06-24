@@ -3,6 +3,7 @@
 Provides helpers to check statement age and data freshness thresholds.
 """
 from datetime import date, datetime
+from typing import Any
 
 
 def statement_age_days(statement_date: date | datetime | str) -> int:
@@ -14,7 +15,7 @@ def statement_age_days(statement_date: date | datetime | str) -> int:
     return (date.today() - statement_date).days
 
 
-def check_freshness(age_days: int) -> dict:
+def check_freshness(age_days: int) -> dict[str, Any]:
     """Return freshness status and warning message if data is stale."""
     if age_days > 365:
         return {
@@ -38,7 +39,7 @@ def check_freshness(age_days: int) -> dict:
     }
 
 
-def get_latest_statement_date(financials: dict) -> date | None:
+def get_latest_statement_date(financials: dict[str, Any]) -> date | None:
     """Extract the most recent statement date from period-keyed financials dict."""
     dates = []
     for period_key in financials:
@@ -50,7 +51,7 @@ def get_latest_statement_date(financials: dict) -> date | None:
     return max(dates) if dates else None
 
 
-def freshness_report(financials: dict) -> dict:
+def freshness_report(financials: dict[str, Any]) -> dict[str, Any]:
     """Build a full freshness report from raw financials data."""
     latest = get_latest_statement_date(financials)
     if latest is None:

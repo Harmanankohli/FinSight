@@ -66,7 +66,7 @@ def _reconfigure_stdio_utf8() -> None:
     """Reconfigure stdout/stderr to UTF-8 (guards against Windows cp1252 errors)."""
     for stream in (sys.stdout, sys.stderr):
         try:
-            stream.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
+            stream.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
         except Exception:
             pass
 

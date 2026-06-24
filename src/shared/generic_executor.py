@@ -42,9 +42,9 @@ class GenericAgentExecutor(AgentExecutor):
 
     def __init__(self, agent: BaseAgent):
         self.agent = agent
-        self._task: asyncio.Task | None = None
+        self._task: asyncio.Task[None] | None = None
 
-    @logged(log_args=False, log_result=False)
+    @logged(log_args=False, log_result=False)  # type: ignore[untyped-decorator]
     async def execute(
         self,
         context: RequestContext,
@@ -63,6 +63,8 @@ class GenericAgentExecutor(AgentExecutor):
         query = context.get_user_input()
         task = context.current_task
         if not task:
+            if context.message is None:
+                raise ValueError("No task or message in RequestContext")
             task = new_task_from_user_message(context.message)
             await event_queue.enqueue_event(task)
 

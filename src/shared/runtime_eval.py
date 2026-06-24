@@ -43,6 +43,7 @@ import asyncio
 import hashlib
 import logging
 import time
+from typing import Any
 
 from shared.settings import (
     EVAL_BURST_LIMIT,
@@ -54,7 +55,7 @@ from shared.settings import (
 logger = logging.getLogger(__name__)
 
 _MIN_RESPONSE_LEN = 80
-_ragas_clients: tuple | None = None
+_ragas_clients: tuple[Any, ...] | None = None
 
 # ---------------------------------------------------------------------------
 # Circuit breaker
@@ -147,7 +148,7 @@ def _record_eval_success() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def _setup_ragas_clients():
+async def _setup_ragas_clients() -> tuple[Any, Any] | None:
     """Return (ragas_llm, ragas_embedder) or None if dependencies are missing."""
     global _ragas_clients
     if _ragas_clients is not None:
@@ -169,12 +170,12 @@ async def _setup_ragas_clients():
 
             self._model = sentence_transformers.SentenceTransformer(model_name)
 
-        def embed_text(self, text: str) -> list:
-            return self._model.encode(
+        def embed_text(self, text: str, **kwargs: Any) -> list[float]:
+            return self._model.encode(  # type: ignore[no-any-return]
                 text, normalize_embeddings=True, convert_to_tensor=False
             ).tolist()
 
-        async def aembed_text(self, text: str) -> list:
+        async def aembed_text(self, text: str, **kwargs: Any) -> list[float]:
             loop = asyncio.get_event_loop()
             return await loop.run_in_executor(None, self.embed_text, text)
 
@@ -196,13 +197,13 @@ async def _setup_ragas_clients():
         return None
 
 
-async def _score_metric(metric, **kwargs) -> float:
+async def _score_metric(metric: Any, **kwargs: Any) -> float:
     from shared.llm_queue import Priority, llm_queue
 
     async with llm_queue.acquire(Priority.LOW, f"eval/{metric.name}"):
         try:
             result = await metric.ascore(**kwargs)
-            return result.value
+            return float(result.value)
         except Exception:
             logger.warning(
                 "RAGAS metric '%s' ascore failed (kwargs keys: %s)",
@@ -213,17 +214,17 @@ async def _score_metric(metric, **kwargs) -> float:
             raise
 
 
-async def _score_metric_with_timeout(metric, **kwargs) -> float:
+async def _score_metric_with_timeout(metric: Any, **kwargs: Any) -> float:
     """Wrap a metric ascore with a wall-clock deadline so a stuck call can't pin the pool."""
     return await asyncio.wait_for(_score_metric(metric, **kwargs), timeout=EVAL_METRIC_TIMEOUT)
 
 
 async def _run_metrics(
-    pairs: list, agent: str = "", trace_id: str | None = None
+    pairs: list[tuple[Any, dict[str, Any]]], agent: str = "", trace_id: str | None = None
 ) -> dict[str, float]:
     """Run metrics concurrently; push each score to Langfuse as it completes."""
     scores: dict[str, float] = {}
-    task_map: dict[asyncio.Task, str] = {}
+    task_map: dict[asyncio.Task[float], str] = {}
 
     for metric, kw in pairs:
         task = asyncio.create_task(_score_metric_with_timeout(metric, **kw))
@@ -272,7 +273,7 @@ def _push_scores(scores: dict[str, float], trace_id: str | None, agent: str) -> 
             return
         prefix = f"ragas/{agent}" if agent else "ragas"
         for name, value in scores.items():
-            kwargs: dict = {
+            kwargs: dict[str, Any] = {
                 "name": f"{prefix}/{name}",
                 "value": value,
                 "comment": f"agent={agent}" if agent else None,
@@ -453,8 +454,8 @@ async def score_rag_response(
         "response": response,
         "retrieved_contexts": retrieved_contexts,
     }
-    _ui_resp = {"user_input": user_input, "response": response}
-    pairs = [
+    _ui_resp: dict[str, Any] = {"user_input": user_input, "response": response}
+    pairs: list[tuple[Any, dict[str, Any]]] = [
         (Faithfulness(llm=ragas_llm), _ctx_kwargs),
         (ContextPrecisionWithoutReference(llm=ragas_llm), _ctx_kwargs),
         (
@@ -502,7 +503,7 @@ async def score_rag_response(
 async def score_quant_response(
     user_input: str,
     response: str,
-    quant_result: dict,
+    quant_result: dict[str, Any],
     trace_id: str | None = None,
 ) -> None:
     """Score quant agent LLM summary.
@@ -555,7 +556,7 @@ async def score_quant_response(
         logger.info("[quant] No RAGAS scores computed")
 
 
-def _build_quant_reference(result: dict) -> str:
+def _build_quant_reference(result: dict[str, Any]) -> str:
     """Serialize computed quant metrics into a factual reference string."""
     parts: list[str] = []
     m = result.get("metrics", {})
@@ -601,7 +602,7 @@ def _build_quant_reference(result: dict) -> str:
 async def score_analytics_response(
     user_input: str,
     response: str,
-    analytics_result: dict,
+    analytics_result: dict[str, Any],
     trace_id: str | None = None,
 ) -> None:
     """Score analytics agent output.
@@ -667,7 +668,7 @@ async def score_analytics_response(
         logger.info("[analytics] No RAGAS scores computed")
 
 
-def _build_analytics_reference(result: dict) -> str:
+def _build_analytics_reference(result: dict[str, Any]) -> str:
     """Serialize computed analytics data into a factual reference string."""
     parts: list[str] = []
     trend = result.get("trend_analysis") or {}
@@ -717,7 +718,7 @@ def _build_analytics_reference(result: dict) -> str:
 async def score_reviewer_response(
     user_input: str,
     response: str,
-    reviewer_result: dict,
+    reviewer_result: dict[str, Any],
     trace_id: str | None = None,
 ) -> None:
     """Score reviewer agent output.
@@ -784,7 +785,7 @@ async def score_reviewer_response(
         logger.info("[reviewer] No RAGAS scores computed")
 
 
-def _build_reviewer_reference(result: dict) -> str:
+def _build_reviewer_reference(result: dict[str, Any]) -> str:
     """Serialize reviewer output into a factual reference string."""
     parts: list[str] = []
     verdict = result.get("verdict")
@@ -875,7 +876,7 @@ async def score_sentiment_response(
             "response": response,
             "retrieved_contexts": retrieved_contexts,
         }
-        pairs: list = [
+        pairs: list[tuple[Any, dict[str, Any]]] = [
             (
                 DomainSpecificRubrics(
                     name="macro_regime_analysis",
@@ -923,7 +924,7 @@ async def score_sentiment_response(
 # ---------------------------------------------------------------------------
 
 
-def score_quant_deterministic(quant_result: dict) -> dict:
+def score_quant_deterministic(quant_result: dict[str, Any]) -> dict[str, Any]:
     """Deterministic schema + invariant checks on Quant result — no LLM, no cost.
 
     Validates:
@@ -957,7 +958,7 @@ def score_quant_deterministic(quant_result: dict) -> dict:
         "behavioral": 0.05,
     }
 
-    checks: dict = {}
+    checks: dict[str, Any] = {}
     # signal_scores lives under metrics, not at the top level
     sig = (quant_result.get("metrics") or {}).get("signal_scores") or {}
     checks["signal_scores_present"] = bool(sig)
@@ -997,7 +998,7 @@ def score_quant_deterministic(quant_result: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def score_analytics_deterministic(analytics_result: dict) -> dict:
+def score_analytics_deterministic(analytics_result: dict[str, Any]) -> dict[str, Any]:
     """Deterministic schema + invariant checks on Analytics result — no LLM, no cost.
 
     Validates:
@@ -1013,7 +1014,7 @@ def score_analytics_deterministic(analytics_result: dict) -> dict:
     """
     from datetime import date
 
-    checks: dict = {}
+    checks: dict[str, Any] = {}
 
     conf = analytics_result.get("analytics_confidence")
     checks["confidence_in_range"] = (
@@ -1103,7 +1104,7 @@ def score_analytics_deterministic(analytics_result: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def score_reviewer_deterministic(reviewer_result: dict) -> dict:
+def score_reviewer_deterministic(reviewer_result: dict[str, Any]) -> dict[str, Any]:
     """Deterministic schema + invariant checks on Reviewer result — no LLM, no cost.
 
     Validates:
@@ -1115,7 +1116,7 @@ def score_reviewer_deterministic(reviewer_result: dict) -> dict:
       - recommendation_validation evidence_strength is valid
       - review_summary is non-empty when contradictions or flags exist
     """
-    checks: dict = {}
+    checks: dict[str, Any] = {}
 
     conf = reviewer_result.get("review_confidence")
     checks["confidence_in_range"] = (

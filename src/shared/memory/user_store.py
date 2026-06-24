@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import UTC, datetime
+from typing import Any
 
 from argon2 import PasswordHasher
 
@@ -72,7 +73,7 @@ async def create_user(username: str, password: str, role: str = "user") -> str:
     return user_id
 
 
-async def get_user(user_id: str) -> dict | None:
+async def get_user(user_id: str) -> dict[str, Any] | None:
     """Look up a user by ID. Returns None if not found."""
     await ensure_schema_v4()
     conn = await get_db()
@@ -93,7 +94,7 @@ async def get_user(user_id: str) -> dict | None:
     }
 
 
-async def get_user_by_username(username: str) -> dict | None:
+async def get_user_by_username(username: str) -> dict[str, Any] | None:
     """Look up a user by username (case-insensitive). Returns None if not found."""
     await ensure_schema_v4()
     conn = await get_db()
@@ -114,7 +115,7 @@ async def get_user_by_username(username: str) -> dict | None:
     }
 
 
-async def verify_password(username: str, password: str) -> dict | None:
+async def verify_password(username: str, password: str) -> dict[str, Any] | None:
     """Verify a username/password combo. Returns user dict on success, None on failure."""
     user = await get_user_by_username(username)
     if not user:
@@ -174,7 +175,7 @@ async def is_refresh_token_revoked(jti: str) -> bool:
     return bool(row[0])
 
 
-async def get_refresh_token(jti: str) -> dict | None:
+async def get_refresh_token(jti: str) -> dict[str, Any] | None:
     """Get full refresh token record."""
     await ensure_schema_v4()
     conn = await get_db()

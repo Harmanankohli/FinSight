@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from shared.settings import get_settings
 
@@ -96,7 +96,7 @@ def verify_user_token(token: str) -> Principal:
     raise AuthError("invalid token") from last
 
 
-def decode_refresh_token(token: str) -> dict:
+def decode_refresh_token(token: str) -> dict[str, Any]:
     """Decode a refresh token, returning the payload dict.
 
     Raises AuthError on failure.

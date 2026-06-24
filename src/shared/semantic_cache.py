@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 import time
 from datetime import date
+from typing import Any
 from uuid import uuid4
 
 logger = logging.getLogger(__name__)
@@ -43,8 +44,8 @@ class SemanticCache:
     ):
         self._threshold = threshold
         self._ttl = ttl_hours * 3600
-        self._col = None
-        self._embedder = None
+        self._col: Any = None
+        self._embedder: Any = None
         self._init_started = False
 
     # Lazy initialisation: Chroma client + embedding model are created on first
@@ -81,7 +82,7 @@ class SemanticCache:
             return None
         try:
             emb = self._embedder.encode(query).tolist()
-            _where: dict = {"date": _today_key()}
+            _where: dict[str, str] = {"date": _today_key()}
             if user_id:
                 _where["user_id"] = user_id
             results = self._col.query(
@@ -102,7 +103,8 @@ class SemanticCache:
                     logger.debug(
                         "Semantic cache hit (sim=%.3f) for query: %s", similarity, query[:60]
                     )
-                    return meta.get("response")
+                    resp = meta.get("response")
+                    return str(resp) if resp is not None else None
         except Exception as exc:
             logger.warning("SemanticCache.get failed: %s", exc)
         return None

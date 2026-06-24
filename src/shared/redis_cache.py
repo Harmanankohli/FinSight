@@ -17,7 +17,7 @@ import asyncio
 import json
 import logging
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, cast
 
 from shared.ttl_cache import TTLCache
 
@@ -69,7 +69,7 @@ class RedisCache:
                     socket_connect_timeout=2,
                     socket_timeout=2,
                 )
-                await client.ping()
+                await cast(Awaitable[bool], client.ping())
                 self._redis = client
                 logger.info("Redis cache connected (ns=%s)", self._ns)
             except Exception as exc:

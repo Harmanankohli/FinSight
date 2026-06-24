@@ -11,6 +11,7 @@ import logging
 import threading
 import time
 from datetime import datetime
+from typing import Any
 
 from google.adk.agents import LlmAgent
 from google.adk.tools.tool_context import ToolContext
@@ -27,13 +28,13 @@ _s = get_settings()
 _client = SubAgentClient(bearer_token=_s.service_auth_token or None)
 
 # Capture raw agent responses keyed by session_id for structured storage
-_agent_responses: dict[str, tuple[float, dict[str, dict]]] = {}
+_agent_responses: dict[str, tuple[float, dict[str, dict[str, Any]]]] = {}
 _session_locks: dict[str, asyncio.Lock] = {}
 _session_locks_lock = threading.Lock()
 
 
 # ADK tool function: delegates tasks to sub-agents via A2A
-def _trim_for_llm(agent_name: str, data: dict) -> dict:
+def _trim_for_llm(agent_name: str, data: dict[str, Any]) -> dict[str, Any]:
     """Return a condensed copy of agent output for the orchestrator LLM.
 
     Keeps fields needed by the reviewer tools and key signals for synthesis.
@@ -212,10 +213,10 @@ async def send_message(args: SendMessageInput, tool_context: ToolContext) -> str
     if parsed and not parsed.get("_raw_text") and not parsed.get("error"):
         return json.dumps(_trim_for_llm(resolved, parsed))
 
-    return result
+    return str(result)
 
 
-def pop_agent_responses(session_id: str) -> dict[str, dict]:
+def pop_agent_responses(session_id: str) -> dict[str, dict[str, Any]]:
     """Pop and return captured agent responses for a session. Sweeps stale entries.
 
     Falls back to the most recent entry if exact session_id match fails,
@@ -248,7 +249,7 @@ def pop_agent_responses(session_id: str) -> dict[str, dict]:
     return result
 
 
-def _synthesis_text_from_context(tool_context) -> str:
+def _synthesis_text_from_context(tool_context: ToolContext) -> str:
     """Extract the longest LLM-generated text from the current turn in session events."""
     try:
         events = tool_context.session.events
@@ -279,7 +280,7 @@ async def save_brief(
     recommendation: str,
     confidence: float,
     rationale: str = "",
-    tool_context: ToolContext = None,
+    tool_context: ToolContext | None = None,
 ) -> str:
     """Save the final investment brief for future reference.
 
@@ -295,7 +296,8 @@ async def save_brief(
     Returns:
         Confirmation message.
     """
-    from shared.memory import PerformanceTracker, TickerMemory
+    from shared.memory.performance_tracker import PerformanceTracker
+    from shared.memory.ticker_memory import TickerMemory
 
     session_id = tool_context.session.id if tool_context and tool_context.session else "unknown"
     user_id = tool_context.user_id if tool_context else "default_user"
@@ -382,7 +384,7 @@ async def save_brief(
     return f"Brief saved for {ticker}: {recommendation.upper()} (confidence: {confidence:.2f})"
 
 
-async def load_memory(query: str, tool_context: ToolContext = None) -> str:
+async def load_memory(query: str, tool_context: ToolContext | None = None) -> str:
     """Search past conversations and saved briefs.
 
     Args:
@@ -411,7 +413,7 @@ async def load_memory(query: str, tool_context: ToolContext = None) -> str:
 async def _evaluate_past_recommendations(ticker: str) -> None:
     """Background task: evaluate past recommendations against current prices."""
     try:
-        from shared.memory import PerformanceTracker as _PT
+        from shared.memory.performance_tracker import PerformanceTracker as _PT
 
         pt = _PT()
         results = await pt.evaluate_all()
@@ -543,7 +545,7 @@ async def discover_background() -> None:
     )
 
 
-def _instruction_provider(ctx=None) -> str:
+def _instruction_provider(ctx: Any = None) -> str:
     """Provide the dynamic system prompt, extracting session_id from the ADK context."""
     session_id = None
     if ctx and hasattr(ctx, "session") and ctx.session and hasattr(ctx.session, "id"):
@@ -564,9 +566,9 @@ root_agent = LlmAgent(
         temperature=0.0,
     ),
 )
-root_agent._sub_agent_client = _client
+root_agent._sub_agent_client = _client  # type: ignore[attr-defined]
 
 
-async def start_background_discovery():
+async def start_background_discovery() -> None:
     """Discover sub-agents at startup, called from the Starlette lifespan to avoid import-time side effects."""
     await discover_background()

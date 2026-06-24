@@ -6,6 +6,7 @@ from __future__ import annotations
 import logging
 from io import BytesIO
 from types import SimpleNamespace
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -637,12 +638,12 @@ def _pptx_slide_conclusion(deck: DeckData, h: SimpleNamespace) -> None:
 
 
 def generate_pptx(
-    brief_data: dict,
+    brief_data: dict[str, Any],
     ticker: str,
     recommendation: str,
     confidence: float,
     analysis_date: str,
-    company_info: dict | None = None,
+    company_info: dict[str, Any] | None = None,
 ) -> BytesIO:
     from pptx import Presentation
     from pptx.dml.color import RGBColor
@@ -651,7 +652,7 @@ def generate_pptx(
     from pptx.util import Emu, Inches, Pt
 
     def rgb(hex_str: str) -> RGBColor:
-        return RGBColor.from_string(hex_str)
+        return RGBColor.from_string(hex_str)  # type: ignore[no-any-return,no-untyped-call]
 
     logger.info(
         "Generating PPTX report for %s (recommendation=%s, confidence=%.0f%%)",
@@ -670,7 +671,7 @@ def generate_pptx(
     FONT = "Calibri"
     MONO = "Consolas"
 
-    def add_slide(dark: bool = False):
+    def add_slide(dark: bool = False) -> Any:
         sld = prs.slides.add_slide(blank_layout)
         bg = sld.shapes.add_shape(1, Inches(0), Inches(0), Inches(13.33), Inches(7.5))
         bg.fill.solid()
@@ -679,20 +680,20 @@ def generate_pptx(
         return sld
 
     def _text(
-        slide,
-        left,
-        top,
-        width,
-        height,
-        text,
-        size,
-        bold=False,
-        color=_TEXT,
-        align=PP_ALIGN.LEFT,
-        font=FONT,
-        wrap=True,
-        anchor=MSO_ANCHOR.TOP,
-    ):
+        slide: Any,
+        left: float,
+        top: float,
+        width: float,
+        height: float,
+        text: str,
+        size: int,
+        bold: bool = False,
+        color: str = _TEXT,
+        align: Any = PP_ALIGN.LEFT,
+        font: str = FONT,
+        wrap: bool = True,
+        anchor: Any = MSO_ANCHOR.TOP,
+    ) -> Any:
         box = slide.shapes.add_textbox(Inches(left), Inches(top), Inches(width), Inches(height))
         tf = box.text_frame
         tf.word_wrap = wrap
@@ -712,8 +713,10 @@ def generate_pptx(
         return box
 
     def _multiline(
-        slide, left, top, width, height, lines, size, color=_TEXT, font=FONT, line_spacing=1.5
-    ):
+        slide: Any, left: float, top: float, width: float, height: float,
+        lines: list[str], size: int, color: str = _TEXT, font: str = FONT,
+        line_spacing: float = 1.5
+    ) -> Any:
         box = slide.shapes.add_textbox(Inches(left), Inches(top), Inches(width), Inches(height))
         tf = box.text_frame
         tf.word_wrap = True
@@ -727,7 +730,10 @@ def generate_pptx(
             run.font.name = font
         return box
 
-    def _rounded_rect(slide, left, top, width, height, fill_color, border_color=None):
+    def _rounded_rect(
+        slide: Any, left: float, top: float, width: float, height: float,
+        fill_color: str, border_color: str | None = None
+    ) -> Any:
         shape = slide.shapes.add_shape(
             MSO_SHAPE.ROUNDED_RECTANGLE,
             Inches(left),
@@ -744,7 +750,10 @@ def generate_pptx(
             shape.line.fill.background()
         return shape
 
-    def _slide_label(slide, text, left=0.83, top=0.7, light=False):
+    def _slide_label(
+        slide: Any, text: str, left: float = 0.83, top: float = 0.7,
+        light: bool = False
+    ) -> None:
         _text(
             slide,
             left,
@@ -758,7 +767,10 @@ def generate_pptx(
             font=FONT,
         )
 
-    def _slide_title(slide, text, left=0.83, top=0.95, light=False):
+    def _slide_title(
+        slide: Any, text: str, left: float = 0.83, top: float = 0.95,
+        light: bool = False
+    ) -> None:
         _text(
             slide,
             left,
@@ -772,7 +784,7 @@ def generate_pptx(
             font=FONT,
         )
 
-    def _footer(slide, dark=False):
+    def _footer(slide: Any, dark: bool = False) -> None:
         color = _TEXT_LIGHT if not dark else _TEXT_MID
         _text(slide, 0.83, 7.0, 5, 0.3, "© 2026 Institutional Equity Research", 9, color=color)
         _text(
@@ -787,7 +799,10 @@ def generate_pptx(
             align=PP_ALIGN.RIGHT,
         )
 
-    def _kpi_chip(slide, left, top, width, label, value, context="", positive=True, dark=False):
+    def _kpi_chip(
+        slide: Any, left: float, top: float, width: float, label: str,
+        value: str, context: str = "", positive: bool = True, dark: bool = False
+    ) -> None:
         chip_bg = _NAVY_MID if dark else _SURFACE
         _rounded_rect(slide, left, top, width, 1.2, chip_bg)
         _text(

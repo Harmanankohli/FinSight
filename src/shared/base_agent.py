@@ -33,7 +33,7 @@ class BaseAgent(BaseModel, ABC):
     @asynccontextmanager
     async def _telemetry_span(
         self, span_name: str, query: str
-    ) -> AsyncIterator[tuple[dict | None, Any, str | None]]:
+    ) -> AsyncIterator[tuple[dict[str, str] | None, Any, str | None]]:
         from shared.observability import get_langfuse_client
         from shared.trace_context import extract_trace_ids
 
@@ -54,7 +54,7 @@ class BaseAgent(BaseModel, ABC):
                 trace_ctx = {"trace_id": trace_id, "parent_span_id": span.id}
             yield trace_ctx, span, trace_id
 
-    def _error_response(self, message: str) -> dict:
+    def _error_response(self, message: str) -> dict[str, Any]:
         return {
             "response_type": "text",
             "is_task_complete": True,
@@ -63,7 +63,7 @@ class BaseAgent(BaseModel, ABC):
             "content": message,
         }
 
-    def _data_response(self, data: Any) -> dict:
+    def _data_response(self, data: Any) -> dict[str, Any]:
         return {
             "response_type": "data",
             "is_task_complete": True,
@@ -83,4 +83,5 @@ class BaseAgent(BaseModel, ABC):
           is_error          – True if agent failed
           require_user_input – True if agent needs more info
         """
-        ...
+        raise NotImplementedError
+        yield  # pragma: no cover — makes this an async generator for type-checking

@@ -10,6 +10,7 @@ import logging
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +71,7 @@ class PerformanceTracker:
         return record_id
 
     # Batch-evaluates all unevaluated recommendations by fetching current prices and computing realized_return for each.  # noqa: E501
-    async def evaluate_all(self) -> list[dict]:
+    async def evaluate_all(self) -> list[dict[str, Any]]:
         """Compare all unevaluated recommendations to current prices.
 
         Fetches current price via yfinance, calculates realized_return.
@@ -81,7 +82,7 @@ class PerformanceTracker:
                FROM recommendation_records
                WHERE evaluated_at IS NULL AND price_at_rec IS NOT NULL"""
         )
-        rows = await cursor.fetchall()
+        rows = list(await cursor.fetchall())
         logger.info("Evaluating %d unevaluated recommendations", len(rows))
 
         results = []
@@ -124,7 +125,7 @@ class PerformanceTracker:
         return results
 
     # Computes win rate per recommendation type. BUY correct if price rose (ret > 0), SELL correct if price fell (ret < 0). HOLD always counted as correct.  # noqa: E501
-    async def get_accuracy_stats(self, user_id: str | None = None) -> dict:
+    async def get_accuracy_stats(self, user_id: str | None = None) -> dict[str, dict[str, Any]]:
         """Return win rate by recommendation type.
 
         A BUY is 'correct' if realized_return > 0.
@@ -149,7 +150,7 @@ class PerformanceTracker:
             )
         rows = await cursor.fetchall()
 
-        stats: dict[str, dict] = {}
+        stats: dict[str, dict[str, Any]] = {}
         for rec, ret in rows:
             rec = rec.upper()
             if rec not in stats:
@@ -178,7 +179,7 @@ class PerformanceTracker:
 
     async def get_past_recommendations(
         self, ticker: str, days: int = 30, user_id: str | None = None
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         """Get recommendations for a ticker in the last N days."""
         conn = await get_db(self._db_path)
         cutoff = (datetime.now(IST) - timedelta(days=days)).isoformat()
@@ -224,7 +225,8 @@ class PerformanceTracker:
 
             ticker_obj = yf.Ticker(ticker)
             info = ticker_obj.info
-            return info.get("currentPrice") or info.get("regularMarketPrice")
+            price = info.get("currentPrice") or info.get("regularMarketPrice")
+            return float(price) if price is not None else None
         except Exception:
             logger.warning("Price fetch failed for %s, returning None", ticker)
             return None

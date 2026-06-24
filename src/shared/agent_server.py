@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Sequence
+from typing import Any
 
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
@@ -24,7 +25,7 @@ from shared.generic_executor import GenericAgentExecutor
 logger = logging.getLogger(__name__)
 
 
-def build_auth_middleware(settings, accept=None) -> list:  # type: ignore[type-arg]
+def build_auth_middleware(settings: Any, accept: frozenset[str] | None = None) -> list[Any]:
     """Build auth middleware list from the shared auth toolkit.
 
     Re-exported for backward compatibility with WP 1.4 callers.
@@ -35,14 +36,14 @@ def build_auth_middleware(settings, accept=None) -> list:  # type: ignore[type-a
     return _build(settings, accept=accept)
 
 
-def _health(service_name: str):
-    async def handler(request):
+def _health(service_name: str) -> Callable[..., Any]:
+    async def handler(request: Any) -> JSONResponse:
         return JSONResponse({"status": "ok", "agent": service_name})
 
     return handler
 
 
-async def _release_evals(request):
+async def _release_evals(request: Any) -> JSONResponse:
     from shared.eval_gate import release_evals as _release
 
     n = await _release()
@@ -65,7 +66,7 @@ def build_agent_app(
     agent_card: AgentCard,
     agent: BaseAgent,
     service_name: str,
-    on_startup: Sequence[Callable] = (),
+    on_startup: Sequence[Callable[..., Any]] = (),
     extra_routes: Sequence[Route] = (),
     accept: frozenset[str] | None = None,
 ) -> Starlette:

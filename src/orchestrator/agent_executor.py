@@ -10,6 +10,7 @@ import logging
 import os
 import re
 import uuid
+from typing import Any
 
 from a2a.helpers import (
     new_task_from_user_message,
@@ -24,10 +25,11 @@ from google.genai import types
 from langfuse import propagate_attributes
 
 from orchestrator.agent import pop_agent_responses
-from shared.guardrails import extract_ticker, is_off_topic
+from shared.guardrails import is_off_topic
 from shared.logging_config import logged, logged_sync
 from shared.observability import get_langfuse_client
 from shared.settings import AGENT_SEED_URLS, EVAL_ENABLED
+from shared.ticker_utils import extract_ticker
 from shared.trace_context import current_user_id
 
 logger = logging.getLogger(__name__)
@@ -37,8 +39,8 @@ _SEMANTIC_CACHE_ENABLED = os.environ.get("SEMANTIC_CACHE_ENABLED", "false").lowe
 _semantic_cache = None
 
 
-@logged_sync(log_result=False)
-def _get_semantic_cache():
+@logged_sync(log_result=False)  # type: ignore[untyped-decorator]
+def _get_semantic_cache() -> Any:
     """Lazy-init and return the global SemanticCache instance, or None if disabled."""
     global _semantic_cache
     if _SEMANTIC_CACHE_ENABLED and _semantic_cache is None:
@@ -80,9 +82,9 @@ class FinSightAgentExecutor(AgentExecutor):
     def __init__(self, runner: Runner) -> None:
         """Store the ADK runner reference and initialise task state."""
         self._runner = runner
-        self._task: asyncio.Task | None = None
+        self._task: asyncio.Task[None] | None = None
 
-    @logged()
+    @logged()  # type: ignore[untyped-decorator]
     async def _get_today_cached_text(self, ticker: str, user_id: str) -> str | None:
         """Return today's cached analysis text, or None if not available."""
         import json
@@ -148,7 +150,7 @@ class FinSightAgentExecutor(AgentExecutor):
             return f"**{ticker} — {rec}** (confidence: {conf:.0%})"
         return None
 
-    @logged(log_args=False, log_result=False)
+    @logged(log_args=False, log_result=False)  # type: ignore[untyped-decorator]
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
         """Run the ADK orchestrator agent for a single A2A request with guardrails and caching."""
         self._task = asyncio.current_task()
@@ -160,6 +162,8 @@ class FinSightAgentExecutor(AgentExecutor):
 
         task = context.current_task
         if not task:
+            if context.message is None:
+                raise ValueError("context.message required when no current_task")
             task = new_task_from_user_message(context.message)
             await event_queue.enqueue_event(task)
 
@@ -180,6 +184,8 @@ class FinSightAgentExecutor(AgentExecutor):
         if is_off_topic(original_input):
             task = context.current_task
             if not task:
+                if context.message is None:
+                    raise ValueError("context.message required when no current_task")
                 task = new_task_from_user_message(context.message)
                 await event_queue.enqueue_event(task)
             updater = TaskUpdater(event_queue, task.id, task.context_id)
@@ -189,7 +195,6 @@ class FinSightAgentExecutor(AgentExecutor):
                     "I'm specialized in investment research. "
                     "Please ask about stocks, portfolios, or financial analysis."
                 ),
-                final=True,
             )
             return
 
@@ -203,6 +208,8 @@ class FinSightAgentExecutor(AgentExecutor):
                 if not _valid:
                     task = context.current_task
                     if not task:
+                        if context.message is None:
+                            raise ValueError("context.message required when no current_task")
                         task = new_task_from_user_message(context.message)
                         await event_queue.enqueue_event(task)
                     updater = TaskUpdater(event_queue, task.id, task.context_id)
@@ -212,7 +219,6 @@ class FinSightAgentExecutor(AgentExecutor):
                             f"Ticker '{ticker_hint}' was not found in SEC EDGAR. "
                             "Please verify the ticker symbol and try again."
                         ),
-                        final=True,
                     )
                     return
             except Exception as _e:
@@ -226,6 +232,8 @@ class FinSightAgentExecutor(AgentExecutor):
             if cached_response:
                 task = context.current_task
                 if not task:
+                    if context.message is None:
+                        raise ValueError("context.message required when no current_task")
                     task = new_task_from_user_message(context.message)
                     await event_queue.enqueue_event(task)
                 updater = TaskUpdater(event_queue, task.id, task.context_id)
@@ -236,7 +244,6 @@ class FinSightAgentExecutor(AgentExecutor):
                 await updater.update_status(
                     TaskState.TASK_STATE_COMPLETED,
                     new_text_message(cached_response),
-                    final=True,
                 )
                 return
 
@@ -247,7 +254,6 @@ class FinSightAgentExecutor(AgentExecutor):
                 await updater.update_status(
                     TaskState.TASK_STATE_COMPLETED,
                     new_text_message(cached),
-                    final=True,
                 )
                 return
 
@@ -270,10 +276,12 @@ class FinSightAgentExecutor(AgentExecutor):
             metadata={"ticker": ticker_hint, "context_id": context_id},
         ) as span:
             with propagate_attributes(session_id=context_id, user_id=user_id):
-                collected_events: list = []
+                collected_events: list[Any] = []
                 final_event = None
                 # Main execute loop: run the ADK agent and collect all streaming events
                 try:
+                    if context_id is None:
+                        raise ValueError("context_id is required for runner")
                     async for event in self._runner.run_async(
                         user_id=user_id,
                         session_id=context_id,
@@ -315,14 +323,14 @@ class FinSightAgentExecutor(AgentExecutor):
                     )
 
     # Output guardrails: reject too-short responses, warn when BUY/HOLD/SELL signal is missing
-    @logged(log_result=False)
+    @logged(log_result=False)  # type: ignore[untyped-decorator]
     async def _process_response(
         self,
-        event,
+        event: Any,
         updater: TaskUpdater,
-        task,
-        span=None,
-        trace_id=None,
+        task: Any,
+        span: Any = None,
+        trace_id: str | None = None,
         user_input: str = "",
         user_id: str = "",
         original_input: str = "",
@@ -390,10 +398,9 @@ class FinSightAgentExecutor(AgentExecutor):
         await updater.update_status(
             TaskState.TASK_STATE_COMPLETED,
             new_text_message(text),
-            final=True,
         )
 
-    @logged()
+    @logged()  # type: ignore[untyped-decorator]
     async def ensure_session(self, user_id: str, context_id: str) -> None:
         """Create an ADK session if one does not already exist for this user and context."""
         session = await self._runner.session_service.get_session(
@@ -408,13 +415,13 @@ class FinSightAgentExecutor(AgentExecutor):
                 session_id=context_id,
             )
 
-    async def cancel(self, context, event_queue) -> None:
+    async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
         """Cancel the currently running agent task if it is still in progress."""
         if self._task and not self._task.done():
             self._task.cancel()
 
-    @logged(log_result=False)
-    async def _add_events_to_memory(self, user_id: str, context_id: str, events: list) -> None:
+    @logged(log_result=False)  # type: ignore[untyped-decorator]
+    async def _add_events_to_memory(self, user_id: str, context_id: str, events: list[Any]) -> None:
         """Add the completed session to memory using the standard ADK pattern.
 
         ADK docs prescribe: run agent → get_session() → add_session_to_memory(session).
@@ -468,7 +475,7 @@ class FinSightAgentExecutor(AgentExecutor):
             logger.error("Failed to add session to memory", exc_info=True)
 
     # Label past analysis TODAY (return directly) vs STALE (must re-run agents)
-    @logged(log_result=False)
+    @logged(log_result=False)  # type: ignore[untyped-decorator]
     async def _build_memory_context(self, user_input: str, user_id: str) -> str:
         """Fetch prior analysis and holdings for prompt injection to inform the LLM."""
         """Build compact memory context for prompt injection."""
@@ -521,7 +528,7 @@ class FinSightAgentExecutor(AgentExecutor):
                             f"Do NOT return this as the current recommendation.] {context}"
                         )
 
-        ps = PortfolioStore()
+        ps = PortfolioStore()  # type: ignore[operator]
         holdings = await ps.get_holdings(user_id)
         if holdings:
             parts.append(

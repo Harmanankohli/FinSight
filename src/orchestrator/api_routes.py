@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from typing import Any
 
 import httpx
 from starlette.requests import Request
@@ -24,9 +25,8 @@ logger = logging.getLogger(__name__)
 
 _TICKER_RE = re.compile(r"^[A-Z0-9.\^-]{1,10}$")
 _api_rate_limiter = TokenBucket(rate=10.0, burst=20)
-_ERROR_ENVELOPE = lambda code, msg, status=400: JSONResponse(  # noqa: E731
-    {"error": {"code": code, "message": msg}}, status_code=status
-)
+def _ERROR_ENVELOPE(code: str, msg: str, status: int = 400) -> JSONResponse:
+    return JSONResponse({"error": {"code": code, "message": msg}}, status_code=status)
 
 
 def _user_id(request: Request) -> str | None:
@@ -196,7 +196,7 @@ async def _build_report_response(
 ) -> Response:
     from shared.reports import generate_docx, generate_html, generate_pdf_async, generate_pptx_async
 
-    brief_data: dict = {}
+    brief_data: dict[str, Any] = {}
     if brief_json_str:
         try:
             brief_data = json.loads(brief_json_str)

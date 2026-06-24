@@ -282,7 +282,11 @@ async def insider_signals_node(state: QuantAnalysisState) -> dict:
                 net_shares=summary.get("net_shares"),
                 net_value=summary.get("net_value"),
                 insider_pct_held=insider_pct,
-                activity_level="high" if trade_count >= 5 else "moderate" if trade_count >= 2 else "low",
+                activity_level=(
+                    "high" if trade_count >= 5
+                    else "moderate" if trade_count >= 2
+                    else "low"
+                ),
             ).model_dump(),
         }
     except Exception as e:

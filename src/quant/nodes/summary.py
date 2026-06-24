@@ -481,7 +481,10 @@ async def llm_summary_node(state: QuantAnalysisState) -> dict:
             )
         else:
             _nd = dcf.get("net_debt")
-            _nd_str = f"({'net_cash' if _nd < 0 else 'net_debt'}=${abs(_nd):,.0f})" if _nd is not None else "N/A"
+            _nd_str = (
+                f"({'net_cash' if _nd < 0 else 'net_debt'}=${abs(_nd):,.0f})"
+                if _nd is not None else "N/A"
+            )
             prompt += (
                 f"DCF: intrinsic=${dcf.get('intrinsic_value')}, "
                 f"upside={dcf.get('upside_pct')}%, "

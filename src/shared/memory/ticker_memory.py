@@ -10,6 +10,7 @@ import logging
 import uuid
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +67,7 @@ class TickerMemory:
         response_text: str,
         recommendation: str = "UNKNOWN",
         confidence: float = 0.5,
-        extra_data: dict | None = None,
+        extra_data: dict[str, Any] | None = None,
     ) -> str:
         """Store a minimal brief when no structured InvestmentBrief is available."""
         record_id = str(uuid.uuid4())
@@ -150,7 +151,7 @@ class TickerMemory:
         return True
 
     # Fetches most recent brief for a ticker, ordered by analysis_date then created_at descending.
-    async def get_latest(self, ticker: str, user_id: str | None = None) -> dict | None:
+    async def get_latest(self, ticker: str, user_id: str | None = None) -> dict[str, Any] | None:
         """Get the most recent brief for a ticker."""
         conn = await get_db(self._db_path)
         if user_id:
@@ -190,7 +191,7 @@ class TickerMemory:
     # Returns last N briefs for a ticker, newest first. Used for trend detection and context building.  # noqa: E501
     async def get_history(
         self, ticker: str, limit: int = 10, user_id: str | None = None
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         """Get last N briefs for a ticker, newest first."""
         conn = await get_db(self._db_path)
         if user_id:
@@ -231,7 +232,7 @@ class TickerMemory:
     # Compares latest two briefs on a given field (default: recommendation). Detects upgrades/downgrades across analyses.  # noqa: E501
     async def has_changed(
         self, ticker: str, field: str = "recommendation", *, user_id: str | None = None
-    ) -> dict | None:
+    ) -> dict[str, Any] | None:
         """Compare latest vs previous brief on a field. Returns {old, new, changed}."""
         history = await self.get_history(ticker, limit=2, user_id=user_id)
         if len(history) < 2:

@@ -5,7 +5,7 @@ import atexit
 import json
 import logging
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import yaml
 from mcp import ClientSession
@@ -84,7 +84,10 @@ atexit.register(_shutdown_mcp_sync)
 # Normalises MCP tool responses—which arrive as complex objects with
 # content.text, raw data structs, or JSON strings—into a uniform dict/list/str.
 # Without this, every call site would need its own format sniffing.
-def parse_mcp_result(result: Any) -> dict | list | str:
+_MCPParsed = dict[str, Any] | list[Any] | str | int | float | bool
+
+
+def parse_mcp_result(result: Any) -> _MCPParsed:
     """Parse MCP tool call result into a consistent Python object.
 
     Handles various MCP response formats:
@@ -125,7 +128,7 @@ def parse_mcp_result(result: Any) -> dict | list | str:
                     return item
             elif hasattr(item, "json_result"):
                 try:
-                    return json.loads(item.json_result)
+                    return cast(_MCPParsed, json.loads(item.json_result))
                 except (json.JSONDecodeError, TypeError):
                     pass
             else:
@@ -137,13 +140,13 @@ def parse_mcp_result(result: Any) -> dict | list | str:
         if len(texts) == 1:
             txt = texts[0]
             try:
-                return json.loads(txt)
+                return cast(_MCPParsed, json.loads(txt))
             except (json.JSONDecodeError, TypeError):
-                return txt
+                return cast(_MCPParsed, txt)
 
         for txt in texts:
             try:
-                return json.loads(txt)
+                return cast(_MCPParsed, json.loads(txt))
             except (json.JSONDecodeError, TypeError):
                 continue
 
@@ -239,7 +242,7 @@ class MCPClient:
             result = await session.list_tools()
             tools = result.tools if hasattr(result, "tools") else result
             for tool in tools:
-                tool_name = tool.name if hasattr(tool, "name") else str(tool)
+                tool_name = tool.name if hasattr(tool, "name") else str(tool)  # type: ignore[union-attr]
                 self._tool_registry[tool_name] = server_name
                 self._tool_definitions[tool_name] = tool
                 logger.debug("Discovered tool '%s' on server '%s'", tool_name, server_name)
@@ -331,14 +334,14 @@ class MCPClient:
             if not session:
                 raise MCPClientError(f"Not connected to MCP server: {server_name}")
             result = await session.list_tools()
-            return result.tools if hasattr(result, "tools") else result
-        all_tools = []
+            return result.tools if hasattr(result, "tools") else list(result)
+        all_tools: list[Any] = []
         for name, session in self._sessions.items():
             try:
                 result = await session.list_tools()
                 tools = result.tools if hasattr(result, "tools") else result
                 for t in tools:
-                    t._server_name = name
+                    t._server_name = name  # type: ignore[union-attr]
                 all_tools.extend(tools)
             except Exception as e:
                 logger.warning("Failed to list tools on '%s': %s", name, e)
@@ -350,7 +353,7 @@ class MCPClient:
             if server_name
             else list(self._sessions.items())
         )
-        resources = []
+        resources: list[Any] = []
         for name, session in sessions:
             if not session:
                 continue
@@ -374,7 +377,7 @@ class MCPClient:
             if not session:
                 continue
             try:
-                return await session.read_resource(uri)
+                return await session.read_resource(uri)  # type: ignore[arg-type]
             except Exception as e:
                 logger.debug("Failed to read resource '%s' on '%s': %s", uri, name, e)
         raise MCPClientError(f"Resource '{uri}' not found on any connected server")

@@ -9,6 +9,7 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +22,7 @@ class PortfolioStore:
     def __init__(self, db_path: Path = DB_PATH):
         self._db_path = db_path
 
-    async def get_profile(self, user_id: str) -> dict | None:
+    async def get_profile(self, user_id: str) -> dict[str, Any] | None:
         """Get a user's profile including holdings, risk profile, and horizon."""
         conn = await get_db(self._db_path)
         cursor = await conn.execute(
@@ -95,7 +96,8 @@ class PortfolioStore:
         """Get a user's current portfolio holdings."""
         profile = await self.get_profile(user_id)
         if profile:
-            return profile["holdings"]
+            holdings: list[str] = profile["holdings"]
+            return holdings
         return []
 
     # Simple write — replaces holdings outright via upsert (INSERT ... ON CONFLICT DO UPDATE).

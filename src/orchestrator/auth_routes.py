@@ -55,7 +55,7 @@ async def _check_lockout(username: str, ip: str) -> bool:
         return not await bucket.try_acquire()
 
 
-def _prune_login_buckets():
+def _prune_login_buckets() -> None:
     """Prune login buckets when cache exceeds 1000 entries or entries are older than 30 min."""
     now = time.monotonic()
     stale_cutoff = now - 1800
@@ -68,9 +68,8 @@ def _prune_login_buckets():
             _login_buckets.pop(k, None)
 
 
-_ERROR_ENVELOPE = lambda code, msg, status=400: JSONResponse(  # noqa: E731
-    {"error": {"code": code, "message": msg}}, status_code=status
-)
+def _ERROR_ENVELOPE(code: str, msg: str, status: int = 400) -> JSONResponse:
+    return JSONResponse({"error": {"code": code, "message": msg}}, status_code=status)
 
 
 def _client_ip(request: Request) -> str:

@@ -5,10 +5,12 @@ from __future__ import annotations
 
 import logging
 from io import BytesIO
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 from shared.reports.deck_model import DeckData
+from shared.reports.deck_model import Section as DeckSection
 from shared.reports.extraction import _extract_deck_data
 
 # ── Colour palette (kept for backward compat) ─────────────────────────────────
@@ -34,12 +36,12 @@ _SIGNAL_COLOURS = {
 
 
 def _extract_docx_content(
-    brief_data: dict,
+    brief_data: dict[str, Any],
     ticker: str,
     recommendation: str,
     confidence: float,
     analysis_date: str,
-    company_info: dict | None = None,
+    company_info: dict[str, Any] | None = None,
 ) -> DeckData:
     """Wrapper for DOCX — reuses the deck extractor."""
     return _extract_deck_data(
@@ -48,12 +50,12 @@ def _extract_docx_content(
 
 
 def generate_docx(
-    brief_data: dict,
+    brief_data: dict[str, Any],
     ticker: str,
     recommendation: str,
     confidence: float,
     analysis_date: str,
-    company_info: dict | None = None,
+    company_info: dict[str, Any] | None = None,
 ) -> BytesIO:
     from docx import Document
     from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -80,7 +82,7 @@ def generate_docx(
         section.right_margin = Inches(1)
 
     def set_run_style(
-        run,
+        run: Any,
         size: int,
         bold: bool = False,
         color: str = _TEXT,
@@ -178,16 +180,17 @@ def generate_docx(
         doc.add_paragraph()
 
     # ── Analysis sections ─────────────────────────────────────────────────────
-    for section in deck.sections:
-        if not section.title and not section.body:
+    deck_section: DeckSection
+    for deck_section in deck.sections:
+        if not deck_section.title and not deck_section.body:
             continue
-        if section.title:
-            h = doc.add_heading(section.title, level=2)
+        if deck_section.title:
+            h = doc.add_heading(deck_section.title, level=2)
             for run in h.runs:
                 run.font.color.rgb = rgb(_DOCX_BLUE)
                 run.font.name = "Calibri"
-        if section.body:
-            for block in section.body.split("\n\n"):
+        if deck_section.body:
+            for block in deck_section.body.split("\n\n"):
                 block = block.strip()
                 if not block:
                     continue

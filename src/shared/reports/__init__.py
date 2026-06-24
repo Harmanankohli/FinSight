@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 from io import BytesIO
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +24,7 @@ from shared.reports.pptx_renderer import generate_pptx as _legacy_generate_pptx
 
 
 def generate_pptx(
-    brief_data: dict,
+    brief_data: dict[str, Any],
     ticker: str,
     recommendation: str,
     confidence: float,
@@ -41,7 +42,7 @@ def generate_pptx(
 
 
 async def generate_pptx_async(
-    brief_data: dict,
+    brief_data: dict[str, Any],
     ticker: str,
     recommendation: str,
     confidence: float,
@@ -59,7 +60,7 @@ async def generate_pptx_async(
 
 
 async def generate_pdf_async(
-    brief_data: dict,
+    brief_data: dict[str, Any],
     ticker: str,
     recommendation: str,
     confidence: float,

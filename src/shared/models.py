@@ -44,9 +44,9 @@ class InvestmentBrief(BaseModel):
     ticker: str
     generated_at: datetime
     query_context: QueryContext
-    rag_insights: RAGInsights  # type: ignore[valid-type]
-    quant_metrics: QuantMetrics  # type: ignore[valid-type]
-    market_context: MarketContext  # type: ignore[valid-type]
+    rag_insights: RAGInsights
+    quant_metrics: QuantMetrics
+    market_context: MarketContext
     final_recommendation: str
     recommendation_rationale: str
     confidence_score: float

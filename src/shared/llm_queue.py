@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import heapq
 import logging
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from enum import IntEnum
 
@@ -43,10 +44,12 @@ class LLMPriorityQueue:
         self._max = max_concurrent
         self._active = 0
         self._seq = 0
-        self._heap: list[tuple[int, int, asyncio.Future]] = []
+        self._heap: list[tuple[int, int, asyncio.Future[None]]] = []
 
     @asynccontextmanager
-    async def acquire(self, priority: Priority = Priority.NORMAL, label: str = ""):
+    async def acquire(
+        self, priority: Priority = Priority.NORMAL, label: str = ""
+    ) -> AsyncIterator[None]:
         await self._enter(priority, label)
         try:
             yield
@@ -65,7 +68,7 @@ class LLMPriorityQueue:
             )
             return
 
-        fut: asyncio.Future = asyncio.get_running_loop().create_future()
+        fut: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         self._seq += 1
         heapq.heappush(self._heap, (int(priority), self._seq, fut))
         logger.info(
