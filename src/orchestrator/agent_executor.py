@@ -481,7 +481,8 @@ class FinSightAgentExecutor(AgentExecutor):
         """Build compact memory context for prompt injection."""
         from datetime import datetime
 
-        from shared.memory import PortfolioStore, TickerMemory
+        from shared.memory.portfolio_store import PortfolioStore
+        from shared.memory.ticker_memory import TickerMemory
         from shared.settings import IST
         from shared.ticker_utils import extract_ticker
 
@@ -528,7 +529,7 @@ class FinSightAgentExecutor(AgentExecutor):
                             f"Do NOT return this as the current recommendation.] {context}"
                         )
 
-        ps = PortfolioStore()  # type: ignore[operator]
+        ps = PortfolioStore()
         holdings = await ps.get_holdings(user_id)
         if holdings:
             parts.append(
@@ -543,7 +544,9 @@ class FinSightAgentExecutor(AgentExecutor):
         """Parse response and store brief + portfolio + performance record."""
         from datetime import datetime
 
-        from shared.memory import PerformanceTracker, PortfolioStore, TickerMemory
+        from shared.memory.performance_tracker import PerformanceTracker
+        from shared.memory.portfolio_store import PortfolioStore
+        from shared.memory.ticker_memory import TickerMemory
         from shared.models import QueryContext
         from shared.settings import IST
         from shared.ticker_utils import extract_ticker

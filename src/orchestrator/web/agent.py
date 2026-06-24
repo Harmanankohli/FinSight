@@ -8,6 +8,7 @@ import asyncio
 import logging
 import re
 from pathlib import Path
+from typing import Any
 
 from shared.bootstrap import bootstrap
 
@@ -39,7 +40,7 @@ async def _release_sub_agent_evals() -> None:
                 logger.debug("release-evals failed for %s (non-fatal)", base)
 
 
-async def _memory_cache_callback(callback_context) -> types.Content | None:
+async def _memory_cache_callback(callback_context: Any) -> types.Content | None:
     """Before-agent callback: discover sub-agents on first call,
     then short-circuit with today's cached brief if available."""
     global _discovery_done
@@ -57,7 +58,7 @@ async def _memory_cache_callback(callback_context) -> types.Content | None:
     from shared.settings import IST
     from shared.ticker_utils import extract_ticker
 
-    def _log(msg):
+    def _log(msg: str) -> None:
         logger.info(msg)
         with open(_LOG_FILE, "a") as f:
             f.write(f"[cache] {msg}\n")
@@ -154,7 +155,7 @@ with open(_LOG_FILE, "a") as _f:
 # Pulls the user query + the synthesized analysis text from session events.
 # Uses the LONGEST LLM text from the current turn (events after the last user
 # message). This runs in after_agent_callback so the full synthesis is available.
-def _extract_query_and_response(events) -> tuple[str, str]:
+def _extract_query_and_response(events: list[Any]) -> tuple[str, str]:
     """Pull the last user query and the longest LLM response from the current turn."""
     # Find the last user message index so we scope to the current turn only.
     last_user_idx = -1
@@ -185,7 +186,7 @@ def _extract_query_and_response(events) -> tuple[str, str]:
     return user_query, best_text
 
 
-def _is_analysis_turn(events) -> bool:
+def _is_analysis_turn(events: list[Any]) -> bool:
     """True if the current turn produced a fresh analysis.
 
     Detects analysis by checking if send_message was called (normal path),
@@ -248,10 +249,10 @@ def _extract_recommendation_from_text(text: str) -> tuple[str, float]:
     return rec, round(conf, 2)
 
 
-def _collect_agent_extra(session_id: str) -> dict:
+def _collect_agent_extra(session_id: str) -> dict[str, Any]:
     """Pop agent responses for a session and map to brief_json keys."""
     agent_outputs = pop_agent_responses(session_id)
-    extra: dict = {}
+    extra: dict[str, Any] = {}
     for agent_name, data in agent_outputs.items():
         name_lower = agent_name.lower()
         if "rag" in name_lower:
@@ -270,7 +271,7 @@ def _collect_agent_extra(session_id: str) -> dict:
     return extra
 
 
-async def _auto_save_brief(session, user_query: str, response_text: str) -> None:
+async def _auto_save_brief(session: Any, user_query: str, response_text: str) -> None:
     """Auto-save the investment brief after the turn completes.
 
     Extracts BUY/HOLD/SELL and confidence from the full response text,
@@ -279,7 +280,8 @@ async def _auto_save_brief(session, user_query: str, response_text: str) -> None
     """
     from datetime import datetime
 
-    from shared.memory import PerformanceTracker, TickerMemory
+    from shared.memory.performance_tracker import PerformanceTracker
+    from shared.memory.ticker_memory import TickerMemory
     from shared.settings import IST
     from shared.ticker_utils import extract_ticker
 
@@ -379,7 +381,7 @@ async def _auto_save_brief(session, user_query: str, response_text: str) -> None
 
 
 # ADK invokes this after every agent turn. Non-analysis turns are skipped to avoid polluting long-term memory with casual chitchat queries.  # noqa: E501
-async def _persist_memory_callback(callback_context) -> None:
+async def _persist_memory_callback(callback_context: Any) -> None:
     """Persist session to memory after each agent turn.
 
     This callback is invoked by ADK after every agent invocation.

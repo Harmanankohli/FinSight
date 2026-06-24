@@ -17,14 +17,14 @@ import logging
 
 from google.adk.cli.service_registry import get_service_registry
 
-from shared.memory import SQLiteMemoryService
+from shared.memory.memory_service import SQLiteMemoryService
 
 logger = logging.getLogger(__name__)
 
 registry = get_service_registry()
 
 
-def finsight_memory_factory(uri: str, **kwargs) -> SQLiteMemoryService:
+def finsight_memory_factory(uri: str, **kwargs: object) -> SQLiteMemoryService:
     """Create a SQLiteMemoryService instance."""
     logger.info("Creating SQLiteMemoryService for URI: %s", uri)
     return SQLiteMemoryService()

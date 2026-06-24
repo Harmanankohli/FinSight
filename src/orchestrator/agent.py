@@ -394,6 +394,8 @@ async def load_memory(query: str, tool_context: ToolContext | None = None) -> st
         Matching memory entries as text.
     """
     try:
+        if tool_context is None:
+            return "No memories found."
         response = await tool_context.search_memory(query)
         if not response or not response.memories:
             return "No memories found."
