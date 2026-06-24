@@ -138,7 +138,7 @@ async def agent_health(name: str) -> NoReturn:
     tags=["Reports"],
     summary="Download latest ticker report",
 )
-async def report_latest(symbol: str, format: str) -> NoReturn:
+async def report_latest(symbol: str, format: str) -> None:
     logger.warning(
         "Unimplemented endpoint called: GET /api/reports/ticker/%s/latest/%s", symbol, format
     )
@@ -151,7 +151,7 @@ async def report_latest(symbol: str, format: str) -> NoReturn:
     tags=["Reports"],
     summary="Download report by brief ID",
 )
-async def report_by_id(brief_id: str, format: str) -> NoReturn:
+async def report_by_id(brief_id: str, format: str) -> None:
     logger.warning("Unimplemented endpoint called: GET /api/reports/%s/%s", brief_id, format)
     raise HTTPException(501)
 
