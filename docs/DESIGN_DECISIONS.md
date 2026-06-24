@@ -793,6 +793,56 @@ Ministral's inconsistent `save_brief` calling directly motivated two v1.36 featu
 
 See the relevant sections above for detailed rationale.
 
+## yahooquery Integration — Batch Macro Fetch & Independent Rate Limiter (v2.12)
+
+### Why add a second data library alongside yfinance?
+
+The project used yfinance for all financial data. yfinance's `get_market_summary` made one HTTP call per symbol — 15 calls for 15 macro symbols, each with yfinance's internal rate limiter overhead. `yahooquery` supports batch queries: a single `Ticker` object fetches all 15 symbols in one HTTP call, reducing macro collection from ~15s to ~1s.
+
+### What was added?
+
+- **`mcp_tools/tools/yahooquery.py`**: Batch macro fetch (`_get_macro_data`), `get_analyst_activity` via `grading_history`, `get_valuation_timeseries` via `valuation_measures`, enhanced `get_earnings_history` via `earnings_trend` (forward estimates + EPS revisions).
+- **`_YQ_LIMITER`**: Independent from `_YF_LIMITER` — 4 requests/s burst, 8 burst max. Separate limiter prevents yahooquery batch calls from competing with yfinance calls for rate limit capacity, and the different burst profile (4/s vs yfinance's rate) reflects the different API behavior.
+
+### Why not extend the existing yfinance tools?
+
+The existing yfinance tools are structured as a unified `mcp_tools/tools.py` module. Adding yahooquery as a separate file (`mcp_tools/tools/yahooquery.py`) keeps the batch logic isolated — the rate limiter, error handling, and response parsing differ from yfinance's single-symbol pattern. The MCP server imports yahooquery tools alongside yfinance tools, with `get_shared_mcp()` dispatching to the correct source transparently.
+
+## Dockerfile Standardization & CI Expansion (v2.13)
+
+### Why standardize all Dockerfiles to uv?
+
+Before v2.13, only some Dockerfiles used the uv image (`ghcr.io/astral-sh/uv:latest`); others used bare pip. Standardizing all 7 Dockerfiles (analytics, financial_rag, market_context, mcp_tools, orchestrator, quant, reviewer) to uv provides:
+- **Faster resolution**: uv resolves dependencies ~10-100x faster than pip
+- **Lockfile-driven**: `COPY uv.lock` ensures reproducible builds across all services
+- **Smaller images**: uv's `--no-cache` flag reduces layer size
+- **Consistent pattern**: identical Dockerfile template across all 7 services — reduces maintenance burden when adding/removing dependencies
+
+Analytics and reviewer had no Dockerfiles before v2.13 — they were added as part of the standardization, completing the full 7-service Docker build matrix.
+
+### Why expand CI test deps from slim to full extras?
+
+Previously CI installed only `.[test]` (slim ~15 packages) to avoid pulling PyTorch/CUDA. This meant CI couldn't catch import errors in agent-specific code. The expansion to `.[test,orchestrator,rag,quant,market,analytics,reviewer,mcp_server]` surfaced 14 test files with missing imports — exactly the kind of silent breakage the slim CI was designed to avoid. The tradeoff is longer install time (~30s with uv cache vs ~5s previously), but the catch is that import errors now fail in CI rather than at runtime.
+
+## Model Change: Ministral-3-14b → liquid/lfm2.5 + qwen3-4b (v2.14)
+
+### Why switch from ministral-3-14b-reasoning to liquid/lfm2.5 + qwen3-4b?
+
+The active `.env` was changed from `mistralai/ministral-3-14b-reasoning` to smaller models for further memory-constrained development:
+
+| Aspect | ministral-3-14b-reasoning | liquid/lfm2.5-1.2b + qwen3-4b |
+|---|---|---|
+| Params | 14B total | 1.2B (liquid) + 4B (qwen) |
+| Inference (M1 MBP 16GB) | ~3-5s per call | ~1-3s per call |
+| Tool-calling reliability | Unreliable (often skips `save_brief`) | Untested — auto-save callback pattern handles skips |
+| RAM usage | ~3-4GB | ~1-2GB |
+
+The move to smaller models is driven by hardware constraints — swapping models in LM Studio without restarting requires sufficient free VRAM. The liquid model is fast enough for sub-agent routing and summarization, while qwen3-4b (same family as qwen3-30b-a3b, proven reliable tool-calling) is scoped to the ADK orchestrator.
+
+### Why keep ministral as the code default?
+
+Same reasoning as previous switches: `src/shared/settings.py` retains `mistralai/ministral-3-14b-reasoning` as the reference model. Developers override via `.env` for local iteration. The qwen3-4b model keeps the qwen family for the orchestrator where tool-calling reliability matters most.
+
 ## RAG Agent Auto-ingest
 
 The RAG agent fetches SEC filings via MCP on first query (`_ensure_ingested`). Was fragile with `json.loads()` on potentially empty MCP responses. Fixed with proper empty-check and `try/except json.JSONDecodeError`.
@@ -3321,8 +3371,9 @@ The model selection history is scattered across multiple non-chronological secti
 | v1.17 | `qwen3-30b-a3b-2507` | LM Studio | ✅ 5-10x faster (5-10s/call), parallel function calling | Major latency improvement, maintained quality |
 | v1.36 | `ministral-3-14b-reasoning` | LM Studio | ⚠️ Faster (3-5s/call) but unreliable save_brief | Per-developer .env override, not code default |
 | v1.36+ | `qwen3-30b-a3b-2507` (default) | LM Studio | ✅ Most tested, reliable tool calling | Code default; local overrides via .env |
+| v2.14 | `liquid/lfm2.5-1.2b` (sub-agents) + `qwen3-4b-2507` (orchestrator) | LM Studio | ⚠️ Smaller/faster (~1-3s/call) but reduced capability | .env override for constrained hardware; code default unchanged |
 
-**Key takeaway**: The project tried 7+ model/provider combinations. Each switch was driven by a specific failure mode (speed, tool-calling reliability, parallel function support). The current combination (LM Studio + qwen3-30b-a3b as default, configurable via .env) gives the best balance of speed and reliability.
+**Key takeaway**: The project tried 8+ model/provider combinations. Each switch was driven by a specific failure mode (speed, tool-calling reliability, parallel function support, memory constraints). The current .env overrides use smaller models (liquid 1.2B + qwen 4B) for faster iteration on constrained hardware, while the code default (ministral-14b / historically qwen3-30b-a3b) remains as the reference—configurable via `.env`.
 
 ---
 

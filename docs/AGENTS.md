@@ -232,7 +232,7 @@ After each response, fires `asyncio.create_task(score_rag_response(...))` with 4
 | Executor | `GenericAgentExecutor(QuantAgent)` in `src/quant/executor.py` |
 | LLM | LM Studio via `langchain-openai` (summary node only; API key from `LLM_API_KEY` env var) |
 | LLM Cache | LangChain `SQLiteCache` — identical inputs reuse cached LLM response |
-| Data Source | MCP (finsight-mcp `get_prices`, `get_financials`, `get_options_chain`, `get_company_filings`, `get_peers`, `get_scenario_shocks`, `get_insider_transactions`) via `get_shared_mcp()` |
+| Data Source | MCP (finsight-mcp `get_prices`, `get_financials`, `get_options_chain`, `get_company_filings`, `get_peers`, `get_scenario_shocks`, `get_insider_transactions`, `get_analyst_activity`, `get_valuation_timeseries`) via `get_shared_mcp()` |
 | Port | 8003 |
 | Agent Card | Built programmatically in `src/quant/server.py` |
 | A2A Endpoint | `POST /a2a` |
@@ -276,7 +276,10 @@ QuantAgent._build_response(query):
           —         ? sector medians computed for relative scoring of fundamentals
           +-- options_flow_node (put/call vol ratio, OI ratio, flow signal, no-data handling)
           +-- insider_signals_node (get_insider_transactions MCP — structured buy/sell data, not Form 4 keyword parsing)
-          +-- analyst_positioning_node (consensus, upside %, short interest, squeeze)
+          +-- analyst_positioning_node (consensus, upside %, short interest, squeeze, grade_momentum,
+          —     forward_estimates, eps_revision_momentum — enriched via MCP get_analyst_activity
+          —     and get_earnings_history, both non-fatal)
+          —     + valuation_history from MCP get_valuation_timeseries (non-fatal)
         ? portfolio_correlation
         ? format_output (8-group weighted voting, sum=1.0)
           (risk_quality 0.15, dcf_value 0.20, fundamental_value 0.13, fundamental_quality 0.12,

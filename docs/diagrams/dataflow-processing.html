@@ -35,7 +35,7 @@ Quant("Quant Agent\n1. MCP prices/financials\n2. 14-node LangGraph DAG\n3. Weigh
 Mkt("Market Context\n1. MCP macro + peers\n2. 3-step parallel collect\n3. CrewAI narrative (CRITICAL)")
 Analytics("Analytics Agent\n1. Trend analysis\n2. Forecast projection\n3. Statistical metrics\n4. Anomaly detection")
 end
-subgraph MCPSources["MCP Data Sources (18 tools)"]
+subgraph MCPSources["MCP Data Sources (20 tools)"]
 
 
 M1("Market\nget_prices / get_financials")
@@ -44,7 +44,8 @@ M3("News\nget_news_sentiment")
 M4("Macro\nget_macro_indicators")
 M5("Options\nget_options_chain")
 M6("Insider\nget_insider_transactions")
-M7("Discovery\nget_peers, shocks\nvalidate, resolve")
+M7("Analyst Activity\nget_analyst_activity\nget_valuation_timeseries")
+M8("Discovery\nget_peers, shocks\nvalidate, resolve")
 end
 StoreAgentOutputs("Agent Output Store\nSQLite (session_id, agent_name)")
 IntegrityGate("Pre-Reviewer Integrity Gate\nvalidate_metric_integrity()\nSharpe, VaR, RSI, MC bounds\nDCF consistency, anomaly checks")
@@ -67,8 +68,9 @@ Quant -- "MCP" --> M1
 Quant -- "MCP" --> M5
 Quant -- "MCP" --> M6
 Quant -- "MCP" --> M7
+Quant -- "MCP" --> M8
 Mkt -- "MCP" --> M4
-Mkt -- "MCP" --> M7
+Mkt -- "MCP" --> M8
 RAG --> StoreAgentOutputs
 Quant --> StoreAgentOutputs
 Mkt --> StoreAgentOutputs
@@ -97,6 +99,7 @@ style M4 fill:#f0ebe3,stroke:#888,color:#1a1a1a
 style M5 fill:#f0ebe3,stroke:#888,color:#1a1a1a
 style M6 fill:#f0ebe3,stroke:#888,color:#1a1a1a
 style M7 fill:#f0ebe3,stroke:#888,color:#1a1a1a
+style M8 fill:#f0ebe3,stroke:#888,color:#1a1a1a
 style Synth fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
 style OutGuard fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
 style MemStore fill:#abebc6,stroke:#1e8449,color:#1a1a1a

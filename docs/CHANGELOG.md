@@ -1,6 +1,128 @@
 ﻿# Changelog
 
-## v2.10 — Comprehensive Codebase Documentation (46cb44e)
+## v2.14 — Model Change to liquid/lfm2.5 + qwen3-4b
+
+### LLM Model Switch (local .env override)
+
+- **`LLM_MODEL`**: `mistralai/ministral-3-14b-reasoning` → `liquid/lfm2.5-1.2b` (~1.2B params). Faster inference at the cost of capability — suitable for routing, summarization, and simpler agent tasks on constrained hardware.
+- **`ADK_MODEL`**: `openai/mistralai/ministral-3-14b-reasoning` → `openai/qwen/qwen3-4b-2507` (~4B params). ADK orchestrator uses a separate model matching the qwen family (proven reliable tool-calling from prior versions) at a smaller footprint.
+- **`LLM_SUMMARY_MODEL`**: `mistralai/ministral-3-14b-reasoning` → `liquid/lfm2.5-1.2b`.
+- Code default in `src/shared/settings.py` remains `mistralai/ministral-3-14b-reasoning` — this is a local `.env` override, same pattern as previous model switches.
+
+## v2.13 — Dockerfile Standardization, CI Expansion, Linting Fixes (32f29b3)
+
+### uv-Based Dockerfiles across 7 Services (32f29b3, e23fbfc)
+
+All Dockerfiles (`src/analytics/Dockerfile`, `src/financial_rag/Dockerfile`, `src/market_context/Dockerfile`, `src/mcp_tools/Dockerfile`, `src/orchestrator/Dockerfile`, `src/quant/Dockerfile`, `src/reviewer/Dockerfile`) standardized to use the uv image (`ghcr.io/astral-sh/uv:latest`) instead of bare pip:
+
+- `COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv` — uv available in all image builds
+- `uv pip install --system --no-cache --extra-index-url https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match ".[svc]"` — faster dependency resolution with pytorch CPU extras
+- `COPY uv.lock ./` alongside `pyproject.toml` — lockfile-driven install for reproducible builds
+- `useradd && chown` chained in the same `RUN` layer — reduces image layers
+
+All 7 services now use an identical Dockerfile pattern. Previously analytics and reviewer had no Dockerfiles; the others used bare pip without uv.
+
+### CI: Test Dependencies Migrated to Full Extras (32f29b3)
+
+- **`.github/workflows/ci.yml`**: Test job replaced `--no-deps -e .` + manual pytest package install with a single `uv pip install -e ".[test,orchestrator,rag,quant,market,analytics,reviewer,mcp_server]"`. This ensures CI tests run against the full dependency tree (includes analytics and reviewer agent frameworks which were previously missing).
+- **Docker build matrix expanded**: Added `analytics-agent` and `reviewer-agent` to the Docker build matrix — all 7 services now build in CI.
+- **`pyproject.toml`**: Added `"src/tests/**/*.py" = ["S101"]` to ruff per-file-ignores (allows `assert` in test code).
+
+### Linting & Cleanup (32f29b3)
+
+Fixed lint warnings across 70+ files: removed unused imports (`financial_rag/executor.py`, `analytics/nodes/anomaly.py`, etc.), fixed line-length violations, removed trailing blank lines. Most were auto-fixed by ruff.
+
+### Docs HTML Sync Script (e23fbfc)
+
+- **`scripts/sync_docs_html.py` (new, 118 lines)**: Converts all `docs/*.md` files to matching `docs/*.html` using `markdown` library with fenced code, tables, and codehilite extensions. Outputs styled HTML with the project's clay/ivory design system, consistent nav bar, and container layout. Run via `uv run python scripts/sync_docs_html.py`.
+
+### Shared Module Lazy Import Recovery (e23fbfc)
+
+- **`src/shared/__init__.py`**: Reverted the explicit re-exports introduced in v2.8 back to `__getattr__`-based lazy imports for heavy modules (`build_agent_app`, `GenericAgentExecutor`, `get_shared_mcp`, `get_langfuse_client`, `init_instrumentation`, all metric computation functions). The v2.8 change to eager imports caused import-time loading of `google.adk`, `sentence-transformers`, and other heavy frameworks when only importing from `shared` — adding ~3s to every CLI startup.
+- **`src/shared/memory/__init__.py`**: Same pattern — `SQLiteMemoryService`, `PerformanceTracker`, `PortfolioStore` moved to lazy `__getattr__` imports, avoiding `google.adk` and `yfinance` import at `from shared.memory import ...` time.
+
+### Test Import Fixes (e23fbfc)
+
+Added missing imports across 14 test files (`test_auth_contract.py`, `test_auth_routes.py`, `test_openapi_spec.py`, `test_settings.py`, `test_web_search_tool.py`, `test_user_store.py`, `test_analytics_nodes.py`, `test_quant_nodes_io.py`, `test_deck_extraction_golden.py`, `test_mcp_tool_shapes.py`, 4 regression tests, `test_memory_store.py`). Most were missing `unittest.mock`, `pytest`, or module-level fixture imports — surfaced by the expanded CI test deps.
+
+- **`src/tests/unit/conftest.py` (new, 26 lines)**: Stubs `langfuse.observe` as an identity decorator for unit tests. Also evicts cached `mcp_tools.tools` submodules so they re-import with the stubbed decorator — prevents `@observe()` from requiring real Langfuse credentials in unit tests.
+
+## v2.12 — yahooquery Secondary Data Source Integration (1217208)
+
+### Batch Macro Fetch via yahooquery
+
+**`src/mcp_tools/tools/market_data.py`**: `_get_macro_impl` rewritten to use `yahooquery.Ticker.history(period="1mo")` — fetches all 15 symbols (4 macro tickers + 11 sector ETFs) in a single HTTP call. Falls back to the original sequential yfinance implementation (`_get_macro_impl_yfinance`) on any failure. The yahooquery path uses a separate `_YQ_LIMITER` rate limiter, independent from yfinance's limiter.
+
+### New MCP Tool: `get_analyst_activity`
+
+**`src/mcp_tools/tools/sentiment.py`** — new `@app.tool()` returning analyst upgrade/downgrade/initiation history via `yahooquery.Ticker.grading_history`:
+
+| Field | Type | Description |
+|---|---|---|
+| `activities` | list | `{date, firm, action, from_grade, to_grade, prior_target, new_target, target_action}` |
+| `upgrades` | int | Count of upgrades in result set |
+| `downgrades` | int | Count of downgrades in result set |
+| `initiations` | int | Count of initiations in result set |
+
+Default limit 20 activities. Cached 1 hour via `cache_analyst_activity`.
+
+### New MCP Tool: `get_valuation_timeseries`
+
+**`src/mcp_tools/tools/market_data.py`** — new `@app.tool()` returning quarterly valuation multiples history via `yahooquery.Ticker.valuation_measures`:
+
+| Field | Type | Description |
+|---|---|---|
+| `periods` | list | `{date, pe_ratio, ps_ratio, pb_ratio, peg_ratio, enterprise_value, ev_to_ebitda, ev_to_revenue, market_cap}` |
+| `summary` | dict | `{pe_avg_2y, pe_current, pe_percentile}` |
+
+Cached 24 hours via `cache_valuation_ts`.
+
+### Enhanced `get_earnings_history` with Forward Estimates
+
+**`src/mcp_tools/tools/sentiment.py`** — `get_earnings_history` now enriches its response with forward EPS estimates and revision momentum from `yahooquery.Ticker.earnings_trend`:
+
+- `forward_estimates` (list): `{period, end_date, growth, eps_avg, eps_low, eps_high, eps_year_ago, n_analysts, revenue_avg, revenue_growth}`
+- `eps_revisions` (list): `{period, up_last_7d, up_last_30d, down_last_7d, down_last_30d}`
+
+These are fetched in an independent `_fetch_forward_estimates()` try/except, so yfinance failure and yahooquery failure do not affect each other. Forward estimate data cached 1 hour via `cache_earnings_trend`.
+
+### Rate Limiters & Caches
+
+**`src/mcp_tools/infra/rate_limiters.py`**:
+- `_YQ_LIMITER` — new `TokenBucket(rate=4, burst=8)`, independent from yfinance's limiter
+- `cache_analyst_activity` — 1h TTL
+- `cache_valuation_ts` — 24h TTL
+- `cache_earnings_trend` — 1h TTL
+
+### AnalystPositioning Model Extension
+
+**`src/shared/agent_models.py`**: `AnalystPositioning` model extended with 9 new fields:
+
+| Field | Type | Source |
+|---|---|---|
+| `grade_momentum` | Optional[str] | Net upgrades minus downgrades ("bullish", "bearish", "neutral") |
+| `latest_actions` | list[AnalystAction] | Raw grading_history entries |
+| `eps_revision_momentum` | Optional[str] | Net up/down revision ratio |
+| `forward_eps_growth` | Optional[float] | Forward EPS growth rate |
+| `forward_eps_avg` | Optional[float] | Mean forward EPS estimate |
+| `forward_revenue_growth` | Optional[float] | Forward revenue growth rate |
+| `pe_avg_2y` | Optional[float] | 2-year average P/E percentile |
+| `pe_current` | Optional[float] | Current trailing P/E |
+| `pe_percentile` | Optional[float] | Current P/E percentile vs 2-year history |
+
+Also added `AnalystAction`, `AnalystActivityResponse`, `ForwardEstimate`, `EPSRevision`, `ForwardEstimatesResponse` Pydantic models.
+
+### Quant Node Integration
+
+- **`src/quant/nodes/data_fetch.py`**: `analyst_positioning_node` now calls MCP `get_analyst_activity` and `get_earnings_history` (both non-fatal) to enrich positioning with grade momentum, latest actions, and forward estimates.
+- **`src/quant/nodes/data_fetch.py`**: `fundamental_analysis_node` now calls MCP `get_valuation_timeseries` (non-fatal) to populate valuation history.
+- **`src/quant/state.py`**: `QuantAnalysisState` gains a `valuation_history` field.
+
+### Test Coverage
+
+7 new characterization tests in `test_mcp_tool_shapes.py` covering `get_analyst_activity`, `get_valuation_timeseries`, and the extended `get_earnings_history` shape.
+
+## v2.11 — Comprehensive Codebase Documentation (46cb44e)
 
 ### Docstrings & JSDoc Coverage across 181 Files (46cb44e)
 

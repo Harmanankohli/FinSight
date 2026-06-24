@@ -431,9 +431,10 @@ Allowed methods: `GET`, `POST`, `OPTIONS`. Exposed headers: `X-FinSight-User-Id`
 The MCP server applies internal rate limits to upstream data sources:
 
 | Source | Rate | Burst | Applies to |
-|---|---|---|---|
+|---|---|---|---|---|
 | SEC EDGAR | 8 req/s | 10 | Ticker map, submissions, filing content, search |
 | yfinance | 4 req/s | 8 | Prices, financials, options, earnings |
+| yahooquery | 4 req/s | 8 | Batch macro fetch, grading history, valuation measures, earnings trend |
 | RSS feeds | 2 req/s | 4 | News sentiment, Yahoo fallback |
 
 These limits are applied per-process via `TokenBucket` in `src/shared/rate_limiter.py` and are not exposed to API consumers.

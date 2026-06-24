@@ -106,14 +106,17 @@ async def fundamental_analysis_node(state: QuantAnalysisState) -> dict:
         data = json.loads(raw)
         info = data.get("info", {})
 
-        current_price = info.get("currentPrice") or info.get("regularMarketPrice", 0) or 0
-        fifty2w_high = info.get("fiftyTwoWeekHigh") or 0
-        fifty2w_low = info.get("fiftyTwoWeekLow") or 0
-        fifty_day_ma = info.get("fiftyDayAverage") or 0
-        two_hundred_day_ma = info.get("twoHundredDayAverage") or 0
+        current_price = info.get("currentPrice") or info.get("regularMarketPrice") or None
+        fifty2w_high = info.get("fiftyTwoWeekHigh") or None
+        fifty2w_low = info.get("fiftyTwoWeekLow") or None
+        fifty_day_ma = info.get("fiftyDayAverage") or None
+        two_hundred_day_ma = info.get("twoHundredDayAverage") or None
         total_debt = info.get("totalDebt") or 0
         _total_cash = info.get("totalCash") or 0
         raw_de = info.get("debtToEquity")
+        raw_div_yield = info.get("dividendYield")
+        if raw_div_yield is not None and raw_div_yield > 1.0:
+            raw_div_yield = raw_div_yield / 100.0
 
         balance_sheet = data.get("balance_sheet", {})
         liquid_cash = _get_total_liquid_cash(info, balance_sheet)
@@ -139,7 +142,7 @@ async def fundamental_analysis_node(state: QuantAnalysisState) -> dict:
             total_debt=total_debt,
             total_cash=liquid_cash,
             market_cap=info.get("marketCap"),
-            dividend_yield=info.get("dividendYield"),
+            dividend_yield=raw_div_yield,
             payout_ratio=info.get("payoutRatio"),
             high_52w=fifty2w_high,
             low_52w=fifty2w_low,

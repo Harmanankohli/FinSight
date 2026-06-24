@@ -6,7 +6,9 @@
 <title>FinSight &mdash; MCP Server</title>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:1.7;color:#2c2c2c;background:#faf8f5;padding:2rem 1rem}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,
+Arial,sans-serif;font-size:16px;line-height:1.7;
+color:#2c2c2c;background:#faf8f5;padding:2rem 1rem}
 .container{max-width:740px;margin:0 auto}
 h1,h2,h3,h4{font-family:Georgia,"Times New Roman",serif;color:#1a1a1a;line-height:1.3}
 h1{font-size:2.2rem;margin-bottom:.25rem;border-bottom:2px solid #e8dcc8;padding-bottom:.5rem}
@@ -16,7 +18,8 @@ h4{font-size:1.05rem;margin-top:1.2rem;margin-bottom:.4rem}
 p{margin-bottom:1rem;color:#444}
 a{color:#8b6f4e;text-decoration:none;font-weight:500}
 a:hover{text-decoration:underline}
-code{background:#f0ebe3;padding:.15em .4em;border-radius:3px;font-size:.875em;font-family:"SF Mono","Fira Code","Fira Mono",monospace}
+code{background:#f0ebe3;padding:.15em .4em;border-radius:3px;
+font-size:.875em;font-family:"SF Mono","Fira Code","Fira Mono",monospace}
 pre{background:#f0ebe3;padding:1rem;border-radius:6px;overflow-x:auto;margin-bottom:1rem;font-size:.875em;line-height:1.5}
 pre code{background:0 0;padding:0}
 table{width:100%;border-collapse:collapse;margin-bottom:1rem;font-size:.925rem}
@@ -75,7 +78,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <tbody>
 <tr>
 <td>8010</td>
-<td><code>get_prices</code>, <code>get_financials</code>, <code>get_options_chain</code>, <code>get_company_filings</code>, <code>get_financial_filings</code>, <code>get_filing_content</code>, <code>validate_ticker</code>, <code>resolve_company_ticker</code>, <code>full_text_search</code>, <code>get_news_sentiment</code>, <code>get_earnings_calendar</code>, <code>get_insider_transactions</code>, <code>get_peers</code>, <code>get_macro_indicators</code>, <code>get_scenario_shocks</code>, <code>get_sentiment_indicators</code>, <code>get_earnings_history</code>, <code>execute_python</code></td>
+<td><code>get_prices</code>, <code>get_financials</code>, <code>get_options_chain</code>, <code>get_company_filings</code>, <code>get_financial_filings</code>, <code>get_filing_content</code>, <code>validate_ticker</code>, <code>resolve_company_ticker</code>, <code>full_text_search</code>, <code>get_news_sentiment</code>, <code>get_earnings_calendar</code>, <code>get_insider_transactions</code>, <code>get_peers</code>, <code>get_macro_indicators</code>, <code>get_scenario_shocks</code>, <code>get_sentiment_indicators</code>, <code>get_earnings_history</code>, <code>get_analyst_activity</code>, <code>get_valuation_timeseries</code>, <code>execute_python</code></td>
 <td><code>find_agent</code>, <code>resource://agent_cards/list</code>, <code>resource://agent_cards/{name}</code></td>
 </tr>
 </tbody>
@@ -146,6 +149,21 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <td><code>get_insider_transactions</code></td>
 <td>Not cached</td>
 <td>Insider data is queried on demand</td>
+</tr>
+<tr>
+<td><code>get_analyst_activity</code></td>
+<td>1 h</td>
+<td>Yahooquery grading_history</td>
+</tr>
+<tr>
+<td><code>get_valuation_timeseries</code></td>
+<td>24 h</td>
+<td>Yahooquery valuation_measures</td>
+</tr>
+<tr>
+<td><code>get_earnings_trend</code></td>
+<td>1 h</td>
+<td>Yahooquery earnings_trend forward estimates</td>
 </tr>
 </tbody>
 </table>
@@ -306,8 +324,18 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 </tr>
 <tr>
 <td><code>get_earnings_history</code></td>
+<td><code>ticker</code>, <code>limit</code> (8)</td>
+<td>Last N quarters EPS estimates vs actuals, beat rate, average surprise %. Also returns <code>forward_estimates</code> (list of <code>{period, end_date, growth, eps_avg, ...}</code>) and <code>eps_revisions</code> (list of <code>{period, up_last_7d, up_last_30d, down_last_7d, down_last_30d}</code>) from yahooquery <code>earnings_trend</code>. yfinance/yahooquery failures handled independently.</td>
+</tr>
+<tr>
+<td><code>get_analyst_activity</code></td>
+<td><code>ticker</code>, <code>limit</code> (20)</td>
+<td>Recent analyst upgrade/downgrade/initiation history via yahooquery <code>grading_history</code>. Returns <code>activities[]</code> with firm, action, from/to grades, price target changes. Summary: upgrades/downgrades/initiations counts. Cached 1h.</td>
+</tr>
+<tr>
+<td><code>get_valuation_timeseries</code></td>
 <td><code>ticker</code></td>
-<td>Last N quarters EPS estimates vs actuals, beat rate, average surprise %.</td>
+<td>Quarterly valuation multiples history via yahooquery <code>valuation_measures</code>. Returns <code>periods[]</code> with pe_ratio, ps_ratio, pb_ratio, peg_ratio, ev_to_ebitda, ev_to_revenue, market_cap. Summary: pe_avg_2y, pe_current, pe_percentile. Cached 24h.</td>
 </tr>
 </tbody>
 </table>
@@ -368,7 +396,8 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <p>Handles various MCP response formats including <code>.content</code> attributes with text parts, direct dicts, and JSON strings.</p>
 
 <hr>
-<p style="font-size:0.85rem;color:#888;margin-top:1rem">FinSight &mdash; Multi-Agent Investment Research System</p>
+<p style="font-size:0.85rem;color:#888;margin-top:1rem">
+FinSight &mdash; Multi-Agent Investment Research System</p>
 </div>
 </body>
 </html>

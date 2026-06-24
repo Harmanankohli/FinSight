@@ -79,6 +79,10 @@ async def _detect_trends(price_data: dict) -> dict:
                     ma_crossover = "golden_cross"
                 elif prev_sma50 >= prev_sma200 and curr_sma50 < curr_sma200:
                     ma_crossover = "death_cross"
+                elif curr_sma50 > curr_sma200:
+                    ma_crossover = "bullish_alignment"
+                else:
+                    ma_crossover = "bearish_alignment"
 
         ema12 = _ema(closes, 12)
         ema26 = _ema(closes, 26)
@@ -167,13 +171,15 @@ async def _detect_trends(price_data: dict) -> dict:
             strength,
             ma_crossover,
         )
+        daily_roc_20 = roc_20d / 20
+        daily_roc_60 = roc_60d / 60
         return TrendAnalysis(
             trend_direction=direction,
             ma_crossover_signal=ma_crossover,
             momentum_shift="accelerating"
-            if roc_20d > roc_60d
+            if daily_roc_20 > daily_roc_60
             else "decelerating"
-            if roc_20d < roc_60d
+            if daily_roc_20 < daily_roc_60
             else None,
             trend_strength=round(strength, 2),
             supporting_indicators=signals if signals else ["neutral"],

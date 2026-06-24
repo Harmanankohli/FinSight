@@ -77,9 +77,9 @@ subgraph AgentStore["Agent Output Store (v2.7)"]
 AOStore("agent_output_store\nSQLite table\n(session_id, agent_name)")
 end
 subgraph MCPComp["MCP Server (port 8010)"]
-Tools("18 MCP Tools")
+Tools("20 MCP Tools")
 TTL("TTL Caches\nPrices: 60s / Financials: 1h\nFilings: perm / Peers: 24h")
-RL("Rate Limiters (TokenBucket)\nSEC: 8/s | YF: 4/s | RSS: 2/s")
+RL("Rate Limiters (TokenBucket)\nSEC: 8/s | YF: 4/s | YQ: 4/s | RSS: 2/s")
 Edgar("_EdgarClient\nTicker→CIK → paginated fetch")
 Sandbox("Python Sandbox\nAST + subprocess isolation")
 end

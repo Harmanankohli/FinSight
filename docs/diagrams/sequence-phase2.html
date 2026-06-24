@@ -60,6 +60,8 @@ Quant->>MCP: get_prices + get_financials
 MCP->>YF: OHLCV + statements
 YF-->>MCP: Series + financials
 MCP-->>Quant: Metrics input
+Quant->>MCP: get_analyst_activity + get_valuation_timeseries
+MCP-->>Quant: Grade momentum + valuation history
 Quant->>Quant: DCF + technicals + voting
 Quant->>LLM: Summary (CRITICAL)
 LLM-->>Quant: BUY (+0.31)

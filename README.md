@@ -99,7 +99,7 @@ All A2A communication uses `A2ACardResolver` for standard discovery and `ClientF
 
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/) (recommended) or pip
-- [LM Studio](https://lmstudio.ai) with a model loaded (e.g. `ministral-3-14b-reasoning`) on port 1234
+- [LM Studio](https://lmstudio.ai) with a model loaded (e.g. `liquid/lfm2.5-1.2b` for sub-agents, `qwen3-4b-2507` for orchestrator) on port 1234
 
 ### Setup
 
@@ -226,7 +226,7 @@ Key environment variables in `.env`:
 
 | Variable | Default | Description |
 |---|---|---|
-| `ADK_MODEL` | `openai/mistralai/ministral-3-14b-reasoning` | LLM model for the orchestrator |
+| `ADK_MODEL` | `openai/mistralai/ministral-3-14b-reasoning` | LLM model for the orchestrator (`.env` override: `openai/qwen/qwen3-4b-2507`) |
 | `AGENT_SEED_URLS` | `http://localhost:8002,http://localhost:8003,http://localhost:8004,http://localhost:8005,http://localhost:8006` | A2A agent discovery URLs (5 sub-agents) |
 | `A2A_TIMEOUT` | `680.0` | Timeout for A2A communication (seconds) |
 | `LLM_BASE_URL` | `http://localhost:1234/v1` | LM Studio OpenAI-compatible endpoint |

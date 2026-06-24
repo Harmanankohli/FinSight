@@ -274,6 +274,9 @@ Four independent caching tiers reduce latency and external API load:
 | `_cache_submissions` | 6 h | `cik` | EDGAR CIK submissions |
 | `_cache_peers` | 24 h | ticker | yfinance Industry/Sector peer lists |
 | `_cache_shocks` | 7 days | sector | Historical crash returns per sector ETF |
+| `_cache_analyst_activity` | 1 h | `(ticker,)` | Analyst grading history via yahooquery |
+| `_cache_valuation_ts` | 24 h | `(ticker,)` | Quarterly valuation multiples via yahooquery |
+| `_cache_earnings_trend` | 1 h | `(ticker,)` | Forward EPS estimates & revisions via yahooquery |
 
 ### Redis Two-Level Cache (Tier 1C, v1.31)
 
@@ -346,13 +349,17 @@ mcp_tools/
   +-- finsight_server.py   # re-exports get_app() for backward compat
   +-- tools/
   │   +-- agent_registry.py   # find_agent(), resource endpoints
-  │   +-- market_data.py      # get_prices(), get_financials(), get_options_chain()
+  │   +-- market_data.py      # get_prices(), get_financials(), get_options_chain(),
+  │                           #   get_valuation_timeseries() (yahooquery),
+  │                           #   get_macro_indicators() (yahooquery batch fetch, fallback to yfinance)
   │   +-- edgar.py            # SEC EDGAR tools (filings, content, search)
   │   +-- ticker.py           # validate_ticker(), resolve_company_ticker()
-  │   +-- sentiment.py        # news, sentiment indicators, earnings
+  │   +-- sentiment.py        # news, sentiment indicators, earnings history (with forward
+  │                           #   estimates via yahooquery earnings_trend),
+  │                           #   get_analyst_activity() (yahooquery grading_history)
   │   +-- sandbox.py          # execute_python() with AST gate
   +-- infra/
-      +-- rate_limiters.py    # TokenBucket rate limiter
+      +-- rate_limiters.py    # TokenBucket rate limiter (_YF_LIMITER, _YQ_LIMITER for yahooquery)
       +-- embed.py            # sentence-transformers lazy loader
       +-- news_fetch.py       # RSS feed fetchers
 ```
@@ -444,18 +451,18 @@ Process-level side-effects centralized in `src/shared/bootstrap.py`:
 
 ## LLM Configuration
 
-All agents use LM Studio (OpenAI-compatible local API). The `src/shared/settings.py` default is `mistralai/ministral-3-14b-reasoning`. All LLM calls are throttled by `LLMPriorityQueue` (3 priority tiers) to prevent eval scoring from starving production inference; concurrency controlled by `LLM_MAX_CONCURRENT` env var (default 2).
+All agents use LM Studio (OpenAI-compatible local API). The `src/shared/settings.py` default is `mistralai/ministral-3-14b-reasoning`; the active `.env` overrides to `liquid/lfm2.5-1.2b` for sub-agents and `openai/qwen/qwen3-4b-2507` for the ADK orchestrator. All LLM calls are throttled by `LLMPriorityQueue` (3 priority tiers) to prevent eval scoring from starving production inference; concurrency controlled by `LLM_MAX_CONCURRENT` env var (default 2).
 
 ### Cross-Process Eval Coordination
 
 Sub-agent evals are deferred via `src/shared/eval_gate.py` to prevent three sub-agent eval processes from competing with orchestrator synthesis on the shared LM Studio instance. Each sub-agent calls `defer_eval()` instead of `asyncio.create_task()`. The orchestrator's `after_agent_callback` fires `_release_sub_agent_evals()` which POSTs to each sub-agent's `/release-evals` endpoint after synthesis completes. A 120s safety-net auto-release prevents evals from being silently dropped if the orchestrator crashes.
 
-| Agent | Model (default) | Provider |
+| Agent | Model (default / .env override) | Provider |
 |---|---|---|
-| Orchestrator (ADK) | `mistralai/ministral-3-14b-reasoning` | `openai/` prefix (LM Studio endpoint) |
-| RAG (LlamaIndex) | `mistralai/ministral-3-14b-reasoning` | `llama-index-llms-openai-like` |
-| Quant (LangGraph) | `mistralai/ministral-3-14b-reasoning` | `langchain-openai` |
-| Market Context (CrewAI) | `mistralai/ministral-3-14b-reasoning` | CrewLLM (OpenAI-compatible) |
+| Orchestrator (ADK) | `mistralai/ministral-3-14b-reasoning` (default) / `openai/qwen/qwen3-4b-2507` (.env) | `openai/` prefix (LM Studio endpoint) |
+| RAG (LlamaIndex) | `mistralai/ministral-3-14b-reasoning` (default) / `liquid/lfm2.5-1.2b` (.env) | `llama-index-llms-openai-like` |
+| Quant (LangGraph) | `mistralai/ministral-3-14b-reasoning` (default) / `liquid/lfm2.5-1.2b` (.env) | `langchain-openai` |
+| Market Context (CrewAI) | `mistralai/ministral-3-14b-reasoning` (default) / `liquid/lfm2.5-1.2b` (.env) | CrewLLM (OpenAI-compatible) |
 
 ## Observability & Tracing
 

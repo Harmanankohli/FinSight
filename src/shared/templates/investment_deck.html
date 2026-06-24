@@ -960,7 +960,7 @@
       </div>
       <div class="trend-card">
         <div class="trend-label">MA Crossover</div>
-        <div class="trend-value {% if 'golden' in deck.trend_data.crossover.lower() %}trend-bullish{% elif 'death' in deck.trend_data.crossover.lower() %}trend-bearish{% else %}trend-neutral{% endif %}">{{ deck.trend_data.crossover }}</div>
+        <div class="trend-value {% if 'golden' in deck.trend_data.crossover.lower() or 'bullish' in deck.trend_data.crossover.lower() %}trend-bullish{% elif 'death' in deck.trend_data.crossover.lower() or 'bearish' in deck.trend_data.crossover.lower() %}trend-bearish{% else %}trend-neutral{% endif %}">{{ deck.trend_data.crossover }}</div>
       </div>
       <div class="trend-card">
         <div class="trend-label">Momentum</div>

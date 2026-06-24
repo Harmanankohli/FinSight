@@ -23,7 +23,7 @@ src/mcp_tools/
 
 | Port | Tools | Registry |
 |---|---|---|
-| 8010 | `get_prices`, `get_financials`, `get_options_chain`, `get_company_filings`, `get_financial_filings`, `get_filing_content`, `validate_ticker`, `resolve_company_ticker`, `full_text_search`, `get_news_sentiment`, `get_earnings_calendar`, `get_insider_transactions`, `get_peers`, `get_macro_indicators`, `get_scenario_shocks`, `get_sentiment_indicators`, `get_earnings_history`, `execute_python` | `find_agent`, `resource://agent_cards/list`, `resource://agent_cards/{name}` |
+| 8010 | `get_prices`, `get_financials`, `get_options_chain`, `get_company_filings`, `get_financial_filings`, `get_filing_content`, `validate_ticker`, `resolve_company_ticker`, `full_text_search`, `get_news_sentiment`, `get_earnings_calendar`, `get_insider_transactions`, `get_peers`, `get_macro_indicators`, `get_scenario_shocks`, `get_sentiment_indicators`, `get_earnings_history`, `get_analyst_activity`, `get_valuation_timeseries`, `execute_python` | `find_agent`, `resource://agent_cards/list`, `resource://agent_cards/{name}` |
 
 No API keys required (SEC uses public API, news uses RSS feeds). Windows-compatible — `import resource` guarded by platform check.
 
@@ -51,6 +51,9 @@ Health check: `GET http://localhost:8010/health` → `{"status":"ok","agent":"mc
 | `get_peers` | 24 h | yfinance Industry/Sector peer lists |
 | `get_scenario_shocks` | 7 days | Historical crash returns per sector ETF |
 | `get_insider_transactions` | Not cached | Insider data is queried on demand |
+| `get_analyst_activity` | 1 h | Yahooquery grading_history |
+| `get_valuation_timeseries` | 24 h | Yahooquery valuation_measures |
+| `get_earnings_trend` | 1 h | Yahooquery earnings_trend forward estimates |
 
 Cache hits log `"Cache hit for <tool>"` at DEBUG level. Cache misses fetch fresh data and store the result.
 
@@ -107,7 +110,9 @@ RSS feeds: Yahoo Finance, CNBC, MarketWatch, Seeking Alpha. VADER sentiment scor
 | `get_scenario_shocks` | `sector` (optional) | Historical crash returns for 4 scenarios (2008, 2020, dot-com, 2022 mild recession) using sector-specific ETFs (QQQ/XLP/XLF/etc). Cached 7 days. |
 | `get_insider_transactions` | `ticker`, `days` (90) | Structured insider buy/sell data from yfinance `Ticker.insider_transactions`. Returns `transactions` array + `summary` dict with total, buys, sells, direction, net_shares, net_value. |
 | `get_sentiment_indicators` | `ticker` | Short interest %, analyst consensus breakdown (buy/hold/sell), institutional ownership %. |
-| `get_earnings_history` | `ticker` | Last N quarters EPS estimates vs actuals, beat rate, average surprise %. |
+| `get_earnings_history` | `ticker`, `limit` (8) | Last N quarters EPS estimates vs actuals, beat rate, average surprise %. Also returns `forward_estimates` (list of `{period, end_date, growth, eps_avg, ...}`) and `eps_revisions` (list of `{period, up_last_7d, up_last_30d, down_last_7d, down_last_30d}`) from yahooquery `earnings_trend`. yfinance/yahooquery failures handled independently. |
+| `get_analyst_activity` | `ticker`, `limit` (20) | Recent analyst upgrade/downgrade/initiation history via yahooquery `grading_history`. Returns `activities[]` with firm, action, from/to grades, price target changes. Summary: upgrades/downgrades/initiations counts. Cached 1h. |
+| `get_valuation_timeseries` | `ticker` | Quarterly valuation multiples history via yahooquery `valuation_measures`. Returns `periods[]` with pe_ratio, ps_ratio, pb_ratio, peg_ratio, ev_to_ebitda, ev_to_revenue, market_cap. Summary: pe_avg_2y, pe_current, pe_percentile. Cached 24h. |
 
 ### Python Runner Tool
 

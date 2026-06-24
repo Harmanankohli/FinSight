@@ -6,7 +6,9 @@
 <title>FinSight &mdash; Design Decisions</title>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:1.7;color:#2c2c2c;background:#faf8f5;padding:2rem 1rem}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,
+Arial,sans-serif;font-size:16px;line-height:1.7;
+color:#2c2c2c;background:#faf8f5;padding:2rem 1rem}
 .container{max-width:740px;margin:0 auto}
 h1,h2,h3,h4{font-family:Georgia,"Times New Roman",serif;color:#1a1a1a;line-height:1.3}
 h1{font-size:2.2rem;margin-bottom:.25rem;border-bottom:2px solid #e8dcc8;padding-bottom:.5rem}
@@ -16,7 +18,8 @@ h4{font-size:1.05rem;margin-top:1.2rem;margin-bottom:.4rem}
 p{margin-bottom:1rem;color:#444}
 a{color:#8b6f4e;text-decoration:none;font-weight:500}
 a:hover{text-decoration:underline}
-code{background:#f0ebe3;padding:.15em .4em;border-radius:3px;font-size:.875em;font-family:"SF Mono","Fira Code","Fira Mono",monospace}
+code{background:#f0ebe3;padding:.15em .4em;border-radius:3px;
+font-size:.875em;font-family:"SF Mono","Fira Code","Fira Mono",monospace}
 pre{background:#f0ebe3;padding:1rem;border-radius:6px;overflow-x:auto;margin-bottom:1rem;font-size:.875em;line-height:1.5}
 pre code{background:0 0;padding:0}
 table{width:100%;border-collapse:collapse;margin-bottom:1rem;font-size:.925rem}
@@ -731,6 +734,63 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <li><strong>Full synthesis after-turn update</strong> — when <code>save_brief</code> is called early with a placeholder, the post-turn callback overwrites with the longer analysis text from session events</li>
 </ol>
 <p>See the relevant sections above for detailed rationale.</p>
+<h2>yahooquery Integration — Batch Macro Fetch &amp; Independent Rate Limiter (v2.12)</h2>
+<h3>Why add a second data library alongside yfinance?</h3>
+<p>The project used yfinance for all financial data. yfinance's <code>get_market_summary</code> made one HTTP call per symbol — 15 calls for 15 macro symbols, each with yfinance's internal rate limiter overhead. <code>yahooquery</code> supports batch queries: a single <code>Ticker</code> object fetches all 15 symbols in one HTTP call, reducing macro collection from ~15s to ~1s.</p>
+<h3>What was added?</h3>
+<ul>
+<li><strong><code>mcp_tools/tools/yahooquery.py</code></strong>: Batch macro fetch (<code>_get_macro_data</code>), <code>get_analyst_activity</code> via <code>grading_history</code>, <code>get_valuation_timeseries</code> via <code>valuation_measures</code>, enhanced <code>get_earnings_history</code> via <code>earnings_trend</code> (forward estimates + EPS revisions).</li>
+<li><strong><code>_YQ_LIMITER</code></strong>: Independent from <code>_YF_LIMITER</code> — 4 requests/s burst, 8 burst max. Separate limiter prevents yahooquery batch calls from competing with yfinance calls for rate limit capacity, and the different burst profile (4/s vs yfinance's rate) reflects the different API behavior.</li>
+</ul>
+<h3>Why not extend the existing yfinance tools?</h3>
+<p>The existing yfinance tools are structured as a unified <code>mcp_tools/tools.py</code> module. Adding yahooquery as a separate file (<code>mcp_tools/tools/yahooquery.py</code>) keeps the batch logic isolated — the rate limiter, error handling, and response parsing differ from yfinance's single-symbol pattern. The MCP server imports yahooquery tools alongside yfinance tools, with <code>get_shared_mcp()</code> dispatching to the correct source transparently.</p>
+<h2>Dockerfile Standardization &amp; CI Expansion (v2.13)</h2>
+<h3>Why standardize all Dockerfiles to uv?</h3>
+<p>Before v2.13, only some Dockerfiles used the uv image (<code>ghcr.io/astral-sh/uv:latest</code>); others used bare pip. Standardizing all 7 Dockerfiles (analytics, financial_rag, market_context, mcp_tools, orchestrator, quant, reviewer) to uv provides:
+- <strong>Faster resolution</strong>: uv resolves dependencies ~10-100x faster than pip
+- <strong>Lockfile-driven</strong>: <code>COPY uv.lock</code> ensures reproducible builds across all services
+- <strong>Smaller images</strong>: uv's <code>--no-cache</code> flag reduces layer size
+- <strong>Consistent pattern</strong>: identical Dockerfile template across all 7 services — reduces maintenance burden when adding/removing dependencies</p>
+<p>Analytics and reviewer had no Dockerfiles before v2.13 — they were added as part of the standardization, completing the full 7-service Docker build matrix.</p>
+<h3>Why expand CI test deps from slim to full extras?</h3>
+<p>Previously CI installed only <code>.[test]</code> (slim ~15 packages) to avoid pulling PyTorch/CUDA. This meant CI couldn't catch import errors in agent-specific code. The expansion to <code>.[test,orchestrator,rag,quant,market,analytics,reviewer,mcp_server]</code> surfaced 14 test files with missing imports — exactly the kind of silent breakage the slim CI was designed to avoid. The tradeoff is longer install time (~30s with uv cache vs ~5s previously), but the catch is that import errors now fail in CI rather than at runtime.</p>
+<h2>Model Change: Ministral-3-14b → liquid/lfm2.5 + qwen3-4b (v2.14)</h2>
+<h3>Why switch from ministral-3-14b-reasoning to liquid/lfm2.5 + qwen3-4b?</h3>
+<p>The active <code>.env</code> was changed from <code>mistralai/ministral-3-14b-reasoning</code> to smaller models for further memory-constrained development:</p>
+<table>
+<thead>
+<tr>
+<th>Aspect</th>
+<th>ministral-3-14b-reasoning</th>
+<th>liquid/lfm2.5-1.2b + qwen3-4b</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Params</td>
+<td>14B total</td>
+<td>1.2B (liquid) + 4B (qwen)</td>
+</tr>
+<tr>
+<td>Inference (M1 MBP 16GB)</td>
+<td>~3-5s per call</td>
+<td>~1-3s per call</td>
+</tr>
+<tr>
+<td>Tool-calling reliability</td>
+<td>Unreliable (often skips <code>save_brief</code>)</td>
+<td>Untested — auto-save callback pattern handles skips</td>
+</tr>
+<tr>
+<td>RAM usage</td>
+<td>~3-4GB</td>
+<td>~1-2GB</td>
+</tr>
+</tbody>
+</table>
+<p>The move to smaller models is driven by hardware constraints — swapping models in LM Studio without restarting requires sufficient free VRAM. The liquid model is fast enough for sub-agent routing and summarization, while qwen3-4b (same family as qwen3-30b-a3b, proven reliable tool-calling) is scoped to the ADK orchestrator.</p>
+<h3>Why keep ministral as the code default?</h3>
+<p>Same reasoning as previous switches: <code>src/shared/settings.py</code> retains <code>mistralai/ministral-3-14b-reasoning</code> as the reference model. Developers override via <code>.env</code> for local iteration. The qwen3-4b model keeps the qwen family for the orchestrator where tool-calling reliability matters most.</p>
 <h2>RAG Agent Auto-ingest</h2>
 <p>The RAG agent fetches SEC filings via MCP on first query (<code>_ensure_ingested</code>). Was fragile with <code>json.loads()</code> on potentially empty MCP responses. Fixed with proper empty-check and <code>try/except json.JSONDecodeError</code>.</p>
 <h3>RAG Content Ingestion Fix</h3>
@@ -2858,9 +2918,16 @@ For lower_is_better (PE, EV/EBITDA, D/E):
 <td>✅ Most tested, reliable tool calling</td>
 <td>Code default; local overrides via .env</td>
 </tr>
+<tr>
+<td>v2.14</td>
+<td><code>liquid/lfm2.5-1.2b</code> (sub-agents) + <code>qwen3-4b-2507</code> (orchestrator)</td>
+<td>LM Studio</td>
+<td>⚠️ Smaller/faster (~1-3s/call) but reduced capability</td>
+<td>.env override for constrained hardware; code default unchanged</td>
+</tr>
 </tbody>
 </table>
-<p><strong>Key takeaway</strong>: The project tried 7+ model/provider combinations. Each switch was driven by a specific failure mode (speed, tool-calling reliability, parallel function support). The current combination (LM Studio + qwen3-30b-a3b as default, configurable via .env) gives the best balance of speed and reliability.</p>
+<p><strong>Key takeaway</strong>: The project tried 8+ model/provider combinations. Each switch was driven by a specific failure mode (speed, tool-calling reliability, parallel function support, memory constraints). The current .env overrides use smaller models (liquid 1.2B + qwen 4B) for faster iteration on constrained hardware, while the code default (ministral-14b / historically qwen3-30b-a3b) remains as the reference—configurable via <code>.env</code>.</p>
 <hr />
 <h2>Quant Fan-In Data-Readiness Guard (v2.5)</h2>
 <h3>Problem</h3>
@@ -3195,7 +3262,8 @@ For lower_is_better (PE, EV/EBITDA, D/E):
 </ul>
 
 <hr>
-<p style="font-size:0.85rem;color:#888;margin-top:1rem">FinSight &mdash; Multi-Agent Investment Research System</p>
+<p style="font-size:0.85rem;color:#888;margin-top:1rem">
+FinSight &mdash; Multi-Agent Investment Research System</p>
 </div>
 </body>
 </html>

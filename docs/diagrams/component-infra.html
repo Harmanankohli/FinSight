@@ -32,9 +32,9 @@ YF("Yahoo Finance")
 RSS("RSS Feeds")
 subgraph MCPServer["MCP Server — FastMCP SSE (port 8010)"]
 MCP_SSE("SSE Endpoint\n/mcp-sse")
-MCP_Tools("Tool Layer\n18 tools registered")
+MCP_Tools("Tool Layer\n20 tools registered")
 MCP_Cache("TTL Caches\nprices: 60s | financials: 1h\nnews: 5min | filings: perm\npeers: 24h | shocks: 7d")
-MCP_Rate("Rate Limiters\nTokenBucket\nSEC: 8/s | YF: 4/s | RSS: 2/s")
+MCP_Rate("Rate Limiters\nTokenBucket\nSEC: 8/s | YF: 4/s | YQ: 4/s | RSS: 2/s")
 MCP_Edgar("_EdgarClient\nTicker→CIK map\nPaginated + 3-retry")
 MCP_Sandbox("Python Sandbox\nAST safety check\nSubprocess isolation\n25s CPU / 512MB / 0 FD")
 end
@@ -50,14 +50,15 @@ SI_Sett("Settings\nsrc/shared/settings.py\nPydantic-settings config\nPer-agent A
 SI_Boot("Bootstrap\nsrc/shared/bootstrap.py\nStartup side-effects\nEvent loop + logging + env")
 SI_Metric("MetricValue\nsrc/shared/metrics.py\nFloat subclass w/ validation\n.status / .warning / .to_dict()\nUsed by Quant + Analytics")
 end
-subgraph DataTools["MCP Data Tools (18)"]
+subgraph DataTools["MCP Data Tools (20)"]
 T1("Market Data\nget_prices / get_financials")
 T2("SEC Filings\nget_company_filings\nget_filing_content")
 T3("News\nget_news_sentiment")
 T4("Macro\nget_macro_indicators")
 T5("Options\nget_options_chain")
 T6("Insider\nget_insider_transactions")
-T7("Discovery\nget_peers, get_scenario_shocks\nvalidate_ticker, resolve_company_ticker\nfull_text_search\nget_earnings_calendar\nget_sentiment_indicators\nget_earnings_history\nexecute_python, find_agent")
+T7("Analyst Activity\nget_analyst_activity\nget_valuation_timeseries")
+T8("Discovery\nget_peers, get_scenario_shocks\nvalidate_ticker, resolve_company_ticker\nfull_text_search\nget_earnings_calendar\nget_sentiment_indicators\nget_earnings_history\nexecute_python, find_agent")
 end
 MCP_SSE --> MCP_Tools
 MCP_Tools --> MCP_Cache
@@ -97,6 +98,7 @@ style T4 fill:#f0ebe3,stroke:#888,color:#1a1a1a
 style T5 fill:#f0ebe3,stroke:#888,color:#1a1a1a
 style T6 fill:#f0ebe3,stroke:#888,color:#1a1a1a
 style T7 fill:#f0ebe3,stroke:#888,color:#1a1a1a
+style T8 fill:#f0ebe3,stroke:#888,color:#1a1a1a
 </div>
 </div>
 <hr style="margin-top:2rem">

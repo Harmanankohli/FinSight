@@ -164,9 +164,10 @@ The orchestrator allows cross-origin requests from `http://localhost:3000` and `
 The MCP server applies rate limits to upstream data sources:
 
 | Source | Rate | Burst |
-|---|---|---|
+|---|---|---|---|
 | SEC EDGAR | 8 req/s | 10 |
 | yfinance | 4 req/s | 8 |
+| yahooquery | 4 req/s | 8 |
 | RSS feeds | 2 req/s | 4 |
 
 ### Secrets in Environment

@@ -6,7 +6,9 @@
 <title>FinSight &mdash; Agents Reference</title>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:1.7;color:#2c2c2c;background:#faf8f5;padding:2rem 1rem}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,
+Arial,sans-serif;font-size:16px;line-height:1.7;
+color:#2c2c2c;background:#faf8f5;padding:2rem 1rem}
 .container{max-width:740px;margin:0 auto}
 h1,h2,h3,h4{font-family:Georgia,"Times New Roman",serif;color:#1a1a1a;line-height:1.3}
 h1{font-size:2.2rem;margin-bottom:.25rem;border-bottom:2px solid #e8dcc8;padding-bottom:.5rem}
@@ -16,7 +18,8 @@ h4{font-size:1.05rem;margin-top:1.2rem;margin-bottom:.4rem}
 p{margin-bottom:1rem;color:#444}
 a{color:#8b6f4e;text-decoration:none;font-weight:500}
 a:hover{text-decoration:underline}
-code{background:#f0ebe3;padding:.15em .4em;border-radius:3px;font-size:.875em;font-family:"SF Mono","Fira Code","Fira Mono",monospace}
+code{background:#f0ebe3;padding:.15em .4em;border-radius:3px;
+font-size:.875em;font-family:"SF Mono","Fira Code","Fira Mono",monospace}
 pre{background:#f0ebe3;padding:1rem;border-radius:6px;overflow-x:auto;margin-bottom:1rem;font-size:.875em;line-height:1.5}
 pre code{background:0 0;padding:0}
 table{width:100%;border-collapse:collapse;margin-bottom:1rem;font-size:.925rem}
@@ -398,7 +401,7 @@ event 3: artifact_update { data: {...} }    ? returned (actual result)
 </tr>
 <tr>
 <td>Data Source</td>
-<td>MCP (finsight-mcp <code>get_prices</code>, <code>get_financials</code>, <code>get_options_chain</code>, <code>get_company_filings</code>, <code>get_peers</code>, <code>get_scenario_shocks</code>, <code>get_insider_transactions</code>) via <code>get_shared_mcp()</code></td>
+<td>MCP (finsight-mcp <code>get_prices</code>, <code>get_financials</code>, <code>get_options_chain</code>, <code>get_company_filings</code>, <code>get_peers</code>, <code>get_scenario_shocks</code>, <code>get_insider_transactions</code>, <code>get_analyst_activity</code>, <code>get_valuation_timeseries</code>) via <code>get_shared_mcp()</code></td>
 </tr>
 <tr>
 <td>Port</td>
@@ -477,7 +480,10 @@ event 3: artifact_update { data: {...} }    ? returned (actual result)
 <span class="w">          </span><span class="err">—</span><span class="w">         </span><span class="err">?</span><span class="w"> </span><span class="n">sector</span><span class="w"> </span><span class="n">medians</span><span class="w"> </span><span class="n">computed</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">relative</span><span class="w"> </span><span class="n">scoring</span><span class="w"> </span><span class="n">of</span><span class="w"> </span><span class="n">fundamentals</span>
 <span class="w">          </span><span class="o">+--</span><span class="w"> </span><span class="n">options_flow_node</span><span class="w"> </span><span class="p">(</span><span class="n">put</span><span class="o">/</span><span class="n">call</span><span class="w"> </span><span class="n">vol</span><span class="w"> </span><span class="n">ratio</span><span class="p">,</span><span class="w"> </span><span class="n">OI</span><span class="w"> </span><span class="n">ratio</span><span class="p">,</span><span class="w"> </span><span class="n">flow</span><span class="w"> </span><span class="k">signal</span><span class="p">,</span><span class="w"> </span><span class="n">no</span><span class="o">-</span><span class="n">data</span><span class="w"> </span><span class="n">handling</span><span class="p">)</span>
 <span class="w">          </span><span class="o">+--</span><span class="w"> </span><span class="n">insider_signals_node</span><span class="w"> </span><span class="p">(</span><span class="n">get_insider_transactions</span><span class="w"> </span><span class="n">MCP</span><span class="w"> </span><span class="err">—</span><span class="w"> </span><span class="n">structured</span><span class="w"> </span><span class="n">buy</span><span class="o">/</span><span class="n">sell</span><span class="w"> </span><span class="n">data</span><span class="p">,</span><span class="w"> </span><span class="ow">not</span><span class="w"> </span><span class="n">Form</span><span class="w"> </span><span class="mi">4</span><span class="w"> </span><span class="n">keyword</span><span class="w"> </span><span class="n">parsing</span><span class="p">)</span>
-<span class="w">          </span><span class="o">+--</span><span class="w"> </span><span class="n">analyst_positioning_node</span><span class="w"> </span><span class="p">(</span><span class="n">consensus</span><span class="p">,</span><span class="w"> </span><span class="n">upside</span><span class="w"> </span><span class="o">%</span><span class="p">,</span><span class="w"> </span><span class="n">short</span><span class="w"> </span><span class="n">interest</span><span class="p">,</span><span class="w"> </span><span class="n">squeeze</span><span class="p">)</span>
+<span class="w">          </span><span class="o">+--</span><span class="w"> </span><span class="n">analyst_positioning_node</span><span class="w"> </span><span class="p">(</span><span class="n">consensus</span><span class="p">,</span><span class="w"> </span><span class="n">upside</span><span class="w"> </span><span class="o">%</span><span class="p">,</span><span class="w"> </span><span class="n">short</span><span class="w"> </span><span class="n">interest</span><span class="p">,</span><span class="w"> </span><span class="n">squeeze</span><span class="p">,</span><span class="w"> </span><span class="n">grade_momentum</span><span class="p">,</span>
+<span class="w">          </span><span class="err">—</span><span class="w">     </span><span class="n">forward_estimates</span><span class="p">,</span><span class="w"> </span><span class="n">eps_revision_momentum</span><span class="w"> </span><span class="err">—</span><span class="w"> </span><span class="n">enriched</span><span class="w"> </span><span class="n">via</span><span class="w"> </span><span class="n">MCP</span><span class="w"> </span><span class="n">get_analyst_activity</span>
+<span class="w">          </span><span class="err">—</span><span class="w">     </span><span class="ow">and</span><span class="w"> </span><span class="n">get_earnings_history</span><span class="p">,</span><span class="w"> </span><span class="n">both</span><span class="w"> </span><span class="n">non</span><span class="o">-</span><span class="n">fatal</span><span class="p">)</span>
+<span class="w">          </span><span class="err">—</span><span class="w">     </span><span class="o">+</span><span class="w"> </span><span class="n">valuation_history</span><span class="w"> </span><span class="n">from</span><span class="w"> </span><span class="n">MCP</span><span class="w"> </span><span class="n">get_valuation_timeseries</span><span class="w"> </span><span class="p">(</span><span class="n">non</span><span class="o">-</span><span class="n">fatal</span><span class="p">)</span>
 <span class="w">        </span><span class="err">?</span><span class="w"> </span><span class="n">portfolio_correlation</span>
 <span class="w">        </span><span class="err">?</span><span class="w"> </span><span class="n">format_output</span><span class="w"> </span><span class="p">(</span><span class="mi">8</span><span class="o">-</span><span class="n">group</span><span class="w"> </span><span class="n">weighted</span><span class="w"> </span><span class="n">voting</span><span class="p">,</span><span class="w"> </span><span class="n">sum</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>
 <span class="w">          </span><span class="p">(</span><span class="n">risk_quality</span><span class="w"> </span><span class="mf">0.15</span><span class="p">,</span><span class="w"> </span><span class="n">dcf_value</span><span class="w"> </span><span class="mf">0.20</span><span class="p">,</span><span class="w"> </span><span class="n">fundamental_value</span><span class="w"> </span><span class="mf">0.13</span><span class="p">,</span><span class="w"> </span><span class="n">fundamental_quality</span><span class="w"> </span><span class="mf">0.12</span><span class="p">,</span>
@@ -831,7 +837,8 @@ event 3: artifact_update { data: {...} }    ? returned (actual result)
 </table>
 
 <hr>
-<p style="font-size:0.85rem;color:#888;margin-top:1rem">FinSight &mdash; Multi-Agent Investment Research System</p>
+<p style="font-size:0.85rem;color:#888;margin-top:1rem">
+FinSight &mdash; Multi-Agent Investment Research System</p>
 </div>
 </body>
 </html>

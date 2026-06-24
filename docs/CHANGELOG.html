@@ -6,7 +6,9 @@
 <title>FinSight &mdash; FinSight</title>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:1.7;color:#2c2c2c;background:#faf8f5;padding:2rem 1rem}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,
+Arial,sans-serif;font-size:16px;line-height:1.7;
+color:#2c2c2c;background:#faf8f5;padding:2rem 1rem}
 .container{max-width:740px;margin:0 auto}
 h1,h2,h3,h4{font-family:Georgia,"Times New Roman",serif;color:#1a1a1a;line-height:1.3}
 h1{font-size:2.2rem;margin-bottom:.25rem;border-bottom:2px solid #e8dcc8;padding-bottom:.5rem}
@@ -16,7 +18,8 @@ h4{font-size:1.05rem;margin-top:1.2rem;margin-bottom:.4rem}
 p{margin-bottom:1rem;color:#444}
 a{color:#8b6f4e;text-decoration:none;font-weight:500}
 a:hover{text-decoration:underline}
-code{background:#f0ebe3;padding:.15em .4em;border-radius:3px;font-size:.875em;font-family:"SF Mono","Fira Code","Fira Mono",monospace}
+code{background:#f0ebe3;padding:.15em .4em;border-radius:3px;
+font-size:.875em;font-family:"SF Mono","Fira Code","Fira Mono",monospace}
 pre{background:#f0ebe3;padding:1rem;border-radius:6px;overflow-x:auto;margin-bottom:1rem;font-size:.875em;line-height:1.5}
 pre code{background:0 0;padding:0}
 table{width:100%;border-collapse:collapse;margin-bottom:1rem;font-size:.925rem}
@@ -47,7 +50,188 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 </div>
 
 <p>﻿# Changelog</p>
-<h2>v2.10 — Comprehensive Codebase Documentation (46cb44e)</h2>
+<h2>v2.14 — Model Change to liquid/lfm2.5 + qwen3-4b</h2>
+<h3>LLM Model Switch (local .env override)</h3>
+<ul>
+<li><strong><code>LLM_MODEL</code></strong>: <code>mistralai/ministral-3-14b-reasoning</code> → <code>liquid/lfm2.5-1.2b</code> (~1.2B params). Faster inference at the cost of capability — suitable for routing, summarization, and simpler agent tasks on constrained hardware.</li>
+<li><strong><code>ADK_MODEL</code></strong>: <code>openai/mistralai/ministral-3-14b-reasoning</code> → <code>openai/qwen/qwen3-4b-2507</code> (~4B params). ADK orchestrator uses a separate model matching the qwen family (proven reliable tool-calling from prior versions) at a smaller footprint.</li>
+<li><strong><code>LLM_SUMMARY_MODEL</code></strong>: <code>mistralai/ministral-3-14b-reasoning</code> → <code>liquid/lfm2.5-1.2b</code>.</li>
+<li>Code default in <code>src/shared/settings.py</code> remains <code>mistralai/ministral-3-14b-reasoning</code> — this is a local <code>.env</code> override, same pattern as previous model switches.</li>
+</ul>
+<h2>v2.13 — Dockerfile Standardization, CI Expansion, Linting Fixes (32f29b3)</h2>
+<h3>uv-Based Dockerfiles across 7 Services (32f29b3, e23fbfc)</h3>
+<p>All Dockerfiles (<code>src/analytics/Dockerfile</code>, <code>src/financial_rag/Dockerfile</code>, <code>src/market_context/Dockerfile</code>, <code>src/mcp_tools/Dockerfile</code>, <code>src/orchestrator/Dockerfile</code>, <code>src/quant/Dockerfile</code>, <code>src/reviewer/Dockerfile</code>) standardized to use the uv image (<code>ghcr.io/astral-sh/uv:latest</code>) instead of bare pip:</p>
+<ul>
+<li><code>COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv</code> — uv available in all image builds</li>
+<li><code>uv pip install --system --no-cache --extra-index-url https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match ".[svc]"</code> — faster dependency resolution with pytorch CPU extras</li>
+<li><code>COPY uv.lock ./</code> alongside <code>pyproject.toml</code> — lockfile-driven install for reproducible builds</li>
+<li><code>useradd &amp;&amp; chown</code> chained in the same <code>RUN</code> layer — reduces image layers</li>
+</ul>
+<p>All 7 services now use an identical Dockerfile pattern. Previously analytics and reviewer had no Dockerfiles; the others used bare pip without uv.</p>
+<h3>CI: Test Dependencies Migrated to Full Extras (32f29b3)</h3>
+<ul>
+<li><strong><code>.github/workflows/ci.yml</code></strong>: Test job replaced <code>--no-deps -e .</code> + manual pytest package install with a single <code>uv pip install -e ".[test,orchestrator,rag,quant,market,analytics,reviewer,mcp_server]"</code>. This ensures CI tests run against the full dependency tree (includes analytics and reviewer agent frameworks which were previously missing).</li>
+<li><strong>Docker build matrix expanded</strong>: Added <code>analytics-agent</code> and <code>reviewer-agent</code> to the Docker build matrix — all 7 services now build in CI.</li>
+<li><strong><code>pyproject.toml</code></strong>: Added <code>"src/tests/**/*.py" = ["S101"]</code> to ruff per-file-ignores (allows <code>assert</code> in test code).</li>
+</ul>
+<h3>Linting &amp; Cleanup (32f29b3)</h3>
+<p>Fixed lint warnings across 70+ files: removed unused imports (<code>financial_rag/executor.py</code>, <code>analytics/nodes/anomaly.py</code>, etc.), fixed line-length violations, removed trailing blank lines. Most were auto-fixed by ruff.</p>
+<h3>Docs HTML Sync Script (e23fbfc)</h3>
+<ul>
+<li><strong><code>scripts/sync_docs_html.py</code> (new, 118 lines)</strong>: Converts all <code>docs/*.md</code> files to matching <code>docs/*.html</code> using <code>markdown</code> library with fenced code, tables, and codehilite extensions. Outputs styled HTML with the project's clay/ivory design system, consistent nav bar, and container layout. Run via <code>uv run python scripts/sync_docs_html.py</code>.</li>
+</ul>
+<h3>Shared Module Lazy Import Recovery (e23fbfc)</h3>
+<ul>
+<li><strong><code>src/shared/__init__.py</code></strong>: Reverted the explicit re-exports introduced in v2.8 back to <code>__getattr__</code>-based lazy imports for heavy modules (<code>build_agent_app</code>, <code>GenericAgentExecutor</code>, <code>get_shared_mcp</code>, <code>get_langfuse_client</code>, <code>init_instrumentation</code>, all metric computation functions). The v2.8 change to eager imports caused import-time loading of <code>google.adk</code>, <code>sentence-transformers</code>, and other heavy frameworks when only importing from <code>shared</code> — adding ~3s to every CLI startup.</li>
+<li><strong><code>src/shared/memory/__init__.py</code></strong>: Same pattern — <code>SQLiteMemoryService</code>, <code>PerformanceTracker</code>, <code>PortfolioStore</code> moved to lazy <code>__getattr__</code> imports, avoiding <code>google.adk</code> and <code>yfinance</code> import at <code>from shared.memory import ...</code> time.</li>
+</ul>
+<h3>Test Import Fixes (e23fbfc)</h3>
+<p>Added missing imports across 14 test files (<code>test_auth_contract.py</code>, <code>test_auth_routes.py</code>, <code>test_openapi_spec.py</code>, <code>test_settings.py</code>, <code>test_web_search_tool.py</code>, <code>test_user_store.py</code>, <code>test_analytics_nodes.py</code>, <code>test_quant_nodes_io.py</code>, <code>test_deck_extraction_golden.py</code>, <code>test_mcp_tool_shapes.py</code>, 4 regression tests, <code>test_memory_store.py</code>). Most were missing <code>unittest.mock</code>, <code>pytest</code>, or module-level fixture imports — surfaced by the expanded CI test deps.</p>
+<ul>
+<li><strong><code>src/tests/unit/conftest.py</code> (new, 26 lines)</strong>: Stubs <code>langfuse.observe</code> as an identity decorator for unit tests. Also evicts cached <code>mcp_tools.tools</code> submodules so they re-import with the stubbed decorator — prevents <code>@observe()</code> from requiring real Langfuse credentials in unit tests.</li>
+</ul>
+<h2>v2.12 — yahooquery Secondary Data Source Integration (1217208)</h2>
+<h3>Batch Macro Fetch via yahooquery</h3>
+<p><strong><code>src/mcp_tools/tools/market_data.py</code></strong>: <code>_get_macro_impl</code> rewritten to use <code>yahooquery.Ticker.history(period="1mo")</code> — fetches all 15 symbols (4 macro tickers + 11 sector ETFs) in a single HTTP call. Falls back to the original sequential yfinance implementation (<code>_get_macro_impl_yfinance</code>) on any failure. The yahooquery path uses a separate <code>_YQ_LIMITER</code> rate limiter, independent from yfinance's limiter.</p>
+<h3>New MCP Tool: <code>get_analyst_activity</code></h3>
+<p><strong><code>src/mcp_tools/tools/sentiment.py</code></strong> — new <code>@app.tool()</code> returning analyst upgrade/downgrade/initiation history via <code>yahooquery.Ticker.grading_history</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>activities</code></td>
+<td>list</td>
+<td><code>{date, firm, action, from_grade, to_grade, prior_target, new_target, target_action}</code></td>
+</tr>
+<tr>
+<td><code>upgrades</code></td>
+<td>int</td>
+<td>Count of upgrades in result set</td>
+</tr>
+<tr>
+<td><code>downgrades</code></td>
+<td>int</td>
+<td>Count of downgrades in result set</td>
+</tr>
+<tr>
+<td><code>initiations</code></td>
+<td>int</td>
+<td>Count of initiations in result set</td>
+</tr>
+</tbody>
+</table>
+<p>Default limit 20 activities. Cached 1 hour via <code>cache_analyst_activity</code>.</p>
+<h3>New MCP Tool: <code>get_valuation_timeseries</code></h3>
+<p><strong><code>src/mcp_tools/tools/market_data.py</code></strong> — new <code>@app.tool()</code> returning quarterly valuation multiples history via <code>yahooquery.Ticker.valuation_measures</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>periods</code></td>
+<td>list</td>
+<td><code>{date, pe_ratio, ps_ratio, pb_ratio, peg_ratio, enterprise_value, ev_to_ebitda, ev_to_revenue, market_cap}</code></td>
+</tr>
+<tr>
+<td><code>summary</code></td>
+<td>dict</td>
+<td><code>{pe_avg_2y, pe_current, pe_percentile}</code></td>
+</tr>
+</tbody>
+</table>
+<p>Cached 24 hours via <code>cache_valuation_ts</code>.</p>
+<h3>Enhanced <code>get_earnings_history</code> with Forward Estimates</h3>
+<p><strong><code>src/mcp_tools/tools/sentiment.py</code></strong> — <code>get_earnings_history</code> now enriches its response with forward EPS estimates and revision momentum from <code>yahooquery.Ticker.earnings_trend</code>:</p>
+<ul>
+<li><code>forward_estimates</code> (list): <code>{period, end_date, growth, eps_avg, eps_low, eps_high, eps_year_ago, n_analysts, revenue_avg, revenue_growth}</code></li>
+<li><code>eps_revisions</code> (list): <code>{period, up_last_7d, up_last_30d, down_last_7d, down_last_30d}</code></li>
+</ul>
+<p>These are fetched in an independent <code>_fetch_forward_estimates()</code> try/except, so yfinance failure and yahooquery failure do not affect each other. Forward estimate data cached 1 hour via <code>cache_earnings_trend</code>.</p>
+<h3>Rate Limiters &amp; Caches</h3>
+<p><strong><code>src/mcp_tools/infra/rate_limiters.py</code></strong>:
+- <code>_YQ_LIMITER</code> — new <code>TokenBucket(rate=4, burst=8)</code>, independent from yfinance's limiter
+- <code>cache_analyst_activity</code> — 1h TTL
+- <code>cache_valuation_ts</code> — 24h TTL
+- <code>cache_earnings_trend</code> — 1h TTL</p>
+<h3>AnalystPositioning Model Extension</h3>
+<p><strong><code>src/shared/agent_models.py</code></strong>: <code>AnalystPositioning</code> model extended with 9 new fields:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Source</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>grade_momentum</code></td>
+<td>Optional[str]</td>
+<td>Net upgrades minus downgrades ("bullish", "bearish", "neutral")</td>
+</tr>
+<tr>
+<td><code>latest_actions</code></td>
+<td>list[AnalystAction]</td>
+<td>Raw grading_history entries</td>
+</tr>
+<tr>
+<td><code>eps_revision_momentum</code></td>
+<td>Optional[str]</td>
+<td>Net up/down revision ratio</td>
+</tr>
+<tr>
+<td><code>forward_eps_growth</code></td>
+<td>Optional[float]</td>
+<td>Forward EPS growth rate</td>
+</tr>
+<tr>
+<td><code>forward_eps_avg</code></td>
+<td>Optional[float]</td>
+<td>Mean forward EPS estimate</td>
+</tr>
+<tr>
+<td><code>forward_revenue_growth</code></td>
+<td>Optional[float]</td>
+<td>Forward revenue growth rate</td>
+</tr>
+<tr>
+<td><code>pe_avg_2y</code></td>
+<td>Optional[float]</td>
+<td>2-year average P/E percentile</td>
+</tr>
+<tr>
+<td><code>pe_current</code></td>
+<td>Optional[float]</td>
+<td>Current trailing P/E</td>
+</tr>
+<tr>
+<td><code>pe_percentile</code></td>
+<td>Optional[float]</td>
+<td>Current P/E percentile vs 2-year history</td>
+</tr>
+</tbody>
+</table>
+<p>Also added <code>AnalystAction</code>, <code>AnalystActivityResponse</code>, <code>ForwardEstimate</code>, <code>EPSRevision</code>, <code>ForwardEstimatesResponse</code> Pydantic models.</p>
+<h3>Quant Node Integration</h3>
+<ul>
+<li><strong><code>src/quant/nodes/data_fetch.py</code></strong>: <code>analyst_positioning_node</code> now calls MCP <code>get_analyst_activity</code> and <code>get_earnings_history</code> (both non-fatal) to enrich positioning with grade momentum, latest actions, and forward estimates.</li>
+<li><strong><code>src/quant/nodes/data_fetch.py</code></strong>: <code>fundamental_analysis_node</code> now calls MCP <code>get_valuation_timeseries</code> (non-fatal) to populate valuation history.</li>
+<li><strong><code>src/quant/state.py</code></strong>: <code>QuantAnalysisState</code> gains a <code>valuation_history</code> field.</li>
+</ul>
+<h3>Test Coverage</h3>
+<p>7 new characterization tests in <code>test_mcp_tool_shapes.py</code> covering <code>get_analyst_activity</code>, <code>get_valuation_timeseries</code>, and the extended <code>get_earnings_history</code> shape.</p>
+<h2>v2.11 — Comprehensive Codebase Documentation (46cb44e)</h2>
 <h3>Docstrings &amp; JSDoc Coverage across 181 Files (46cb44e)</h3>
 <ul>
 <li><strong>162 Python files (+4,216 lines)</strong>: Added detailed Google-style docstrings with Args, Returns, and Examples to every function, method, and class across all agents, shared modules, MCP servers, and tests.</li>
@@ -1668,7 +1852,8 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 </ul>
 
 <hr>
-<p style="font-size:0.85rem;color:#888;margin-top:1rem">FinSight &mdash; Multi-Agent Investment Research System</p>
+<p style="font-size:0.85rem;color:#888;margin-top:1rem">
+FinSight &mdash; Multi-Agent Investment Research System</p>
 </div>
 </body>
 </html>

@@ -1550,7 +1550,7 @@ def _populate_from_agent_outputs(data: DeckData, brief_data: dict, response_text
         badge = "bullish" if "bull" in td else "expensive" if "bear" in td else "moderate"
         data.scorecard.append(("Analytics Trend", td.replace("_", " ").title(), badge))
         ma_signal = trend.get("ma_crossover_signal")
-        if ma_signal:
+        if ma_signal and ma_signal in ("golden_cross", "death_cross"):
             ma_badge = "bullish" if ma_signal == "golden_cross" else "expensive"
             data.scorecard.append(("MA Crossover", ma_signal.replace("_", " ").title(), ma_badge))
 
@@ -2221,7 +2221,7 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
             td = trend.trend_direction or "neutral"
             badge = "bullish" if "bull" in td else "expensive" if "bear" in td else "moderate"
             data.scorecard.append(("Analytics Trend", td.replace("_", " ").title(), badge))
-            if trend.ma_crossover_signal:
+            if trend.ma_crossover_signal and trend.ma_crossover_signal in ("golden_cross", "death_cross"):
                 badge = "bullish" if trend.ma_crossover_signal == "golden_cross" else "expensive"
                 data.scorecard.append(
                     ("MA Crossover", trend.ma_crossover_signal.replace("_", " ").title(), badge)

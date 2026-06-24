@@ -1,6 +1,6 @@
 # Test Coverage
 
-**~275 test functions (~355 parametrized cases) across 34 test files + offline evaluation driver. v1.39 added DOCX/HTML/PPTX regression tests. Phase 0 added 45 characterization tests (4 files). Phase 3 added auth contract tests (3 files). Phase R added corpus regression harness (1 file). v2.2 added agent output extraction tests (1 file). v2.6 added 5 new test files for Analytics Agent, Reviewer Agent, and new agent models. v2.7 added agent_output_store memory test and Windows/locking fixes. All tests now live under `src/tests/`.**
+**~285 test functions (~370 parametrized cases) across 35 test files + offline evaluation driver. v1.39 added DOCX/HTML/PPTX regression tests. Phase 0 added 45 characterization tests (4 files). Phase 3 added auth contract tests (3 files). Phase R added corpus regression harness (1 file). v2.2 added agent output extraction tests (1 file). v2.6 added 5 new test files for Analytics Agent, Reviewer Agent, and new agent models. v2.7 added agent_output_store memory test and Windows/locking fixes. v2.12 added 7 new characterization tests for yahooquery tools and expanded MCP tool shapes. v2.13 added `conftest.py` for unit tests (langfuse.observe stubs). All tests now live under `src/tests/`.**
 
 ## Running Tests
 
@@ -20,7 +20,9 @@ pytest -m "not external"        # exclude tests that need external services
 
 ```
 src/tests/
-├── conftest.py                          # env isolation, memory_db fixture, os._exit hook
+    ├── conftest.py                          # env isolation, memory_db fixture, os._exit hook
+    ├── unit/conftest.py                     # v2.13 — stubs langfuse.observe as identity decorator,
+    │                                        #   evicts mcp_tools.tools submodule cache for clean re-imports
 ├── evaluation/                          # offline RAGAS eval (standalone, not pytest)
 │   ├── golden_set.jsonl                 #   5 golden examples (NVDA, AAPL)
 │   └── run_offline_eval.py              #   offline evaluation driver
@@ -71,7 +73,7 @@ src/tests/
         └── test_save_brief_persists_synthesis.py  # 2 - synthesis wins, rationale fallback
     └── test_agent_output_store.py   # 10 - v2.7: store/get/prune, cross-agent isolation, TTL expiry
 
-**Total: ~355 parametrized test cases across 34 test files.**
+**Total: ~370 parametrized test cases across 35 test files (34 + unit/conftest.py).**
 ```
 
 ## Key Patterns
@@ -123,7 +125,7 @@ Tests `generate_pptx()` - slide count verification via `_count_slides()` (parses
 |---|---|
 | `test_api_contracts.py` | ASGI in-process API route tests with temp SQLite DB and pre-stubbed ADK/a2a-sdk modules. Covers all REST endpoints with auth on/off states. |
 | `test_deck_extraction_golden.py` | Golden tests over 4 fixtures (minimal/structured/empty/realistic_quant). Goldens written on first run via `UPDATE_GOLDENS=1`. Includes P1-regression test documenting current bug. |
-| `test_mcp_tool_shapes.py` | MCP tool return-shape tests with mocked yfinance/feedparser. No network required. Validates each tool's response schema. |
+| `test_mcp_tool_shapes.py` | MCP tool return-shape tests with mocked yfinance/feedparser/yahooquery. No network required. Validates each tool's response schema — includes 7 tests for yahooquery-backed tools (`get_analyst_activity`, `get_valuation_timeseries`, enhanced `get_earnings_history`, `get_macro_indicators` batch path) added in v2.12. |
 | `test_quant_nodes_io.py` | Per-node state-in/state-out with stubbed MCP client. Each LangGraph node tested in isolation with synthetic inputs. |
 
 ## Corpus Regression Tests (Phase R)
