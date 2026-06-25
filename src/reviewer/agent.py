@@ -4,7 +4,7 @@ import logging
 
 from agents import Agent
 from agents.models.openai_chatcompletions import OpenAIChatCompletionsModel
-from openai import AsyncOpenAI
+from langfuse.openai import AsyncOpenAI
 
 from shared.agent_models import ReviewerAgentOutput
 from shared.settings import LLM_BASE_URL, LLM_SUMMARY_MODEL

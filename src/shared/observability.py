@@ -132,7 +132,13 @@ def init_instrumentation(agent_type: str) -> None:
         except (ImportError, ModuleNotFoundError):
             pass
         StarletteInstrumentor().instrument()
-    elif agent_type in ("analytics", "reviewer"):
+    elif agent_type == "analytics":
+        from opentelemetry.instrumentation.starlette import StarletteInstrumentor
+        from pydantic_ai import Agent as PydanticAIAgent
+
+        PydanticAIAgent.instrument_all()
+        StarletteInstrumentor().instrument()
+    elif agent_type == "reviewer":
         from opentelemetry.instrumentation.starlette import StarletteInstrumentor
 
         StarletteInstrumentor().instrument()

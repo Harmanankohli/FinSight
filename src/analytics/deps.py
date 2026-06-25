@@ -1,7 +1,6 @@
 """Immutable dependencies injected into every PydanticAI graph node.
 
-Carries the ticker/period context, a shared MCP client for data fetching,
-and an optional Langfuse handler for trace instrumentation.
+Carries the ticker/period context and a shared MCP client for data fetching.
 """
 
 from dataclasses import dataclass
@@ -15,4 +14,3 @@ class AnalyticsDeps:
     ticker: str                          # Stock ticker being analysed
     period: str                          # Lookback period string
     mcp_client: Any                      # Shared MCP client for data tools
-    langfuse_handler: Any | None = None  # Optional Langfuse observability handler

@@ -136,13 +136,12 @@ class AnalyticsPipeline:
             nodes=[FetchDataNode, AnalyzeNode, FormatOutputNode, LLMSummaryNode],
         )
 
-    async def run(self, ticker: str, period: str, mcp_client, langfuse_handler=None) -> dict:
+    async def run(self, ticker: str, period: str, mcp_client) -> dict:
         logger.info("Analytics graph run start: ticker=%s period=%s", ticker, period)
         deps = AnalyticsDeps(
             ticker=ticker,
             period=period,
             mcp_client=mcp_client,
-            langfuse_handler=langfuse_handler,
         )
         state = AnalyticsState(ticker=ticker, period=period)
         result = await self.graph.run(FetchDataNode(), state=state, deps=deps)

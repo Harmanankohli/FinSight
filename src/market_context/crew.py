@@ -11,6 +11,7 @@ import logging
 from datetime import date
 
 from crewai import Agent, Crew, Process, Task
+from langfuse import observe
 
 from shared.logging_config import logged, logged_sync
 
@@ -168,6 +169,7 @@ class MarketContextCrew:
 
         return Crew(agents=[agent], tasks=[task], process=Process.sequential, verbose=False)
 
+    @observe(name="crewai-market-analysis")
     @logged()
     async def analyze(self, ticker: str, precollected_data: dict | None = None) -> dict:
         """Execute the crew and parse its output into a MarketContextOutput dict.
