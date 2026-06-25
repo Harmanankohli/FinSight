@@ -3,24 +3,22 @@
 import io
 import json
 import logging
-import os
 
 import pytest
 
 from shared.logging_config import (
-    ColoredFormatter,
-    JsonFormatter,
-    SanitizeFilter,
     _ENTER_MARKER,
     _EXIT_MARKER,
     _FAIL_MARKER,
     _LEVEL_COLORS,
     _SERVICE_COLORS,
     _TIMESTAMP_COLOR,
+    ColoredFormatter,
+    JsonFormatter,
+    SanitizeFilter,
     _should_colorize,
     logged_sync,
 )
-
 
 # ---------------------------------------------------------------------------
 # _should_colorize
