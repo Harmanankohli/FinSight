@@ -4,6 +4,7 @@ const ORCHESTRATOR_URL =
   process.env.NEXT_PUBLIC_ORCHESTRATOR_URL || "http://localhost:8001";
 
 const nextConfig: NextConfig = {
+  output: "standalone",
   env: {
     NEXT_PUBLIC_ORCHESTRATOR_URL: ORCHESTRATOR_URL,
   },

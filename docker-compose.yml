@@ -145,6 +145,24 @@ services:
       start_period: 20s
     restart: unless-stopped
 
+  web:
+    build:
+      context: src/web/nextjs-app
+      dockerfile: Dockerfile
+    ports: ["3000:3000"]
+    environment:
+      - NEXT_PUBLIC_ORCHESTRATOR_URL=http://orchestrator:8001
+    depends_on:
+      orchestrator:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+
   redis:
     image: redis:7-alpine
     command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:-finsight_dev}"]

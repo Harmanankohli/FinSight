@@ -112,7 +112,10 @@ jobs:
             context: src/reviewer
           - name: mcp-server
             context: src/mcp_tools
+          - name: web
+            context: src/web/nextjs-app
+            docker_context: src/web/nextjs-app
     steps:
       - uses: actions/checkout@v4
       - name: Build ${{ matrix.service.name }}
-        run: docker build -t finsight-${{ matrix.service.name }}:ci -f ${{ matrix.service.context }}/Dockerfile .
+        run: docker build -t finsight-${{ matrix.service.name }}:ci -f ${{ matrix.service.context }}/Dockerfile ${{ matrix.service.docker_context || '.' }}
