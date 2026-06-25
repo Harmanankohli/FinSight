@@ -1,6 +1,8 @@
 /** Dashboard page displaying observability metrics, agent performance KPIs, and RAGAS quality scores from Langfuse. */
 "use client";
 
+export const dynamic = "force-dynamic";
+
 import { Suspense, useEffect, useState, useRef, useSyncExternalStore } from "react";
 import { LineChart, Line, AreaChart, Area, BarChart, Bar, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from "recharts";
 import { AGENT_COLOR, type AgentKey } from "@/lib/agentColors";
