@@ -16,7 +16,12 @@ def statement_age_days(statement_date: date | datetime | str) -> int:
 
 
 def check_freshness(age_days: int) -> dict[str, Any]:
-    """Return freshness status and warning message if data is stale."""
+    """Return freshness status and warning message if data is stale.
+
+    Thresholds align with SEC filing cadence: 10-Q is due within 45 days of
+    each quarter end (180 days ≈ two missed quarterlies); 10-K is due within
+    60–90 days of fiscal year end (365 days = full year without an annual filing).
+    """
     if age_days > 365:
         return {
             "status": "stale",

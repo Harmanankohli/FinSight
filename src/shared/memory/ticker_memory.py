@@ -239,7 +239,8 @@ class TickerMemory:
             return None
         latest = history[0]
         previous = history[1]
-        # G11 fix: old = previous (older), new = latest (newer)
+        # history[0] is newest, history[1] is older — assign accordingly.
+        # (G11 was a bug where these were swapped, producing false "downgrade" signals.)
         old_val = previous.get(field)
         new_val = latest.get(field)
         return {

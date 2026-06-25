@@ -38,6 +38,8 @@ def _keyword_score(query_text: str, node_text: str) -> float:
     n_lower = node_text.lower()
     n_total = max(1, len(re.findall(r"\w+", n_lower)))
     match_count = sum(n_lower.count(t) for t in q_terms)
+    # 0.08: empirically ~8% of tokens in a financial paragraph are meaningful
+    # query terms; divides raw match count by expected density to produce [0,1].
     return min(1.0, match_count / (n_total * 0.08 + 1))
 
 

@@ -27,7 +27,9 @@ from .sub_agent_client import SubAgentClient
 _s = get_settings()
 _client = SubAgentClient(bearer_token=_s.service_auth_token or None)
 
-# Capture raw agent responses keyed by session_id for structured storage
+# Keyed by session_id → (capture_timestamp, {agent_name: output_dict}).
+# The float timestamp lets background sweeps evict stale captures (>300 s) when
+# pop_agent_responses() is never called for a session (e.g. on request failure).
 _agent_responses: dict[str, tuple[float, dict[str, dict[str, Any]]]] = {}
 _session_locks: dict[str, asyncio.Lock] = {}
 _session_locks_lock = threading.Lock()

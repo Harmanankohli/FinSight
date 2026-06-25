@@ -152,7 +152,7 @@ async def get_financials(ticker: str) -> dict:
 
 _MACRO_TICKERS = {
     "us10y": "^TNX",  # 10-year Treasury yield
-    "us2y": "^FVX",  # 5-year proxy (closest clean 2Y in yfinance)
+    "us2y": "^FVX",  # keyed "us2y" for backward-compat; actual instrument is 5-year (^FVX) — yfinance has no clean 2Y future
     "vix": "^VIX",  # CBOE volatility index
     "dxy": "DX-Y.NYB",  # US Dollar index
 }

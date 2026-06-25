@@ -14,6 +14,9 @@ from shared.memory.store import get_db, write_lock
 
 logger = logging.getLogger(__name__)
 
+# Maps LLM-generated agent display names to canonical short keys used for DB
+# queries and dict lookups. The LLM produces non-deterministic casing/wording,
+# so we normalise here rather than trusting the raw resolved_name string.
 _AGENT_KEY_MAP: dict[str, str] = {
     "financial rag agent": "rag",
     "quant analysis agent": "quant",

@@ -130,7 +130,8 @@ class PerformanceTracker:
 
         A BUY is 'correct' if realized_return > 0.
         A SELL is 'correct' if realized_return < 0.
-        HOLD correctness is not evaluated.
+        HOLD is always counted as correct — penalising a neutral signal on price
+        movement would bias the metric against conservative recommendations.
         """
         conn = await get_db(self._db_path)
         if user_id:
