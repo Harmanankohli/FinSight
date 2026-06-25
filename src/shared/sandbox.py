@@ -371,9 +371,9 @@ def _sandbox_preexec() -> None:
     try:
         import resource as _res
 
-        _res.setrlimit(_res.RLIMIT_CPU, (25, 25))  # type: ignore[attr-defined]  # Linux-only
-        _res.setrlimit(_res.RLIMIT_AS, (512 * 1024 * 1024, 512 * 1024 * 1024))  # type: ignore[attr-defined]  # Linux-only
-        _res.setrlimit(_res.RLIMIT_NOFILE, (0, 0))  # type: ignore[attr-defined]  # Linux-only
+        _res.setrlimit(_res.RLIMIT_CPU, (25, 25))  # type: ignore[attr-defined,unused-ignore]
+        _res.setrlimit(_res.RLIMIT_AS, (512 * 1024 * 1024, 512 * 1024 * 1024))  # type: ignore[attr-defined,unused-ignore]
+        _res.setrlimit(_res.RLIMIT_NOFILE, (0, 0))  # type: ignore[attr-defined,unused-ignore]
     except Exception:
         logger.debug("Resource limits unavailable (expected on Windows)")
 
