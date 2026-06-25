@@ -420,6 +420,22 @@ The `agent_output_store` table (`session_id TEXT, agent_name TEXT, output_json T
 | `compute_information_ratio(returns, benchmark, ...)` | Active return / tracking error (returns float) |
 | `compute_cagr(values)` | Compound annual growth rate (returns float\|None) |
 
+## Per-Agent Dependency Groups (v2.16)
+
+`pyproject.toml` defines per-agent optional dependency groups so each Docker image installs only its own framework:
+
+| Group | Framework | Used By |
+|---|---|---|
+| `orchestrator` | google-adk, a2a-sdk, starlette | Orchestrator |
+| `rag` | llama-index, sentence-transformers | RAG Agent |
+| `quant` | langchain, langchain-openai | Quant Agent |
+| `market` | crewai | Market Context Agent |
+| `analytics` | pydantic-ai | Analytics Agent |
+| `reviewer` | openai-agents | Reviewer Agent |
+| `mcp_server` | fastmcp | MCP Server |
+
+Core `[project.dependencies]` contains only the shared base (~30 packages: a2a-sdk, starlette, pydantic, observability, auth). Each Dockerfile installs `".[svc]"` via `uv pip install --system`. Package counts per image dropped from 315 to 99-184.
+
 ## CI Pipeline
 
 A GitHub Actions CI pipeline runs on every push (v1.41, Phase 0):
@@ -431,9 +447,9 @@ A GitHub Actions CI pipeline runs on every push (v1.41, Phase 0):
 | **test** | `pytest tests/unit/ -v` | Unit tests with slim deps (no PyTorch/CUDA) |
 | **frontend** | `npx next lint` + `npx tsc --noEmit` | web/nextjs-app/ |
 | **openapi** | `python scripts/generate_openapi.py --check` | docs/openapi.json freshness |
-| **docker** | Docker build for all 5 services (continue-on-error) | Dockerfiles |
+| **docker** | Docker build for all 8 services (continue-on-error) | 7 Python Dockerfiles + 1 Next.js Dockerfile |
 
-Test job uses `--no-deps -e .` to install only ~15 packages instead of all 293 base deps (avoids PyTorch, CUDA, all agent frameworks). A `AUTH_ENABLED={false,true}` matrix runs auth contract tests twice.
+Test job uses `--no-deps -e .` to install only ~15 packages instead of all 293 base deps (avoids PyTorch, CUDA, all agent frameworks). A `AUTH_ENABLED={false,true}` matrix runs auth contract tests twice. The Docker build matrix includes `web-frontend` (Next.js standalone image) alongside the 7 Python agent images.
 
 ## Centralized Settings & Bootstrap
 
@@ -505,8 +521,20 @@ The Langfuse client uses `is_default_export_span` to filter out noisy A2A intern
 | Orchestrator | `orchestrator` | GoogleADKInstrumentor, HTTPXClientInstrumentor | `orchestrator-execute` span, per-sub-agent latency spans |
 | RAG Agent | `rag_agent` | LlamaIndexInstrumentor | `rag-agent-stream` span |
 | Quant Agent | `quant_agent` | StarletteInstrumentor | `quant-agent-stream` span + CallbackHandler for LangGraph nodes |
-| Market Context Agent | `market_context_agent` | CrewAIInstrumentor, StarletteInstrumentor | `market-context-agent-stream` span |
+| Market Context Agent | `market_context_agent` | CrewAIInstrumentor, StarletteInstrumentor, `@observe()` on `analyze()` | `market-context-agent-stream` span + `crewai-market-analysis` observation |
+| Analytics Agent | `analytics_agent` | PydanticAI `Agent.instrument_all()`, StarletteInstrumentor | `analytics-agent-stream` span + `gen_ai.*` OTEL spans |
+| Reviewer Agent | `reviewer_agent` | StarletteInstrumentor, `langfuse.openai.AsyncOpenAI` | `reviewer-agent-stream` span + auto-instrumented LLM generations |
 | MCP Server | `mcp_server` | — | `@observe()` on individual tools |
+
+### Colored Console Logging (v2.17)
+
+`src/shared/logging_config.py` provides a `ColoredFormatter` for console output:
+- Per-level ANSI colors (DEBUG=cyan, INFO=green, WARNING=yellow, ERROR=red, CRITICAL=bold white on red)
+- Service badge colors aligned with the frontend CSS palette
+- Decorator lifecycle markers: `→ Enter`, `← Exit ⏱`, `✗ Fail ⏱`
+- `NO_COLOR=1` disables all ANSI codes; `FORCE_COLOR=1` forces them on non-TTY
+- JSON file logs remain plain (zero ANSI codes)
+- Frontend counterpart: `src/web/nextjs-app/lib/logger.ts` with ANSI (server) and CSS `%c` (browser)
 
 ### Sub-Agent Latency Spans
 
@@ -605,12 +633,43 @@ The memory context is compact (~300 tokens) and includes:
 | `PerformanceTracker` | `src/shared/memory/performance_tracker.py` | Recommendation outcome tracking, accuracy evaluation |
 | `SQLiteMemoryService` | `src/shared/memory/memory_service.py` | ADK `BaseMemoryService` implementation for `load_memory` tool |
 
+## Web Frontend (Next.js)
+
+The web frontend (`src/web/nextjs-app/`) is a Next.js 16 application running on port 3000, served either via `next start` (standalone Docker image) or `next dev` (local development). It provides the user-facing UI: overview page, research chat (CopilotKit), dashboard metrics, and operator controls.
+
+### Service Architecture
+
+```
+Next.js (port 3000)
+  +-- /app/overview          — landing page with system overview
+  +-- /app/research          — CopilotKit chat interface (proxied to orchestrator /a2a-agui)
+  +-- /app/dashboard         — Langfuse metrics dashboard (KPIs, agent breakdown, latency charts)
+  +-- /app/operator          — service health dashboard
+  +-- /api/copilotkit         — POST proxy to orchestrator /a2a-agui
+  +-- /api/dashboard         — GET aggregated dashboard metrics
+  +-- /api/dashboard/scores  — GET RAGAS score timeseries
+  +-- /api/reports/*         — GET report downloads (proxied to backend)
+  +-- /api/auth/*            — login/logout endpoints
+```
+
+### Docker Build
+
+Multi-stage Dockerfile (`src/web/nextjs-app/Dockerfile`):
+1. **deps**: `node:20-alpine` + `npm ci`
+2. **build**: `npm run build` (standalone output via `output: 'standalone'` in `next.config.ts`)
+3. **runner**: `node:20-alpine` + standalone build output — no `node_modules`, ~120MB final image
+
+### Langfuse API Integration
+
+The dashboard queries Langfuse via its REST API. API limits are capped at 100 (Langfuse cloud tier limit) to prevent 400 errors. The dashboard and overview pages display actual API error messages rather than generic fallbacks.
+
 ## Health Endpoints
 
-All five services expose `GET /health`:
+All six services expose `GET /health`:
 
 | Service | URL | Response |
 |---|---|---|
+| Web Frontend | `http://localhost:3000/api/health` | `{"status":"ok","agent":"web"}` |
 | Orchestrator | `http://localhost:8001/health` | `{"status":"ok","agent":"orchestrator"}` |
 | RAG Agent | `http://localhost:8002/health` | `{"status":"ok","agent":"rag"}` |
 | Quant Agent | `http://localhost:8003/health` | `{"status":"ok","agent":"quant"}` |

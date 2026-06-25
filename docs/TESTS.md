@@ -1,6 +1,6 @@
 # Test Coverage
 
-**~285 test functions (~370 parametrized cases) across 35 test files + offline evaluation driver. v1.39 added DOCX/HTML/PPTX regression tests. Phase 0 added 45 characterization tests (4 files). Phase 3 added auth contract tests (3 files). Phase R added corpus regression harness (1 file). v2.2 added agent output extraction tests (1 file). v2.6 added 5 new test files for Analytics Agent, Reviewer Agent, and new agent models. v2.7 added agent_output_store memory test and Windows/locking fixes. v2.12 added 7 new characterization tests for yahooquery tools and expanded MCP tool shapes. v2.13 added `conftest.py` for unit tests (langfuse.observe stubs). All tests now live under `src/tests/`.**
+**~250 test cases across 50 test files + offline evaluation driver. Phase 0 added 45 characterization tests (4 files). Phase 3 added auth contract tests (3 files). Phase R added corpus regression harness (1 file). v2.2 added agent output extraction tests (1 file). v2.6 added 5 new test files for Analytics Agent, Reviewer Agent, and new agent models. v2.7 added agent_output_store memory test and Windows/locking fixes. v2.12 added 7 new characterization tests for yahooquery tools and expanded MCP tool shapes. v2.13 added `conftest.py` for unit tests (langfuse.observe stubs). v2.16 added characterization test golden fixtures for structured agent outputs. All tests now live under `src/tests/`.**
 
 ## Running Tests
 

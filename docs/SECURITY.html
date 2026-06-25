@@ -95,27 +95,27 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 </ul>
 <h3>Trusted Proxies (IP Lockout)</h3>
 <p>The rate-limited lockout key combines username + IP. By default, the IP is read from the direct socket address (<code>request.client.host</code>). In Docker Compose, the Next.js proxy forwards requests — the socket address is the proxy's IP, not the browser's. Set <code>TRUSTED_PROXIES</code> to the proxy's IP so <code>X-Forwarded-For</code> is used:</p>
-<div class="codehilite"><pre><span></span><code><span class="na">TRUSTED_PROXIES</span><span class="o">=</span><span class="s">172.18.0.5</span><span class="w">   </span><span class="c1"># Next.js proxy container IP</span>
-</code></pre></div>
+<pre class="codehilite"><code class="language-ini">TRUSTED_PROXIES=172.18.0.5   # Next.js proxy container IP
+</code></pre>
 
 <p>Empty list (default) always uses socket address — <code>X-Forwarded-For</code> is never trusted.</p>
 <h3>Token Generation</h3>
-<div class="codehilite"><pre><span></span><code><span class="c1"># User JWT signing secret (32+ hex characters)</span>
-openssl<span class="w"> </span>rand<span class="w"> </span>-hex<span class="w"> </span><span class="m">32</span>
+<pre class="codehilite"><code class="language-bash"># User JWT signing secret (32+ hex characters)
+openssl rand -hex 32
 
-<span class="c1"># Service-to-service shared secret (16+ characters)</span>
-openssl<span class="w"> </span>rand<span class="w"> </span>-hex<span class="w"> </span><span class="m">16</span>
-</code></pre></div>
+# Service-to-service shared secret (16+ characters)
+openssl rand -hex 16
+</code></pre>
 
 <p>Add these to <code>.env</code>:</p>
-<div class="codehilite"><pre><span></span><code><span class="na">AUTH_ENABLED</span><span class="o">=</span><span class="s">true</span>
-<span class="na">AUTH_JWT_SECRETS</span><span class="o">=</span><span class="s">&lt;32-byte-hex&gt;</span>
-<span class="na">SERVICE_AUTH_TOKEN</span><span class="o">=</span><span class="s">&lt;16-byte-hex&gt;</span>
-</code></pre></div>
+<pre class="codehilite"><code class="language-ini">AUTH_ENABLED=true
+AUTH_JWT_SECRETS=&lt;32-byte-hex&gt;
+SERVICE_AUTH_TOKEN=&lt;16-byte-hex&gt;
+</code></pre>
 
 <h3>Creating Users</h3>
-<div class="codehilite"><pre><span></span><code>python<span class="w"> </span>scripts/create_user.py<span class="w"> </span>&lt;username&gt;
-</code></pre></div>
+<pre class="codehilite"><code class="language-bash">python scripts/create_user.py &lt;username&gt;
+</code></pre>
 
 <p>Prompts for password (interactive). Passwords hashed with Argon2id. User records stored in <code>db/users.db</code> (SQLite).</p>
 <h2>Python Sandbox</h2>
@@ -268,7 +268,7 @@ openssl<span class="w"> </span>rand<span class="w"> </span>-hex<span class="w"> 
 <li>Agent HTTP servers bind to <code>0.0.0.0</code> (container-required) but accept only authenticated requests</li>
 </ul>
 <h3>TLS Termination</h3>
-<p>In production, deploy behind a reverse proxy (Caddy, nginx) for TLS termination. See <code>deploy/Caddyfile.example</code>.</p>
+<p>In production, deploy behind a reverse proxy (Caddy, nginx) for TLS termination.</p>
 <h2>Known Limitations</h2>
 <table>
 <thead>

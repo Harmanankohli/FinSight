@@ -7,19 +7,20 @@ An autonomous multi-agent system that answers investment queries like *"Should I
 - **Multi-framework orchestration**: Google ADK orchestrator delegates to LlamaIndex (RAG), LangGraph (Quant), CrewAI (Market Context), PydanticAI (Analytics), and OpenAI Agents SDK (Reviewer)
 - **A2A protocol**: Standard-compliant agent discovery and streaming communication via JSON-RPC over HTTP
 - **Multi-tier caching**: TTL-based tool-result cache in the MCP server (1 min prices, 1 h financials, 5 min news, permanent filings, 24h peers, 7d scenario shocks), LangChain SQLiteCache for LLM responses, semantic cache using ChromaDB cosine similarity, and LLM priority queue (`CRITICAL`/`NORMAL`/`LOW`) to prevent eval starvation of production inference
-- **Investment deck generation**: PPTX, DOCX, self-contained HTML, and PDF reports generated from any stored brief via `generate_pptx()`, `generate_docx()`, `generate_html()`, `generate_pdf_async()` — served at `/api/reports/{brief_id}/{format}` and `/api/reports/ticker/{symbol}/latest/{format}`. PPTX generation tries Playwright first (screenshot-based) before falling back to python-pptx. v2.7 adds 10+ new report sections with Chart.js interactive charts (forecast distribution, Monte Carlo, trend overlays, stress scenarios, DCF breakdown, anomaly alerts, signals table, technicals table, stats table, cross-validation verdict).
-- **AG-UI / CopilotKit frontend**: Next.js 16 + CopilotKit 1.59 streaming chat interface (`src/web/nextjs-app/`) via `POST /a2a-agui`; AG-UI bridge with off-topic guardrail, brief auto-save, per-event timeout, and `active_agents` state tracking
+- **Investment deck generation**: Self-contained HTML and PDF reports generated from any stored brief via `generate_html()` and `generate_pdf_async()` — served at `/api/reports/{brief_id}/{format}` and `/api/reports/ticker/{symbol}/latest/{format}`. HTML uses Jinja2 templates with Chart.js interactive charts (forecast distribution, Monte Carlo, trend overlays, stress scenarios, DCF breakdown, anomaly alerts, signals table, technicals table, stats table, cross-validation verdict). PDF uses Playwright print-mode with A4 portrait and section breaks.
+- **AG-UI / CopilotKit frontend**: Next.js 16 + CopilotKit 1.59 streaming chat interface (`src/web/nextjs-app/`) with overview, research, dashboard, memory, and operator pages; Dockerized as a standalone image on port 3000
 - **Input/output guardrails**: Off-topic filter, pre-flight ticker validation, empty-response guard, and BUY/HOLD/SELL signal enforcement with auto-retry
 - **Persistent memory layer**: SQLite-backed session storage, cross-session memory search, ticker brief history, portfolio persistence, recommendation tracking with live price snapshots, and shared agent output store for cross-process data sharing between orchestrator and reviewer
 - **Incremental RAG ingestion**: Tracks ingested filing URLs in SQLite — restarts never re-ingest already-indexed documents
 - **RAGAS evaluation pipeline**: Offline batch evaluation (Faithfulness, ResponseRelevancy, ContextPrecision, ContextRecall, ToolCallAccuracy, AgentGoalAccuracy) with Langfuse score push. Runtime per-query evaluation on live production responses with per-metric streaming, client caching, and 180s LLM timeout
-- **Structured logging**: `@logged`/`@logged_sync` timing decorators emit `Enter`/`Exit`/`Fail` with `latency_ms`; operational log statements at cache, DB, sandbox, and report-generation boundaries; noisy third-party loggers suppressed by default, overridable via `LOG_LEVEL_<LIB>` env vars
+- **Structured logging**: `@logged`/`@logged_sync` timing decorators emit `→ Enter`, `← Exit ⏱`, `✗ Fail ⏱` with `latency_ms`; ANSI colored console output with per-level colors and service badges (aligned with frontend CSS palette); JSON file logs remain plain for log aggregators; `NO_COLOR`/`FORCE_COLOR` support
 - **Portfolio correlation analysis**: When you explicitly mention portfolio holdings (e.g. "My portfolio holds AAPL, MSFT"), the quant agent computes cross-stock correlation matrices alongside the primary analysis
-- **Distributed tracing**: Langfuse traces span all four agent processes in a single trace tree via text-based context propagation, with automatic filtering of noisy A2A internal spans
+- **Distributed tracing**: Langfuse traces span all seven agent processes in a single trace tree via text-based context propagation. All agents (including Analytics, Market Context, and Reviewer) are fully instrumented — Analytics via PydanticAI OTEL (`gen_ai.*` spans), Reviewer via `langfuse.openai.AsyncOpenAI`, Market Context via `@observe()` on CrewAI execution.
 - **Health monitoring**: `/health` endpoints on all seven services with docker-compose healthcheck integration
 - **Local LLM inference**: All agents use LM Studio (OpenAI-compatible API) — no cloud dependencies
 - **Frontend auth bypass**: `NEXT_PUBLIC_AUTH_ENABLED=false` short-circuits all frontend auth checks for local development, independently togglable from backend `AUTH_ENABLED`
-- **MCP data tools**: Unified server providing SEC filings, price data, financials, news sentiment, insider transactions, peer discovery, scenario shocks, and more
+- **MCP data tools**: Unified server providing SEC filings (via EDGAR), price data (yfinance/yahooquery), financials, news sentiment, insider transactions, peer discovery, scenario shocks, analyst activity, valuation timeseries, and more
+- **Per-agent Docker images**: 7 Python agent services + 1 Next.js web frontend, each with a multi-stage Dockerfile. Per-agent dependency groups in `pyproject.toml` ensure each image installs only its own framework (99-184 packages vs. 315 monolithic)
 
 ## Architecture
 
@@ -44,10 +45,10 @@ An autonomous multi-agent system that answers investment queries like *"Should I
 +--------------------------------------------------------------+
 │          Unified finsight-mcp Server (port 8010)              │
 │  +-----------------+  +---------------------------------+   │
-│  │ Agent Registry  │  │  Data Sources                 │   │
-│  │ find_agent()    │  │  get_prices, get_financials,  │   │
-│  │ resource://agent_cards│  │  get_options_chain,           │   │
-│  +-----------------+  │  get_company_filings,         │   │
+│  │  │ Agent Registry  │  │  Data Sources                 │   │
+│  │  │ find_agent()    │  │  get_prices, get_financials,  │   │
+│  │  │                 │  │  get_options_chain,           │   │
+│  │  +-----------------+  │  get_financial_filings,       │   │
 │                        │  get_financial_filings,       │   │
 │                        │  get_filing_content,          │   │
 │                        │  validate_ticker,             │   │
@@ -82,7 +83,7 @@ All A2A communication uses `A2ACardResolver` for standard discovery and `ClientF
 | Analytics | PydanticAI (trend analysis, forecast, anomaly detection, statistical metrics) |
 | Reviewer | OpenAI Agents SDK + deterministic Python tools (contradiction check, source verification, confidence scoring, recommendation validation) |
 | MCP Server | FastMCP (agent registry + data tools + TTL caching) |
-| Report Generator | `src/shared/reports/` package — python-pptx (PPTX), python-docx (DOCX), Jinja2 (HTML), Playwright (PDF + screenshot PPTX) |
+| Report Generator | `src/shared/reports/` package — Jinja2 (HTML), Playwright (PDF) |
 | Frontend | Next.js 16 + CopilotKit 1.59 + @ag-ui/client (`src/web/nextjs-app/`) via `POST /a2a-agui` |
 | Evaluation | RAGAS offline pipeline + runtime per-query eval (per-metric streaming, client caching, 180s timeout) + custom financial rubrics |
 | LLM | LM Studio (local, OpenAI-compatible) |
@@ -126,6 +127,12 @@ Use the batch file to start everything:
 run_adk_web.bat
 ```
 
+Or use Docker Compose (includes all 7 Python agents + Next.js web frontend + Redis):
+
+```bash
+docker compose up --build
+```
+
 Or start each service manually in separate terminals:
 
 ```bash
@@ -133,18 +140,18 @@ Or start each service manually in separate terminals:
 lms server start
 
 # Terminal 1: Unified MCP Server
-uv run python -m uvicorn mcp_tools.finsight_server:get_app --host 0.0.0.0 --port 8010
+uv run python -m mcp_tools.finsight_server
 
 # Terminal 2: RAG Agent
-uv run python -m uvicorn financial_rag.server:app --host 0.0.0.0 --port 8002
+uv run python -m financial_rag.server
 
 # Terminal 3: Quant Agent
-uv run python -m uvicorn quant.server:app --host 0.0.0.0 --port 8003
+uv run python -m quant.server
 
 # Terminal 4: Market Context Agent
-uv run python -m uvicorn market_context.server:app --host 0.0.0.0 --port 8004
+uv run python -m market_context.server
 
-# Terminal 5: ADK Web UI
+# Terminal 5: ADK Web UI (Orchestrator)
 uv run adk web --port 8080 --session_service_uri sqlite://./db/adk_sessions.db --memory_service_uri finsight:// agents
 ```
 
@@ -202,7 +209,7 @@ stop_servers.bat
 │   │   +-- settings.py         # Pydantic-settings BaseSettings
 │   │   +-- bootstrap.py        # Process-level side-effects
 │   │   +-- mcp_client.py       # MCP client with dynamic tool discovery
-│   │   +-- reports/            # HTML/PPTX/DOCX report generation
+│   │   +-- reports/            # HTML/PDF report generation
 │   │   +-- memory/             # SQLite persistence layer
 │   │   +-- templates/          # Jinja2 templates
 │   │
@@ -210,10 +217,8 @@ stop_servers.bat
 │   +-- tests/                  # Unit, characterization, regression, security tests
 │   +-- scripts/                # Utility scripts
 │
-+-- agent_cards/               # A2A Agent Card JSON files
 +-- db/                        # SQLite + ChromaDB data
 +-- docs/                      # Documentation
-+-- deploy/                    # Deployment configs
 +-- run_ui.bat                 # Start all services (AG-UI mode)
 +-- run_adk_web.bat            # Start all services (ADK web mode)
 +-- docker-compose.yml
@@ -254,7 +259,7 @@ Key environment variables in `.env`:
 
 ## Testing
 
-**~355 parametrized test cases** across 34 test files — see [TESTS.md](docs/TESTS.md) for details.
+**~268 test cases** across 50 test files — see [TESTS.md](docs/TESTS.md) for details.
 
 ## License
 

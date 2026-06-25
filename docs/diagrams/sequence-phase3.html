@@ -40,10 +40,10 @@ Note over Orch,User: ══════ Phase 3: Synthesis + Persistence ══�
 
 Orch->>Orch: ⑨ Pre-reviewer integrity gate (validate_metric_integrity)
 Note over Orch: Checks: Sharpe in [-5,5], VaR in [0,1], RSI in [0,100],<br/>MAPE ≥ 0, beta in [-3,6], MC prob in [0,1],<br/>DCF upside consistency, anomaly count ≥ 0
-Orch->>Orch: ⑩ Collect 4 agent outputs + integrity alerts + Reviewer verdict
+Orch->>Orch: ⑩ Collect 5 agent outputs + integrity alerts + Reviewer verdict
 Note over Orch: RAG: "NVDA revenue grew 125%..."<br/>Quant: "BUY (+0.31), 6/8 groups bullish"<br/>Mkt: "Bullish macro, yield curve steepening"<br/>Analytics: "Strong uptrend, low anomaly"<br/>Reviewer: "No contradictions, high confidence"<br/>Integrity: "All metrics in valid range"
 Orch->>LLM: ⑪ Synthesize final recommendation
-Note over Orch,LLM: LLM receives 4 agent results + reviewer verdict + query + memory<br/>Produces BUY/HOLD/SELL + detailed rationale
+Note over Orch,LLM: LLM receives 5 agent results + reviewer verdict + query + memory<br/>Produces BUY/HOLD/SELL + detailed rationale
 LLM-->>Orch: "BUY — Confidence 0.78. Strong quant, positive macro."
 Orch->>Guard: ⑪ Output guardrail check
 Note over Guard: ≥50 chars? ✓ | BUY/HOLD/SELL keyword? ✓<br/>Auto-retry up to 3× on failure

@@ -1,5 +1,37 @@
 # Design Decisions
 
+## Colored Console Logging (v2.17)
+
+### Why ANSI colors for console but plain JSON for files?
+
+The system has two logging consumers: human operators watching console output (who benefit from color-coded severity and service badges) and log aggregators parsing JSON lines (where ANSI escape codes would corrupt parsing). The `ColoredFormatter` is attached only to the `StreamHandler`; the `FileHandler` uses the plain `JsonFormatter`. A regression test (`test_colored_logging.py`) guarantees zero ANSI codes in file output.
+
+### Why service badge colors aligned with the frontend CSS palette?
+
+Operators reading console logs can mentally correlate log lines with the frontend's agent tile colors. Blue = RAG, Green = Quant, Brown = Market Context, etc. This reduces cognitive load when switching between terminal and browser during debugging.
+
+### Why `NO_COLOR` / `FORCE_COLOR` env vars?
+
+`NO_COLOR` (https://no-color.org/) is a community standard adopted by major CLI tools. Respecting it ensures the logs are clean when piped to `grep`, `jq`, or CI log collectors. `FORCE_COLOR=1` is set in GitHub Actions to get colored output in the CI web UI, which renders ANSI codes as styled spans.
+
+### Why decorator lifecycle markers?
+
+The `@logged()` decorator previously emitted `Enter`/`Exit`/`Fail` text. The v2.17 update added Unicode arrows (`→`, `←`, `✗`) and a timer emoji (`⏱`) to make scanability faster — an operator can spot a failed call by looking for `✗` without reading the surrounding text.
+
+## Full Agent Langfuse Instrumentation (v2.17)
+
+### Why `langfuse.openai.AsyncOpenAI` for the reviewer instead of manual traces?
+
+The reviewer agent previously used a raw `openai.AsyncOpenAI` client with no Langfuse instrumentation. Swapping to `langfuse.openai.AsyncOpenAI` gives automatic span creation for every LLM call (prompt, completion, latency, token counts) without any manual trace setup. This brings the reviewer in line with all other agents.
+
+### Why `Agent.instrument_all()` for analytics?
+
+PydanticAI's `Agent.instrument_all()` enables OpenTelemetry tracing (`gen_ai.*` spans) for all LLM calls made by the agent. The previous implementation had no instrumentation for analytics LLM calls, creating a blind spot in Langfuse traces.
+
+### Why `@observe()` on CrewAI `analyze()`?
+
+CrewAI runs its crew in a thread pool (not the async event loop). Langfuse's async context propagation doesn't cross the thread boundary. The `@observe()` decorator creates a Langfuse observation that wraps the synchronous thread-pool execution, ensuring the crew's work appears in the trace tree.
+
 ## Caching Strategy
 
 ### Why `_TTLCache` with `OrderedDict` instead of a library?
@@ -128,6 +160,29 @@ Integration tests that spin up all 4 agents + MCP server + orchestrator would ta
 - ✅ Zero agent framework imports in test dependencies — slim CI install possible
 - ✅ Integration tests exist as manual scripts, not CI gates
 - ✅ Contract tests cover A2A protocol compliance in-process
+
+## Per-Agent Dependency Groups (v2.16)
+
+### Why split dependencies into per-agent optional groups?
+
+Before v2.16, `pyproject.toml` listed all dependencies (LlamaIndex, LangChain, CrewAI, PydanticAI, OpenAI Agents, sentence-transformers, etc.) in the core `[project.dependencies]`. Every Docker image installed all 315 packages even though each agent only uses one framework. The orchestrator doesn't need LangChain; the quant agent doesn't need CrewAI.
+
+Moving heavy framework deps into optional groups (`[project.optional-dependencies] orchestrator`, `rag`, `quant`, `market`, `analytics`, `reviewer`, `mcp_server`) lets each Dockerfile install `".[svc]"` — only its own framework plus the shared base. Package counts per image dropped from 315 to 99-184.
+
+**Why not use a single `requirements.txt` per agent?** uv's native extras are version-locked in `uv.lock`, ensuring reproducible builds. Separate `requirement.txt` files drift without lockfile enforcement. Extras also work with `uv pip install --system --no-cache` in Docker without additional tooling.
+
+### Why Next.js standalone Docker output?
+
+Next.js `output: 'standalone'` produces a self-contained build with only the minimal `node_modules` needed to run `next start`. The final Docker image (~120MB) contains no source code, no `node_modules` (except the trimmed subset), and no build tools. This:
+- Eliminates the `node_modules` bloat (~1.2GB in dev) from production images
+- Reduces attack surface (no build tools, no source)
+- Allows the same image for dev and prod (port 3000, no volume mounts)
+
+**Why multi-stage?** A single-stage build would include the full `node_modules` + `.next` + source in the final image. Multi-stage copies only the standalone output to a clean `node:20-alpine` base.
+
+### Why cap Langfuse API limit at 100?
+
+Langfuse cloud tier enforces a maximum of 100 API calls per minute per trace. The dashboard was requesting 200-500 spans in a single query, triggering HTTP 400 errors. Capping the limit parameter at 100 prevents the errors while still returning enough data for dashboard visualizations.
 
 ## Same-Day Memory Cache & analysis_date Column
 

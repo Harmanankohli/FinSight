@@ -1,5 +1,71 @@
 ﻿# Changelog
 
+## v2.17 — ANSI Colored Logging, Full Agent Langfuse Instrumentation (11b8638–7321dfc)
+
+### ANSI Colored Console Logging (11b8638)
+
+- **`src/shared/logging_config.py`**: Added `ColoredFormatter` with per-level ANSI colors (DEBUG=cyan, INFO=green, WARNING=yellow, ERROR=red, CRITICAL=bold white on red) and dim timestamps. Service badge colors aligned with frontend CSS palette (rag=blue, quant=green, market_context=brown, mcp=magenta, analytics=cyan, reviewer=red, orchestrator=yellow).
+- **Decorator lifecycle markers**: `@logged()` and `@logged_sync()` now emit `→ Enter`, `← Exit ⏱`, `✗ Fail ⏱` with decorator-aware coloring in ColoredFormatter.
+- **Environment controls**: `NO_COLOR=1` disables all ANSI codes (https://no-color.org/); `FORCE_COLOR=1` forces ANSI codes even on non-TTY (useful for CI). colorama init for Windows compatibility.
+- **Dual output**: Console StreamHandler is colored; file JSON handler remains plain (zero ANSI codes guaranteed by regression test).
+- **`src/web/nextjs-app/lib/logger.ts` (new, 96 lines)**: Frontend `createLogger()` utility with ANSI colored output (server-side) and CSS `%c` styling (browser console).
+- **CI**: `FORCE_COLOR=1` set in GitHub Actions test job for colored output.
+- **`pyproject.toml`**: Added `colorama>=0.4.6` as explicit core dependency.
+- **18 unit tests** in `src/tests/unit/test_colored_logging.py` covering formatter, decorator markers, NO_COLOR, FORCE_COLOR, and JSON file purity.
+
+### Full Agent Langfuse Instrumentation (7321dfc)
+
+- **`src/analytics/`**: Enabled PydanticAI OTEL tracing via `Agent.instrument_all()` for full `gen_ai.*` span coverage on LLM calls. Removed dead `langfuse_handler` field from `AnalyticsDeps` and `AnalyticsPipeline.run()`.
+- **`src/market_context/crew.py`**: Added `@observe(name="crewai-market-analysis")` decorator on `MarketContextCrew.analyze()` to bridge the async-to-thread boundary (CrewAI runs in a thread pool).
+- **`src/reviewer/agent.py`**: Swapped `openai.AsyncOpenAI` → `langfuse.openai.AsyncOpenAI` for auto-instrumented LLM generations (no manual trace setup needed).
+- **`src/shared/observability.py`**: `init_instrumentation()` now handles analytics and reviewer separately: analytics gets `PydanticAIAgent.instrument_all()` + `StarletteInstrumentor`; reviewer gets `StarletteInstrumentor` only.
+
+### Test Import Fixes (f17fc2c)
+
+- **`src/tests/unit/test_colored_logging.py`**: Removed unused `import os`; sorted imports with ruff (F401 + I001 fixes).
+
+## v2.16 — Next.js Docker, Dashboard Restore, Frontend Fixes, Docker Image Slimming (a2353d6–e65d31b)
+
+### Next.js Web Frontend Dockerization (79b5d24)
+
+- **`src/web/nextjs-app/Dockerfile` (new, 28 lines)**: Multi-stage build (deps → build → standalone runner) using `node:20-alpine`. Produces a self-contained image with `next start` on port 3000 — no `node_modules` in the final image.
+- **`src/web/nextjs-app/next.config.ts`**: Added `output: 'standalone'` to enable self-contained builds.
+- **`src/web/nextjs-app/.dockerignore` (new)**: Excludes `node_modules`, `.next`, `.git` from build context.
+- **`docker-compose.yml`**: Added `web` service on port `3000:3000` with build context pointing to `src/web/nextjs-app/`.
+- **`.github/workflows/ci.yml`**: Added `web-frontend` to the Docker build matrix — all 8 images (7 Python + 1 Node) now build in CI.
+
+### Per-Agent Dependency Groups (a2353d6)
+
+- **`pyproject.toml`**: Heavy framework deps (llama-index, langchain, crewai, pydantic-ai, openai-agents, etc.) moved out of core `[project.dependencies]` into per-agent optional groups (`orchestrator`, `rag`, `quant`, `market`, `analytics`, `reviewer`, `mcp_server`). Core deps reduced from 315 to ~30 packages.
+- **Docker images slimmed**: Each Dockerfile now installs `".[svc]"` (agent-specific extras) instead of the full dependency tree. Package counts per image dropped from 315 to 99-184.
+- **Why**: The monolithic core included every framework (LlamaIndex, LangChain, CrewAI, PydanticAI, OpenAI Agents) even though each agent only uses one. Per-agent groups let each Docker image pull only its own framework — critical for CI build times and image sizes.
+
+### Dashboard Page Overhaul (a49bc68, af0b2af)
+
+- **`app/page.tsx` (overview page)**: Restored from git history — had been overwritten with a duplicate of the dashboard. Now serves as the landing page with overview content.
+- **Dashboard page fixes**:
+  - Fixed `useSyncExternalStore` infinite loop in Sidebar by caching `getRecentQueries` snapshots (af0b2af)
+  - Fixed Langfuse 400 errors by reducing API limit from 200/500 to 100 (Langfuse cloud cap) (af0b2af)
+  - Fixed missing "Growth Opportunities" in report risk-reward section — added fallback defaults before early return in raw agent outputs extraction path (af0b2af)
+  - Show actual API error messages in dashboard/overview instead of generic "API error" (af0b2af)
+- **API routes updated**: `/api/dashboard/route.ts` (24 lines changed), `/api/dashboard/scores/route.ts` (11 lines changed) — better error handling and data formatting.
+- **`lib/recentQueries.ts`**: Updated to work with the restored overview page structure.
+
+### Frontend React Patterns (1f26978, 0d0034f)
+
+- **`app/dashboard/page.tsx`**: Added `export const dynamic = 'force-dynamic'` to skip static prerendering (1f26978).
+- **`app/dashboard/page.tsx`**: Provided `getServerSnapshot` as third argument to `useSyncExternalStore` — fixes prerendering failure in standalone mode where `export const dynamic` has no effect in "use client" pages (0d0034f).
+
+### Mypy Fixes (8be8bbf)
+
+- **`src/shared/sandbox.py`**: Added `unused-ignore` to `attr-defined` suppression — Linux has the `attrs` package, Windows doesn't.
+- **`src/shared/redis_cache.py`**: Removed redundant `cast(Awaitable[bool], ...)` around `client.ping()` — mypy cross-platform complaint.
+
+### CI Pipeline Updates (65c9928, bd41c9f, e65d31b)
+
+- Re-triggered pipeline after GitHub Actions config updates.
+- Merged PR #17 (fix/ci-cd branch) — all CI checks passing.
+
 ## v2.15 — Type Safety, Import Standardization, Frontend React Patterns (bd3e242–d5c9ecb)
 
 ### Type Annotation Modernization (bd3e242, 30d8796)

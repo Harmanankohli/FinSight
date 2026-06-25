@@ -49,6 +49,22 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <a href="diagrams/index.html">Diagrams</a>
 </div>
 
+<h2>Colored Console Logging (v2.17)</h2>
+<h3>Why ANSI colors for console but plain JSON for files?</h3>
+<p>The system has two logging consumers: human operators watching console output (who benefit from color-coded severity and service badges) and log aggregators parsing JSON lines (where ANSI escape codes would corrupt parsing). The <code>ColoredFormatter</code> is attached only to the <code>StreamHandler</code>; the <code>FileHandler</code> uses the plain <code>JsonFormatter</code>. A regression test (<code>test_colored_logging.py</code>) guarantees zero ANSI codes in file output.</p>
+<h3>Why service badge colors aligned with the frontend CSS palette?</h3>
+<p>Operators reading console logs can mentally correlate log lines with the frontend's agent tile colors. Blue = RAG, Green = Quant, Brown = Market Context, etc. This reduces cognitive load when switching between terminal and browser during debugging.</p>
+<h3>Why <code>NO_COLOR</code> / <code>FORCE_COLOR</code> env vars?</h3>
+<p><code>NO_COLOR</code> (https://no-color.org/) is a community standard adopted by major CLI tools. Respecting it ensures the logs are clean when piped to <code>grep</code>, <code>jq</code>, or CI log collectors. <code>FORCE_COLOR=1</code> is set in GitHub Actions to get colored output in the CI web UI, which renders ANSI codes as styled spans.</p>
+<h3>Why decorator lifecycle markers?</h3>
+<p>The <code>@logged()</code> decorator previously emitted <code>Enter</code>/<code>Exit</code>/<code>Fail</code> text. The v2.17 update added Unicode arrows (<code>→</code>, <code>←</code>, <code>✗</code>) and a timer emoji (<code>⏱</code>) to make scanability faster — an operator can spot a failed call by looking for <code>✗</code> without reading the surrounding text.</p>
+<h2>Full Agent Langfuse Instrumentation (v2.17)</h2>
+<h3>Why <code>langfuse.openai.AsyncOpenAI</code> for the reviewer instead of manual traces?</h3>
+<p>The reviewer agent previously used a raw <code>openai.AsyncOpenAI</code> client with no Langfuse instrumentation. Swapping to <code>langfuse.openai.AsyncOpenAI</code> gives automatic span creation for every LLM call (prompt, completion, latency, token counts) without any manual trace setup. This brings the reviewer in line with all other agents.</p>
+<h3>Why <code>Agent.instrument_all()</code> for analytics?</h3>
+<p>PydanticAI's <code>Agent.instrument_all()</code> enables OpenTelemetry tracing (<code>gen_ai.*</code> spans) for all LLM calls made by the agent. The previous implementation had no instrumentation for analytics LLM calls, creating a blind spot in Langfuse traces.</p>
+<h3>Why <code>@observe()</code> on CrewAI <code>analyze()</code>?</h3>
+<p>CrewAI runs its crew in a thread pool (not the async event loop). Langfuse's async context propagation doesn't cross the thread boundary. The <code>@observe()</code> decorator creates a Langfuse observation that wraps the synchronous thread-pool execution, ensuring the crew's work appears in the trace tree.</p>
 <h2>Caching Strategy</h2>
 <h3>Why <code>_TTLCache</code> with <code>OrderedDict</code> instead of a library?</h3>
 <p><code>functools.lru_cache</code> is synchronous and doesn't support TTL. <code>cachetools</code> and <code>aiocache</code> would be new dependencies. <code>OrderedDict</code> + <code>time.monotonic()</code> gives LRU eviction, TTL expiry, and thread-safety with a <code>threading.Lock</code> in ~30 lines. Zero new package imports.</p>
@@ -131,6 +147,19 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <li>✅ Integration tests exist as manual scripts, not CI gates</li>
 <li>✅ Contract tests cover A2A protocol compliance in-process</li>
 </ul>
+<h2>Per-Agent Dependency Groups (v2.16)</h2>
+<h3>Why split dependencies into per-agent optional groups?</h3>
+<p>Before v2.16, <code>pyproject.toml</code> listed all dependencies (LlamaIndex, LangChain, CrewAI, PydanticAI, OpenAI Agents, sentence-transformers, etc.) in the core <code>[project.dependencies]</code>. Every Docker image installed all 315 packages even though each agent only uses one framework. The orchestrator doesn't need LangChain; the quant agent doesn't need CrewAI.</p>
+<p>Moving heavy framework deps into optional groups (<code>[project.optional-dependencies] orchestrator</code>, <code>rag</code>, <code>quant</code>, <code>market</code>, <code>analytics</code>, <code>reviewer</code>, <code>mcp_server</code>) lets each Dockerfile install <code>".[svc]"</code> — only its own framework plus the shared base. Package counts per image dropped from 315 to 99-184.</p>
+<p><strong>Why not use a single <code>requirements.txt</code> per agent?</strong> uv's native extras are version-locked in <code>uv.lock</code>, ensuring reproducible builds. Separate <code>requirement.txt</code> files drift without lockfile enforcement. Extras also work with <code>uv pip install --system --no-cache</code> in Docker without additional tooling.</p>
+<h3>Why Next.js standalone Docker output?</h3>
+<p>Next.js <code>output: 'standalone'</code> produces a self-contained build with only the minimal <code>node_modules</code> needed to run <code>next start</code>. The final Docker image (~120MB) contains no source code, no <code>node_modules</code> (except the trimmed subset), and no build tools. This:
+- Eliminates the <code>node_modules</code> bloat (~1.2GB in dev) from production images
+- Reduces attack surface (no build tools, no source)
+- Allows the same image for dev and prod (port 3000, no volume mounts)</p>
+<p><strong>Why multi-stage?</strong> A single-stage build would include the full <code>node_modules</code> + <code>.next</code> + source in the final image. Multi-stage copies only the standalone output to a clean <code>node:20-alpine</code> base.</p>
+<h3>Why cap Langfuse API limit at 100?</h3>
+<p>Langfuse cloud tier enforces a maximum of 100 API calls per minute per trace. The dashboard was requesting 200-500 spans in a single query, triggering HTTP 400 errors. Capping the limit parameter at 100 prevents the errors while still returning enough data for dashboard visualizations.</p>
 <h2>Same-Day Memory Cache &amp; analysis_date Column</h2>
 <h3>Why check the date before re-running agents?</h3>
 <p>Market data (prices, news sentiment) changes daily. A recommendation from yesterday may be wrong today. However, re-running all three sub-agents for every query on the same stock within the same day wastes 30–60 seconds of LLM inference and MCP calls when the underlying data has not changed since the last run. The same-day cache gives users instant responses for repeat queries while guaranteeing a fresh agent run the next day.</p>
@@ -548,11 +577,11 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <p>Configuration was scattered across <code>src/shared/config.py</code> with module-level <code>os.environ.get()</code> calls and <code>try/except ImportError</code> fallbacks. No type validation — a typo in <code>.env</code> silently defaulted. <code>os.environ["HF_HUB_OFFLINE"] = "1"</code> at <code>src/shared/config.py</code> import time produced side effects just by importing the config module.</p>
 <h3>Solution</h3>
 <p><code>src/shared/settings.py</code> uses pydantic-settings <code>BaseSettings</code>:</p>
-<div class="codehilite"><pre><span></span><code><span class="k">class</span> <span class="nc">Settings</span><span class="p">(</span><span class="n">BaseSettings</span><span class="p">):</span>
-    <span class="n">llm_base_url</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="s2">&quot;http://localhost:1234/v1&quot;</span><span class="p">,</span> <span class="n">alias</span><span class="o">=</span><span class="s2">&quot;LLM_BASE_URL&quot;</span><span class="p">)</span>
-    <span class="n">llm_api_key</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="s2">&quot;lmstudio&quot;</span><span class="p">,</span> <span class="n">alias</span><span class="o">=</span><span class="s2">&quot;LLM_API_KEY&quot;</span><span class="p">)</span>
-    <span class="o">...</span>
-</code></pre></div>
+<pre class="codehilite"><code class="language-python">class Settings(BaseSettings):
+    llm_base_url: str = Field(&quot;http://localhost:1234/v1&quot;, alias=&quot;LLM_BASE_URL&quot;)
+    llm_api_key: str = Field(&quot;lmstudio&quot;, alias=&quot;LLM_API_KEY&quot;)
+    ...
+</code></pre>
 
 <p><strong>Back-compat aliases</strong>: <code>LLM_BASE_URL</code> walks through <code>OPENAI_BASE_URL</code> → <code>LM_STUDIO_BASE_URL</code> → default via <code>AliasChoices</code>.</p>
 <p><strong>Singleton lazy-load</strong>: <code>get_settings()</code> caches after first call — no import-time side effects.</p>
@@ -607,16 +636,16 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <p>The default Docker image runs as <code>root</code>. If a vulnerability in the Python process allows code execution (e.g. via a malicious filing document), the attacker gets root inside the container. Running as a non-root user limits blast radius — the attacker can only write to world-writable directories like <code>/tmp</code>. All 5 Dockerfiles (<code>orchestrator</code>, <code>quant</code>, <code>rag</code>, <code>market-context</code>, <code>mcp</code>) use <code>USER appuser</code> with <code>uid=10001</code> (non-standard to avoid conflicts with host UIDs).</p>
 <h3>Why per-service pip extras?</h3>
 <p>The full install of all 4 agent frameworks in every container wastes disk space and attack surface. The orchestrator container doesn't need LlamaIndex or LangGraph, and the RAG container doesn't need ADK or CrewAI. Using pip extras per service:</p>
-<div class="codehilite"><pre><span></span><code><span class="n">pip</span><span class="w"> </span><span class="n">install</span><span class="w"> </span><span class="ss">&quot;finsight-mcp[orchestrator]&quot;</span>
-<span class="n">pip</span><span class="w"> </span><span class="n">install</span><span class="w"> </span><span class="ss">&quot;finsight-mcp[rag]&quot;</span>
-</code></pre></div>
+<pre class="codehilite"><code>pip install &quot;finsight-mcp[orchestrator]&quot;
+pip install &quot;finsight-mcp[rag]&quot;
+</code></pre>
 
 <p>Each container only installs the frameworks its agent needs. The <code>[all]</code> extra is available for development. On disk: orchestrator container shrinks from 12 GB (all frameworks) to 3.2 GB.</p>
 <h3>Why python urllib healthchecks instead of curl?</h3>
 <p>Including <code>curl</code> in each container adds ~15 MB per image (5 containers = 75 MB total) and is a security concern (curl is frequently targeted by CVEs). Python's built-in <code>urllib.request</code> can perform health checks with no additional dependencies:</p>
-<div class="codehilite"><pre><span></span><code><span class="k">HEALTHCHECK</span><span class="w"> </span>--interval<span class="o">=</span>30s<span class="w"> </span>--timeout<span class="o">=</span>5s<span class="w"> </span>--retries<span class="o">=</span><span class="m">3</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span><span class="k">CMD</span><span class="w"> </span>python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;import urllib.request; urllib.request.urlopen(&#39;http://localhost:8002/health&#39;)&quot;</span>
-</code></pre></div>
+<pre class="codehilite"><code class="language-dockerfile">HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+  CMD python -c &quot;import urllib.request; urllib.request.urlopen('http://localhost:8002/health')&quot;
+</code></pre>
 
 <p>This is 5 lines of inline Python — no curl binary, no package install, no attack surface.</p>
 <h3>Why <code>restart: unless-stopped</code>?</h3>
@@ -845,9 +874,9 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <p><code>get_company_filings()</code> returned all recent filings in order, but for large financial companies the "recent" batch was dominated by 8-Ks (current reports filed nearly daily). A request for <code>limit=10</code> might return 0-1 actual 10-K or 10-Q statements, leaving RAG agents with no financial data to analyze.</p>
 <h3>Solution</h3>
 <p>Added <code>get_financial_filings()</code> that fetches 10-K and 10-Q filings separately with independent limits:</p>
-<div class="codehilite"><pre><span></span><code>annual_limit=5    → up to 5 years of 10-Ks
+<pre class="codehilite"><code>annual_limit=5    → up to 5 years of 10-Ks
 quarterly_limit=8 → up to 2 years of 10-Qs
-</code></pre></div>
+</code></pre>
 
 <p>If the initial "recent" batch doesn't contain enough 10-Ks, it paginates to older filings pages. The response separates annual from quarterly so downstream agents can distinguish yearly trends from quarterly updates.</p>
 <h2>News System: Concurrent RSS + Yahoo Finance Fallback</h2>
@@ -908,12 +937,12 @@ quarterly_limit=8 → up to 2 years of 10-Qs
 <p>Validation rejected "SEC", but the fallback <code>_resolve_ticker()</code> passed the full noisy query "Analyze General Electric SEC filings for recent financial performance" to MCP's <code>resolve_company_ticker</code>. The SEC reverse index could not reliably match against all those noise words, and Yahoo Finance occasionally returned irrelevant tickers.</p>
 <h3>Solution</h3>
 <p><strong>Step 1 — Financial stop-word blocklist</strong>: Added <code>_FINANCIAL_STOP_WORDS</code> in <code>src/shared/ticker_utils.py</code> — a curated set of 30+ financial acronyms that are never valid stock tickers. Applied to both pattern 4 (3-5 letter) and pattern 5 (2 letter) regex results.</p>
-<div class="codehilite"><pre><span></span><code><span class="n">_FINANCIAL_STOP_WORDS</span> <span class="o">=</span> <span class="nb">frozenset</span><span class="p">({</span>
-    <span class="s2">&quot;SEC&quot;</span><span class="p">,</span> <span class="s2">&quot;EPS&quot;</span><span class="p">,</span> <span class="s2">&quot;CEO&quot;</span><span class="p">,</span> <span class="s2">&quot;CFO&quot;</span><span class="p">,</span> <span class="s2">&quot;NYSE&quot;</span><span class="p">,</span> <span class="s2">&quot;NASDAQ&quot;</span><span class="p">,</span>
-    <span class="s2">&quot;INC&quot;</span><span class="p">,</span> <span class="s2">&quot;LLC&quot;</span><span class="p">,</span> <span class="s2">&quot;LTD&quot;</span><span class="p">,</span> <span class="s2">&quot;CORP&quot;</span><span class="p">,</span> <span class="s2">&quot;GAAP&quot;</span><span class="p">,</span> <span class="s2">&quot;EBIT&quot;</span><span class="p">,</span> <span class="s2">&quot;EBITDA&quot;</span><span class="p">,</span>
-    <span class="o">...</span>
-<span class="p">})</span>
-</code></pre></div>
+<pre class="codehilite"><code class="language-python">_FINANCIAL_STOP_WORDS = frozenset({
+    &quot;SEC&quot;, &quot;EPS&quot;, &quot;CEO&quot;, &quot;CFO&quot;, &quot;NYSE&quot;, &quot;NASDAQ&quot;,
+    &quot;INC&quot;, &quot;LLC&quot;, &quot;LTD&quot;, &quot;CORP&quot;, &quot;GAAP&quot;, &quot;EBIT&quot;, &quot;EBITDA&quot;,
+    ...
+})
+</code></pre>
 
 <p><strong>Step 2 — Query noise cleanup</strong>: Added <code>clean_query_for_resolution()</code> that strips:
 - Common financial analysis words ("analyze", "filings", "financial", "performance", "sec", "edgar")
@@ -929,25 +958,25 @@ quarterly_limit=8 → up to 2 years of 10-Qs
 <h2>Portfolio Holdings Extraction for Correlation Analysis</h2>
 <h3>Problem</h3>
 <p>The Quant agent's <code>correlation_matrix</code> was always <code>{}</code> even when users explicitly mentioned portfolio holdings. The <code>correlation_node</code> in <code>nodes.py</code> requires <code>portfolio_holdings</code> (a list of ticker symbols) to compute correlations, but the chain never populated it:</p>
-<div class="codehilite"><pre><span></span><code>stream() → analyze(ticker) → graph.run(ticker, portfolio_holdings=None)
-</code></pre></div>
+<pre class="codehilite"><code>stream() → analyze(ticker) → graph.run(ticker, portfolio_holdings=None)
+</code></pre>
 
 <p>The <code>QuantAgent.stream()</code> method extracted the target ticker from the query but had no logic to extract portfolio holdings. Even though <code>graph.run()</code> accepted a <code>portfolio_holdings</code> parameter, it was always passed as <code>None</code>.</p>
 <h3>Solution</h3>
 <p><strong>Step 1 — <code>extract_holdings()</code> in <code>src/shared/ticker_utils.py</code></strong>: Four regex patterns covering natural language phrasing:</p>
-<div class="codehilite"><pre><span></span><code><span class="n">_HOLDINGS_PATTERNS</span> <span class="o">=</span> <span class="p">[</span>
-    <span class="c1"># &quot;My portfolio holds AAPL, MSFT, GOOGL&quot;</span>
-    <span class="c1"># &quot;My portfolio: TSLA, AMZN, META&quot;</span>
-    <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;(?:portfolio|holdings?)\s*(?::|holds?|contains?|includes?|consists\s+of)\s*...&quot;</span><span class="p">),</span>
-    <span class="c1"># &quot;I own MSFT and GOOGL&quot;</span>
-    <span class="c1"># &quot;my current portfolio includes AAPL, TSLA&quot;</span>
-    <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;(?:I\s+(?:own|hold|have|am\s+invested\s+in)|my\s+...portfolio...)\s+...&quot;</span><span class="p">),</span>
-    <span class="c1"># &quot;My current holdings are JPM, BAC, WFC&quot;</span>
-    <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;(?:my\s+...portfolio...)\s+are\s+...&quot;</span><span class="p">),</span>
-    <span class="c1"># &quot;currently own AAPL, MSFT&quot;</span>
-    <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;(?:currently\s+)?(?:own|hold|have)\s*:?\s*...&quot;</span><span class="p">),</span>
-<span class="p">]</span>
-</code></pre></div>
+<pre class="codehilite"><code class="language-python">_HOLDINGS_PATTERNS = [
+    # &quot;My portfolio holds AAPL, MSFT, GOOGL&quot;
+    # &quot;My portfolio: TSLA, AMZN, META&quot;
+    re.compile(r&quot;(?:portfolio|holdings?)\s*(?::|holds?|contains?|includes?|consists\s+of)\s*...&quot;),
+    # &quot;I own MSFT and GOOGL&quot;
+    # &quot;my current portfolio includes AAPL, TSLA&quot;
+    re.compile(r&quot;(?:I\s+(?:own|hold|have|am\s+invested\s+in)|my\s+...portfolio...)\s+...&quot;),
+    # &quot;My current holdings are JPM, BAC, WFC&quot;
+    re.compile(r&quot;(?:my\s+...portfolio...)\s+are\s+...&quot;),
+    # &quot;currently own AAPL, MSFT&quot;
+    re.compile(r&quot;(?:currently\s+)?(?:own|hold|have)\s*:?\s*...&quot;),
+]
+</code></pre>
 
 <p>Each pattern captures a comma-and-separated list of uppercase tickers. The <code>exclude_ticker</code> parameter removes the target stock from the holdings list.</p>
 <p><strong>Step 2 — Pass holdings through the chain</strong>: <code>stream()</code> calls <code>extract_holdings(query, exclude_ticker=ticker)</code>, passes to <code>analyze(portfolio_holdings=holdings)</code>, which passes to <code>graph.run(portfolio_holdings=holdings)</code>.</p>
@@ -1068,11 +1097,11 @@ quarterly_limit=8 → up to 2 years of 10-Qs
 <h2>Langfuse Distributed Tracing Across Processes</h2>
 <h3>Problem</h3>
 <p>Each agent runs in a separate OS process (uvicorn on its own port). When a sub-agent calls <code>langfuse.start_observation()</code> it creates a brand new root trace — Langfuse has no way to know that the sub-agent trace belongs inside the orchestrator's trace. This resulted in 4 disconnected traces per query:</p>
-<div class="codehilite"><pre><span></span><code>Trace A: orchestrator-execute   [pid: 8001]
+<pre class="codehilite"><code>Trace A: orchestrator-execute   [pid: 8001]
 Trace B: rag-agent-stream        [pid: 8002]   ← orphan
 Trace C: quant-agent-stream      [pid: 8003]   ← orphan
 Trace D: sentiment-agent-stream  [pid: 8004]   ← orphan
-</code></pre></div>
+</code></pre>
 
 <h3>Solution</h3>
 <p><strong>Text-based trace context injection via A2A payload:</strong></p>
@@ -1092,7 +1121,7 @@ Trace D: sentiment-agent-stream  [pid: 8004]   ← orphan
 <h3>Why <code>start_observation()</code> not <code>start_as_current_observation()</code>?</h3>
 <p><code>start_as_current_observation()</code> is a context manager that manages OTel context tokens. In async generators, the context token is created in one async context but the generator yields control to a different context, causing <code>ValueError: Token was created in a different Context</code>. <code>start_observation()</code> creates the span manually without OTel context management, avoiding the conflict. The span's <code>.end()</code> is called in the <code>finally</code> block.</p>
 <h3>Result</h3>
-<div class="codehilite"><pre><span></span><code>Trace A: finsight-query [ticker=NVDA]
+<pre class="codehilite"><code>Trace A: finsight-query [ticker=NVDA]
 ├── orchestrator-execute
 │   ├── send_message → Financial RAG Agent
 │   │   └── rag-agent-stream (child of orchestrator-execute)
@@ -1104,7 +1133,7 @@ Trace D: sentiment-agent-stream  [pid: 8004]   ← orphan
 │   │       └── llm_summary
 │   └── send_message → Sentiment Intelligence Agent
 │       └── sentiment-agent-stream (child of orchestrator-execute)
-</code></pre></div>
+</code></pre>
 
 <h2>Date Hallucination</h2>
 <h3>Problem</h3>
@@ -1413,14 +1442,14 @@ Trace D: sentiment-agent-stream  [pid: 8004]   ← orphan
 <p>Additionally, each MCP connection holds an open HTTP connection and a background asyncio task (reading SSE events). Per-request connect/disconnect creates connection churn that can exhaust file descriptors under load.</p>
 <h3>Why double-checked locking instead of a simple module-level <code>await</code>?</h3>
 <p>Python's <code>asyncio.Queue</code> and similar primitives aside, the simplest pattern for async lazy-init with concurrent safety is the double-checked lock:</p>
-<div class="codehilite"><pre><span></span><code><span class="k">if</span> <span class="n">_global_client</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">_global_client</span><span class="o">.</span><span class="n">_connected</span><span class="p">:</span>
-    <span class="k">return</span> <span class="n">_global_client</span>
-<span class="k">async</span> <span class="k">with</span> <span class="n">_client_lock</span><span class="p">:</span>
-    <span class="k">if</span> <span class="n">_global_client</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="ow">not</span> <span class="n">_global_client</span><span class="o">.</span><span class="n">_connected</span><span class="p">:</span>
-        <span class="n">_global_client</span> <span class="o">=</span> <span class="n">MCPClient</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
-        <span class="k">await</span> <span class="n">_global_client</span><span class="o">.</span><span class="n">connect_all</span><span class="p">()</span>
-<span class="k">return</span> <span class="n">_global_client</span>
-</code></pre></div>
+<pre class="codehilite"><code class="language-python">if _global_client is not None and _global_client._connected:
+    return _global_client
+async with _client_lock:
+    if _global_client is None or not _global_client._connected:
+        _global_client = MCPClient(...)
+        await _global_client.connect_all()
+return _global_client
+</code></pre>
 
 <p>The first check (unlocked) is a fast-path O(1) return for the common case (already connected). The locked check handles the race where N callers arrive simultaneously on cold start — only one creates the client, the rest get the single result. Without the second check, N callers would create N clients.</p>
 <h3>Why reconnect on <code>ConnectionError</code>+<code>EOFError</code> instead of all exceptions?</h3>
@@ -1588,13 +1617,13 @@ Trace D: sentiment-agent-stream  [pid: 8004]   ← orphan
 <h3>Solution</h3>
 <p><strong>Standard ADK pattern</strong>: <code>run_async()</code> → <code>get_session()</code> → <code>add_session_to_memory(session)</code></p>
 <p>The <code>DatabaseSessionService.get_session()</code> loads events from the database when called after <code>run_async()</code> completes. We collect events during <code>run_async()</code> as a safety net, then use the standard pattern with fallback:</p>
-<div class="codehilite"><pre><span></span><code><span class="n">session</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_runner</span><span class="o">.</span><span class="n">session_service</span><span class="o">.</span><span class="n">get_session</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
-<span class="k">if</span> <span class="n">session</span> <span class="ow">and</span> <span class="n">session</span><span class="o">.</span><span class="n">events</span><span class="p">:</span>
-    <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_runner</span><span class="o">.</span><span class="n">memory_service</span><span class="o">.</span><span class="n">add_session_to_memory</span><span class="p">(</span><span class="n">session</span><span class="p">)</span>
-<span class="k">else</span><span class="p">:</span>
-    <span class="c1"># Fallback: use events collected during run_async</span>
-    <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_runner</span><span class="o">.</span><span class="n">memory_service</span><span class="o">.</span><span class="n">add_events_to_memory</span><span class="p">(</span><span class="n">events</span><span class="o">=</span><span class="n">collected_events</span><span class="p">)</span>
-</code></pre></div>
+<pre class="codehilite"><code class="language-python">session = await self._runner.session_service.get_session(...)
+if session and session.events:
+    await self._runner.memory_service.add_session_to_memory(session)
+else:
+    # Fallback: use events collected during run_async
+    await self._runner.memory_service.add_events_to_memory(events=collected_events)
+</code></pre>
 
 <h3>Hybrid Search: BM25 + Embeddings</h3>
 <p>Instead of Mem0 (requires external OpenAI API), we implemented local hybrid search:</p>
@@ -1655,13 +1684,13 @@ Trace D: sentiment-agent-stream  [pid: 8004]   ← orphan
 <h2>Parallel Fan-Out Graph Topology</h2>
 <h3>Why parallel fan-out instead of a sequential chain?</h3>
 <p>The original Quant graph was largely sequential: <code>fetch_prices → compute_metrics → DCF/stress → format_output</code>. Price fetching and fundamentals fetching were sequential, adding ~3-5s per call. The revised graph fans out from START into 5 parallel branches:</p>
-<div class="codehilite"><pre><span></span><code><span class="n">START</span><span class="w"> </span><span class="err">──→</span><span class="w"> </span><span class="n">fetch_prices</span><span class="w"> </span><span class="err">──→</span><span class="w"> </span><span class="n">compute_base_metrics</span><span class="w"> </span><span class="err">──</span><span class="p">[</span><span class="n">volatility</span><span class="w"> </span><span class="n">gate</span><span class="p">]</span><span class="err">──→</span><span class="w"> </span><span class="n">DCF</span><span class="o">/</span><span class="n">stress</span>
-<span class="w">                       </span><span class="err">└──→</span><span class="w"> </span><span class="n">technical_analysis</span>
-<span class="w">       </span><span class="err">└──→</span><span class="w"> </span><span class="n">fetch_fundamentals</span><span class="w"> </span><span class="err">──→</span><span class="w"> </span><span class="n">peer_comparison</span>
-<span class="w">                               </span><span class="err">└──→</span><span class="w"> </span><span class="n">analyst_positioning</span>
-<span class="w">       </span><span class="err">└──→</span><span class="w"> </span><span class="n">options_flow</span>
-<span class="w">       </span><span class="err">└──→</span><span class="w"> </span><span class="n">insider_signals</span>
-</code></pre></div>
+<pre class="codehilite"><code>START ──→ fetch_prices ──→ compute_base_metrics ──[volatility gate]──→ DCF/stress
+                       └──→ technical_analysis
+       └──→ fetch_fundamentals ──→ peer_comparison
+                               └──→ analyst_positioning
+       └──→ options_flow
+       └──→ insider_signals
+</code></pre>
 
 <p>All paths converge at <code>format_output</code> → <code>llm_summary</code>. Since the branches are independent (prices don't depend on fundamentals, technicals don't depend on DCF), there's no reason to serialize them. <code>LangGraph</code> supports multiple outgoing edges from a node naturally — no special parallel construct needed.</p>
 <h3>Why not merge <code>fetch_prices</code> and <code>fetch_fundamentals</code> into one node?</h3>
@@ -1712,10 +1741,10 @@ Trace D: sentiment-agent-stream  [pid: 8004]   ← orphan
 3. No persistent news index — news was re-fetched from MCP each time (no dedup cache)</p>
 <h3>Solution</h3>
 <p><code>query()</code> in <code>src/financial_rag/executor.py:162</code> now fires both ingestions as <code>asyncio.create_task()</code> without awaiting:</p>
-<div class="codehilite"><pre><span></span><code><span class="n">asyncio</span><span class="o">.</span><span class="n">create_task</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_ensure_ingested</span><span class="p">(</span><span class="n">ticker</span><span class="p">))</span>
-<span class="n">asyncio</span><span class="o">.</span><span class="n">create_task</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_ensure_news_ingested</span><span class="p">(</span><span class="n">ticker</span><span class="p">))</span>
-<span class="k">return</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">index</span><span class="o">.</span><span class="n">query</span><span class="p">(</span><span class="n">ticker</span><span class="p">,</span> <span class="n">query_text</span><span class="p">)</span>
-</code></pre></div>
+<pre class="codehilite"><code class="language-python">asyncio.create_task(self._ensure_ingested(ticker))
+asyncio.create_task(self._ensure_news_ingested(ticker))
+return await self.index.query(ticker, query_text)
+</code></pre>
 
 <p>The ChromaDB query runs immediately against whatever is already indexed. If a filing or news article was ingested in a prior query, it's found. If the ticker has never been queried before, the ingestion tasks complete in the background and the current query returns results from the first ingestion that finishes (or falls back gracefully).</p>
 <h3>Why a separate dedup key for news?</h3>
@@ -1810,10 +1839,10 @@ Trace D: sentiment-agent-stream  [pid: 8004]   ← orphan
 <h3>Why convert <code>_ensure_ingested</code> from await to fire-and-forget?</h3>
 <p>Phase 1's <code>query()</code> used <code>await asyncio.gather(self._ensure_ingested(ticker), self._ensure_news_ingested(ticker))</code> — the query blocked until both ingestion tasks completed. This added ~8s (filings) + ~3s (news) = ~11s of cold-start latency to every new ticker's first query. The query result could only use data indexed from a previous run.</p>
 <p>Phase 2 converts both to <code>asyncio.create_task()</code> (<code>executor.py:162-166</code>):</p>
-<div class="codehilite"><pre><span></span><code><span class="n">asyncio</span><span class="o">.</span><span class="n">create_task</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_ensure_ingested</span><span class="p">(</span><span class="n">ticker</span><span class="p">))</span>
-<span class="n">asyncio</span><span class="o">.</span><span class="n">create_task</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_ensure_news_ingested</span><span class="p">(</span><span class="n">ticker</span><span class="p">))</span>
-<span class="k">return</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">index</span><span class="o">.</span><span class="n">query</span><span class="p">(</span><span class="n">ticker</span><span class="p">,</span> <span class="n">query_text</span><span class="p">)</span>
-</code></pre></div>
+<pre class="codehilite"><code class="language-python">asyncio.create_task(self._ensure_ingested(ticker))
+asyncio.create_task(self._ensure_news_ingested(ticker))
+return await self.index.query(ticker, query_text)
+</code></pre>
 
 <p>The ChromaDB query runs immediately against whatever is already indexed. If the ticker was queried before, all data is available. If it's a new ticker, the ingestion finishes in the background and the current query returns a warming signal.</p>
 <h3>Why a warming signal instead of silently returning empty results?</h3>
@@ -1976,17 +2005,17 @@ Trace D: sentiment-agent-stream  [pid: 8004]   ← orphan
 </tbody>
 </table>
 <p>All three fan out from <code>START</code> alongside the existing nodes. <code>format_output_node</code> collects all 8 signal groups (technical, fundamental, narrative, options, insider, positioning, macro, risk) with weights summing to 1.0:</p>
-<div class="codehilite"><pre><span></span><code><span class="n">_SIGNAL_WEIGHTS</span> <span class="o">=</span> <span class="p">{</span>
-    <span class="s2">&quot;technical&quot;</span><span class="p">:</span>    <span class="mf">0.15</span><span class="p">,</span>
-    <span class="s2">&quot;fundamental&quot;</span><span class="p">:</span>  <span class="mf">0.15</span><span class="p">,</span>
-    <span class="s2">&quot;narrative&quot;</span><span class="p">:</span>    <span class="mf">0.10</span><span class="p">,</span>
-    <span class="s2">&quot;options&quot;</span><span class="p">:</span>      <span class="mf">0.12</span><span class="p">,</span>
-    <span class="s2">&quot;insider&quot;</span><span class="p">:</span>      <span class="mf">0.10</span><span class="p">,</span>
-    <span class="s2">&quot;positioning&quot;</span><span class="p">:</span>  <span class="mf">0.11</span><span class="p">,</span>
-    <span class="s2">&quot;macro&quot;</span><span class="p">:</span>        <span class="mf">0.12</span><span class="p">,</span>
-    <span class="s2">&quot;risk&quot;</span><span class="p">:</span>         <span class="mf">0.15</span><span class="p">,</span>
-<span class="p">}</span>
-</code></pre></div>
+<pre class="codehilite"><code class="language-python">_SIGNAL_WEIGHTS = {
+    &quot;technical&quot;:    0.15,
+    &quot;fundamental&quot;:  0.15,
+    &quot;narrative&quot;:    0.10,
+    &quot;options&quot;:      0.12,
+    &quot;insider&quot;:      0.10,
+    &quot;positioning&quot;:  0.11,
+    &quot;macro&quot;:        0.12,
+    &quot;risk&quot;:         0.15,
+}
+</code></pre>
 
 <p>Confidence formula (§8.6.2): <code>|composite| × (1 − std(present_signals))</code></p>
 <h3>Why raw weighted sum instead of normalized?</h3>
@@ -2036,11 +2065,11 @@ Trace D: sentiment-agent-stream  [pid: 8004]   ← orphan
 <li><strong>L1</strong>: In-process <code>TTLCache</code> (fast, no network). Hit → return immediately.</li>
 <li><strong>L2</strong>: Redis write-through. L1 miss → read from Redis → populate L1. Every L1 <code>set()</code> propagates to Redis.</li>
 </ul>
-<div class="codehilite"><pre><span></span><code><span class="k">def</span> <span class="nf">make_cache</span><span class="p">(</span><span class="n">ttl_seconds</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">300</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">TTLCache</span> <span class="o">|</span> <span class="n">RedisCache</span><span class="p">:</span>
-    <span class="k">if</span> <span class="n">REDIS_URL</span><span class="p">:</span>
-        <span class="k">return</span> <span class="n">RedisCache</span><span class="p">(</span><span class="n">ttl_seconds</span><span class="o">=</span><span class="n">ttl_seconds</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="n">name</span><span class="p">)</span>
-    <span class="k">return</span> <span class="n">TTLCache</span><span class="p">(</span><span class="n">ttl_seconds</span><span class="o">=</span><span class="n">ttl_seconds</span><span class="p">)</span>
-</code></pre></div>
+<pre class="codehilite"><code class="language-python">def make_cache(ttl_seconds: int = 300, name: str = &quot;&quot;) -&gt; TTLCache | RedisCache:
+    if REDIS_URL:
+        return RedisCache(ttl_seconds=ttl_seconds, name=name)
+    return TTLCache(ttl_seconds=ttl_seconds)
+</code></pre>
 
 <p>All existing <code>TTLCache(...)</code> instantiations in <code>finsight_server.py</code> remain valid — <code>make_cache()</code> returns a <code>TTLCache</code> when <code>REDIS_URL</code> is unset, identical behavior to before. When <code>REDIS_URL</code> is configured, the returned <code>RedisCache</code> adds shared persistence transparently.</p>
 <h3>Why not Redis-only?</h3>
@@ -2094,22 +2123,22 @@ Trace D: sentiment-agent-stream  [pid: 8004]   ← orphan
 <p>The semantic cache (<code>src/shared/semantic_cache.py</code>) stores responses keyed by query text. A user asking "Analyze NVDA" on Tuesday would hit the cache from Monday's analysis — missing overnight news, price moves, or macro shifts. The cache was too effective: it served stale content across trading days.</p>
 <h3>Solution</h3>
 <p>Tag each cache entry with the current <code>YYYY-MM-DD</code> date on write, and filter by date on read:</p>
-<div class="codehilite"><pre><span></span><code><span class="c1"># shared/semantic_cache.py — set()</span>
-<span class="n">today</span> <span class="o">=</span> <span class="n">date</span><span class="o">.</span><span class="n">today</span><span class="p">()</span><span class="o">.</span><span class="n">isoformat</span><span class="p">()</span>  <span class="c1"># YYYY-MM-DD</span>
-<span class="bp">self</span><span class="o">.</span><span class="n">_collection</span><span class="o">.</span><span class="n">add</span><span class="p">(</span>
-    <span class="n">ids</span><span class="o">=</span><span class="p">[</span><span class="n">entry_id</span><span class="p">],</span>
-    <span class="n">embeddings</span><span class="o">=</span><span class="p">[</span><span class="n">embedding</span><span class="p">],</span>
-    <span class="n">metadatas</span><span class="o">=</span><span class="p">[{</span><span class="s2">&quot;date&quot;</span><span class="p">:</span> <span class="n">today</span><span class="p">,</span> <span class="s2">&quot;response&quot;</span><span class="p">:</span> <span class="o">...</span><span class="p">}],</span>
-    <span class="n">documents</span><span class="o">=</span><span class="p">[</span><span class="n">query</span><span class="p">],</span>
-<span class="p">)</span>
+<pre class="codehilite"><code class="language-python"># shared/semantic_cache.py — set()
+today = date.today().isoformat()  # YYYY-MM-DD
+self._collection.add(
+    ids=[entry_id],
+    embeddings=[embedding],
+    metadatas=[{&quot;date&quot;: today, &quot;response&quot;: ...}],
+    documents=[query],
+)
 
-<span class="c1"># get()</span>
-<span class="n">results</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_collection</span><span class="o">.</span><span class="n">query</span><span class="p">(</span>
-    <span class="n">query_embeddings</span><span class="o">=</span><span class="p">[</span><span class="n">embedding</span><span class="p">],</span>
-    <span class="n">n_results</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
-    <span class="n">where</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;date&quot;</span><span class="p">:</span> <span class="n">today</span><span class="p">},</span>  <span class="c1"># only today&#39;s entries</span>
-<span class="p">)</span>
-</code></pre></div>
+# get()
+results = self._collection.query(
+    query_embeddings=[embedding],
+    n_results=1,
+    where={&quot;date&quot;: today},  # only today's entries
+)
+</code></pre>
 
 <p>A ChromaDB <code>where</code> filter on the metadata <code>date</code> field ensures only entries from the current date match. Same query on different days → no metadata match → cache miss → new analysis generated and stored.</p>
 <h3>Why not a TTL?</h3>
@@ -2126,25 +2155,25 @@ Trace D: sentiment-agent-stream  [pid: 8004]   ← orphan
 <p>The first RAG query after server start paid a ~3-5s cold-start tax: loading the HuggingFace <code>all-MiniLM-L6-v2</code> embedder, connecting to ChromaDB, and loading the CrossEncoder reranker all happened on first use. This made the first query of a session or after a restart noticeably slower than subsequent ones.</p>
 <h3>Solution</h3>
 <p><code>_do_prewarm()</code> at <code>src/financial_rag/server.py</code> runs once on Starlette startup via <code>asyncio.to_thread</code>:</p>
-<div class="codehilite"><pre><span></span><code><span class="k">async</span> <span class="k">def</span> <span class="nf">_do_prewarm</span><span class="p">():</span>
-    <span class="n">t0</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">monotonic</span><span class="p">()</span>
-    <span class="c1"># 1. Embedder</span>
-    <span class="n">embedder</span> <span class="o">=</span> <span class="n">HuggingFaceEmbedding</span><span class="p">(</span><span class="n">model_name</span><span class="o">=</span><span class="n">EMBED_MODEL</span><span class="p">)</span>
-    <span class="n">embedder</span><span class="o">.</span><span class="n">_model</span>  <span class="c1"># triggers actual model load</span>
-    <span class="n">_</span> <span class="o">=</span> <span class="n">embedder</span><span class="o">.</span><span class="n">get_text_embedding</span><span class="p">(</span><span class="s2">&quot;warmup&quot;</span><span class="p">)</span>
-    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Embedder loaded in </span><span class="si">%.2f</span><span class="s2">s&quot;</span><span class="p">,</span> <span class="n">time</span><span class="o">.</span><span class="n">monotonic</span><span class="p">()</span> <span class="o">-</span> <span class="n">t0</span><span class="p">)</span>
+<pre class="codehilite"><code class="language-python">async def _do_prewarm():
+    t0 = time.monotonic()
+    # 1. Embedder
+    embedder = HuggingFaceEmbedding(model_name=EMBED_MODEL)
+    embedder._model  # triggers actual model load
+    _ = embedder.get_text_embedding(&quot;warmup&quot;)
+    logger.info(&quot;Embedder loaded in %.2fs&quot;, time.monotonic() - t0)
 
-    <span class="c1"># 2. ChromaDB collections</span>
-    <span class="k">for</span> <span class="n">coll</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;sec_filings&quot;</span><span class="p">,</span> <span class="s2">&quot;news&quot;</span><span class="p">,</span> <span class="s2">&quot;earnings&quot;</span><span class="p">):</span>
-        <span class="n">index</span><span class="o">.</span><span class="n">_chroma</span><span class="o">.</span><span class="n">get_or_create_collection</span><span class="p">(</span><span class="n">coll</span><span class="p">)</span>
-    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;ChromaDB collections ready in </span><span class="si">%.2f</span><span class="s2">s&quot;</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
+    # 2. ChromaDB collections
+    for coll in (&quot;sec_filings&quot;, &quot;news&quot;, &quot;earnings&quot;):
+        index._chroma.get_or_create_collection(coll)
+    logger.info(&quot;ChromaDB collections ready in %.2fs&quot;, ...)
 
-    <span class="c1"># 3. CrossEncoder (lazy-loaded in HybridSearchPipeline)</span>
-    <span class="kn">from</span> <span class="nn">.hybrid_search</span> <span class="kn">import</span> <span class="n">HybridSearchPipeline</span>
-    <span class="n">hp</span> <span class="o">=</span> <span class="n">HybridSearchPipeline</span><span class="p">()</span>
-    <span class="n">hp</span><span class="o">.</span><span class="n">_get_reranker</span><span class="p">()</span>  <span class="c1"># triggers model load</span>
-    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Reranker loaded in </span><span class="si">%.2f</span><span class="s2">s&quot;</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
-</code></pre></div>
+    # 3. CrossEncoder (lazy-loaded in HybridSearchPipeline)
+    from .hybrid_search import HybridSearchPipeline
+    hp = HybridSearchPipeline()
+    hp._get_reranker()  # triggers model load
+    logger.info(&quot;Reranker loaded in %.2fs&quot;, ...)
+</code></pre>
 
 <p>Each stage logs elapsed seconds so the cold-start budget is visible in server logs. The warm-up runs concurrently with the first A2A request (Starlette startup fires before the server accepts requests), so the first user query typically finds all models already loaded.</p>
 <h3>Why not lazy-load as before?</h3>
@@ -2253,7 +2282,7 @@ Trace D: sentiment-agent-stream  [pid: 8004]   ← orphan
 <p>The original <code>_score_fundamental_value()</code> and <code>_score_fundamental_quality()</code> used absolute universal thresholds: PE &lt; 12 → good, ROE &gt; 25% → excellent. These thresholds were arbitrary and sector-blind — a PE of 20 might be cheap for a tech stock but expensive for a utility. The same ROE of 15% would score "moderate" on the absolute scale, but might be the sector median for banks and quite strong for retail.</p>
 <h3>Solution</h3>
 <p><strong><code>_relative_score(value, median, higher_is_better)</code></strong> (<code>src/quant/nodes.py</code>): Scores a metric relative to its sector median ratio. Returns in [-1, 1]:</p>
-<div class="codehilite"><pre><span></span><code>For higher_is_better (ROE, margin):
+<pre class="codehilite"><code>For higher_is_better (ROE, margin):
   ratio &gt; 2.0× median → +1.0
   ratio &gt; 1.5× median → +0.6
   ratio &gt; 1.1× median → +0.2
@@ -2268,7 +2297,7 @@ For lower_is_better (PE, EV/EBITDA, D/E):
   ratio &lt; 1.2× median → -0.1
   ratio &lt; 1.6× median → -0.4
   else → -0.7
-</code></pre></div>
+</code></pre>
 
 <p><strong>Sector medians computed in <code>peer_comparison_node</code></strong> (<code>nodes.py:919-935</code>): After ranking all peer tickers on each fundamental metric, the node computes the median value per metric across all peers. These medians are passed to <code>format_output_node</code> via <code>peer_comparison.medians</code>.</p>
 <p><strong>Fallback</strong>: When no peer medians are available (no peers found, or all peers lack a given metric), <code>_score_fundamental_value</code> and <code>_score_fundamental_quality</code> fall back to the original absolute thresholds — no regression for tickers without peer coverage.</p>
@@ -2438,15 +2467,15 @@ For lower_is_better (PE, EV/EBITDA, D/E):
 <h2>Weighted Vote Normalization (v1.36)</h2>
 <h3>Why redistribute missing signal weights instead of ignoring them?</h3>
 <p>The quant agent's behavioral voting uses 8 signal groups (options flow, insider transactions, short interest, etc.), each with a fixed weight in <code>_SIGNAL_WEIGHTS</code>. Before v1.36:</p>
-<div class="codehilite"><pre><span></span><code><span class="n">composite</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">group_scores</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="o">*</span> <span class="n">_SIGNAL_WEIGHTS</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">k</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span> <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">present</span><span class="p">)</span>
-</code></pre></div>
+<pre class="codehilite"><code class="language-python">composite = sum(group_scores[k] * _SIGNAL_WEIGHTS.get(k, 0) for k in present)
+</code></pre>
 
 <p>When a signal was absent (score = 0.0), it was filtered out via <code>present = {k: v for k, v in group_scores.items() if v != 0.0}</code>. But its weight was <em>also</em> excluded — meaning the total divisor was &lt; 1.0. This dampened the composite score proportionally to the number of missing signals.</p>
 <p>Example: if only 2 of 8 signals are present, each with weight 0.15, the composite → sum of (score × 0.15) = 0.30 × average_score. A strong BUY signal of +1.0 in both groups gives composite = 0.30, which is still in HOLD territory (threshold 0.15). <strong>The more signals missing, the harder it was to get a confident non-HOLD vote.</strong></p>
 <p>The fix redistributes weights:</p>
-<div class="codehilite"><pre><span></span><code><span class="n">scale</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="n">total_present_weight</span>
-<span class="n">composite</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">group_scores</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="o">*</span> <span class="n">_SIGNAL_WEIGHTS</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">k</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span> <span class="o">*</span> <span class="n">scale</span> <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">present</span><span class="p">)</span>
-</code></pre></div>
+<pre class="codehilite"><code class="language-python">scale = 1.0 / total_present_weight
+composite = sum(group_scores[k] * _SIGNAL_WEIGHTS.get(k, 0) * scale for k in present)
+</code></pre>
 
 <p>Now a single +1.0 signal with weight 0.15 (scaled to 1.0) produces composite = 1.0 → confident BUY. This is correct: the present signal says BUY with high conviction; missing data shouldn't dilute its vote.</p>
 <h3>Why sort FCF periods descending in FCF checks?</h3>
@@ -2487,14 +2516,14 @@ For lower_is_better (PE, EV/EBITDA, D/E):
 <p>The API routes (<code>/api/sessions</code>, <code>/api/sessions/{id}/events</code>) query ADK's session database — which stores conversation turns, tool calls, and event history. This is separate from <code>finsight_memory.db</code>, which stores custom tables (<code>ticker_briefs</code>, <code>recommendation_records</code>, <code>memory_entries</code>). Using <code>_ADK_SESSION_DB = DB_PATH.parent / "adk_sessions.db"</code> makes the path explicit and prevents accidental cross-contamination if the memory DB schema changes.</p>
 <h3>Why proper <code>finally</code> blocks for connection cleanup (api_routes)?</h3>
 <p>Before v1.36, some API routes omitted <code>try/finally</code> around <code>aiosqlite.connect()</code>. If the handler raised an exception mid-request, the database connection was leaked — no <code>await db.close()</code>. Over time, this exhausted the SQLite connection limit (default 5 concurrent writes on Windows, ~unlimited reads but with performance degradation). All routes now use:</p>
-<div class="codehilite"><pre><span></span><code><span class="n">db</span> <span class="o">=</span> <span class="kc">None</span>
-<span class="k">try</span><span class="p">:</span>
-    <span class="n">db</span> <span class="o">=</span> <span class="k">await</span> <span class="n">aiosqlite</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
-    <span class="o">...</span>
-<span class="k">finally</span><span class="p">:</span>
-    <span class="k">if</span> <span class="n">db</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-        <span class="k">await</span> <span class="n">db</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
-</code></pre></div>
+<pre class="codehilite"><code class="language-python">db = None
+try:
+    db = await aiosqlite.connect(...)
+    ...
+finally:
+    if db is not None:
+        await db.close()
+</code></pre>
 
 <p>This guarantees cleanup even on exception paths. The <code>db = None</code> initialization ensures the <code>finally</code> block doesn't reference a <code>NameError</code> if the connection assignment fails.</p>
 <h2>Deferred Eval Gate (v1.38)</h2>
@@ -2733,17 +2762,17 @@ For lower_is_better (PE, EV/EBITDA, D/E):
 </ol>
 <h3>Solution</h3>
 <p>Move all runnable code under <code>src/</code>:</p>
-<div class="codehilite"><pre><span></span><code><span class="n">src</span><span class="o">/</span>
-<span class="w">  </span><span class="n">orchestrator</span><span class="o">/</span><span class="w">       </span><span class="c1"># ADK orchestrator</span>
-<span class="w">  </span><span class="n">financial_rag</span><span class="o">/</span><span class="w">      </span><span class="c1"># RAG agent (LlamaIndex)</span>
-<span class="w">  </span><span class="n">quant</span><span class="o">/</span><span class="w">              </span><span class="c1"># Quant agent (LangGraph)</span>
-<span class="w">  </span><span class="n">market_context</span><span class="o">/</span><span class="w">     </span><span class="c1"># Market Context agent (CrewAI)</span>
-<span class="w">  </span><span class="n">mcp_tools</span><span class="o">/</span><span class="w">          </span><span class="c1"># MCP server</span>
-<span class="w">  </span><span class="n">shared</span><span class="o">/</span><span class="w">             </span><span class="c1"># Shared infrastructure</span>
-<span class="w">  </span><span class="n">web</span><span class="o">/</span><span class="w">                </span><span class="c1"># Next.js frontend</span>
-<span class="w">  </span><span class="n">tests</span><span class="o">/</span><span class="w">              </span><span class="c1"># All test files</span>
-<span class="w">  </span><span class="n">scripts</span><span class="o">/</span><span class="w">            </span><span class="c1"># Utility scripts</span>
-</code></pre></div>
+<pre class="codehilite"><code>src/
+  orchestrator/       # ADK orchestrator
+  financial_rag/      # RAG agent (LlamaIndex)
+  quant/              # Quant agent (LangGraph)
+  market_context/     # Market Context agent (CrewAI)
+  mcp_tools/          # MCP server
+  shared/             # Shared infrastructure
+  web/                # Next.js frontend
+  tests/              # All test files
+  scripts/            # Utility scripts
+</code></pre>
 
 <p>Configuration changes:
 - <code>pyproject.toml</code>: <code>packages.find = { where = ["src"] }</code> — setuptools scans <code>src/</code> for packages. <code>pythonpath = ["src"]</code> so tests import from <code>src/</code> directly. <code>testpaths = ["src/tests"]</code>.
@@ -3114,15 +3143,15 @@ For lower_is_better (PE, EV/EBITDA, D/E):
 <p>This caused key mismatches (was it <code>"beta"</code> or <code>"stock_beta"?</code>), missing metadata (what methodology was used for this Sharpe ratio?), and inconsistent aggregation (is the value a float or a string? what's the valid range?). Every cross-agent metric handoff was a fragile <code>.get()</code> chain with no validation.</p>
 <h3>Solution</h3>
 <p>Introduce <code>MetricValue</code> in <code>src/shared/metrics.py</code> — a <code>float</code> subclass carrying validation metadata:</p>
-<div class="codehilite"><pre><span></span><code><span class="k">class</span> <span class="nc">MetricValue</span><span class="p">(</span><span class="nb">float</span><span class="p">):</span>
-    <span class="k">def</span> <span class="fm">__new__</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">value</span><span class="p">,</span> <span class="n">methodology</span><span class="p">,</span> <span class="n">min_valid</span><span class="p">,</span> <span class="n">max_valid</span><span class="p">,</span> <span class="n">warning</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
-        <span class="o">...</span>
-    <span class="nd">@property</span>
-    <span class="k">def</span> <span class="nf">status</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span> <span class="o">...</span>  <span class="c1"># &quot;VALID&quot; | &quot;WARNING&quot; | &quot;ERROR&quot;</span>
-    <span class="nd">@property</span>
-    <span class="k">def</span> <span class="nf">warning</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span> <span class="o">...</span>
-    <span class="k">def</span> <span class="nf">to_dict</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span> <span class="o">...</span>
-</code></pre></div>
+<pre class="codehilite"><code class="language-python">class MetricValue(float):
+    def __new__(cls, value, methodology, min_valid, max_valid, warning=None):
+        ...
+    @property
+    def status(self): ...  # &quot;VALID&quot; | &quot;WARNING&quot; | &quot;ERROR&quot;
+    @property
+    def warning(self): ...
+    def to_dict(self): ...
+</code></pre>
 
 <p><code>MetricValue</code> behaves exactly as a float everywhere (<code>isinstance</code>, arithmetic, Pydantic fields) but adds <code>.status</code>, <code>.warning</code>, and <code>.methodology</code> properties plus a <code>to_dict()</code> serialization method. The <code>metric_result()</code> factory wraps raw floats into validated <code>MetricValue</code> instances.</p>
 <h3>Why a <code>float</code> subclass instead of a dataclass?</h3>
@@ -3146,8 +3175,8 @@ For lower_is_better (PE, EV/EBITDA, D/E):
 <p>Traditional DCF valuation discounts projected free cash flows. Banks, insurance companies, and other financial institutions don't have meaningful FCF — their "cash flow" is the spread between lending and deposit rates, not discretionary capital. Applying DCF to a bank produces absurd results (negative terminal values, meaningless growth rates) because the model assumes cash can be distributed to shareholders, whereas regulatory capital requirements prevent this.</p>
 <h3>Solution</h3>
 <p>Introduce a P/B (Price-to-Book) residual income model as an alternative <code>method</code> on the DCF node. When the quant agent detects a financial sector ticker (SIC codes 60-69: banks, insurance, real estate), it sets <code>method="pb"</code> instead of <code>method="dcf"</code>. The P/B model computes:</p>
-<div class="codehilite"><pre><span></span><code>fair_pb_multiple = (ROE - g) / (COE - g)
-</code></pre></div>
+<pre class="codehilite"><code>fair_pb_multiple = (ROE - g) / (COE - g)
+</code></pre>
 
 <p>where ROE = return on equity, g = terminal growth rate, COE = cost of equity. The fair value is <code>fair_pb_multiple * book_value_per_share</code>, compared against the current P/B ratio.</p>
 <h3>Why not use a sector-specific ticker blacklist?</h3>
@@ -3171,13 +3200,13 @@ For lower_is_better (PE, EV/EBITDA, D/E):
 <p>Both ran unconditionally, with regex results appended AFTER model data. This produced duplicate KPI chips ("P/E Ratio: 25.3" appeared twice), overwritten structured values (regex label "Bull Case" replaced "95th Percentile Target"), and duplicated valuation sections. Every report had a manual cleanup step to remove duplicates.</p>
 <h3>Solution</h3>
 <p>Every extraction function now takes a snapshot of existing labels before running, and checks <code>_existing_labels</code> / <code>existing_chip_labels</code> / <code>existing_scorecard_dims</code> before appending from regex. The pattern:</p>
-<div class="codehilite"><pre><span></span><code><span class="n">_snap</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_existing_labels</span><span class="p">)</span>
-<span class="c1"># ... structured population ...</span>
-<span class="c1"># regex fallback:</span>
-<span class="k">if</span> <span class="n">label</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">_snap</span><span class="p">:</span>
-    <span class="bp">self</span><span class="o">.</span><span class="n">_existing_labels</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">label</span><span class="p">)</span>
-    <span class="c1"># ... append regex result ...</span>
-</code></pre></div>
+<pre class="codehilite"><code class="language-python">_snap = set(self._existing_labels)
+# ... structured population ...
+# regex fallback:
+if label not in _snap:
+    self._existing_labels.add(label)
+    # ... append regex result ...
+</code></pre>
 
 <p>Structured data always runs first and marks labels as taken. Regex fallback only fires for labels the structured path didn't populate.</p>
 <h3>Why not remove regex extraction entirely?</h3>

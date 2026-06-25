@@ -50,6 +50,70 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 </div>
 
 <p>﻿# Changelog</p>
+<h2>v2.17 — ANSI Colored Logging, Full Agent Langfuse Instrumentation (11b8638–7321dfc)</h2>
+<h3>ANSI Colored Console Logging (11b8638)</h3>
+<ul>
+<li><strong><code>src/shared/logging_config.py</code></strong>: Added <code>ColoredFormatter</code> with per-level ANSI colors (DEBUG=cyan, INFO=green, WARNING=yellow, ERROR=red, CRITICAL=bold white on red) and dim timestamps. Service badge colors aligned with frontend CSS palette (rag=blue, quant=green, market_context=brown, mcp=magenta, analytics=cyan, reviewer=red, orchestrator=yellow).</li>
+<li><strong>Decorator lifecycle markers</strong>: <code>@logged()</code> and <code>@logged_sync()</code> now emit <code>→ Enter</code>, <code>← Exit ⏱</code>, <code>✗ Fail ⏱</code> with decorator-aware coloring in ColoredFormatter.</li>
+<li><strong>Environment controls</strong>: <code>NO_COLOR=1</code> disables all ANSI codes (https://no-color.org/); <code>FORCE_COLOR=1</code> forces ANSI codes even on non-TTY (useful for CI). colorama init for Windows compatibility.</li>
+<li><strong>Dual output</strong>: Console StreamHandler is colored; file JSON handler remains plain (zero ANSI codes guaranteed by regression test).</li>
+<li><strong><code>src/web/nextjs-app/lib/logger.ts</code> (new, 96 lines)</strong>: Frontend <code>createLogger()</code> utility with ANSI colored output (server-side) and CSS <code>%c</code> styling (browser console).</li>
+<li><strong>CI</strong>: <code>FORCE_COLOR=1</code> set in GitHub Actions test job for colored output.</li>
+<li><strong><code>pyproject.toml</code></strong>: Added <code>colorama&gt;=0.4.6</code> as explicit core dependency.</li>
+<li><strong>18 unit tests</strong> in <code>src/tests/unit/test_colored_logging.py</code> covering formatter, decorator markers, NO_COLOR, FORCE_COLOR, and JSON file purity.</li>
+</ul>
+<h3>Full Agent Langfuse Instrumentation (7321dfc)</h3>
+<ul>
+<li><strong><code>src/analytics/</code></strong>: Enabled PydanticAI OTEL tracing via <code>Agent.instrument_all()</code> for full <code>gen_ai.*</code> span coverage on LLM calls. Removed dead <code>langfuse_handler</code> field from <code>AnalyticsDeps</code> and <code>AnalyticsPipeline.run()</code>.</li>
+<li><strong><code>src/market_context/crew.py</code></strong>: Added <code>@observe(name="crewai-market-analysis")</code> decorator on <code>MarketContextCrew.analyze()</code> to bridge the async-to-thread boundary (CrewAI runs in a thread pool).</li>
+<li><strong><code>src/reviewer/agent.py</code></strong>: Swapped <code>openai.AsyncOpenAI</code> → <code>langfuse.openai.AsyncOpenAI</code> for auto-instrumented LLM generations (no manual trace setup needed).</li>
+<li><strong><code>src/shared/observability.py</code></strong>: <code>init_instrumentation()</code> now handles analytics and reviewer separately: analytics gets <code>PydanticAIAgent.instrument_all()</code> + <code>StarletteInstrumentor</code>; reviewer gets <code>StarletteInstrumentor</code> only.</li>
+</ul>
+<h3>Test Import Fixes (f17fc2c)</h3>
+<ul>
+<li><strong><code>src/tests/unit/test_colored_logging.py</code></strong>: Removed unused <code>import os</code>; sorted imports with ruff (F401 + I001 fixes).</li>
+</ul>
+<h2>v2.16 — Next.js Docker, Dashboard Restore, Frontend Fixes, Docker Image Slimming (a2353d6–e65d31b)</h2>
+<h3>Next.js Web Frontend Dockerization (79b5d24)</h3>
+<ul>
+<li><strong><code>src/web/nextjs-app/Dockerfile</code> (new, 28 lines)</strong>: Multi-stage build (deps → build → standalone runner) using <code>node:20-alpine</code>. Produces a self-contained image with <code>next start</code> on port 3000 — no <code>node_modules</code> in the final image.</li>
+<li><strong><code>src/web/nextjs-app/next.config.ts</code></strong>: Added <code>output: 'standalone'</code> to enable self-contained builds.</li>
+<li><strong><code>src/web/nextjs-app/.dockerignore</code> (new)</strong>: Excludes <code>node_modules</code>, <code>.next</code>, <code>.git</code> from build context.</li>
+<li><strong><code>docker-compose.yml</code></strong>: Added <code>web</code> service on port <code>3000:3000</code> with build context pointing to <code>src/web/nextjs-app/</code>.</li>
+<li><strong><code>.github/workflows/ci.yml</code></strong>: Added <code>web-frontend</code> to the Docker build matrix — all 8 images (7 Python + 1 Node) now build in CI.</li>
+</ul>
+<h3>Per-Agent Dependency Groups (a2353d6)</h3>
+<ul>
+<li><strong><code>pyproject.toml</code></strong>: Heavy framework deps (llama-index, langchain, crewai, pydantic-ai, openai-agents, etc.) moved out of core <code>[project.dependencies]</code> into per-agent optional groups (<code>orchestrator</code>, <code>rag</code>, <code>quant</code>, <code>market</code>, <code>analytics</code>, <code>reviewer</code>, <code>mcp_server</code>). Core deps reduced from 315 to ~30 packages.</li>
+<li><strong>Docker images slimmed</strong>: Each Dockerfile now installs <code>".[svc]"</code> (agent-specific extras) instead of the full dependency tree. Package counts per image dropped from 315 to 99-184.</li>
+<li><strong>Why</strong>: The monolithic core included every framework (LlamaIndex, LangChain, CrewAI, PydanticAI, OpenAI Agents) even though each agent only uses one. Per-agent groups let each Docker image pull only its own framework — critical for CI build times and image sizes.</li>
+</ul>
+<h3>Dashboard Page Overhaul (a49bc68, af0b2af)</h3>
+<ul>
+<li><strong><code>app/page.tsx</code> (overview page)</strong>: Restored from git history — had been overwritten with a duplicate of the dashboard. Now serves as the landing page with overview content.</li>
+<li><strong>Dashboard page fixes</strong>:</li>
+<li>Fixed <code>useSyncExternalStore</code> infinite loop in Sidebar by caching <code>getRecentQueries</code> snapshots (af0b2af)</li>
+<li>Fixed Langfuse 400 errors by reducing API limit from 200/500 to 100 (Langfuse cloud cap) (af0b2af)</li>
+<li>Fixed missing "Growth Opportunities" in report risk-reward section — added fallback defaults before early return in raw agent outputs extraction path (af0b2af)</li>
+<li>Show actual API error messages in dashboard/overview instead of generic "API error" (af0b2af)</li>
+<li><strong>API routes updated</strong>: <code>/api/dashboard/route.ts</code> (24 lines changed), <code>/api/dashboard/scores/route.ts</code> (11 lines changed) — better error handling and data formatting.</li>
+<li><strong><code>lib/recentQueries.ts</code></strong>: Updated to work with the restored overview page structure.</li>
+</ul>
+<h3>Frontend React Patterns (1f26978, 0d0034f)</h3>
+<ul>
+<li><strong><code>app/dashboard/page.tsx</code></strong>: Added <code>export const dynamic = 'force-dynamic'</code> to skip static prerendering (1f26978).</li>
+<li><strong><code>app/dashboard/page.tsx</code></strong>: Provided <code>getServerSnapshot</code> as third argument to <code>useSyncExternalStore</code> — fixes prerendering failure in standalone mode where <code>export const dynamic</code> has no effect in "use client" pages (0d0034f).</li>
+</ul>
+<h3>Mypy Fixes (8be8bbf)</h3>
+<ul>
+<li><strong><code>src/shared/sandbox.py</code></strong>: Added <code>unused-ignore</code> to <code>attr-defined</code> suppression — Linux has the <code>attrs</code> package, Windows doesn't.</li>
+<li><strong><code>src/shared/redis_cache.py</code></strong>: Removed redundant <code>cast(Awaitable[bool], ...)</code> around <code>client.ping()</code> — mypy cross-platform complaint.</li>
+</ul>
+<h3>CI Pipeline Updates (65c9928, bd41c9f, e65d31b)</h3>
+<ul>
+<li>Re-triggered pipeline after GitHub Actions config updates.</li>
+<li>Merged PR #17 (fix/ci-cd branch) — all CI checks passing.</li>
+</ul>
 <h2>v2.15 — Type Safety, Import Standardization, Frontend React Patterns (bd3e242–d5c9ecb)</h2>
 <h3>Type Annotation Modernization (bd3e242, 30d8796)</h3>
 <ul>

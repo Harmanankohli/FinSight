@@ -48,6 +48,8 @@ EvalG["RuntimeEval\nsrc/shared/runtime_eval.py\nCircuit breaker + dedup\nBurst +
 EvalD["EvalGate\nsrc/shared/eval_gate.py\nDeferred eval release\n120s auto-release"]
 Sett["Settings\nsrc/shared/settings.py\nPydantic-settings\nPer-agent timeouts + LLM config"]
 Boot["Bootstrap\nsrc/shared/bootstrap.py\nStartup: event loop, logging\nLangfuse, env vars"]
+ColoredLog["ColoredFormatter\nsrc/shared/logging_config.py\nANSI per-level colors\nService badge colors\nNO_COLOR / FORCE_COLOR"]
+FrontendLog["createLogger()\nsrc/web/nextjs-app/lib/logger.ts\nANSI server + CSS browser"]
 MV["MetricValue\nsrc/shared/metrics.py\nFloat subclass w/ validation\n.status / .warning / .to_dict()"]
 end
 subgraph Storage["Storage / Memory (SQLite)"]
@@ -93,6 +95,8 @@ QuantA -. "uses" .-> MV
 AnalyticsA -. "uses" .-> MV
 FExec -. "settings" .-> Sett
 FExec -. "boot" .-> Boot
+FExec -. "colored log" .-> ColoredLog
+FrontendLog -. "CSS %c" .-> ColoredLog
 TMem -. "SQLite" .-> DB
 PStore -. "SQLite" .-> DB
 SMem -. "SQLite" .-> DB
@@ -119,6 +123,8 @@ style EvalG fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
 style EvalD fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
 style Sett fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
 style Boot fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
+style ColoredLog fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
+style FrontendLog fill:#d4e6f1,stroke:#2980b9,color:#1a1a1a
 style MV fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
 style QGraph fill:#fdebd0,stroke:#e67e22,color:#1a1a1a
 style SMem fill:#abebc6,stroke:#1e8449,color:#1a1a1a

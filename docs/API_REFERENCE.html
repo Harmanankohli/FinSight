@@ -53,61 +53,61 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <h2>Orchestrator (port 8001)</h2>
 <p>The orchestrator is the primary entry point. It exposes A2A protocol endpoints, REST API routes for the frontend, AG-UI streaming endpoints, and health checks.</p>
 <h3>Health</h3>
-<div class="codehilite"><pre><span></span><code>GET /health
-</code></pre></div>
+<pre class="codehilite"><code>GET /health
+</code></pre>
 
 <p><strong>Response</strong>: <code>200 OK</code></p>
-<div class="codehilite"><pre><span></span><code><span class="p">{</span><span class="nt">&quot;status&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;ok&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;agent&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;orchestrator&quot;</span><span class="p">}</span>
-</code></pre></div>
+<pre class="codehilite"><code class="language-json">{&quot;status&quot;: &quot;ok&quot;, &quot;agent&quot;: &quot;orchestrator&quot;}
+</code></pre>
 
 <hr />
 <h3>A2A Protocol</h3>
 <h4>Agent Card Discovery</h4>
-<div class="codehilite"><pre><span></span><code>GET /.well-known/agent-card.json
-</code></pre></div>
+<pre class="codehilite"><code>GET /.well-known/agent-card.json
+</code></pre>
 
 <p>Returns the orchestrator's A2A agent card (protobuf-encoded JSON). Used by <code>A2ACardResolver</code> for standard agent discovery.</p>
 <p><strong>Response</strong>: <code>200 OK</code> — AgentCard JSON with name, description, version, capabilities, supported interfaces, and skills.</p>
 <h4>JSON-RPC Endpoint</h4>
-<div class="codehilite"><pre><span></span><code>POST /a2a
+<pre class="codehilite"><code>POST /a2a
 Headers: A2A-Version: 1.0
-</code></pre></div>
+</code></pre>
 
 <p>Standard A2A JSON-RPC endpoint for inter-agent communication. Accepts <code>SendMessage</code> method calls from sub-agents or external A2A clients.</p>
 <p><strong>Request body</strong>:</p>
-<div class="codehilite"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;jsonrpc&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2.0&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;method&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;SendMessage&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;abc123&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;params&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="nt">&quot;message&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">      </span><span class="nt">&quot;messageId&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;def456&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;role&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;ROLE_USER&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;parts&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="nt">&quot;text&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Should I invest in NVDA?&quot;</span><span class="p">}]</span>
-<span class="w">    </span><span class="p">}</span>
-<span class="w">  </span><span class="p">}</span>
-<span class="p">}</span>
-</code></pre></div>
+<pre class="codehilite"><code class="language-json">{
+  &quot;jsonrpc&quot;: &quot;2.0&quot;,
+  &quot;method&quot;: &quot;SendMessage&quot;,
+  &quot;id&quot;: &quot;abc123&quot;,
+  &quot;params&quot;: {
+    &quot;message&quot;: {
+      &quot;messageId&quot;: &quot;def456&quot;,
+      &quot;role&quot;: &quot;ROLE_USER&quot;,
+      &quot;parts&quot;: [{&quot;text&quot;: &quot;Should I invest in NVDA?&quot;}]
+    }
+  }
+}
+</code></pre>
 
 <p><strong>Streaming response</strong>: Yields <code>task</code>, <code>status_update</code>, and <code>artifact_update</code> events. Intermediate <code>SUBMITTED</code>/<code>WORKING</code> events are non-terminal; only <code>artifact_update</code> data and terminal <code>COMPLETED</code>/<code>FAILED</code> states carry results.</p>
 <hr />
 <h3>AG-UI Endpoints</h3>
 <h4>AG-UI Bridge (Production)</h4>
-<div class="codehilite"><pre><span></span><code>POST /a2a-agui
+<pre class="codehilite"><code>POST /a2a-agui
 Content-Type: application/json
-</code></pre></div>
+</code></pre>
 
 <p>Primary endpoint for the Next.js CopilotKit frontend. Streams AG-UI-compatible events through the ADK runner with full guardrails (off-topic filter, today's brief cache, memory context injection, sub-agent tracking).</p>
 <p><strong>Request body</strong> (<code>RunAgentInput</code>):</p>
-<div class="codehilite"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;thread_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;optional-thread-id&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;run_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;optional-run-id&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;messages&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
-<span class="w">    </span><span class="p">{</span><span class="nt">&quot;role&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;user&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;content&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Analyze NVDA for long-term hold&quot;</span><span class="p">}</span>
-<span class="w">  </span><span class="p">],</span>
-<span class="w">  </span><span class="nt">&quot;forwarded_props&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;user_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;user-123&quot;</span><span class="p">}</span>
-<span class="p">}</span>
-</code></pre></div>
+<pre class="codehilite"><code class="language-json">{
+  &quot;thread_id&quot;: &quot;optional-thread-id&quot;,
+  &quot;run_id&quot;: &quot;optional-run-id&quot;,
+  &quot;messages&quot;: [
+    {&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;Analyze NVDA for long-term hold&quot;}
+  ],
+  &quot;forwarded_props&quot;: {&quot;user_id&quot;: &quot;user-123&quot;}
+}
+</code></pre>
 
 <p><strong>Headers</strong>:
 - <code>X-FinSight-User-Id</code> (optional) — user identity; falls back to <code>forwarded_props.user_id</code>, then auto-generated <code>anon-{uuid}</code>
@@ -124,9 +124,9 @@ Content-Type: application/json
 - <code>RunFinishedEvent</code> — run completes</p>
 <p><strong>CORS</strong>: Allowed origins <code>http://localhost:3000</code>, <code>http://127.0.0.1:3000</code>.</p>
 <h4>AG-UI Eval Endpoint</h4>
-<div class="codehilite"><pre><span></span><code>POST /agentic_chat
+<pre class="codehilite"><code>POST /agentic_chat
 Content-Type: application/json
-</code></pre></div>
+</code></pre>
 
 <p>Simplified AG-UI endpoint for RAGAS evaluation. Runs the orchestrator without guardrails or memory injection — useful for offline batch evaluation.</p>
 <p><strong>Request body</strong>: Same <code>RunAgentInput</code> format as <code>/a2a-agui</code>.</p>
@@ -135,10 +135,10 @@ Content-Type: application/json
 <h3>REST API Routes</h3>
 <p>All REST routes are read-only JSON endpoints. User identity is read from the <code>X-FinSight-User-Id</code> request header.</p>
 <h4>Memory — Ticker Briefs</h4>
-<div class="codehilite"><pre><span></span><code>GET /api/memory/ticker/{symbol}
+<pre class="codehilite"><code>GET /api/memory/ticker/{symbol}
 GET /api/memory/ticker/{symbol}/latest
 GET /api/memory/ticker/{symbol}/changed
-</code></pre></div>
+</code></pre>
 
 <table>
 <thead>
@@ -167,21 +167,21 @@ GET /api/memory/ticker/{symbol}/changed
 </tbody>
 </table>
 <p><strong>Brief object shape</strong>:</p>
-<div class="codehilite"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;id&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;ticker&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;NVDA&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;recommendation&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;BUY&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;confidence&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.85</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;response_text&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Full analysis text...&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;analysis_date&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-06-07&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;created_at&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-06-07T14:30:00+05:30&quot;</span>
-<span class="p">}</span>
-</code></pre></div>
+<pre class="codehilite"><code class="language-json">{
+  &quot;id&quot;: 1,
+  &quot;ticker&quot;: &quot;NVDA&quot;,
+  &quot;recommendation&quot;: &quot;BUY&quot;,
+  &quot;confidence&quot;: 0.85,
+  &quot;response_text&quot;: &quot;Full analysis text...&quot;,
+  &quot;analysis_date&quot;: &quot;2026-06-07&quot;,
+  &quot;created_at&quot;: &quot;2026-06-07T14:30:00+05:30&quot;
+}
+</code></pre>
 
 <h4>Sessions</h4>
-<div class="codehilite"><pre><span></span><code>GET /api/sessions
+<pre class="codehilite"><code>GET /api/sessions
 GET /api/sessions/{id}/events
-</code></pre></div>
+</code></pre>
 
 <table>
 <thead>
@@ -205,32 +205,32 @@ GET /api/sessions/{id}/events
 </tbody>
 </table>
 <p><strong>Session object shape</strong>:</p>
-<div class="codehilite"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;session-uuid&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;user_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;user-123&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;app_name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;orchestrator&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;last_update_time&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-06-07T14:30:00&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;event_count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">12</span>
-<span class="p">}</span>
-</code></pre></div>
+<pre class="codehilite"><code class="language-json">{
+  &quot;id&quot;: &quot;session-uuid&quot;,
+  &quot;user_id&quot;: &quot;user-123&quot;,
+  &quot;app_name&quot;: &quot;orchestrator&quot;,
+  &quot;last_update_time&quot;: &quot;2026-06-07T14:30:00&quot;,
+  &quot;event_count&quot;: 12
+}
+</code></pre>
 
 <p><strong>Event object shape</strong>:</p>
-<div class="codehilite"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;event-uuid&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;author&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;orchestrator&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;timestamp&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-06-07T14:30:00&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;content&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
-<span class="w">    </span><span class="p">{</span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;text&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;text&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;BUY recommendation for NVDA...&quot;</span><span class="p">},</span>
-<span class="w">    </span><span class="p">{</span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;function_call&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;send_message&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;args&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;agent_name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;rag&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;task&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;...&quot;</span><span class="p">}},</span>
-<span class="w">    </span><span class="p">{</span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;function_response&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;send_message&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;response&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;...&quot;</span><span class="p">}</span>
-<span class="w">  </span><span class="p">]</span>
-<span class="p">}</span>
-</code></pre></div>
+<pre class="codehilite"><code class="language-json">{
+  &quot;id&quot;: &quot;event-uuid&quot;,
+  &quot;author&quot;: &quot;orchestrator&quot;,
+  &quot;timestamp&quot;: &quot;2026-06-07T14:30:00&quot;,
+  &quot;content&quot;: [
+    {&quot;type&quot;: &quot;text&quot;, &quot;text&quot;: &quot;BUY recommendation for NVDA...&quot;},
+    {&quot;type&quot;: &quot;function_call&quot;, &quot;name&quot;: &quot;send_message&quot;, &quot;args&quot;: {&quot;agent_name&quot;: &quot;rag&quot;, &quot;task&quot;: &quot;...&quot;}},
+    {&quot;type&quot;: &quot;function_response&quot;, &quot;name&quot;: &quot;send_message&quot;, &quot;response&quot;: &quot;...&quot;}
+  ]
+}
+</code></pre>
 
 <h4>Agents</h4>
-<div class="codehilite"><pre><span></span><code>GET /api/agents
+<pre class="codehilite"><code>GET /api/agents
 GET /api/agents/{name}/health
-</code></pre></div>
+</code></pre>
 
 <table>
 <thead>
@@ -251,9 +251,9 @@ GET /api/agents/{name}/health
 </tbody>
 </table>
 <h4>Reports</h4>
-<div class="codehilite"><pre><span></span><code>GET /api/reports/ticker/{symbol}/latest/{format}
+<pre class="codehilite"><code>GET /api/reports/ticker/{symbol}/latest/{format}
 GET /api/reports/{brief_id}/{format}
-</code></pre></div>
+</code></pre>
 
 <table>
 <thead>
@@ -277,18 +277,18 @@ GET /api/reports/{brief_id}/{format}
 </tbody>
 </table>
 <p><strong>Response headers</strong>:</p>
-<div class="codehilite"><pre><span></span><code><span class="nt">Content-Type</span><span class="o">:</span><span class="w"> </span><span class="nt">text</span><span class="o">/</span><span class="nt">html</span><span class="w"> </span><span class="o">(</span><span class="nt">HTML</span><span class="o">)</span>
-<span class="w">              </span><span class="nt">application</span><span class="o">/</span><span class="nt">pdf</span><span class="w"> </span><span class="o">(</span><span class="nt">PDF</span><span class="o">)</span>
-<span class="nt">Content-Disposition</span><span class="o">:</span><span class="w"> </span><span class="nt">attachment</span><span class="o">;</span><span class="w"> </span><span class="nt">filename</span><span class="o">=</span><span class="s2">&quot;FinSight_{ticker}_{date}.pdf&quot;</span><span class="w"> </span><span class="o">(</span><span class="nt">PDF</span><span class="w"> </span><span class="nt">only</span><span class="o">)</span>
-</code></pre></div>
+<pre class="codehilite"><code>Content-Type: text/html (HTML)
+              application/pdf (PDF)
+Content-Disposition: attachment; filename=&quot;FinSight_{ticker}_{date}.pdf&quot; (PDF only)
+</code></pre>
 
 <p><strong>Report format endpoints</strong> are served via <code>generate_html()</code> and <code>generate_pdf_async()</code> in the <code>src/shared/reports/</code> package (split from <code>src/shared/report_generator.py</code> in v1.41; the monolithic shim was removed in v2.0). PPTX and DOCX renderers were removed in v2.5 — the HTML scrollable page replaced the slide deck format. The HTML format uses a Jinja2 template (<code>src/shared/templates/investment_deck.html</code>) as a full scrollable page. PDF uses Playwright to render the same HTML as A4 portrait. All formats share a common <code>_extract_deck_data()</code> extraction pipeline in <code>src/shared/reports/extraction.py</code> with Pydantic agent output models, which can also consume structured agent outputs via <code>_populate_from_agent_outputs()</code>.</p>
 <hr />
 <h3>Static Files</h3>
-<div class="codehilite"><pre><span></span><code>GET /reports/{filename}
-</code></pre></div>
+<pre class="codehilite"><code>GET /reports/{filename}
+</code></pre>
 
-<p>Serves generated report files (PPTX/DOCX) from <code>db/reports/</code> as static downloads.</p>
+<p>Serves generated report files (HTML/PDF) from <code>db/reports/</code> as static downloads.</p>
 <hr />
 <h2>Sub-Agent Servers</h2>
 <p>Each sub-agent exposes the same endpoint pattern.</p>
@@ -340,23 +340,23 @@ GET /api/reports/{brief_id}/{format}
 </tbody>
 </table>
 <h4>Release Evals</h4>
-<div class="codehilite"><pre><span></span><code>POST /release-evals
-</code></pre></div>
+<pre class="codehilite"><code>POST /release-evals
+</code></pre>
 
 <p>Triggers deferred RAGAS evaluation coroutines. Called by the orchestrator's <code>after_agent_callback</code> after synthesis completes. Includes a 120s safety-net auto-release if the orchestrator crashes.</p>
 <p><strong>Response</strong>: <code>200 OK</code></p>
-<div class="codehilite"><pre><span></span><code><span class="p">{</span><span class="nt">&quot;released&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">3</span><span class="p">}</span>
-</code></pre></div>
+<pre class="codehilite"><code class="language-json">{&quot;released&quot;: 3}
+</code></pre>
 
 <hr />
 <h2>MCP Server (port 8010)</h2>
 <h3>Health</h3>
-<div class="codehilite"><pre><span></span><code>GET /health
-</code></pre></div>
+<pre class="codehilite"><code>GET /health
+</code></pre>
 
 <p><strong>Response</strong>: <code>200 OK</code></p>
-<div class="codehilite"><pre><span></span><code><span class="p">{</span><span class="nt">&quot;status&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;ok&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;agent&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;mcp&quot;</span><span class="p">}</span>
-</code></pre></div>
+<pre class="codehilite"><code class="language-json">{&quot;status&quot;: &quot;ok&quot;, &quot;agent&quot;: &quot;mcp&quot;}
+</code></pre>
 
 <h3>MCP Tools</h3>
 <p>The MCP server exposes tools via SSE transport at <code>/sse</code>. Tools are consumed by agents via the MCP client library, not via direct HTTP calls. See <a href="MCP_SERVERS.md">MCP_SERVERS.md</a> for the full tool catalog.</p>
@@ -442,8 +442,8 @@ GET /api/reports/{brief_id}/{format}
 <hr />
 <h2>Error Responses</h2>
 <p>All endpoints return errors as JSON:</p>
-<div class="codehilite"><pre><span></span><code><span class="p">{</span><span class="nt">&quot;error&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Description of the error&quot;</span><span class="p">}</span>
-</code></pre></div>
+<pre class="codehilite"><code class="language-json">{&quot;error&quot;: &quot;Description of the error&quot;}
+</code></pre>
 
 <p>Standard HTTP status codes:</p>
 <table>
@@ -524,31 +524,31 @@ GET /api/reports/{brief_id}/{format}
 </tbody>
 </table>
 <h4>Login</h4>
-<div class="codehilite"><pre><span></span><code>POST /auth/login
+<pre class="codehilite"><code>POST /auth/login
 Content-Type: application/json
 
 {&quot;username&quot;: &quot;admin&quot;, &quot;password&quot;: &quot;secret123&quot;}
-</code></pre></div>
+</code></pre>
 
 <p><strong>Response</strong>: <code>200 OK</code></p>
-<div class="codehilite"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;access_token&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;eyJhbG...&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;expires_in&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">900</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;token_type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Bearer&quot;</span>
-<span class="p">}</span>
-</code></pre></div>
+<pre class="codehilite"><code class="language-json">{
+  &quot;access_token&quot;: &quot;eyJhbG...&quot;,
+  &quot;expires_in&quot;: 900,
+  &quot;token_type&quot;: &quot;Bearer&quot;
+}
+</code></pre>
 
 <p>Also sets <code>refresh_token</code> httpOnly cookie (7-day TTL, rotated on use).</p>
 <h4>Refresh</h4>
-<div class="codehilite"><pre><span></span><code>POST /auth/refresh
+<pre class="codehilite"><code>POST /auth/refresh
 Cookie: refresh_token=&lt;token&gt;
-</code></pre></div>
+</code></pre>
 
 <p><strong>Response</strong>: <code>200 OK</code> — same response shape as login, new access token + rotated refresh cookie.</p>
 <h4>Logout</h4>
-<div class="codehilite"><pre><span></span><code>POST /auth/logout
+<pre class="codehilite"><code>POST /auth/logout
 Cookie: refresh_token=&lt;token&gt;
-</code></pre></div>
+</code></pre>
 
 <p><strong>Response</strong>: <code>200 OK</code> — deletes refresh token from DB.</p>
 <h4>Rate-Limited Lockout</h4>
@@ -558,12 +558,12 @@ Cookie: refresh_token=&lt;token&gt;
 <li><strong>Known tradeoff</strong>: username-keyed lockout allows DoS of a known username; accepted for single-host deployment</li>
 </ul>
 <h4>Token Generation</h4>
-<div class="codehilite"><pre><span></span><code><span class="c1"># User JWT signing secret (32+ hex characters)</span>
-openssl<span class="w"> </span>rand<span class="w"> </span>-hex<span class="w"> </span><span class="m">32</span>
+<pre class="codehilite"><code class="language-bash"># User JWT signing secret (32+ hex characters)
+openssl rand -hex 32
 
-<span class="c1"># Service-to-service shared secret (16+ characters)</span>
-openssl<span class="w"> </span>rand<span class="w"> </span>-hex<span class="w"> </span><span class="m">16</span>
-</code></pre></div>
+# Service-to-service shared secret (16+ characters)
+openssl rand -hex 16
+</code></pre>
 
 <hr />
 <h2>CORS</h2>

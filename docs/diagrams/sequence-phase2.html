@@ -40,7 +40,7 @@ participant SEC as SEC EDGAR
 participant YF as Yahoo Finance
 Note over Orch,YF: ══════ Phase 2a: Parallel A2A Dispatch ══════
 
-par ⑧ All 4 agents fire simultaneously (SendMessageInput)
+par ⑧ All 5 agents fire simultaneously (SendMessageInput)
 Orch->>RAG: A2A SendMessageInput("Financial RAG Agent", "NVDA")
 activate RAG
 RAG->>MCP: get_financial_filings("NVDA")

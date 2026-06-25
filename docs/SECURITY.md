@@ -182,7 +182,7 @@ All secrets and API keys are loaded from environment variables via `src/shared/s
 
 ### TLS Termination
 
-In production, deploy behind a reverse proxy (Caddy, nginx) for TLS termination. See `deploy/Caddyfile.example`.
+In production, deploy behind a reverse proxy (Caddy, nginx) for TLS termination.
 
 ## Known Limitations
 
