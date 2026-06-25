@@ -303,10 +303,13 @@ class FinSightAgentExecutor(AgentExecutor):
                             collected_events.append(event)
                             if event.is_final_response():
                                 final_event = event
-                        if final_event and final_event.content and final_event.content.parts:
-                            generation.update(
-                                output=final_event.content.parts[0].text[:2000]
-                            )
+                        final_text = (
+                            final_event.content.parts[0].text
+                            if final_event and final_event.content and final_event.content.parts
+                            else None
+                        )
+                        if final_text:
+                            generation.update(output=final_text[:2000])
 
                     if final_event:
                         await self._process_response(
