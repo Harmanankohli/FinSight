@@ -25,8 +25,15 @@ export async function GET() {
   }
 
   try {
-    const data = await langfetch<{ data: LfScore[] }>("/api/public/scores?limit=500");
-    const allScores = (data.data || []) as LfScore[];
+    const scorePages: LfScore[][] = [];
+    const firstPage = await langfetch<{ data: LfScore[]; meta?: { totalPages?: number } }>("/api/public/scores?limit=100");
+    scorePages.push((firstPage.data || []) as LfScore[]);
+    const scoreTotalPages = Math.min(firstPage.meta?.totalPages ?? 1, 5);
+    for (let p = 2; p <= scoreTotalPages; p++) {
+      const page = await langfetch<{ data: LfScore[] }>(`/api/public/scores?limit=100&page=${p}`);
+      scorePages.push((page.data || []) as LfScore[]);
+    }
+    const allScores = scorePages.flat();
 
     const ragasScores = allScores.filter(s => {
       if (!s.name) return false;

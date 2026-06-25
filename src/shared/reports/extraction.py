@@ -2829,6 +2829,14 @@ def _extract_deck_data(
             logger.debug("Validated agent output path failed (%s), using legacy extraction", _ve)
             _populate_from_agent_outputs(data, brief_data, response_text)
 
+        if not data.risks:
+            data.risks = ["Market volatility", "Regulatory changes"]
+        else:
+            data.risks_extracted = True
+        if not data.opportunities:
+            data.opportunities = ["Strong operational execution", "Market positioning"]
+        else:
+            data.opportunities_extracted = True
         if data.kpi_chips and (data.financials or data.executive_summary):
             return data
         if not _used_validated:

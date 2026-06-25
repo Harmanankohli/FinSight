@@ -146,11 +146,11 @@ const fetchStore = {
         fetch(`/api/dashboard?hours=${h}`, { signal: c.signal }),
         fetch("/api/dashboard/scores", { signal: c.signal }),
       ]);
-      if (!dashRes.ok || !scoreRes.ok) throw new Error("API error");
       const dashJson = await dashRes.json();
       const scoreJson = await scoreRes.json();
       if (dashJson.error) throw new Error(dashJson.error);
       if (scoreJson.error) throw new Error(scoreJson.error);
+      if (!dashRes.ok || !scoreRes.ok) throw new Error("API error");
       this.update({ data: dashJson, scores: scoreJson, error: null, lastRefresh: new Date(), loading: false });
     } catch (e: unknown) {
       if (e instanceof Error && e.name !== "AbortError") {

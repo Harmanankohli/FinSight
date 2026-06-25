@@ -4,8 +4,10 @@
 import { useSyncExternalStore } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { getRecentQueries, RecentQuery } from "@/lib/recentQueries";
+import { getRecentQueries, type RecentQuery } from "@/lib/recentQueries";
 import { useAuth } from "@/contexts/AuthContext";
+
+const SERVER_EMPTY: RecentQuery[] = [];
 
 const NAV = [
   { href: "/", label: "Overview", icon: "M3 9.5 12 3l9 6.5V21H3z" },
@@ -25,7 +27,7 @@ export function Sidebar() {
       return () => window.removeEventListener("finsight:recent-queries-changed", cb);
     },
     getRecentQueries,
-    () => [] as RecentQuery[],
+    () => SERVER_EMPTY,
   );
 
   return (
