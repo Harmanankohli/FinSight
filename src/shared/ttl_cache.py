@@ -25,7 +25,7 @@ class TTLCache:
         self._max = max_entries
         self._data: dict[str, tuple[float, Any]] = {}
         self._lock = asyncio.Lock()
-        self._inflight: dict[str, asyncio.Future] = {}
+        self._inflight: dict[str, asyncio.Future[Any]] = {}
 
     async def get_or_fetch(self, key: str, fetch: Callable[[], Awaitable[Any]]) -> Any:
         """Return cached value if fresh; fetch exactly once for concurrent callers."""
@@ -51,7 +51,7 @@ class TTLCache:
         self,
         key: str,
         fetch: Callable[[], Awaitable[Any]],
-        fut: asyncio.Future,
+        fut: asyncio.Future[Any],
     ) -> None:
         try:
             value = await fetch()

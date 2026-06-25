@@ -27,6 +27,7 @@ import subprocess
 import sys
 import tempfile
 import uuid
+from typing import Any
 
 from shared.auth.audit import log_sandbox_execution
 
@@ -155,7 +156,7 @@ def _docker_available() -> bool:
     return shutil.which("docker") is not None
 
 
-async def _run_container(code: str, timeout: int = 30) -> dict:
+async def _run_container(code: str, timeout: int = 30) -> dict[str, Any]:
     """Run *code* in a Docker container with strict resource isolation.
 
     Container spec:
@@ -370,14 +371,16 @@ def _sandbox_preexec() -> None:
     try:
         import resource as _res
 
-        _res.setrlimit(_res.RLIMIT_CPU, (25, 25))
-        _res.setrlimit(_res.RLIMIT_AS, (512 * 1024 * 1024, 512 * 1024 * 1024))
-        _res.setrlimit(_res.RLIMIT_NOFILE, (0, 0))
+        _res.setrlimit(_res.RLIMIT_CPU, (25, 25))  # type: ignore[attr-defined,unused-ignore]
+        _res.setrlimit(_res.RLIMIT_AS, (512 * 1024 * 1024, 512 * 1024 * 1024))  # type: ignore[attr-defined,unused-ignore]
+        _res.setrlimit(_res.RLIMIT_NOFILE, (0, 0))  # type: ignore[attr-defined,unused-ignore]
     except Exception:
         logger.debug("Resource limits unavailable (expected on Windows)")
 
 
-async def run_sandbox(code: str, timeout: int = 30, principal: str = "mcp-server") -> dict:
+async def run_sandbox(
+    code: str, timeout: int = 30, principal: str = "mcp-server"
+) -> dict[str, Any]:
     """Run *code* through the configured sandbox mode.
 
     Mode is read from ``SANDBOX_MODE`` at call time:
@@ -423,7 +426,7 @@ async def run_sandbox(code: str, timeout: int = 30, principal: str = "mcp-server
     return result
 
 
-async def _run_ast(code: str, timeout: int = 30) -> dict:
+async def _run_ast(code: str, timeout: int = 30) -> dict[str, Any]:
     """Run *code* through the AST gate + subprocess sandbox (default mode)."""
     safe, reason = _check_code_safety(code)
     if not safe:
@@ -466,7 +469,7 @@ async def _run_ast(code: str, timeout: int = 30) -> dict:
             logger.debug("Could not unlink temp runner %s", runner_path)
 
 
-def _parse_sandbox_output(proc: subprocess.CompletedProcess) -> dict:
+def _parse_sandbox_output(proc: subprocess.CompletedProcess[str]) -> dict[str, Any]:
     """Parse stdout/stderr from a sandbox subprocess into a result dict."""
     result = None
     clean_lines: list[str] = []

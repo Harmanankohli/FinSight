@@ -43,7 +43,7 @@ def inject_trace_context(
     """
     if not user_id and (not trace_id or not parent_span_id):
         return task_text
-    envelope: dict = {}
+    envelope: dict[str, dict[str, str]] = {}
     if trace_id and parent_span_id:
         envelope["_trace"] = {
             "trace_id": trace_id,
@@ -55,7 +55,7 @@ def inject_trace_context(
     return f"{prefix}{_SEPARATOR}{task_text}"
 
 
-def extract_trace_context(task_text: str) -> tuple[dict | None, str]:
+def extract_trace_context(task_text: str) -> tuple[dict[str, str] | None, str]:
     """Strip and parse the trace prefix, returning (trace_dict, clean_text).
 
     Returns (None, task_text) if no valid prefix is found — the agent

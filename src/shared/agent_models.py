@@ -5,7 +5,7 @@ The orchestrator validates combined agent outputs through ValidatedAgentOutputs
 before passing to report generation, replacing ~220 lines of manual dict extraction.
 """
 
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -45,15 +45,15 @@ class DCFValuation(BaseModel):
     fcf_used: float | None = Field(None, gt=0)
     revenue_growth: float | None = None
     earnings_growth: float | None = None
-    dcf_assumptions: dict | None = None
+    dcf_assumptions: dict[str, Any] | None = None
     fcf_age_days: float | None = Field(None, ge=0)
-    freshness: dict | None = None
-    valuation_warnings: list | None = None
-    scenarios: dict | None = None
+    freshness: dict[str, Any] | None = None
+    valuation_warnings: list[str] | None = None
+    scenarios: dict[str, Any] | None = None
     valuation_reliability: float | None = Field(None, ge=0.0, le=1.0)
     pb_ratio_used: float | None = Field(None, gt=0)
     fair_pb_multiple: float | None = Field(None, gt=0)
-    sensitivity_matrix: dict | None = None
+    sensitivity_matrix: dict[str, Any] | None = None
 
 
 class MonteCarloResult(BaseModel):
@@ -162,7 +162,7 @@ class PeerComparison(BaseModel):
     industry: str | None = None
     sector: str | None = None
     peers: list[str] = Field(default_factory=list)
-    comparison: dict[str, dict] = Field(default_factory=dict)
+    comparison: dict[str, dict[str, Any]] = Field(default_factory=dict)
     rankings: dict[str, int] = Field(default_factory=dict)
     n_peers: int = Field(0, ge=0)
     medians: dict[str, float] = Field(default_factory=dict)
@@ -274,19 +274,19 @@ class QuantAgentOutput(BaseModel):
     ticker: str
     recommendation: str = "HOLD"
     reasoning: str = ""
-    metrics: QuantRiskMetrics = Field(default_factory=QuantRiskMetrics)
+    metrics: QuantRiskMetrics = Field(default_factory=QuantRiskMetrics)  # type: ignore[arg-type]
     dcf_valuation: DCFValuation | None = None
     dcf_error: str | None = None
     stress_test: StressTestResult | None = None
     monte_carlo: MonteCarloResult | None = None
-    correlation_matrix: dict = Field(default_factory=dict)
+    correlation_matrix: dict[str, Any] = Field(default_factory=dict)
     fundamentals: Fundamentals | None = None
     technicals: TechnicalIndicators | None = None
     peer_comparison: PeerComparison | None = None
     options_signals: OptionsSignals | None = None
     insider_signals: InsiderSignals | None = None
     positioning: AnalystPositioning | None = None
-    schema_validation: dict | None = None
+    schema_validation: dict[str, Any] | None = None
 
 
 # ── RAG Agent model ──────────────────────────────────────────────────────────
@@ -297,7 +297,7 @@ class RAGAgentOutput(BaseModel):
 
     ticker: str
     summary: str = ""
-    sources: list = Field(default_factory=list)
+    sources: list[Any] = Field(default_factory=list)
     relevance_scores: list[float] = Field(default_factory=list)
     context_texts: list[str] = Field(default_factory=list)
     confidence_score: float = Field(0.0, ge=0.0, le=1.0)
@@ -319,8 +319,8 @@ class MarketContextOutput(BaseModel):
     confidence_score: float = Field(0.0, ge=0.0, le=1.0)
     key_tailwinds: list[str] = Field(default_factory=list)
     key_headwinds: list[str] = Field(default_factory=list)
-    macro_regime: Optional[str] = None
-    relative_peer_positioning: Optional[str] = None
+    macro_regime: str | None = None
+    relative_peer_positioning: str | None = None
     peer_comparison: list[MarketContextPeer] = Field(default_factory=list)
 
 
@@ -401,7 +401,7 @@ class SourceVerification(BaseModel):
 
     @field_validator("verification_rate", mode="before")
     @classmethod
-    def normalize_rate(cls, v):
+    def normalize_rate(cls, v: Any) -> Any:
         if isinstance(v, (int, float)) and v > 1.0:
             return v / 100.0
         return v
@@ -415,21 +415,21 @@ class AgentScores(BaseModel):
 
     @field_validator("quant", "rag", "market_context", "analytics", mode="before")
     @classmethod
-    def normalize_agent_scores(cls, v):
+    def normalize_agent_scores(cls, v: Any) -> Any:
         if isinstance(v, (int, float)) and v > 1.0:
             return v / 100.0
         return v
 
 
 class ConfidenceBreakdown(BaseModel):
-    agent_scores: AgentScores = Field(default_factory=AgentScores)
+    agent_scores: AgentScores = Field(default_factory=AgentScores)  # type: ignore[arg-type]
     agreement_score: float = Field(0.0, ge=0.0, le=1.0)
     data_quality_score: float = Field(0.0, ge=0.0, le=1.0)
     meta_confidence: float = Field(0.0, ge=0.0, le=1.0)
 
     @field_validator("agreement_score", "data_quality_score", "meta_confidence", mode="before")
     @classmethod
-    def normalize_confidence_scores(cls, v):
+    def normalize_confidence_scores(cls, v: Any) -> Any:
         if isinstance(v, (int, float)) and v > 1.0:
             return v / 100.0
         return v
@@ -456,7 +456,7 @@ class ReviewerAgentOutput(BaseModel):
 
     @field_validator("review_confidence", mode="before")
     @classmethod
-    def normalize_review_confidence(cls, v):
+    def normalize_review_confidence(cls, v: Any) -> Any:
         if isinstance(v, (int, float)) and v > 1.0:
             return v / 100.0
         return v

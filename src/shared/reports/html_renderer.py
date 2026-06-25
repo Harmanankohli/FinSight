@@ -4,6 +4,10 @@
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    import jinja2
 
 logger = logging.getLogger(__name__)
 
@@ -11,7 +15,7 @@ from shared.reports.deck_model import DeckData
 from shared.reports.extraction import _extract_deck_data
 
 
-def _deck_to_template_context(deck: DeckData) -> dict:
+def _deck_to_template_context(deck: DeckData) -> dict[str, Any]:
     """Build Jinja2 template context from DeckData."""
     rec_colors = {"BUY": "var(--green)", "HOLD": "var(--blue)", "SELL": "var(--red)"}
     conf = deck.confidence / 100.0 if deck.confidence > 1.0 else deck.confidence
@@ -54,12 +58,12 @@ def _get_jinja_env() -> jinja2.Environment:  # noqa: F821
 
 
 def generate_html(
-    brief_data: dict,
+    brief_data: dict[str, Any],
     ticker: str,
     recommendation: str,
     confidence: float,
     analysis_date: str,
-    company_info: dict | None = None,
+    company_info: dict[str, Any] | None = None,
 ) -> str:
     """Generate a standalone HTML investment deck. Returns HTML string."""
     logger.info("Generating HTML report for %s", ticker)
@@ -68,6 +72,6 @@ def generate_html(
     )
     ctx = _deck_to_template_context(deck)
     template = _get_jinja_env().get_template("investment_deck.html")
-    result = template.render(**ctx)
+    result: str = template.render(**ctx)
     logger.info("HTML report generated for %s (%d bytes)", ticker, len(result))
     return result

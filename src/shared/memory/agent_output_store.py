@@ -8,6 +8,7 @@ token waste and avoiding the OpenAI Agents SDK tool-call limitation.
 import json
 import logging
 from datetime import UTC, datetime
+from typing import Any
 
 from shared.memory.store import get_db, write_lock
 
@@ -27,7 +28,7 @@ def _normalize_agent_key(resolved_name: str) -> str:
     return _AGENT_KEY_MAP.get(lower, lower.replace(" ", "_"))
 
 
-async def store_agent_output(session_id: str, agent_name: str, output: dict) -> None:
+async def store_agent_output(session_id: str, agent_name: str, output: dict[str, Any]) -> None:
     """INSERT OR REPLACE agent output into the shared store."""
     async with write_lock():
         conn = await get_db()
@@ -46,7 +47,7 @@ async def store_agent_output(session_id: str, agent_name: str, output: dict) -> 
     logger.debug("Stored agent output: session=%s agent=%s", session_id, agent_name)
 
 
-async def get_agent_outputs(session_id: str) -> dict[str, dict]:
+async def get_agent_outputs(session_id: str) -> dict[str, dict[str, Any]]:
     """Return all agent outputs for a session, keyed by normalized short name."""
     conn = await get_db()
     cursor = await conn.execute(
@@ -54,7 +55,7 @@ async def get_agent_outputs(session_id: str) -> dict[str, dict]:
         (session_id,),
     )
     rows = await cursor.fetchall()
-    result: dict[str, dict] = {}
+    result: dict[str, dict[str, Any]] = {}
     for agent_name, output_json in rows:
         key = _normalize_agent_key(agent_name)
         try:

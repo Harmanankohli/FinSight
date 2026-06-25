@@ -6,7 +6,10 @@ returning sensible defaults (0.0, 1.0, 50.0, or None) when inputs are too
 short, degenerate, or contain non-finite values.
 """
 
+from __future__ import annotations
+
 import logging
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -21,7 +24,20 @@ class MetricValue(float):
     but also exposes .to_dict() for reporting and .status/.warning for validation.
     """
 
-    def __new__(cls, value, methodology="", min_valid=-999, max_valid=999, warning=None):
+    _methodology: str
+    _min_valid: float
+    _max_valid: float
+    _warning: str | None
+    _status: str
+
+    def __new__(
+        cls,
+        value: float,
+        methodology: str = "",
+        min_valid: float = -999,
+        max_valid: float = 999,
+        warning: str | None = None,
+    ) -> MetricValue:
         obj = super().__new__(cls, value if np.isfinite(value) else 0.0)
         obj._methodology = methodology
         obj._min_valid = min_valid
@@ -41,26 +57,26 @@ class MetricValue(float):
         return obj
 
     @property
-    def methodology(self):
+    def methodology(self) -> str:
         return self._methodology
 
     @property
-    def min_valid(self):
+    def min_valid(self) -> float:
         return self._min_valid
 
     @property
-    def max_valid(self):
+    def max_valid(self) -> float:
         return self._max_valid
 
     @property
-    def status(self):
+    def status(self) -> str:
         return self._status
 
     @property
-    def warning(self):
+    def warning(self) -> str | None:
         return self._warning
 
-    def to_dict(self):
+    def to_dict(self) -> dict[str, Any]:
         return {
             "value": float(self),
             "methodology": self._methodology,

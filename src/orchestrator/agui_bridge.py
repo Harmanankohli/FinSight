@@ -19,6 +19,7 @@ import logging
 import re
 import uuid
 from collections.abc import AsyncGenerator
+from typing import Any
 
 from ag_ui.core import (
     EventType,
@@ -140,7 +141,8 @@ async def _get_today_cached_text(ticker: str, *, user_id: str | None = None) -> 
 async def _build_memory_context(user_input: str, user_id: str) -> str:
     from datetime import datetime
 
-    from shared.memory import PortfolioStore, TickerMemory
+    from shared.memory.portfolio_store import PortfolioStore
+    from shared.memory.ticker_memory import TickerMemory
     from shared.settings import IST
     from shared.ticker_utils import extract_ticker
 
@@ -206,7 +208,8 @@ async def _auto_save_brief(
     from datetime import datetime
 
     from orchestrator.agent import pop_agent_responses
-    from shared.memory import PerformanceTracker, TickerMemory
+    from shared.memory.performance_tracker import PerformanceTracker
+    from shared.memory.ticker_memory import TickerMemory
     from shared.settings import IST
     from shared.ticker_utils import extract_ticker
 
@@ -433,8 +436,8 @@ async def _stream(
         ).__aiter__()
         while True:
             deadline = _TOOL_TIMEOUT if _awaiting_tool_response > 0 else _LLM_TIMEOUT
-            elapsed = 0
-            event = None
+            elapsed: float = 0
+            event: Any = None
             next_task = asyncio.ensure_future(event_iter.__anext__())
             while elapsed < deadline:
                 wait = min(_KEEPALIVE_INTERVAL, deadline - elapsed)
@@ -479,11 +482,12 @@ async def _stream(
             for fn_call in event.get_function_calls():
                 _awaiting_tool_response += 1
                 call_id = str(uuid.uuid4())
-                fn_id = getattr(fn_call, "id", None) or fn_call.name
-                pending_calls[call_id] = fn_call.name
+                fn_name = fn_call.name or ""
+                fn_id = getattr(fn_call, "id", None) or fn_name
+                pending_calls[call_id] = fn_name
                 pending_by_fn_id[fn_id] = call_id
 
-                if fn_call.name == "send_message":
+                if fn_name == "send_message":
                     had_send_message = True
                     args = dict(fn_call.args or {})
                     agent_raw = args.get("agent_name", "")
@@ -517,7 +521,7 @@ async def _stream(
                     ToolCallStartEvent(
                         type=EventType.TOOL_CALL_START,
                         tool_call_id=call_id,
-                        tool_call_name=fn_call.name,
+                        tool_call_name=fn_name,
                         parent_message_id=msg_id,
                     )
                 )
@@ -533,7 +537,7 @@ async def _stream(
             # Function responses → sub-agent results
             for fn_resp in event.get_function_responses():
                 _awaiting_tool_response = max(0, _awaiting_tool_response - 1)
-                fn_id = getattr(fn_resp, "id", None) or fn_resp.name
+                fn_id = getattr(fn_resp, "id", None) or fn_resp.name or ""
                 call_id = pending_by_fn_id.get(fn_id, str(uuid.uuid4()))
                 raw = fn_resp.response
                 if isinstance(raw, str):
@@ -622,10 +626,10 @@ async def _stream(
     yield sse(RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=run_id))
 
 
-def make_agui_bridge_endpoint(runner: Runner):
+def make_agui_bridge_endpoint(runner: Runner) -> Any:
     """Return a Starlette POST handler for /a2a-agui."""
 
-    async def a2a_agui(request: Request):
+    async def a2a_agui(request: Request) -> StreamingResponse | JSONResponse:
         try:
             body = await request.json()
             payload = RunAgentInput.model_validate(body)

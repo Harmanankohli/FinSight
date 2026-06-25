@@ -3,6 +3,7 @@
 import json
 import logging
 import time
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +23,7 @@ _STRIP_KEYS = {
 }
 
 
-def _clean(obj, depth=0):
+def _clean(obj: Any, depth: int = 0) -> Any:
     """Strip null values only from the event envelope and message-level metadata.
 
     Preserves null in data-carrying fields (snapshot, delta values, input nested
@@ -45,7 +46,7 @@ def _clean(obj, depth=0):
     return obj
 
 
-def _strip_message_nulls(messages):
+def _strip_message_nulls(messages: Any) -> Any:
     """Strip null optional fields inside message objects (name, encryptedValue)."""
     if not isinstance(messages, list):
         return messages
@@ -60,7 +61,7 @@ def _strip_message_nulls(messages):
     return out
 
 
-def sse(event_obj) -> str:
+def sse(event_obj: Any) -> str:
     """Format an AG-UI event as a Server-Sent Events data frame."""
     if event_obj.timestamp is None:
         event_obj.timestamp = int(time.time() * 1000)

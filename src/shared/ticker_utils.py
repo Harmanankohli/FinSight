@@ -5,6 +5,7 @@ Parses tickers from text, validates them, and supports fuzzy matching.
 import json
 import logging
 import re
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -245,11 +246,11 @@ def extract_ticker(query: str) -> str:
 
     matches = [w for w in re.findall(r"\b([A-Z]{3,5})\b", query) if not _is_financial_stop_word(w)]
     if matches:
-        return matches[0]
+        return str(matches[0])
 
     matches = [w for w in re.findall(r"\b([A-Z]{1,2})\b", query) if not _is_financial_stop_word(w)]
     if matches:
-        return matches[-1]
+        return str(matches[-1])
 
     # Case-insensitive fallback: match lowercase/mixed-case ticker after a
     # preposition or action verb (e.g. "analyze aapl", "about nvda").
@@ -303,7 +304,7 @@ _HOLDINGS_PATTERNS = [
 
 # Delegates to the MCP server's SEC-sourced database for authoritative ticker
 # validation. The server queries EDGAR to confirm existence and return canonical form.
-async def validate_ticker_via_mcp(mcp, ticker: str) -> tuple[bool, str, str]:
+async def validate_ticker_via_mcp(mcp: Any, ticker: str) -> tuple[bool, str, str]:
     """Call MCP validate_ticker. Returns (valid, canonical_ticker, company_name_or_error). Raises on MCP failure."""  # noqa: E501
     result = await mcp.call_tool_by_name("validate_ticker", {"ticker": ticker})
     if hasattr(result, "content"):
@@ -321,7 +322,7 @@ async def validate_ticker_via_mcp(mcp, ticker: str) -> tuple[bool, str, str]:
 
 # Delegates company-name→ticker resolution to the MCP server, which queries
 # SEC EDGAR. Strips noise words first to improve NLP accuracy server-side.
-async def resolve_ticker_via_mcp(mcp, query: str, exclude_ticker: str = "") -> tuple[str, str]:
+async def resolve_ticker_via_mcp(mcp: Any, query: str, exclude_ticker: str = "") -> tuple[str, str]:
     """Call MCP resolve_company_ticker. Returns (ticker, company_name). Raises on MCP failure."""
     cleaned = clean_query_for_resolution(query)
     if exclude_ticker:

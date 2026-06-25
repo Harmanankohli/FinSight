@@ -95,7 +95,7 @@ def _trunc_repr(obj: Any, max_len: int = 500) -> str:
         return "<repr-error>"
 
 
-def logged(level: int = logging.INFO, log_args: bool = True, log_result: bool = True):
+def logged(level: int = logging.INFO, log_args: bool = True, log_result: bool = True) -> Any:
     """Decorator: logs enter/exit/latency for async functions.
 
     Logs function name, arguments (input), return value (output), and elapsed
@@ -107,9 +107,9 @@ def logged(level: int = logging.INFO, log_args: bool = True, log_result: bool = 
         log_result: Whether to log the return value (default True).
     """
 
-    def decorator(fn):
+    def decorator(fn: Any) -> Any:
         @functools.wraps(fn)
-        async def wrapper(*args, **kwargs):
+        async def wrapper(*args: Any, **kwargs: Any) -> Any:
             _logger = logging.getLogger(fn.__module__)
             _log_name = fn.__qualname__
             if log_args:
@@ -161,12 +161,12 @@ def logged(level: int = logging.INFO, log_args: bool = True, log_result: bool = 
     return decorator
 
 
-def logged_sync(level: int = logging.INFO, log_args: bool = True, log_result: bool = True):
+def logged_sync(level: int = logging.INFO, log_args: bool = True, log_result: bool = True) -> Any:
     """Synchronous version of ``logged()`` — for non-async functions."""
 
-    def decorator(fn):
+    def decorator(fn: Any) -> Any:
         @functools.wraps(fn)
-        def wrapper(*args, **kwargs):
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
             _logger = logging.getLogger(fn.__module__)
             _log_name = fn.__qualname__
             if log_args:
@@ -218,7 +218,7 @@ def logged_sync(level: int = logging.INFO, log_args: bool = True, log_result: bo
     return decorator
 
 
-def logged_class(level: int = logging.INFO, log_args: bool = True, log_result: bool = True):
+def logged_class(level: int = logging.INFO, log_args: bool = True, log_result: bool = True) -> Any:
     """Class-level decorator: applies ``logged()`` to every public method.
 
     Skips dunder methods and abstract stubs.
@@ -231,7 +231,7 @@ def logged_class(level: int = logging.INFO, log_args: bool = True, log_result: b
                 ...
     """
 
-    def class_decorator(cls):
+    def class_decorator(cls: Any) -> Any:
         for attr_name in dir(cls):
             if attr_name.startswith("_") and attr_name not in ("__init__",):
                 continue

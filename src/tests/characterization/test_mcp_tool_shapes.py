@@ -318,7 +318,11 @@ async def test_get_analyst_activity_grade_comparison():
     import pandas as pd
     mock_yq = MagicMock()
     mock_yq.return_value.grading_history = pd.DataFrame({
-        "epochGradeDate": [pd.Timestamp("2024-06-01"), pd.Timestamp("2024-06-02"), pd.Timestamp("2024-06-03")],
+        "epochGradeDate": [
+            pd.Timestamp("2024-06-01"),
+            pd.Timestamp("2024-06-02"),
+            pd.Timestamp("2024-06-03"),
+        ],
         "firm": ["Goldman Sachs", "Morgan Stanley", "JP Morgan"],
         "action": ["main", "reit", "main"],  # none are "up"/"down"
         "fromGrade": ["Hold", "Buy", "Buy"],

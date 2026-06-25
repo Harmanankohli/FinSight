@@ -21,13 +21,14 @@ from a2a.helpers import (
 )
 from a2a.types.a2a_pb2 import (
     AgentCard,
+    Role,
     SendMessageRequest,
     TaskState,
 )
 from google.protobuf.json_format import MessageToDict
 
 
-def _get_data_parts(parts: list) -> list:
+def _get_data_parts(parts: list[Any]) -> list[Any]:
     """Return parts that have a protobuf struct/data payload.
 
     Replaces ``get_data_parts`` which is not available in the installed a2a-sdk.
@@ -228,7 +229,7 @@ class SubAgentClient:
         return entry["_client"]
 
     # Streams A2A events (message / artifact / status / task) and returns the first terminal result
-    @logged()
+    @logged()  # type: ignore[untyped-decorator]
     async def send_message(self, agent_name: str, task_str: str) -> str:
         """Send a task to a remote agent and return its text response.
 
@@ -263,7 +264,7 @@ class SubAgentClient:
             )
         # ------------------------------------------------
 
-        message = new_text_message(task_str, role=1)
+        message = new_text_message(task_str, role=Role.ROLE_USER)
         req = SendMessageRequest(message=message)
 
         _TIMEOUT_MAP = {

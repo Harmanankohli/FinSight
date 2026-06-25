@@ -40,14 +40,14 @@ async def _get_adk_db() -> aiosqlite.Connection:
     return _adk_conn
 
 
-def _flatten_event(data: dict) -> dict:
+def _flatten_event(data: dict[str, Any]) -> dict[str, Any]:
     """Extract author and content parts from a raw event JSON dict.
 
     Flattens functionCall / functionResponse parts into typed dicts.
     Pure function — no I/O, independently testable.
     """
     author = data.get("author") or data.get("role") or ""
-    content_parts: list[dict] = []
+    content_parts: list[dict[str, Any]] = []
     content = data.get("content", {})
     for part in content.get("parts") or []:
         if not isinstance(part, dict):

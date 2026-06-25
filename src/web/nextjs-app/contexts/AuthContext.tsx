@@ -4,7 +4,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import {
-  loginAPI, logoutAPI, refreshTokenAPI, fetchMe,
+  loginAPI, logoutAPI, refreshTokenAPI,
   type AuthUser,
 } from "@/lib/auth";
 
@@ -67,7 +67,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await logoutAPI();
     setUser(null);
     setAccessToken(null);
-  }, [router]);
+  }, []);
 
   return (
     <AuthContext.Provider value={{ user, accessToken, isAuthenticated: !!user, isLoading, login, logout }}>

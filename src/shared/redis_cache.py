@@ -69,7 +69,7 @@ class RedisCache:
                     socket_connect_timeout=2,
                     socket_timeout=2,
                 )
-                await client.ping()
+                await client.ping()  # type: ignore[misc,unused-ignore]
                 self._redis = client
                 logger.info("Redis cache connected (ns=%s)", self._ns)
             except Exception as exc:

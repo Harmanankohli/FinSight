@@ -13,8 +13,10 @@ import json
 import logging
 import re
 import uuid
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from google.adk.events import Event
 from google.adk.memory import BaseMemoryService
@@ -89,11 +91,11 @@ class SQLiteMemoryService(BaseMemoryService):
     async def add_events_to_memory(
         self,
         *,
-        app_name: str | None = None,
-        user_id: str | None = None,
-        events: list[Event] | None = None,
+        app_name: str,
+        user_id: str,
+        events: Sequence[Event],
         session_id: str | None = None,
-        custom_metadata: dict | None = None,
+        custom_metadata: Mapping[str, object] | None = None,
     ) -> None:
         """Add a delta of events to memory without re-ingesting the full session.
 
@@ -104,11 +106,18 @@ class SQLiteMemoryService(BaseMemoryService):
             return
         logger.debug("Memory add_events_to_memory: session=%s events=%d", session_id, len(events))
 
+        resolved_user_id: str | None = user_id
+        resolved_session_id: str | None = session_id
+        resolved_app_name: str | None = app_name
+
         # Extract context values from custom_metadata if not provided directly
         if custom_metadata:
-            user_id = user_id or custom_metadata.get("user_id")
-            session_id = session_id or custom_metadata.get("session_id")
-            app_name = app_name or custom_metadata.get("app_name")
+            meta_user = custom_metadata.get("user_id")
+            resolved_user_id = resolved_user_id or (str(meta_user) if meta_user else None)
+            meta_session = custom_metadata.get("session_id")
+            resolved_session_id = resolved_session_id or (str(meta_session) if meta_session else None)
+            meta_app = custom_metadata.get("app_name")
+            resolved_app_name = resolved_app_name or (str(meta_app) if meta_app else None)
 
         async with write_lock():
             conn = await get_db(self._db_path)
@@ -121,9 +130,9 @@ class SQLiteMemoryService(BaseMemoryService):
                 content_json = json.dumps(self._event_to_dict(event))
                 metadata_json = json.dumps(
                     {
-                        "app_name": app_name or "finsight",
+                        "app_name": resolved_app_name or "finsight",
                         "author": event.author,
-                        **(custom_metadata or {}),
+                        **(dict(custom_metadata) if custom_metadata else {}),
                     }
                 )
 
@@ -133,8 +142,8 @@ class SQLiteMemoryService(BaseMemoryService):
                     " VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (
                         entry_id,
-                        user_id or "default_user",
-                        session_id or "",
+                        resolved_user_id or "default_user",
+                        resolved_session_id or "",
                         content_json,
                         metadata_json,
                         content_text,
@@ -223,8 +232,12 @@ class SQLiteMemoryService(BaseMemoryService):
         # Sort by fused score descending
         ranked = sorted(fused.items(), key=lambda x: x[1], reverse=True)
 
-        id_to_entry = {p["entry"].id: p["entry"] for p in parsed}
-        memories = []
+        id_to_entry: dict[str, MemoryEntry] = {}
+        for p in parsed:
+            mem_entry = p["entry"]
+            if isinstance(mem_entry, MemoryEntry) and mem_entry.id:
+                id_to_entry[mem_entry.id] = mem_entry
+        memories: list[MemoryEntry] = []
         for entry_id, _score in ranked[:10]:
             if entry_id in id_to_entry:
                 memories.append(id_to_entry[entry_id])
@@ -236,7 +249,7 @@ class SQLiteMemoryService(BaseMemoryService):
 
     # Tokenizes query and corpus, scores entries with BM25Okapi (term-frequency × inverse document frequency).  # noqa: E501
     @staticmethod
-    def _bm25_score(query: str, parsed: list[dict]) -> dict[str, float]:
+    def _bm25_score(query: str, parsed: list[dict[str, Any]]) -> dict[str, float]:
         """Compute BM25 scores for all entries against the query."""
         query_tokens = SQLiteMemoryService._tokenize(query)
         if not query_tokens:
@@ -249,7 +262,7 @@ class SQLiteMemoryService(BaseMemoryService):
         return {p["entry"].id: float(s) for p, s in zip(parsed, scores, strict=False)}
 
     # Encodes query and all entry texts with sentence-transformers, computes pairwise cosine similarity.  # noqa: E501
-    def _embedding_score(self, query: str, parsed: list[dict]) -> dict[str, float]:
+    def _embedding_score(self, query: str, parsed: list[dict[str, Any]]) -> dict[str, float]:
         """Compute cosine similarity between query embedding and entry embeddings."""
         try:
             model = self._get_model()
@@ -314,15 +327,15 @@ class SQLiteMemoryService(BaseMemoryService):
         return re.findall(r"[a-zA-Z0-9]+", text.lower())
 
     @staticmethod
-    def _event_to_dict(event: Event) -> dict:
+    def _event_to_dict(event: Event) -> dict[str, Any]:
         """Serialize an Event to a JSON-compatible dict."""
-        result: dict = {
+        result: dict[str, Any] = {
             "author": event.author,
             "parts": [],
         }
         if event.content and event.content.parts:
             for part in event.content.parts:
-                part_dict: dict = {}
+                part_dict: dict[str, Any] = {}
                 if part.text:
                     part_dict["text"] = part.text
                 if part_dict:

@@ -48,7 +48,7 @@ class SQLiteTaskStore(TaskStore):
             try:
                 conn = await get_db(self._db_path)
                 cursor = await conn.execute("SELECT task_id, owner, payload FROM a2a_tasks")
-                rows = await cursor.fetchall()
+                rows = list(await cursor.fetchall())
                 for _task_id, owner, payload in rows:
                     task = Parse(payload, Task())
                     # Use a bare dict as the owner's task map — avoids touching

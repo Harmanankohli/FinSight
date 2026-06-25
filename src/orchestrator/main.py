@@ -7,6 +7,7 @@ REST API routes, authentication middleware, and background sub-agent discovery.
 # ruff: noqa: E402
 import asyncio
 import logging
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from shared.bootstrap import bootstrap
@@ -23,11 +24,12 @@ from google.adk.sessions import DatabaseSessionService
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
+from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from shared.a2a_store import SQLiteTaskStore
-from shared.memory import SQLiteMemoryService
+from shared.memory.memory_service import SQLiteMemoryService
 from shared.observability import init_instrumentation
 
 init_instrumentation("orchestrator")
@@ -104,7 +106,7 @@ request_handler = DefaultRequestHandler(
 )
 
 
-async def health(request):
+async def health(request: Request) -> JSONResponse:
     """Return a simple health-check JSON response."""
 
     return JSONResponse({"status": "ok", "agent": "orchestrator"})
@@ -135,7 +137,7 @@ from shared.auth.middleware import require as _require_auth
 _SAFE_FILENAME_RE = __import__("re", fromlist=["compile"]).compile(r"[^A-Za-z0-9._-]")
 
 
-async def _authenticated_report(request):
+async def _authenticated_report(request: Request) -> JSONResponse | FileResponse:
     """GET /reports/{filename} — authenticated report download."""
     try:
         _require_auth(request, kinds=("user", "service"))
@@ -167,7 +169,7 @@ routes.append(Route("/reports/{filename}", _authenticated_report, methods=["GET"
 
 
 @asynccontextmanager
-async def lifespan(app):
+async def lifespan(app: Starlette) -> AsyncGenerator[None, None]:
     """Start background sub-agent discovery on startup and cleanly
     disconnect MCP clients on shutdown."""
 

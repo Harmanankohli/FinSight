@@ -10,13 +10,23 @@ import pytest
 # ---------------------------------------------------------------------------
 # Stub out heavy ADK / langfuse packages before orchestrator.agent is imported.
 # ---------------------------------------------------------------------------
+def _identity_decorator(*args, **kwargs):
+    if len(args) == 1 and callable(args[0]) and not kwargs:
+        return args[0]
+    return lambda f: f
+
+
 def _stub_modules():
     sub_client_mock = MagicMock()
     sub_client_mock.SubAgentClient = MagicMock
     obs_mock = MagicMock()
     obs_mock.init_langfuse = MagicMock()
+    langfuse_mock = MagicMock()
+    langfuse_mock.observe = _identity_decorator
+    langfuse_mock.decorators = MagicMock()
+    langfuse_mock.decorators.observe = _identity_decorator
     stubs = {
-        "langfuse": MagicMock(),
+        "langfuse": langfuse_mock,
         "langfuse.span_filter": MagicMock(),
         "shared.observability": obs_mock,
         "orchestrator.sub_agent_client": sub_client_mock,
@@ -105,8 +115,8 @@ async def test_save_brief_uses_synthesis_over_rationale(tmp_path):
     pt_mock = MagicMock()
     pt_mock.record_recommendation = AsyncMock()
     with (
-        patch("shared.memory.TickerMemory", lambda: TickerMemory(db_path=db)),
-        patch("shared.memory.PerformanceTracker", return_value=pt_mock),
+        patch("shared.memory.ticker_memory.TickerMemory", lambda: TickerMemory(db_path=db)),
+        patch("shared.memory.performance_tracker.PerformanceTracker", return_value=pt_mock),
         patch("orchestrator.agent.asyncio.create_task"),
     ):
         await save_brief(
@@ -145,8 +155,8 @@ async def test_save_brief_falls_back_to_rationale_on_empty_session(tmp_path):
     pt_mock = MagicMock()
     pt_mock.record_recommendation = AsyncMock()
     with (
-        patch("shared.memory.TickerMemory", lambda: TickerMemory(db_path=db)),
-        patch("shared.memory.PerformanceTracker", return_value=pt_mock),
+        patch("shared.memory.ticker_memory.TickerMemory", lambda: TickerMemory(db_path=db)),
+        patch("shared.memory.performance_tracker.PerformanceTracker", return_value=pt_mock),
         patch("orchestrator.agent.asyncio.create_task"),
     ):
         await save_brief(

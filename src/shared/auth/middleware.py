@@ -122,7 +122,7 @@ class AuthMiddleware:
         # accept ⊆ {"user", "service"}; default: both
         self.accept = accept or frozenset({"user", "service"})
 
-    async def __call__(self, scope: dict, receive: Any, send: Any) -> None:
+    async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
@@ -243,7 +243,7 @@ def require(
 def build_auth_middleware(
     settings: Any,
     accept: frozenset[str] | None = None,
-) -> list:
+) -> list[Middleware]:
     """Build the middleware list for a Starlette app.
 
     Returns an empty list when auth is disabled (preserves current behaviour).

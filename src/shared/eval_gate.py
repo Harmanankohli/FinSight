@@ -28,8 +28,9 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_deferred: list[tuple[Callable[..., Coroutine], tuple, dict]] = []
-_auto_release_task: asyncio.Task | None = None
+_DeferredItem = tuple[Callable[..., Coroutine[Any, Any, Any]], tuple[Any, ...], dict[str, Any]]
+_deferred: list[_DeferredItem] = []
+_auto_release_task: asyncio.Task[None] | None = None
 
 
 def _get_defer_timeout() -> float:
@@ -41,7 +42,7 @@ def _get_defer_timeout() -> float:
         return 120.0
 
 
-def defer_eval(fn: Callable[..., Coroutine], *args: Any, **kwargs: Any) -> None:
+def defer_eval(fn: Callable[..., Coroutine[Any, Any, Any]], *args: Any, **kwargs: Any) -> None:
     """Queue an eval coroutine for deferred execution."""
     global _auto_release_task
     _deferred.append((fn, args, kwargs))

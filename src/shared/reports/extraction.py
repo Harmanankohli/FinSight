@@ -7,6 +7,8 @@ import json
 import logging
 import os
 import re
+from collections.abc import Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -280,7 +282,7 @@ _EXCHANGE_MAP = {
 
 
 def _resolve_ticker_info(
-    ticker: str, text: str, company_info: dict | None = None
+    ticker: str, text: str, company_info: dict[str, Any] | None = None
 ) -> tuple[str, str, str]:
     """Return (company_name, sector, exchange).
 
@@ -321,14 +323,14 @@ def _resolve_ticker_info(
     return (ticker, "", "")
 
 
-def _parse_markdown_tables(text: str) -> tuple[str, list[dict], list[ParsedTable]]:
+def _parse_markdown_tables(text: str) -> tuple[str, list[dict[str, str]], list[ParsedTable]]:
     """Extract markdown tables into structured dicts.
 
     Returns (cleaned_text, flat_rows, structured_tables).
     flat_rows kept for back-compat until R.4; structured_tables used for classification.
     """
     table_pattern = re.compile(r"((?:^\|.+\|\s*\n)+)", re.MULTILINE)
-    parsed_tables: list[list[dict]] = []
+    parsed_tables: list[list[dict[str, str]]] = []
     structured_tables: list[ParsedTable] = []
     for match in table_pattern.finditer(text):
         block = match.group(1)
@@ -1173,7 +1175,7 @@ def _stage_executive_summary(ctx: ExtractionCtx) -> None:
 
 
 # Ordered stage list — each stage operates on ExtractionCtx in place.
-STAGES: list = [
+STAGES: list[Callable[[ExtractionCtx], None]] = [
     _stage_tables,
     _stage_metrics,
     _stage_scenarios,
@@ -1184,12 +1186,12 @@ STAGES: list = [
 ]
 
 
-def _enrich_from_markdown(
+def _enrich_from_markdown_staged(
     data: DeckData,
     text: str,
     sections: list[Section],
-    table_rows: list[dict] = None,
-    tables: list[ParsedTable] = None,
+    table_rows: list[dict[str, str]] | None = None,
+    tables: list[ParsedTable] | None = None,
 ) -> None:
     """Run the staged extraction pipeline over text into data."""
     ctx = ExtractionCtx(
@@ -1212,18 +1214,21 @@ def _enrich_from_markdown(
     )
 
 
-def _safe_parse(val):
+def _safe_parse(val: Any) -> dict[str, Any]:
     if isinstance(val, dict):
         return val
     if isinstance(val, str):
         try:
-            return json.loads(val)
+            parsed = json.loads(val)
+            if isinstance(parsed, dict):
+                return parsed
+            return {}
         except (json.JSONDecodeError, TypeError):
             return {}
     return {}
 
 
-def _populate_from_agent_outputs(data: DeckData, brief_data: dict, response_text: str) -> None:
+def _populate_from_agent_outputs(data: DeckData, brief_data: dict[str, Any], response_text: str) -> None:
     """Populate DeckData from structured agent output dicts stored in brief_json."""
     quant = _safe_parse(brief_data.get("quant_response"))
     rag = _safe_parse(brief_data.get("rag_response"))
@@ -1484,7 +1489,7 @@ def _populate_from_agent_outputs(data: DeckData, brief_data: dict, response_text
                 sym = pc.get("ticker", "")
                 if sym and sym != data.ticker and sym not in data.peer_names:
                     data.peer_names.append(sym)
-            all_keys = set()
+            all_keys: set[str] = set()
             for pc in si_peers[:2]:
                 all_keys.update((pc.get("metrics") or {}).keys())
             for mn in sorted(all_keys):
@@ -1495,7 +1500,7 @@ def _populate_from_agent_outputs(data: DeckData, brief_data: dict, response_text
 
         # Merge duplicate peer rows (quant col0 + sentiment col1/col2 for same metric)
         if len(data.peers) > 5:
-            _merged: dict[str, dict] = {}
+            _merged: dict[str, dict[str, Any]] = {}
             _order: list[str] = []
             for _r in data.peers:
                 _m = _r.get("metric", "")
@@ -1545,11 +1550,11 @@ def _populate_from_agent_outputs(data: DeckData, brief_data: dict, response_text
 
     # ── Analytics response (legacy dict path) ─────────────────────────────
     if analytics:
-        trend = analytics.get("trend_analysis") or {}
-        td = trend.get("trend_direction") or "neutral"
+        analytics_trend = analytics.get("trend_analysis") or {}
+        td = analytics_trend.get("trend_direction") or "neutral"
         badge = "bullish" if "bull" in td else "expensive" if "bear" in td else "moderate"
         data.scorecard.append(("Analytics Trend", td.replace("_", " ").title(), badge))
-        ma_signal = trend.get("ma_crossover_signal")
+        ma_signal = analytics_trend.get("ma_crossover_signal")
         if ma_signal and ma_signal in ("golden_cross", "death_cross"):
             ma_badge = "bullish" if ma_signal == "golden_cross" else "expensive"
             data.scorecard.append(("MA Crossover", ma_signal.replace("_", " ").title(), ma_badge))
@@ -1677,7 +1682,7 @@ def _populate_from_agent_outputs(data: DeckData, brief_data: dict, response_text
     )
 
 
-def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
+def _populate_from_validated_outputs(data: DeckData, outputs: Any) -> None:
     """Populate DeckData from validated Pydantic agent outputs (ValidatedAgentOutputs).
 
     Replaces the dict-extraction path in _populate_from_agent_outputs with typed
@@ -2171,14 +2176,14 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
             for pc in sentiment.peer_comparison[:2]:
                 all_keys.update(pc.metrics.keys())
             for mn in sorted(all_keys):
-                row: dict = {"metric": mn, "col0": "N/A"}
+                peer_row: dict[str, Any] = {"metric": mn, "col0": "N/A"}
                 for ci, pc in enumerate(sentiment.peer_comparison[:2]):
-                    row[f"col{ci + 1}"] = pc.metrics.get(mn, "N/A")
-                data.peers.append(row)
+                    peer_row[f"col{ci + 1}"] = pc.metrics.get(mn, "N/A")
+                data.peers.append(peer_row)
 
         # Merge duplicate peer rows (quant col0 + sentiment col1/col2 for same metric)
         if len(data.peers) > 5:
-            merged: dict[str, dict] = {}
+            merged: dict[str, dict[str, Any]] = {}
             order: list[str] = []
             for row in data.peers:
                 m = row.get("metric", "")
@@ -2549,27 +2554,27 @@ def _populate_from_validated_outputs(data: DeckData, outputs) -> None:
     negative_drivers = _dedup_neg
 
     if positive_drivers or negative_drivers:
-        parts: list[str] = []
+        driver_parts: list[str] = []
         if positive_drivers:
-            parts.append("<strong>Positive Signals</strong><ul>")
+            driver_parts.append("<strong>Positive Signals</strong><ul>")
             for d in positive_drivers[:5]:
-                parts.append(f"<li>{d}</li>")
-            parts.append("</ul>")
+                driver_parts.append(f"<li>{d}</li>")
+            driver_parts.append("</ul>")
         if negative_drivers:
-            parts.append("<strong>Negative Signals</strong><ul>")
+            driver_parts.append("<strong>Negative Signals</strong><ul>")
             for d in negative_drivers[:5]:
-                parts.append(f"<li>{d}</li>")
-            parts.append("</ul>")
-        data.sections.append(Section("Recommendation Drivers", "".join(parts)))
+                driver_parts.append(f"<li>{d}</li>")
+            driver_parts.append("</ul>")
+        data.sections.append(Section("Recommendation Drivers", "".join(driver_parts)))
 
 
 def _extract_deck_data(
-    brief_data: dict,
+    brief_data: dict[str, Any],
     ticker: str,
     recommendation: str,
     confidence: float,
     analysis_date: str,
-    company_info: dict | None = None,
+    company_info: dict[str, Any] | None = None,
 ) -> DeckData:
     rec = recommendation.upper() if recommendation else "UNKNOWN"
     response_text = brief_data.get("response_text", "")
@@ -2757,7 +2762,7 @@ def _extract_deck_data(
                     sym = pc_entry.get("ticker", "")
                     if sym and sym != data.ticker and sym not in data.peer_names:
                         data.peer_names.append(sym)
-                all_metrics_keys = set()
+                all_metrics_keys: set[str] = set()
                 for pc_entry in si_peers[:2]:
                     all_metrics_keys.update((pc_entry.get("metrics") or {}).keys())
                 for metric_name in sorted(all_metrics_keys):
@@ -2824,6 +2829,14 @@ def _extract_deck_data(
             logger.debug("Validated agent output path failed (%s), using legacy extraction", _ve)
             _populate_from_agent_outputs(data, brief_data, response_text)
 
+        if not data.risks:
+            data.risks = ["Market volatility", "Regulatory changes"]
+        else:
+            data.risks_extracted = True
+        if not data.opportunities:
+            data.opportunities = ["Strong operational execution", "Market positioning"]
+        else:
+            data.opportunities_extracted = True
         if data.kpi_chips and (data.financials or data.executive_summary):
             return data
         if not _used_validated:
@@ -2872,8 +2885,8 @@ def _enrich_from_markdown(
     data: DeckData,
     text: str,
     sections: list[Section],
-    table_rows: list[dict] = None,
-    tables: list[ParsedTable] = None,
+    table_rows: list[dict[str, str]] | None = None,
+    tables: list[ParsedTable] | None = None,
 ) -> None:
     """Extract KPIs, scorecard ratings, risks, and opportunities from text.
 

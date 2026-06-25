@@ -12,6 +12,7 @@ import json
 import logging
 import uuid
 from collections.abc import AsyncGenerator
+from typing import Any
 
 from ag_ui.core import (
     EventType,
@@ -69,7 +70,7 @@ async def _stream(
             type=EventType.RUN_STARTED,
             thread_id=thread_id,
             run_id=run_id,
-            input=payload.model_dump(by_alias=True),
+            input=payload,
         )
     )
 
@@ -89,12 +90,13 @@ async def _stream(
             # ── Function calls (sub-agent delegations) ───────────────────────
             for fn_call in event.get_function_calls():
                 call_id = str(uuid.uuid4())
-                pending_calls[fn_call.name] = call_id
+                fn_name = fn_call.name or ""
+                pending_calls[fn_name] = call_id
                 yield _sse(
                     ToolCallStartEvent(
                         type=EventType.TOOL_CALL_START,
                         tool_call_id=call_id,
-                        tool_call_name=fn_call.name,
+                        tool_call_name=fn_name,
                         parent_message_id=msg_id,
                     )
                 )
@@ -114,7 +116,7 @@ async def _stream(
 
             # ── Function responses (sub-agent results) ───────────────────────
             for fn_resp in event.get_function_responses():
-                call_id = pending_calls.get(fn_resp.name, str(uuid.uuid4()))
+                call_id = pending_calls.get(fn_resp.name or "", str(uuid.uuid4()))
                 result_text = ""
                 if fn_resp.response:
                     result_text = (
@@ -180,10 +182,10 @@ async def _stream(
     )
 
 
-def make_agui_endpoint(runner: Runner):
+def make_agui_endpoint(runner: Runner) -> Any:
     """Return a Starlette POST handler for /agentic_chat."""
 
-    async def agentic_chat(request: Request):
+    async def agentic_chat(request: Request) -> StreamingResponse | JSONResponse:
         try:
             body = await request.json()
             payload = RunAgentInput.model_validate(body)

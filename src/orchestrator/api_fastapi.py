@@ -13,6 +13,7 @@ Usage:
 from __future__ import annotations
 
 import logging
+from typing import NoReturn
 
 from fastapi import FastAPI, HTTPException
 
@@ -45,7 +46,7 @@ fastapi_app = FastAPI(
 
 
 @fastapi_app.get("/health", response_model=HealthResponse, tags=["System"])
-async def health():
+async def health() -> dict[str, str]:
     return {"status": "ok", "agent": "orchestrator"}
 
 
@@ -56,7 +57,7 @@ async def health():
     tags=["Memory"],
     summary="List ticker memory history",
 )
-async def memory_ticker_history(symbol: str, limit: int = 10):
+async def memory_ticker_history(symbol: str, limit: int = 10) -> NoReturn:
     logger.warning("Unimplemented endpoint called: GET /api/memory/ticker/%s", symbol)
     raise HTTPException(501)
 
@@ -68,7 +69,7 @@ async def memory_ticker_history(symbol: str, limit: int = 10):
     tags=["Memory"],
     summary="Get latest ticker brief",
 )
-async def memory_ticker_latest(symbol: str):
+async def memory_ticker_latest(symbol: str) -> NoReturn:
     logger.warning("Unimplemented endpoint called: GET /api/memory/ticker/%s/latest", symbol)
     raise HTTPException(501)
 
@@ -79,7 +80,7 @@ async def memory_ticker_latest(symbol: str):
     tags=["Memory"],
     summary="Check if ticker recommendation changed",
 )
-async def memory_ticker_changed(symbol: str):
+async def memory_ticker_changed(symbol: str) -> NoReturn:
     logger.warning("Unimplemented endpoint called: GET /api/memory/ticker/%s/changed", symbol)
     raise HTTPException(501)
 
@@ -91,7 +92,7 @@ async def memory_ticker_changed(symbol: str):
     tags=["Sessions"],
     summary="List conversation sessions",
 )
-async def sessions_list(user_id: str | None = None, limit: int = 50):
+async def sessions_list(user_id: str | None = None, limit: int = 50) -> NoReturn:
     logger.warning("Unimplemented endpoint called: GET /api/sessions")
     raise HTTPException(501)
 
@@ -103,7 +104,7 @@ async def sessions_list(user_id: str | None = None, limit: int = 50):
     tags=["Sessions"],
     summary="Get session events",
 )
-async def session_events(id: str):
+async def session_events(id: str) -> NoReturn:
     logger.warning("Unimplemented endpoint called: GET /api/sessions/%s/events", id)
     raise HTTPException(501)
 
@@ -114,7 +115,7 @@ async def session_events(id: str):
     tags=["Agents"],
     summary="List discovered sub-agents",
 )
-async def agents_list():
+async def agents_list() -> NoReturn:
     logger.warning("Unimplemented endpoint called: GET /api/agents")
     raise HTTPException(501)
 
@@ -126,7 +127,7 @@ async def agents_list():
     tags=["Agents"],
     summary="Check sub-agent health",
 )
-async def agent_health(name: str):
+async def agent_health(name: str) -> NoReturn:
     logger.warning("Unimplemented endpoint called: GET /api/agents/%s/health", name)
     raise HTTPException(501)
 
@@ -137,7 +138,7 @@ async def agent_health(name: str):
     tags=["Reports"],
     summary="Download latest ticker report",
 )
-async def report_latest(symbol: str, format: str):
+async def report_latest(symbol: str, format: str) -> None:
     logger.warning(
         "Unimplemented endpoint called: GET /api/reports/ticker/%s/latest/%s", symbol, format
     )
@@ -150,7 +151,7 @@ async def report_latest(symbol: str, format: str):
     tags=["Reports"],
     summary="Download report by brief ID",
 )
-async def report_by_id(brief_id: str, format: str):
+async def report_by_id(brief_id: str, format: str) -> None:
     logger.warning("Unimplemented endpoint called: GET /api/reports/%s/%s", brief_id, format)
     raise HTTPException(501)
 
@@ -166,7 +167,7 @@ async def report_by_id(brief_id: str, format: str):
     tags=["Auth"],
     summary="Authenticate with username+password",
 )
-async def login(body: LoginRequest):
+async def login(body: LoginRequest) -> NoReturn:
     logger.warning("Unimplemented endpoint called: POST /auth/login")
     raise HTTPException(501)
 
@@ -178,7 +179,7 @@ async def login(body: LoginRequest):
     tags=["Auth"],
     summary="Refresh access token",
 )
-async def refresh():
+async def refresh() -> NoReturn:
     logger.warning("Unimplemented endpoint called: POST /auth/refresh")
     raise HTTPException(501)
 
@@ -189,7 +190,7 @@ async def refresh():
     tags=["Auth"],
     summary="Revoke refresh token and clear session",
 )
-async def logout():
+async def logout() -> NoReturn:
     logger.warning("Unimplemented endpoint called: POST /auth/logout")
     raise HTTPException(501)
 
@@ -201,7 +202,7 @@ async def logout():
     tags=["Auth"],
     summary="Get current authenticated user",
 )
-async def me():
+async def me() -> NoReturn:
     logger.warning("Unimplemented endpoint called: GET /auth/me")
     raise HTTPException(501)
 

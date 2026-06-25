@@ -11,12 +11,16 @@ export interface RecentQuery {
   ts: number;
 }
 
-/** Reads recent queries from localStorage. Returns an empty array if unavailable or malformed. */
-export function getRecentQueries(): RecentQuery[] {
-  if (typeof window === "undefined") return [];
+const EMPTY: RecentQuery[] = [];
+let _cachedRaw: string | null = null;
+let _cachedResult: RecentQuery[] = EMPTY;
+
+function parseQueries(): RecentQuery[] {
+  const raw = localStorage.getItem(KEY) || "[]";
+  if (raw === _cachedRaw) return _cachedResult;
   try {
-    const raw: unknown[] = JSON.parse(localStorage.getItem(KEY) || "[]");
-    return raw.filter(
+    const parsed: unknown[] = JSON.parse(raw);
+    _cachedResult = parsed.filter(
       (q): q is RecentQuery =>
         typeof q === "object" &&
         q !== null &&
@@ -24,8 +28,16 @@ export function getRecentQueries(): RecentQuery[] {
         typeof (q as RecentQuery).ts === "number"
     );
   } catch {
-    return [];
+    _cachedResult = EMPTY;
   }
+  _cachedRaw = raw;
+  return _cachedResult;
+}
+
+/** Reads recent queries from localStorage. Returns a stable reference when content hasn't changed. */
+export function getRecentQueries(): RecentQuery[] {
+  if (typeof window === "undefined") return EMPTY;
+  return parseQueries();
 }
 
 /** Adds a query to the recent queries list (deduped by threadId, capped at 12). Dispatches a custom event to notify the sidebar. */
