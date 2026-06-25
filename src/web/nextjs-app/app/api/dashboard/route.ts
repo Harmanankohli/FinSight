@@ -2,6 +2,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { langfetch, langfuseConfigured } from "@/lib/langfuse";
 import { classifyAgent, type AgentKey } from "@/lib/agentColors";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api/dashboard");
 
 const SKIP_NAMES = new Set(["ChatOpenAI", "Embedding", "get_prices"]);
 const SKIP_PREFIXES = ["get_prices"];
@@ -108,6 +111,7 @@ export async function GET(req: NextRequest) {
   const rawHours = parseInt(req.nextUrl.searchParams.get("hours") || "24", 10);
   const hours = Math.min(720, Math.max(1, isNaN(rawHours) || rawHours <= 0 ? 24 : rawHours));
   const fromTimestamp = new Date(Date.now() - hours * 3600000).toISOString();
+  log.info("Dashboard metrics request", { hours });
 
   try {
     const tracePages: LfTrace[][] = [];

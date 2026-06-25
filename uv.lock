@@ -3409,6 +3409,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "a2a-sdk", extra = ["http-server"] },
     { name = "aiosqlite" },
+    { name = "colorama" },
     { name = "httpx" },
     { name = "langfuse" },
     { name = "opentelemetry-api" },
@@ -3618,6 +3619,7 @@ requires-dist = [
     { name = "boto3", marker = "extra == 'future'", specifier = ">=1.35.0" },
     { name = "chromadb", marker = "extra == 'orchestrator'", specifier = ">=0.5.0" },
     { name = "chromadb", marker = "extra == 'rag'", specifier = ">=0.5.0" },
+    { name = "colorama", specifier = ">=0.4.6" },
     { name = "crewai", marker = "extra == 'market'", specifier = ">=0.40.0,<1.0.0" },
     { name = "ddgs", marker = "extra == 'all'", specifier = ">=8.0.0" },
     { name = "fastapi", marker = "extra == 'orchestrator'", specifier = ">=0.115.0" },

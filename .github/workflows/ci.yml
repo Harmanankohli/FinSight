@@ -46,6 +46,7 @@ jobs:
       AUTH_ENABLED: ${{ matrix.auth }}
       AUTH_JWT_SECRETS: ${{ matrix.auth == 'true' && 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' || '' }}
       SERVICE_AUTH_TOKEN: ${{ matrix.auth == 'true' && 'bbbbbbbbbbbbbbbb' || '' }}
+      FORCE_COLOR: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
