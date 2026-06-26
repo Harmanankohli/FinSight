@@ -49,76 +49,85 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <a href="diagrams/index.html">Diagrams</a>
 </div>
 
-<p><strong>~250 test cases across 50 test files + offline evaluation driver. Phase 0 added 45 characterization tests (4 files). Phase 3 added auth contract tests (3 files). Phase R added corpus regression harness (1 file). v2.2 added agent output extraction tests (1 file). v2.6 added 5 new test files for Analytics Agent, Reviewer Agent, and new agent models. v2.7 added agent_output_store memory test and Windows/locking fixes. v2.12 added 7 new characterization tests for yahooquery tools and expanded MCP tool shapes. v2.13 added <code>conftest.py</code> for unit tests (langfuse.observe stubs). v2.16 added characterization test golden fixtures for structured agent outputs. All tests now live under <code>src/tests/</code>.</strong></p>
+<p><strong>~370 parametrized test cases across 40+ test files + offline evaluation driver. Phase 0 added 45 characterization tests (4 files). Phase 3 added auth contract tests (3 files). Phase R added corpus regression harness (1 file). v2.2 added agent output extraction tests (1 file). v2.6 added new test files for Analytics Agent, Reviewer Agent, and new agent models. v2.7 added agent_output_store memory test and Windows/locking fixes. v2.12 added 7 new characterization tests for yahooquery tools and expanded MCP tool shapes. v2.13 added <code>conftest.py</code> for unit tests (langfuse.observe stubs). v2.16 added characterization test golden fixtures for structured agent outputs. All tests live under <code>src/tests/</code>.</strong></p>
 <h2>Running Tests</h2>
-<pre class="codehilite"><code class="language-bash">pytest                          # all unit tests
-pytest -v                       # verbose
-pytest src/tests/unit/              # unit tests only
-pytest src/tests/characterization/  # characterization tests only
-pytest -m auth                  # auth-related tests (Phase 3)
-pytest -m openapi               # OpenAPI spec tests
-pytest -m integration           # integration/smoke tests (requires running services)
-pytest -m &quot;not integration&quot;     # unit tests only (default)
-pytest -m &quot;not external&quot;        # exclude tests that need external services
-</code></pre>
+<div class="codehilite"><pre><span></span><code>pytest<span class="w">                          </span><span class="c1"># all unit tests</span>
+pytest<span class="w"> </span>-v<span class="w">                       </span><span class="c1"># verbose</span>
+pytest<span class="w"> </span>src/tests/unit/<span class="w">              </span><span class="c1"># unit tests only</span>
+pytest<span class="w"> </span>src/tests/characterization/<span class="w">  </span><span class="c1"># characterization tests only</span>
+pytest<span class="w"> </span>-m<span class="w"> </span>auth<span class="w">                  </span><span class="c1"># auth-related tests (Phase 3)</span>
+pytest<span class="w"> </span>-m<span class="w"> </span>openapi<span class="w">               </span><span class="c1"># OpenAPI spec tests</span>
+pytest<span class="w"> </span>-m<span class="w"> </span>integration<span class="w">           </span><span class="c1"># integration/smoke tests (requires running services)</span>
+pytest<span class="w"> </span>-m<span class="w"> </span><span class="s2">&quot;not integration&quot;</span><span class="w">     </span><span class="c1"># unit tests only (default)</span>
+pytest<span class="w"> </span>-m<span class="w"> </span><span class="s2">&quot;not external&quot;</span><span class="w">        </span><span class="c1"># exclude tests that need external services</span>
+</code></pre></div>
 
 <h2>Test Layout</h2>
-<pre class="codehilite"><code>src/tests/
-    ├── conftest.py                          # env isolation, memory_db fixture, os._exit hook
-    ├── unit/conftest.py                     # v2.13 — stubs langfuse.observe as identity decorator,
-    │                                        #   evicts mcp_tools.tools submodule cache for clean re-imports
-├── evaluation/                          # offline RAGAS eval (standalone, not pytest)
-│   ├── golden_set.jsonl                 #   5 golden examples (NVDA, AAPL)
-│   └── run_offline_eval.py              #   offline evaluation driver
-├── characterization/                    # Phase 0 - 45 tests, 4 files
-│   ├── conftest.py                      #   fixtures, mocks, golden loader
-│   ├── test_api_contracts.py            #   ASGI in-process API route tests
-│   ├── test_deck_extraction_golden.py   #   golden tests (4 fixtures, UPDATE_GOLDENS=1)
-│   ├── test_mcp_tool_shapes.py          #   MCP tool return-shape contracts
-│   └── test_quant_nodes_io.py           #   per-node state-in/state-out
-├── integration/
-│   ├── test_mcp_server_smoke.py         #   4 - MCP + agent card endpoint reachability
-│   └── test_behavioral_signals_e2e.py   #   5 - options flow, insider, positioning,
-│                                        #       peer comparison, Monte Carlo (Phase 4)
-├── security/
-│   └── test_sandbox.py                  #  11 (parametrized ~45+) - AST gate + subprocess
-├── regression/                          # Report generator + corpus tests
-│   ├── test_docx_regression.py          #   5 - DOCX: valid output, empty, unknown,
-│                                        #       unicode, markdown tables
-│   ├── test_html_regression.py          #   8 - HTML: valid, empty, unknown, non-std rec,
-│                                        #       unicode, tables, deck-stage embedded, XSS
-│   ├── test_pptx_regression.py          #   7 - PPTX: valid, empty, unknown, non-std rec,
-│                                        #       unicode, tables, long summary
-│   └── test_corpus_invariants.py        #   7 - Phase R: corpus fixture invariants
-│                                        #       (hostile, one_liner, quant_heavy, etc.)
-└── unit/
-    ├── test_models.py                   #  10 - Pydantic model construction, round-trip
-    ├── test_quant_graph_nodes.py        #  18 - quant metrics, signals, voting
-    ├── test_parallel_dispatch.py        #   3 - concurrent gather, timeout map
-    ├── test_runtime_eval_gates.py       #   9 - circuit breaker, dedup, burst
-    ├── test_ticker_utils.py             #  11 (~15 parametrized) - extraction, parsing
-    ├── test_ttl_cache.py                #   9 - hit/miss/expiry, LRU
-    ├── test_rate_limiter.py             #   4 - burst, refill
-    ├── test_trace_context.py            #   8 - inject/extract
-    ├── test_settings.py                 #   Phase 1: pydantic-settings validation
-    ├── test_deck_data_extraction.py     #  38 - Phase R: extraction pipeline edge cases
-    ├── test_agent_outputs_extraction.py #  16 - v2.2: agent output capture + extraction routing
-    ├── test_auth_tokens.py              # 132 - Phase 2: JWT gen, validation, rotation
-    ├── test_auth_middleware.py          # 189 - Phase 2: middleware chain, routing
-    ├── test_auth_routes.py              # 145 - Phase 2: login/refresh/logout, lockout
-    ├── test_auth_audit.py               #  41 - Phase 2: structured auth.denied logs
-    ├── test_user_store.py               # 146 - Phase 2: Argon2, user CRUD
-    ├── test_auth_contract.py            # 170 - Phase 3: parametrized auth×route matrix
-    ├── test_a2a_protocol.py             # 167 - Phase 3: A2A lifecycle, failure modes
-    ├── test_openapi_spec.py             #  73 - Phase 3: spec regeneration check
-    └── memory/
-        ├── test_memory_store.py         #   5 - tables, indexes, WAL
-        ├── test_ticker_memory.py        #   7 - store/get_latest, flip detection
-        └── test_save_brief_persists_synthesis.py  # 2 - synthesis wins, rationale fallback
-    └── test_agent_output_store.py   # 10 - v2.7: store/get/prune, cross-agent isolation, TTL expiry
+<div class="codehilite"><pre><span></span><code><span class="n">src</span><span class="o">/</span><span class="n">tests</span><span class="o">/</span>
+<span class="w">    </span><span class="err">├──</span><span class="w"> </span><span class="n">conftest</span><span class="o">.</span><span class="n">py</span><span class="w">                          </span><span class="c1"># env isolation, memory_db fixture, os._exit hook</span>
+<span class="w">    </span><span class="err">├──</span><span class="w"> </span><span class="n">unit</span><span class="o">/</span><span class="n">conftest</span><span class="o">.</span><span class="n">py</span><span class="w">                     </span><span class="c1"># v2.13 — stubs langfuse.observe as identity decorator,</span>
+<span class="w">    </span><span class="err">│</span><span class="w">                                        </span><span class="c1">#   evicts mcp_tools.tools submodule cache for clean re-imports</span>
+<span class="err">├──</span><span class="w"> </span><span class="n">evaluation</span><span class="o">/</span><span class="w">                          </span><span class="c1"># offline RAGAS eval (standalone, not pytest)</span>
+<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">golden_set</span><span class="o">.</span><span class="n">jsonl</span><span class="w">                 </span><span class="c1">#   5 golden examples (NVDA, AAPL)</span>
+<span class="err">│</span><span class="w">   </span><span class="err">└──</span><span class="w"> </span><span class="n">run_offline_eval</span><span class="o">.</span><span class="n">py</span><span class="w">              </span><span class="c1">#   offline evaluation driver</span>
+<span class="err">├──</span><span class="w"> </span><span class="n">characterization</span><span class="o">/</span><span class="w">                    </span><span class="c1"># Phase 0 - 45 tests, 4 files</span>
+<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">conftest</span><span class="o">.</span><span class="n">py</span><span class="w">                      </span><span class="c1">#   fixtures, mocks, golden loader</span>
+<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">test_api_contracts</span><span class="o">.</span><span class="n">py</span><span class="w">            </span><span class="c1">#   ASGI in-process API route tests</span>
+<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">test_deck_extraction_golden</span><span class="o">.</span><span class="n">py</span><span class="w">   </span><span class="c1">#   golden tests (4 fixtures, UPDATE_GOLDENS=1)</span>
+<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">test_mcp_tool_shapes</span><span class="o">.</span><span class="n">py</span><span class="w">          </span><span class="c1">#   MCP tool return-shape contracts</span>
+<span class="err">│</span><span class="w">   </span><span class="err">└──</span><span class="w"> </span><span class="n">test_quant_nodes_io</span><span class="o">.</span><span class="n">py</span><span class="w">           </span><span class="c1">#   per-node state-in/state-out</span>
+<span class="err">├──</span><span class="w"> </span><span class="n">integration</span><span class="o">/</span>
+<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">test_mcp_server_smoke</span><span class="o">.</span><span class="n">py</span><span class="w">         </span><span class="c1">#   4 - MCP + agent card endpoint reachability</span>
+<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">test_behavioral_signals_e2e</span><span class="o">.</span><span class="n">py</span><span class="w">   </span><span class="c1">#   5 - options flow, insider, positioning,</span>
+<span class="err">│</span><span class="w">   </span><span class="err">│</span><span class="w">                                        </span><span class="c1">#       peer comparison, Monte Carlo (Phase 4)</span>
+<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">test_analytics_smoke</span><span class="o">.</span><span class="n">py</span><span class="w">          </span><span class="c1">#   analytics endpoint reachability</span>
+<span class="err">│</span><span class="w">   </span><span class="err">└──</span><span class="w"> </span><span class="n">test_reviewer_smoke</span><span class="o">.</span><span class="n">py</span><span class="w">           </span><span class="c1">#   reviewer endpoint reachability</span>
+<span class="err">├──</span><span class="w"> </span><span class="n">security</span><span class="o">/</span>
+<span class="err">│</span><span class="w">   </span><span class="err">└──</span><span class="w"> </span><span class="n">test_sandbox</span><span class="o">.</span><span class="n">py</span><span class="w">                  </span><span class="c1">#  11 (parametrized ~45+) - AST gate + subprocess</span>
+<span class="err">├──</span><span class="w"> </span><span class="n">regression</span><span class="o">/</span><span class="w">                          </span><span class="c1"># Report generator + corpus tests</span>
+<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">test_docx_regression</span><span class="o">.</span><span class="n">py</span><span class="w">          </span><span class="c1">#   5 - DOCX: valid output, empty, unknown,</span>
+<span class="err">│</span><span class="w">                                        </span><span class="c1">#       unicode, markdown tables</span>
+<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">test_html_regression</span><span class="o">.</span><span class="n">py</span><span class="w">          </span><span class="c1">#   8 - HTML: valid, empty, unknown, non-std rec,</span>
+<span class="err">│</span><span class="w">                                        </span><span class="c1">#       unicode, tables, deck-stage embedded, XSS</span>
+<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">test_pptx_regression</span><span class="o">.</span><span class="n">py</span><span class="w">          </span><span class="c1">#   7 - PPTX: valid, empty, unknown, non-std rec,</span>
+<span class="err">│</span><span class="w">                                        </span><span class="c1">#       unicode, tables, long summary</span>
+<span class="err">│</span><span class="w">   </span><span class="err">└──</span><span class="w"> </span><span class="n">test_corpus_invariants</span><span class="o">.</span><span class="n">py</span><span class="w">        </span><span class="c1">#   7 - Phase R: corpus fixture invariants</span>
+<span class="err">│</span><span class="w">                                        </span><span class="c1">#       (hostile, one_liner, quant_heavy, etc.)</span>
+<span class="err">└──</span><span class="w"> </span><span class="n">unit</span><span class="o">/</span>
+<span class="w">    </span><span class="err">├──</span><span class="w"> </span><span class="n">conftest</span><span class="o">.</span><span class="n">py</span><span class="w">                          </span><span class="c1"># v2.13 — stubs langfuse.observe as identity decorator,</span>
+<span class="w">    </span><span class="err">│</span><span class="w">                                        </span><span class="c1">#   evicts mcp_tools.tools submodule cache for clean re-imports</span>
+<span class="w">    </span><span class="err">├──</span><span class="w"> </span><span class="n">test_models</span><span class="o">.</span><span class="n">py</span><span class="w">                   </span><span class="c1">#  10 - Pydantic model construction, round-trip</span>
+<span class="w">    </span><span class="err">├──</span><span class="w"> </span><span class="n">test_new_agent_models</span><span class="o">.</span><span class="n">py</span><span class="w">         </span><span class="c1">#   5 - Analytics/Reviewer/Agent output models</span>
+<span class="w">    </span><span class="err">├──</span><span class="w"> </span><span class="n">test_quant_graph_nodes</span><span class="o">.</span><span class="n">py</span><span class="w">        </span><span class="c1">#  18 - quant metrics, signals, voting</span>
+<span class="w">    </span><span class="err">├──</span><span class="w"> </span><span class="n">test_parallel_dispatch</span><span class="o">.</span><span class="n">py</span><span class="w">        </span><span class="c1">#   3 - concurrent gather, timeout map</span>
+<span class="w">    </span><span class="err">├──</span><span class="w"> </span><span class="n">test_runtime_eval_gates</span><span class="o">.</span><span class="n">py</span><span class="w">       </span><span class="c1">#   9 - circuit breaker, dedup, burst</span>
+<span class="w">    </span><span class="err">├──</span><span class="w"> </span><span class="n">test_ticker_utils</span><span class="o">.</span><span class="n">py</span><span class="w">             </span><span class="c1">#  11 (~15 parametrized) - extraction, parsing</span>
+<span class="w">    </span><span class="err">├──</span><span class="w"> </span><span class="n">test_ttl_cache</span><span class="o">.</span><span class="n">py</span><span class="w">                </span><span class="c1">#   9 - hit/miss/expiry, LRU</span>
+<span class="w">    </span><span class="err">├──</span><span class="w"> </span><span class="n">test_rate_limiter</span><span class="o">.</span><span class="n">py</span><span class="w">             </span><span class="c1">#   4 - burst, refill</span>
+<span class="w">    </span><span class="err">├──</span><span class="w"> </span><span class="n">test_trace_context</span><span class="o">.</span><span class="n">py</span><span class="w">            </span><span class="c1">#   8 - inject/extract</span>
+<span class="w">    </span><span class="err">├──</span><span class="w"> </span><span class="n">test_settings</span><span class="o">.</span><span class="n">py</span><span class="w">                 </span><span class="c1">#  Phase 1: pydantic-settings validation</span>
+<span class="w">    </span><span class="err">├──</span><span class="w"> </span><span class="n">test_deck_data_extraction</span><span class="o">.</span><span class="n">py</span><span class="w">     </span><span class="c1">#  38 - Phase R: extraction pipeline edge cases</span>
+<span class="w">    </span><span class="err">├──</span><span class="w"> </span><span class="n">test_agent_outputs_extraction</span><span class="o">.</span><span class="n">py</span><span class="w"> </span><span class="c1">#  16 - v2.2: agent output capture + extraction routing</span>
+<span class="w">    </span><span class="err">├──</span><span class="w"> </span><span class="n">test_analytics_nodes</span><span class="o">.</span><span class="n">py</span><span class="w">          </span><span class="c1">#  10 - analytics pipeline, MetricValue integration</span>
+<span class="w">    </span><span class="err">├──</span><span class="w"> </span><span class="n">test_reviewer_tools</span><span class="o">.</span><span class="n">py</span><span class="w">           </span><span class="c1">#   8 - reviewer tools (contradiction, confidence, validation)</span>
+<span class="w">    </span><span class="err">├──</span><span class="w"> </span><span class="n">test_web_search_tool</span><span class="o">.</span><span class="n">py</span><span class="w">          </span><span class="c1">#   5 - DuckDuckGo search tool</span>
+<span class="w">    </span><span class="err">├──</span><span class="w"> </span><span class="n">test_colored_logging</span><span class="o">.</span><span class="n">py</span><span class="w">          </span><span class="c1">#  18 - v2.17: formatter, decorator markers, NO_COLOR, FORCE_COLOR</span>
+<span class="w">    </span><span class="err">├──</span><span class="w"> </span><span class="n">test_auth_tokens</span><span class="o">.</span><span class="n">py</span><span class="w">              </span><span class="c1"># 132 - Phase 2: JWT gen, validation, rotation</span>
+<span class="w">    </span><span class="err">├──</span><span class="w"> </span><span class="n">test_auth_middleware</span><span class="o">.</span><span class="n">py</span><span class="w">          </span><span class="c1"># 189 - Phase 2: middleware chain, routing</span>
+<span class="w">    </span><span class="err">├──</span><span class="w"> </span><span class="n">test_auth_routes</span><span class="o">.</span><span class="n">py</span><span class="w">              </span><span class="c1"># 145 - Phase 2: login/refresh/logout, lockout</span>
+<span class="w">    </span><span class="err">├──</span><span class="w"> </span><span class="n">test_auth_audit</span><span class="o">.</span><span class="n">py</span><span class="w">               </span><span class="c1">#  41 - Phase 2: structured auth.denied logs</span>
+<span class="w">    </span><span class="err">├──</span><span class="w"> </span><span class="n">test_user_store</span><span class="o">.</span><span class="n">py</span><span class="w">               </span><span class="c1"># 146 - Phase 2: Argon2, user CRUD</span>
+<span class="w">    </span><span class="err">├──</span><span class="w"> </span><span class="n">test_auth_contract</span><span class="o">.</span><span class="n">py</span><span class="w">            </span><span class="c1"># 170 - Phase 3: parametrized auth×route matrix</span>
+<span class="w">    </span><span class="err">├──</span><span class="w"> </span><span class="n">test_a2a_protocol</span><span class="o">.</span><span class="n">py</span><span class="w">             </span><span class="c1"># 167 - Phase 3: A2A lifecycle, failure modes</span>
+<span class="w">    </span><span class="err">├──</span><span class="w"> </span><span class="n">test_openapi_spec</span><span class="o">.</span><span class="n">py</span><span class="w">             </span><span class="c1">#  73 - Phase 3: spec regeneration check</span>
+<span class="w">    </span><span class="err">└──</span><span class="w"> </span><span class="n">memory</span><span class="o">/</span>
+<span class="w">        </span><span class="err">├──</span><span class="w"> </span><span class="n">test_memory_store</span><span class="o">.</span><span class="n">py</span><span class="w">         </span><span class="c1">#   5 - tables, indexes, WAL</span>
+<span class="w">        </span><span class="err">├──</span><span class="w"> </span><span class="n">test_ticker_memory</span><span class="o">.</span><span class="n">py</span><span class="w">        </span><span class="c1">#   7 - store/get_latest, flip detection</span>
+<span class="w">        </span><span class="err">└──</span><span class="w"> </span><span class="n">test_save_brief_persists_synthesis</span><span class="o">.</span><span class="n">py</span><span class="w">  </span><span class="c1"># 2 - synthesis wins, rationale fallback</span>
+<span class="w">    </span><span class="err">└──</span><span class="w"> </span><span class="n">test_agent_output_store</span><span class="o">.</span><span class="n">py</span><span class="w">   </span><span class="c1"># 10 - v2.7: store/get/prune, cross-agent isolation, TTL expiry</span>
 
-**Total: ~370 parametrized test cases across 35 test files (34 + unit/conftest.py).**
-</code></pre>
+<span class="o">**</span><span class="n">Total</span><span class="p">:</span><span class="w"> </span><span class="o">~</span><span class="mi">370</span><span class="w"> </span><span class="n">parametrized</span><span class="w"> </span><span class="n">test</span><span class="w"> </span><span class="n">cases</span><span class="w"> </span><span class="n">across</span><span class="w"> </span><span class="mi">40</span><span class="o">+</span><span class="w"> </span><span class="n">test</span><span class="w"> </span><span class="n">files</span><span class="o">.**</span>
+</code></pre></div>
 
 <h2>Key Patterns</h2>
 <ul>
@@ -131,15 +140,15 @@ pytest -m &quot;not external&quot;        # exclude tests that need external ser
 </ul>
 <h2>Integration Tests</h2>
 <p>4 smoke tests marked <code>@pytest.mark.integration</code> + <code>@pytest.mark.external</code> - skipped by default. Run with:</p>
-<pre class="codehilite"><code class="language-bash">pytest -m integration
-</code></pre>
+<div class="codehilite"><pre><span></span><code>pytest<span class="w"> </span>-m<span class="w"> </span>integration
+</code></pre></div>
 
 <p>These verify the MCP server (port 8010) and agent card endpoints (ports 8002-8004) are reachable. Requires all services running (<code>run_adk_web.bat</code>).</p>
 <h2>Report Generation Regression Tests (v1.39)</h2>
 <p>3 new test files validate all three output formats against realistic data patterns. All use <code>unittest.mock.patch("yfinance.Ticker", ...)</code> to avoid real network calls.</p>
 <h3>Running</h3>
-<pre class="codehilite"><code class="language-bash">pytest src/tests/regression/ -v
-</code></pre>
+<div class="codehilite"><pre><span></span><code>pytest<span class="w"> </span>src/tests/regression/<span class="w"> </span>-v
+</code></pre></div>
 
 <h3>DOCX (<code>test_docx_regression.py</code>)</h3>
 <p>Tests <code>generate_docx()</code> with the shared <code>_extract_deck_data()</code> extraction pipeline. Validates output is valid <code>BytesIO</code>, non-empty, and handles edge cases (empty brief, unknown ticker, unicode, markdown tables).</p>

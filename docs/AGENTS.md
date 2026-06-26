@@ -382,23 +382,152 @@ After each analysis, fires `asyncio.create_task(score_market_context_response(..
 | `macro_regime_analysis` (DomainSpecificRubrics) | Custom 5-level rubric: scores whether the narrative discusses the yield curve (spread, regime), VIX level, DXY trend, and relevant sector ETF performance with actual values. |
 | `peer_landscape_quality` (DomainSpecificRubrics) | Custom 5-level rubric: evaluates depth of peer comparison — whether named peers are contrasted on at least two metrics (PE, growth, margins, market cap) and competitive positioning is explained. |
 
+---
+
+## Agent 5: Analytics (PydanticAI)
+
+| Property | Value |
+|---|---|
+| Framework | PydanticAI |
+| Executor | `GenericAgentExecutor(AnalyticsAgent)` in `src/analytics/executor.py` |
+| LLM | LM Studio via `langfuse.openai.AsyncOpenAI` (API key from `LLM_API_KEY` env var) |
+| Data Source | MCP (finsight-mcp `get_prices` via `get_shared_mcp()`) |
+| Port | 8005 |
+| Agent Card | Built programmatically in `src/analytics/server.py` |
+| A2A Endpoint | `POST /a2a` |
+| Health | `GET /health` → `{"status":"ok","agent":"analytics"}` |
+
+### Skills
+
+| ID | Name | Description |
+|---|---|---|
+| `trend_analysis` | Trend Analysis | Identify price trends, moving average crossovers, and directional momentum |
+| `forecast_analysis` | Forecast Analysis | Generate price forecasts with confidence intervals using statistical models |
+| `anomaly_detection` | Anomaly Detection | Detect unusual price movements, volume spikes, and regime changes |
+| `statistical_metrics` | Statistical Metrics | Compute Sharpe ratio, Sortino ratio, Calmar ratio, alpha, information ratio, and CAGR |
+| `chart_data` | Chart Data | Generate structured chart data for trend overlays and forecast visualizations |
+
+### Architecture
+
+```
+Request → DefaultRequestHandler → GenericAgentExecutor(AnalyticsAgent)
+  → AnalyticsAgent.stream(query, context_id, task_id)
+    → yield await self._build_response(query)
+    → return {response_type: "data", content: result, ...}
+
+AnalyticsAgent._build_response(query):
+    → extract_trace_ids(query)
+    → with langfuse.start_as_current_observation(name="analytics-agent-stream")
+      → extract_ticker(query)
+      → AnalyticsAgent.analyze(ticker, period="1y")
+        +-- mcp = await get_shared_mcp()
+        +-- AnalyticsPipeline.run(ticker, period)
+             +-- data_fetch_node: MCP get_prices → OHLCV
+             +-- trend_node: SMA crossover, direction, strength
+             +-- statistics_node: Sharpe, Sortino, Calmar, alpha, CAGR, VaR
+             +-- forecast_node: statistical forecast with confidence intervals
+             +-- anomaly_node: z-score anomaly detection, regime changes
+             +-- charts_node: structured chart data for visualizations
+             +-- summary_node: CRITICAL priority queue — LLM synthesis
+        → validated = AnalyticsAgentOutput.model_validate(result)
+      → if EVAL_ENABLED: defer_eval(score_analytics_response, ...) (deferred via shared/eval_gate.py)
+      → return {response_type: "data", content: result, ...}
+```
+
+**Note**: The analytics agent uses a PydanticAI pipeline with `Agent.instrument_all()` for full OpenTelemetry `gen_ai.*` span coverage. All metric computations use shared `MetricValue` from `src/shared/metrics.py`.
+
+#### Runtime Evaluation
+
+After each analysis, fires `defer_eval(score_analytics_response, ...)` with deterministic schema checks + deferred RAGAS metrics. Scored from `user_input`, `response`, and computed analytics result. RAGAS metric LLM calls use `LOW` priority in `LLMPriorityQueue`.
+
+| Metric | Why |
+|---|---|
+| `score_analytics_deterministic()` | Zero-LLM schema validation — checks all required fields present, metric ranges valid, forecast intervals consistent. |
+| Runtime RAGAS metrics | Deferred LLM-based quality scoring for trend, forecast, and anomaly descriptions. |
+
+---
+
+## Agent 6: Reviewer (OpenAI Agents SDK)
+
+| Property | Value |
+|---|---|
+| Framework | OpenAI Agents SDK |
+| Executor | `GenericAgentExecutor(ReviewerAgent)` in `src/reviewer/executor.py` |
+| LLM | LM Studio via `langfuse.openai.AsyncOpenAI` (API key from `LLM_API_KEY` env var, `LLM_SUMMARY_MODEL`) |
+| Data Source | Shared agent output store (`get_agent_outputs(session_id)`) |
+| Port | 8006 |
+| Agent Card | Built programmatically in `src/reviewer/server.py` |
+| A2A Endpoint | `POST /a2a` |
+| Health | `GET /health` → `{"status":"ok","agent":"reviewer"}` |
+
+### Skills
+
+| ID | Name | Description |
+|---|---|---|
+| `cross_validation` | Cross-Validation | Cross-validate outputs from all sub-agents for consistency and contradictions |
+| `confidence_scoring` | Confidence Scoring | Compute calibrated meta-confidence across all agent outputs |
+| `recommendation_validation` | Recommendation Validation | Validate the final BUY/HOLD/SELL recommendation against supporting evidence |
+| `structured_review` | Structured Review | Produce a structured review report with verdict, flags, and confidence breakdown |
+
+### Architecture
+
+```
+Request → DefaultRequestHandler → GenericAgentExecutor(ReviewerAgent)
+  → ReviewerAgent.stream(query, context_id, task_id)
+    → yield await self._build_response(query, context_id)
+    → return {response_type: "data", content: result, ...}
+
+ReviewerAgent._build_response(query, context_id):
+    → extract_trace_ids(query)
+    → with langfuse.start_as_current_observation(name="reviewer-agent-stream")
+      → extract_ticker(query)
+      → agent_outputs = get_agent_outputs(session_id)  # from shared store
+      → Deterministic tool chain (all in Python, no LLM):
+          +-- validate_metric_integrity(agent_outputs)  # mathematical invariants
+          +-- check_contradictions(agent_outputs)        # cross-agent contradiction detection
+          +-- score_confidence(agent_outputs)            # calibrated meta-confidence
+          +-- validate_recommendation(agent_outputs)     # BUY/HOLD/SELL evidence check
+          +-- validate_dcf(agent_outputs.get("quant"))   # DCF input validation
+          +-- check_consistency(agent_outputs)           # signal consistency checks
+          +-- verify_sources(agent_outputs)              # source verification
+      → LLM synthesis (CRITICAL priority queue — OpenAI Agents SDK):
+          +-- reviewer_agent with agent_summaries + tool results
+          +-- Outputs ReviewerAgentOutput (Pydantic model): review_summary, verdict,
+              contradictions, confidence_breakdown, recommendation_validation, flags
+      → if EVAL_ENABLED: defer_eval(score_reviewer_response, ...) (deferred via shared/eval_gate.py)
+      → return {response_type: "data", content: result, ...}
+```
+
+**Note**: The reviewer uses `langfuse.openai.AsyncOpenAI` for automatic LLM generation instrumentation. It reads agent outputs from the shared `agent_output_store` SQLite table — no direct A2A calls to sub-agents. The deterministic tool chain runs first, then the LLM receives tool results + agent summaries as structured input.
+
+**Guardrails**: The reviewer has input/output guardrails defined in `src/reviewer/guardrails.py`. Input guardrails check for valid agent outputs; output guardrails validate the review structure and confidence bounds.
+
+#### Runtime Evaluation
+
+After each review, fires `defer_eval(score_reviewer_response, ...)` with deterministic schema checks + deferred RAGAS metrics. Scored from `user_input`, `response`, and reviewer output. RAGAS metric LLM calls use `LOW` priority in `LLMPriorityQueue`.
+
+| Metric | Why |
+|---|---|
+| `score_reviewer_deterministic()` | Zero-LLM schema validation — checks verdict present, confidence in [0,1], all required review fields populated. |
+| Runtime RAGAS metrics | Deferred LLM-based quality scoring for review summary, contradiction detection quality, and recommendation validation. |
+
 ## Shared Infrastructure
 
-All four agents share a common infrastructure layer:
+All five agents share a common infrastructure layer:
 
 | Component | Details |
 |---|---|
 | **MCP client singleton** | `get_shared_mcp()` returns a process-wide `MCPClient` instance. Auto-reconnects on `ConnectionError`/`EOFError`/`IncompleteReadError`. No per-request connect/disconnect. |
 | **Ticker validation** | `resolve_and_validate_ticker()`, `validate_ticker()`, and `resolve_ticker()` in `src/shared/ticker_utils.py` use `get_shared_mcp()` internally. `resolve_and_validate_ticker()` is a unified helper combining both steps — shared across all 5 agents (RAG, Quant, Market Context, Analytics, Reviewer), replacing per-agent private methods. Blocks financial acronyms (SEC, EPS, CEO, etc.) via hardcoded `_COMMON_ACRONYMS` set. |
-| **`@logged` timing decorator** | Applied to all three sub-agent `_build_response()` methods and `SubAgentClient.send_message()`. Logs elapsed time and entry/exit. |
+| **`@logged` timing decorator** | Applied to all five sub-agent `_build_response()` methods and `SubAgentClient.send_message()`. Logs elapsed time and entry/exit. |
 | **Lazy OpenTelemetry** | `init_instrumentation("<agent_type>")` replaces module-level `*Instrumentor().instrument()` calls. Called from each server entry point. |
-| **SQLiteTaskStore** | Replaces `InMemoryTaskStore` in all four server entry points. Tasks survive process restarts. |
+| **SQLiteTaskStore** | Replaces `InMemoryTaskStore` in all five server entry points. Tasks survive process restarts. |
 | **`LLM_API_KEY` env var** | Replaces hardcoded `api_key="lmstudio"`. All agent files import from `shared.settings` (was `src/shared/config.py`, removed in v2.0). |
 | **Centralized settings** | `src/shared/settings.py` (pydantic-settings `BaseSettings`) with back-compat aliases, `validate_runtime()`, `get_settings()` singleton. `src/shared/bootstrap.py` centralises process-level side-effects (event loop policy, `HF_HUB_OFFLINE`, stdout encoding). |
 | **Per-service log levels** | `LOG_LEVEL_<SERVICE>` env vars (e.g. `LOG_LEVEL_ORCHESTRATOR=DEBUG`). |
 | **`SEC_USER_AGENT` env var** | Replaces hardcoded SEC user agent string in MCP server filing requests. |
 | **LLM Priority Queue** | `LLMPriorityQueue` in `src/shared/llm_queue.py` (process-local, heap-based async semaphore). Three tiers: `CRITICAL` (quant summary, crew kickoff), `NORMAL` (warmup ping), `LOW` (RAGAS eval). Default `LLM_MAX_CONCURRENT=2`. Prevents eval starvation of production inference. |
-| **Deferred Eval Gate** | `src/shared/eval_gate.py` — holds sub-agent eval LLM calls until the orchestrator releases them via `POST /release-evals` after synthesis completes. Prevents 3 sub-agent eval processes from competing with orchestrator synthesis on a single LM Studio instance. Includes 120s safety-net auto-release. |
+| **Deferred Eval Gate** | `src/shared/eval_gate.py` — holds sub-agent eval LLM calls until the orchestrator releases them via `POST /release-evals` after synthesis completes. Prevents 5 sub-agent eval processes from competing with orchestrator synthesis on a single LM Studio instance. Includes 120s safety-net auto-release. |
 | **Pydantic Agent Output Models** | `src/shared/agent_models.py` (v2.5) — typed models (`QuantAgentOutput`, `MarketContextOutput`, `RAGAgentOutput`) at every agent boundary, replacing ~220 lines of fragile regex/`.get()` chains. Fixes zeroed KPI chips, raw JSON narrative from CrewAI, and DCF key mismatch. Falls back to legacy dict extraction for old briefs. |
 | **`SERVICE_AUTH_TOKEN`** | `SubAgentClient` accepts `bearer_token` from `settings.service_auth_token`. When `AUTH_ENABLED=true`, orchestrator-to-sub-agent A2A requests carry the service bearer token. |
 | **Shared Agent Output Store** | `src/shared/memory/agent_output_store.py` (v2.7) — SQLite table `agent_output_store` keyed by `(session_id, agent_name)`. Full agent outputs persisted by orchestrator `send_message` callback, fetched by reviewer executor via `get_agent_outputs()`. TTL-pruned at startup. |
@@ -431,3 +560,4 @@ The project evolved through thirteen phases, each adding distinct agent capabili
 | **—** | v2.6 | Analytics agent (PydanticAI, :8005) and Reviewer agent (OpenAI Agents SDK, :8006). Two-phase orchestration (Phase 1 parallel + Phase 2 review + Phase 3 synthesis). AG-UI eval hook. Reviewer input/output guardrails. |
 | **—** | v2.7 | Shared SQLite agent_output store for cross-process data sharing. Reviewer simplified to synthesis-only (tools called directly in Python). Agent summaries passed to LLM. 10+ new HTML report sections (technicals, trends, forecast/MC charts, DCF, stress, signals, anomalies, stats, cross-validation). Chart.js visualizations. Frontend auth bypass via `NEXT_PUBLIC_AUTH_ENABLED=false`. Test fixes for Windows file locking and DuckDuckGo mock patterns. |
 | **—** | v2.8 | `SendMessageInput(agent_name, ticker)` Pydantic model eliminates ticker hallucination. Pre-reviewer metric integrity gate (`validate_metric_integrity()`). Report calculation fixes (Sharpe risk-free rate, momentum double-multiply, MAPE format, stress test division, Beta label, MC BUY→HOLD downgrade). Unified `resolve_and_validate_ticker()` across all agents. Trace context nesting fix. RAG stream simplified to single-yield pattern. Reviewer tool expansions (confidence `_derive_*`, contradiction cross-checks, validation expansion). Observability dashboard replaces trace page. Web UI agent response capture (`_collect_agent_extra()`). Lazy import reversal (removed `__getattr__` pattern). Analytics & Reviewer frontend tiles. AG-UI keepalive streaming. `EVAL_TRACE_ENABLED` consolidated to `EVAL_ENABLED`. Eval gate timer reset on `defer_eval()`. |
+| **—** | v2.18 | TTFT (Time to First Token) tracking via Langfuse `completion_start_time` on both sub-agent A2A streaming and orchestrator ADK runner streaming. Null-safety guard on `.text` before slicing in generation output. |

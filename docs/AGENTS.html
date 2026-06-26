@@ -105,89 +105,89 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 </ol>
 <p>All A2A communication uses <code>ClientFactory</code> + <code>BaseClient</code> from the official <code>a2a-sdk</code>. Streaming events are handled correctly: intermediate SUBMITTED/WORKING events are skipped, only <code>artifact_update</code> events (data or text) and terminal <code>status_update</code> events are returned to the LLM.</p>
 <h3>Architecture</h3>
-<pre class="codehilite"><code>Module load (standalone — src/orchestrator/main.py):
-  ? SubAgentClient.discover() in lifespan background task
-    +-- A2ACardResolver(http, &quot;http://localhost:8002&quot;)
-    +-- A2ACardResolver(http, &quot;http://localhost:8003&quot;)
-    +-- A2ACardResolver(http, &quot;http://localhost:8004&quot;)
-    ? self.agents populated ? instruction updated (callable _instruction_provider)
+<div class="codehilite"><pre><span></span><code><span class="n">Module</span><span class="w"> </span><span class="n">load</span><span class="w"> </span><span class="p">(</span><span class="n">standalone</span><span class="w"> </span><span class="err">—</span><span class="w"> </span><span class="n">src</span><span class="o">/</span><span class="n">orchestrator</span><span class="o">/</span><span class="n">main</span><span class="p">.</span><span class="n">py</span><span class="p">)</span><span class="o">:</span>
+<span class="w">  </span><span class="o">?</span><span class="w"> </span><span class="n">SubAgentClient</span><span class="p">.</span><span class="n">discover</span><span class="p">()</span><span class="w"> </span><span class="k">in</span><span class="w"> </span><span class="n">lifespan</span><span class="w"> </span><span class="n">background</span><span class="w"> </span><span class="n">task</span>
+<span class="w">    </span><span class="o">+--</span><span class="w"> </span><span class="n">A2ACardResolver</span><span class="p">(</span><span class="n">http</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;http://localhost:8002&quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="o">+--</span><span class="w"> </span><span class="n">A2ACardResolver</span><span class="p">(</span><span class="n">http</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;http://localhost:8003&quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="o">+--</span><span class="w"> </span><span class="n">A2ACardResolver</span><span class="p">(</span><span class="n">http</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;http://localhost:8004&quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="o">?</span><span class="w"> </span><span class="nb">self</span><span class="p">.</span><span class="n">agents</span><span class="w"> </span><span class="n">populated</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">instruction</span><span class="w"> </span><span class="n">updated</span><span class="w"> </span><span class="p">(</span><span class="n">callable</span><span class="w"> </span><span class="n">_instruction_provider</span><span class="p">)</span>
 
-ADK Web UI (services.py at src/orchestrator/):
-  ? Discovery fires inside _memory_cache_callback on first turn
-    — main.py lifespan never used under adk web
-    — root_agent.instruction is callable: builds instruction per-turn
+<span class="n">ADK</span><span class="w"> </span><span class="n">Web</span><span class="w"> </span><span class="n">UI</span><span class="w"> </span><span class="p">(</span><span class="n">services</span><span class="p">.</span><span class="n">py</span><span class="w"> </span><span class="n">at</span><span class="w"> </span><span class="n">src</span><span class="o">/</span><span class="n">orchestrator</span><span class="o">/</span><span class="p">)</span><span class="o">:</span>
+<span class="w">  </span><span class="o">?</span><span class="w"> </span><span class="n">Discovery</span><span class="w"> </span><span class="n">fires</span><span class="w"> </span><span class="n">inside</span><span class="w"> </span><span class="n">_memory_cache_callback</span><span class="w"> </span><span class="n">on</span><span class="w"> </span><span class="n">first</span><span class="w"> </span><span class="n">turn</span>
+<span class="w">    </span><span class="err">—</span><span class="w"> </span><span class="n">main</span><span class="p">.</span><span class="n">py</span><span class="w"> </span><span class="n">lifespan</span><span class="w"> </span><span class="n">never</span><span class="w"> </span><span class="n">used</span><span class="w"> </span><span class="n">under</span><span class="w"> </span><span class="n">adk</span><span class="w"> </span><span class="n">web</span>
+<span class="w">    </span><span class="err">—</span><span class="w"> </span><span class="n">root_agent</span><span class="p">.</span><span class="n">instruction</span><span class="w"> </span><span class="n">is</span><span class="w"> </span><span class="n">callable</span><span class="o">:</span><span class="w"> </span><span class="n">builds</span><span class="w"> </span><span class="n">instruction</span><span class="w"> </span><span class="n">per</span><span class="o">-</span><span class="n">turn</span>
 
-FinSightAgentExecutor:
-  A2A Request ? execute()
-  ? _build_memory_context(query) ? inject [MEMORY CONTEXT] prefix
-  ? RUNNER.run_async(user_query)
-  ? ADK LlmAgent (tools: [send_message, load_memory])
-    ? LLM emits ALL send_message calls in ONE assistant turn (parallel, per system prompt instruction)
-    ? send_message(SendMessageInput(agent_name=&quot;Financial RAG Agent&quot;, ticker=&quot;NVDA&quot;))
-    ? send_message(SendMessageInput(agent_name=&quot;Quant Analysis Agent&quot;, ticker=&quot;NVDA&quot;))
-    ? send_message(SendMessageInput(agent_name=&quot;Market Context Agent&quot;, ticker=&quot;NVDA&quot;))
-    ? LLM receives all results together in the next turn
-    ? LLM synthesizes BUY/HOLD/SELL
-    ? load_memory(query=&quot;...&quot;) — search past conversations
-  ? _add_events_to_memory() ? get_session() ? add_session_to_memory()
-  ? _persist_to_memory() ? direct events ? SQLiteMemoryService (for load_memory)
-  ? _store_memory() ? TickerMemory + PortfolioStore + PerformanceTracker
-  — send_message uses SendMessageInput(agent_name, ticker) Pydantic model
-  — Task templates built from _AGENT_TASK_TEMPLATES dict (no free-text LLM task construction)
+<span class="nl">FinSightAgentExecutor</span><span class="p">:</span>
+<span class="w">  </span><span class="n">A2A</span><span class="w"> </span><span class="n">Request</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">execute</span><span class="p">()</span>
+<span class="w">  </span><span class="o">?</span><span class="w"> </span><span class="n">_build_memory_context</span><span class="p">(</span><span class="n">query</span><span class="p">)</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">inject</span><span class="w"> </span><span class="p">[</span><span class="n">MEMORY</span><span class="w"> </span><span class="n">CONTEXT</span><span class="p">]</span><span class="w"> </span><span class="n">prefix</span>
+<span class="w">  </span><span class="o">?</span><span class="w"> </span><span class="n">RUNNER</span><span class="p">.</span><span class="n">run_async</span><span class="p">(</span><span class="n">user_query</span><span class="p">)</span>
+<span class="w">  </span><span class="o">?</span><span class="w"> </span><span class="n">ADK</span><span class="w"> </span><span class="n">LlmAgent</span><span class="w"> </span><span class="p">(</span><span class="n">tools</span><span class="o">:</span><span class="w"> </span><span class="p">[</span><span class="n">send_message</span><span class="p">,</span><span class="w"> </span><span class="n">load_memory</span><span class="p">])</span>
+<span class="w">    </span><span class="o">?</span><span class="w"> </span><span class="n">LLM</span><span class="w"> </span><span class="n">emits</span><span class="w"> </span><span class="n">ALL</span><span class="w"> </span><span class="n">send_message</span><span class="w"> </span><span class="n">calls</span><span class="w"> </span><span class="k">in</span><span class="w"> </span><span class="n">ONE</span><span class="w"> </span><span class="n">assistant</span><span class="w"> </span><span class="n">turn</span><span class="w"> </span><span class="p">(</span><span class="n">parallel</span><span class="p">,</span><span class="w"> </span><span class="n">per</span><span class="w"> </span><span class="n">system</span><span class="w"> </span><span class="n">prompt</span><span class="w"> </span><span class="n">instruction</span><span class="p">)</span>
+<span class="w">    </span><span class="o">?</span><span class="w"> </span><span class="n">send_message</span><span class="p">(</span><span class="n">SendMessageInput</span><span class="p">(</span><span class="n">agent_name</span><span class="o">=</span><span class="s">&quot;Financial RAG Agent&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">ticker</span><span class="o">=</span><span class="s">&quot;NVDA&quot;</span><span class="p">))</span>
+<span class="w">    </span><span class="o">?</span><span class="w"> </span><span class="n">send_message</span><span class="p">(</span><span class="n">SendMessageInput</span><span class="p">(</span><span class="n">agent_name</span><span class="o">=</span><span class="s">&quot;Quant Analysis Agent&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">ticker</span><span class="o">=</span><span class="s">&quot;NVDA&quot;</span><span class="p">))</span>
+<span class="w">    </span><span class="o">?</span><span class="w"> </span><span class="n">send_message</span><span class="p">(</span><span class="n">SendMessageInput</span><span class="p">(</span><span class="n">agent_name</span><span class="o">=</span><span class="s">&quot;Market Context Agent&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">ticker</span><span class="o">=</span><span class="s">&quot;NVDA&quot;</span><span class="p">))</span>
+<span class="w">    </span><span class="o">?</span><span class="w"> </span><span class="n">LLM</span><span class="w"> </span><span class="n">receives</span><span class="w"> </span><span class="n">all</span><span class="w"> </span><span class="n">results</span><span class="w"> </span><span class="n">together</span><span class="w"> </span><span class="k">in</span><span class="w"> </span><span class="n">the</span><span class="w"> </span><span class="n">next</span><span class="w"> </span><span class="n">turn</span>
+<span class="w">    </span><span class="o">?</span><span class="w"> </span><span class="n">LLM</span><span class="w"> </span><span class="n">synthesizes</span><span class="w"> </span><span class="n">BUY</span><span class="o">/</span><span class="n">HOLD</span><span class="o">/</span><span class="n">SELL</span>
+<span class="w">    </span><span class="o">?</span><span class="w"> </span><span class="n">load_memory</span><span class="p">(</span><span class="n">query</span><span class="o">=</span><span class="s">&quot;...&quot;</span><span class="p">)</span><span class="w"> </span><span class="err">—</span><span class="w"> </span><span class="n">search</span><span class="w"> </span><span class="n">past</span><span class="w"> </span><span class="n">conversations</span>
+<span class="w">  </span><span class="o">?</span><span class="w"> </span><span class="n">_add_events_to_memory</span><span class="p">()</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">get_session</span><span class="p">()</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">add_session_to_memory</span><span class="p">()</span>
+<span class="w">  </span><span class="o">?</span><span class="w"> </span><span class="n">_persist_to_memory</span><span class="p">()</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">direct</span><span class="w"> </span><span class="n">events</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">SQLiteMemoryService</span><span class="w"> </span><span class="p">(</span><span class="k">for</span><span class="w"> </span><span class="n">load_memory</span><span class="p">)</span>
+<span class="w">  </span><span class="o">?</span><span class="w"> </span><span class="n">_store_memory</span><span class="p">()</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">TickerMemory</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">PortfolioStore</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">PerformanceTracker</span>
+<span class="w">  </span><span class="err">—</span><span class="w"> </span><span class="n">send_message</span><span class="w"> </span><span class="n">uses</span><span class="w"> </span><span class="n">SendMessageInput</span><span class="p">(</span><span class="n">agent_name</span><span class="p">,</span><span class="w"> </span><span class="n">ticker</span><span class="p">)</span><span class="w"> </span><span class="n">Pydantic</span><span class="w"> </span><span class="n">model</span>
+<span class="w">  </span><span class="err">—</span><span class="w"> </span><span class="n">Task</span><span class="w"> </span><span class="n">templates</span><span class="w"> </span><span class="n">built</span><span class="w"> </span><span class="n">from</span><span class="w"> </span><span class="n">_AGENT_TASK_TEMPLATES</span><span class="w"> </span><span class="n">dict</span><span class="w"> </span><span class="p">(</span><span class="n">no</span><span class="w"> </span><span class="n">free</span><span class="o">-</span><span class="n">text</span><span class="w"> </span><span class="n">LLM</span><span class="w"> </span><span class="n">task</span><span class="w"> </span><span class="n">construction</span><span class="p">)</span>
 
-before_agent_callback (ADK Web UI path — fires before LLM every turn):
-  ? _memory_cache_callback(callback_context)
-       ? Extract user ticker from session.events (regex)
-       ? TickerMemory.get_latest(ticker, user_id=None)
-         +-- hit ? return types.Content directly (short-circuit)
-         +-- miss ? fall back to MCP resolve_company_ticker for company-name tokens
-         —          (e.g. &quot;VISA&quot; ? canonical &quot;V&quot;) then retry cache lookup
-         +-- still miss ? return None (let LLM run)
+<span class="n">before_agent_callback</span><span class="w"> </span><span class="p">(</span><span class="n">ADK</span><span class="w"> </span><span class="n">Web</span><span class="w"> </span><span class="n">UI</span><span class="w"> </span><span class="n">path</span><span class="w"> </span><span class="err">—</span><span class="w"> </span><span class="n">fires</span><span class="w"> </span><span class="n">before</span><span class="w"> </span><span class="n">LLM</span><span class="w"> </span><span class="n">every</span><span class="w"> </span><span class="n">turn</span><span class="p">)</span><span class="o">:</span>
+<span class="w">  </span><span class="o">?</span><span class="w"> </span><span class="n">_memory_cache_callback</span><span class="p">(</span><span class="n">callback_context</span><span class="p">)</span>
+<span class="w">       </span><span class="o">?</span><span class="w"> </span><span class="n">Extract</span><span class="w"> </span><span class="n">user</span><span class="w"> </span><span class="n">ticker</span><span class="w"> </span><span class="n">from</span><span class="w"> </span><span class="n">session</span><span class="p">.</span><span class="n">events</span><span class="w"> </span><span class="p">(</span><span class="n">regex</span><span class="p">)</span>
+<span class="w">       </span><span class="o">?</span><span class="w"> </span><span class="n">TickerMemory</span><span class="p">.</span><span class="n">get_latest</span><span class="p">(</span><span class="n">ticker</span><span class="p">,</span><span class="w"> </span><span class="n">user_id</span><span class="o">=</span><span class="n">None</span><span class="p">)</span>
+<span class="w">         </span><span class="o">+--</span><span class="w"> </span><span class="n">hit</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="n">types</span><span class="p">.</span><span class="n">Content</span><span class="w"> </span><span class="n">directly</span><span class="w"> </span><span class="p">(</span><span class="kt">short</span><span class="o">-</span><span class="n">circuit</span><span class="p">)</span>
+<span class="w">         </span><span class="o">+--</span><span class="w"> </span><span class="n">miss</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">fall</span><span class="w"> </span><span class="n">back</span><span class="w"> </span><span class="n">to</span><span class="w"> </span><span class="n">MCP</span><span class="w"> </span><span class="n">resolve_company_ticker</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">company</span><span class="o">-</span><span class="n">name</span><span class="w"> </span><span class="n">tokens</span>
+<span class="w">         </span><span class="err">—</span><span class="w">          </span><span class="p">(</span><span class="n">e</span><span class="p">.</span><span class="n">g</span><span class="p">.</span><span class="w"> </span><span class="s">&quot;VISA&quot;</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">canonical</span><span class="w"> </span><span class="s">&quot;V&quot;</span><span class="p">)</span><span class="w"> </span><span class="n">then</span><span class="w"> </span><span class="n">retry</span><span class="w"> </span><span class="n">cache</span><span class="w"> </span><span class="n">lookup</span>
+<span class="w">         </span><span class="o">+--</span><span class="w"> </span><span class="n">still</span><span class="w"> </span><span class="n">miss</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="n">None</span><span class="w"> </span><span class="p">(</span><span class="n">let</span><span class="w"> </span><span class="n">LLM</span><span class="w"> </span><span class="n">run</span><span class="p">)</span>
 
-Executor-level cache (A2A path — orchestrator/agent_executor.py):
-  A2A Request ? execute()
-  ? _get_today_cached_text(ticker) — same check, returns cached text directly
-  ? [miss] ? _build_memory_context() ? RUNNER.run_async()
+<span class="n">Executor</span><span class="o">-</span><span class="n">level</span><span class="w"> </span><span class="n">cache</span><span class="w"> </span><span class="p">(</span><span class="n">A2A</span><span class="w"> </span><span class="n">path</span><span class="w"> </span><span class="err">—</span><span class="w"> </span><span class="n">orchestrator</span><span class="o">/</span><span class="n">agent_executor</span><span class="p">.</span><span class="n">py</span><span class="p">)</span><span class="o">:</span>
+<span class="w">  </span><span class="n">A2A</span><span class="w"> </span><span class="n">Request</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">execute</span><span class="p">()</span>
+<span class="w">  </span><span class="o">?</span><span class="w"> </span><span class="n">_get_today_cached_text</span><span class="p">(</span><span class="n">ticker</span><span class="p">)</span><span class="w"> </span><span class="err">—</span><span class="w"> </span><span class="n">same</span><span class="w"> </span><span class="n">check</span><span class="p">,</span><span class="w"> </span><span class="n">returns</span><span class="w"> </span><span class="n">cached</span><span class="w"> </span><span class="n">text</span><span class="w"> </span><span class="n">directly</span>
+<span class="w">  </span><span class="o">?</span><span class="w"> </span><span class="p">[</span><span class="n">miss</span><span class="p">]</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">_build_memory_context</span><span class="p">()</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">RUNNER</span><span class="p">.</span><span class="n">run_async</span><span class="p">()</span>
 
-after_agent_callback (ADK web UI path — primary path; run_adk_web.bat no longer starts orchestrator/main.py; services.py at src/orchestrator/services.py because ADK rewrites agents_dir to parent when it detects web/agent.py):
-  ? _is_analysis_turn(session.events) — was save_brief called OR was send_message invoked?
-       +-- No  ? skip persist + eval (memory recall turn, e.g. load_memory only)
-       +-- Yes ?
-             ? _collect_agent_extra() — pop agent responses from send_message events, map into brief_json keys
-             ? callback_context.add_events_to_memory(events=session.events, custom_metadata={...})
-             ? SQLiteMemoryService.add_events_to_memory() ? memory_entries table
-             ? if EVAL_ENABLED: asyncio.create_task(score_response(query, response, trace_id))
-                  ? ragas/orchestrator/{AnswerRelevancy, citation_quality, risk_disclosure,
-                                        recommendation_clarity, response_completeness}
-             ? asyncio.create_task(_release_sub_agent_evals())  — POST /release-evals to all sub-agents
-</code></pre>
+<span class="n">after_agent_callback</span><span class="w"> </span><span class="p">(</span><span class="n">ADK</span><span class="w"> </span><span class="n">web</span><span class="w"> </span><span class="n">UI</span><span class="w"> </span><span class="n">path</span><span class="w"> </span><span class="err">—</span><span class="w"> </span><span class="n">primary</span><span class="w"> </span><span class="n">path</span><span class="p">;</span><span class="w"> </span><span class="n">run_adk_web</span><span class="p">.</span><span class="n">bat</span><span class="w"> </span><span class="n">no</span><span class="w"> </span><span class="n">longer</span><span class="w"> </span><span class="n">starts</span><span class="w"> </span><span class="n">orchestrator</span><span class="o">/</span><span class="n">main</span><span class="p">.</span><span class="n">py</span><span class="p">;</span><span class="w"> </span><span class="n">services</span><span class="p">.</span><span class="n">py</span><span class="w"> </span><span class="n">at</span><span class="w"> </span><span class="n">src</span><span class="o">/</span><span class="n">orchestrator</span><span class="o">/</span><span class="n">services</span><span class="p">.</span><span class="n">py</span><span class="w"> </span><span class="n">because</span><span class="w"> </span><span class="n">ADK</span><span class="w"> </span><span class="n">rewrites</span><span class="w"> </span><span class="n">agents_dir</span><span class="w"> </span><span class="n">to</span><span class="w"> </span><span class="n">parent</span><span class="w"> </span><span class="n">when</span><span class="w"> </span><span class="n">it</span><span class="w"> </span><span class="n">detects</span><span class="w"> </span><span class="n">web</span><span class="o">/</span><span class="n">agent</span><span class="p">.</span><span class="n">py</span><span class="p">)</span><span class="o">:</span>
+<span class="w">  </span><span class="o">?</span><span class="w"> </span><span class="n">_is_analysis_turn</span><span class="p">(</span><span class="n">session</span><span class="p">.</span><span class="n">events</span><span class="p">)</span><span class="w"> </span><span class="err">—</span><span class="w"> </span><span class="n">was</span><span class="w"> </span><span class="n">save_brief</span><span class="w"> </span><span class="n">called</span><span class="w"> </span><span class="n">OR</span><span class="w"> </span><span class="n">was</span><span class="w"> </span><span class="n">send_message</span><span class="w"> </span><span class="n">invoked</span><span class="o">?</span>
+<span class="w">       </span><span class="o">+--</span><span class="w"> </span><span class="n">No</span><span class="w">  </span><span class="o">?</span><span class="w"> </span><span class="n">skip</span><span class="w"> </span><span class="n">persist</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">eval</span><span class="w"> </span><span class="p">(</span><span class="n">memory</span><span class="w"> </span><span class="n">recall</span><span class="w"> </span><span class="n">turn</span><span class="p">,</span><span class="w"> </span><span class="n">e</span><span class="p">.</span><span class="n">g</span><span class="p">.</span><span class="w"> </span><span class="n">load_memory</span><span class="w"> </span><span class="n">only</span><span class="p">)</span>
+<span class="w">       </span><span class="o">+--</span><span class="w"> </span><span class="n">Yes</span><span class="w"> </span><span class="o">?</span>
+<span class="w">             </span><span class="o">?</span><span class="w"> </span><span class="n">_collect_agent_extra</span><span class="p">()</span><span class="w"> </span><span class="err">—</span><span class="w"> </span><span class="n">pop</span><span class="w"> </span><span class="n">agent</span><span class="w"> </span><span class="n">responses</span><span class="w"> </span><span class="n">from</span><span class="w"> </span><span class="n">send_message</span><span class="w"> </span><span class="n">events</span><span class="p">,</span><span class="w"> </span><span class="n">map</span><span class="w"> </span><span class="n">into</span><span class="w"> </span><span class="n">brief_json</span><span class="w"> </span><span class="n">keys</span>
+<span class="w">             </span><span class="o">?</span><span class="w"> </span><span class="n">callback_context</span><span class="p">.</span><span class="n">add_events_to_memory</span><span class="p">(</span><span class="n">events</span><span class="o">=</span><span class="n">session</span><span class="p">.</span><span class="n">events</span><span class="p">,</span><span class="w"> </span><span class="n">custom_metadata</span><span class="o">=</span><span class="p">{...})</span>
+<span class="w">             </span><span class="o">?</span><span class="w"> </span><span class="n">SQLiteMemoryService</span><span class="p">.</span><span class="n">add_events_to_memory</span><span class="p">()</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">memory_entries</span><span class="w"> </span><span class="n">table</span>
+<span class="w">             </span><span class="o">?</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">EVAL_ENABLED</span><span class="o">:</span><span class="w"> </span><span class="n">asyncio</span><span class="p">.</span><span class="n">create_task</span><span class="p">(</span><span class="n">score_response</span><span class="p">(</span><span class="n">query</span><span class="p">,</span><span class="w"> </span><span class="n">response</span><span class="p">,</span><span class="w"> </span><span class="n">trace_id</span><span class="p">))</span>
+<span class="w">                  </span><span class="o">?</span><span class="w"> </span><span class="n">ragas</span><span class="o">/</span><span class="n">orchestrator</span><span class="o">/</span><span class="p">{</span><span class="n">AnswerRelevancy</span><span class="p">,</span><span class="w"> </span><span class="n">citation_quality</span><span class="p">,</span><span class="w"> </span><span class="n">risk_disclosure</span><span class="p">,</span>
+<span class="w">                                        </span><span class="n">recommendation_clarity</span><span class="p">,</span><span class="w"> </span><span class="n">response_completeness</span><span class="p">}</span>
+<span class="w">             </span><span class="o">?</span><span class="w"> </span><span class="n">asyncio</span><span class="p">.</span><span class="n">create_task</span><span class="p">(</span><span class="n">_release_sub_agent_evals</span><span class="p">())</span><span class="w">  </span><span class="err">—</span><span class="w"> </span><span class="n">POST</span><span class="w"> </span><span class="o">/</span><span class="k">release</span><span class="o">-</span><span class="n">evals</span><span class="w"> </span><span class="n">to</span><span class="w"> </span><span class="n">all</span><span class="w"> </span><span class="n">sub</span><span class="o">-</span><span class="n">agents</span>
+</code></pre></div>
 
 <h3>Streaming Event Flow</h3>
 <p>When <code>send_message</code> is called, sub-agents respond with streaming events:</p>
-<pre class="codehilite"><code>event 1: task { state: SUBMITTED }          ? skipped (non-terminal)
+<div class="codehilite"><pre><span></span><code>event 1: task { state: SUBMITTED }          ? skipped (non-terminal)
 event 2: status_update { WORKING, msg }     ? skipped (non-terminal)
 event 3: artifact_update { data: {...} }    ? returned (actual result)
     OR status_update { COMPLETED, msg }     ? returned (terminal text)
     OR task { state: COMPLETED, artifacts } ? returned (non-streaming fallback)
-</code></pre>
+</code></pre></div>
 
 <h3>Sample Request</h3>
-<pre class="codehilite"><code class="language-json">POST /a2a
-Headers: {&quot;A2A-Version&quot;: &quot;1.0&quot;}
-Body:
-{
-  &quot;jsonrpc&quot;: &quot;2.0&quot;,
-  &quot;method&quot;: &quot;SendMessage&quot;,
-  &quot;id&quot;: &quot;abc123&quot;,
-  &quot;params&quot;: {
-    &quot;message&quot;: {
-      &quot;messageId&quot;: &quot;def456&quot;,
-      &quot;role&quot;: &quot;ROLE_USER&quot;,
-      &quot;parts&quot;: [{&quot;text&quot;: &quot;Should I invest in NVDA?&quot;}]
-    }
-  }
-}
-</code></pre>
+<div class="codehilite"><pre><span></span><code><span class="err">POST</span><span class="w"> </span><span class="err">/a</span><span class="mi">2</span><span class="err">a</span>
+<span class="err">Headers</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;A2A-Version&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;1.0&quot;</span><span class="p">}</span>
+<span class="err">Body</span><span class="p">:</span>
+<span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;jsonrpc&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2.0&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;method&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;SendMessage&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;abc123&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;params&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">&quot;message&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="nt">&quot;messageId&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;def456&quot;</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">&quot;role&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;ROLE_USER&quot;</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">&quot;parts&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="nt">&quot;text&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Should I invest in NVDA?&quot;</span><span class="p">}]</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
 
 <h3>Runtime Evaluation</h3>
 <p>Triggered from <code>after_agent_callback</code> (ADK Web path) — see step 10 above. Fires <code>asyncio.create_task(score_response(...))</code> with 6 metrics (all scored from <code>user_input</code> + <code>response</code> only — no ground-truth reference needed). Also fires <code>_release_sub_agent_evals()</code> as a background task, which POSTs to each sub-agent's <code>/release-evals</code> endpoint to fire their deferred eval coroutines. Globally toggled by <code>EVAL_TRACE_ENABLED</code> in <code>.env</code>. All LLM-based metrics use <code>LOW</code> priority in <code>LLMPriorityQueue</code> — they yield to production <code>CRITICAL</code> calls when the LM Studio instance is saturated. Scores pushed to Langfuse under <code>ragas/orchestrator/&lt;metric&gt;</code>.</p>
@@ -307,43 +307,43 @@ Body:
 - CrossEncoder reranker (~2s)</p>
 <p>Per-stage timing logged. Effect: first RAG query no longer pays ~3-5s model-load tax.</p>
 <h3>Architecture</h3>
-<pre class="codehilite"><code>Request ? DefaultRequestHandler ? GenericAgentExecutor(RAGAgent)
-  ? RAGAgent.stream(query, context_id, task_id)
-    ? await self._build_response(query)
-    ? return {response_type: &quot;data&quot;, content: result, ...}
+<div class="codehilite"><pre><span></span><code><span class="n">Request</span><span class="w"> </span><span class="vm">?</span><span class="w"> </span><span class="n">DefaultRequestHandler</span><span class="w"> </span><span class="vm">?</span><span class="w"> </span><span class="n">GenericAgentExecutor</span><span class="p">(</span><span class="n">RAGAgent</span><span class="p">)</span>
+<span class="w">  </span><span class="vm">?</span><span class="w"> </span><span class="n">RAGAgent</span><span class="p">.</span><span class="n">stream</span><span class="p">(</span><span class="n">query</span><span class="p">,</span><span class="w"> </span><span class="n">context_id</span><span class="p">,</span><span class="w"> </span><span class="n">task_id</span><span class="p">)</span>
+<span class="w">    </span><span class="vm">?</span><span class="w"> </span><span class="n">await</span><span class="w"> </span><span class="n">self</span><span class="p">.</span><span class="n">_build_response</span><span class="p">(</span><span class="n">query</span><span class="p">)</span>
+<span class="w">    </span><span class="vm">?</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="err">{</span><span class="nl">response_type</span><span class="p">:</span><span class="w"> </span><span class="ss">&quot;data&quot;</span><span class="p">,</span><span class="w"> </span><span class="nl">content</span><span class="p">:</span><span class="w"> </span><span class="k">result</span><span class="p">,</span><span class="w"> </span><span class="p">...</span><span class="err">}</span>
 
-RAGAgent._build_response(query):
-    ? extract_trace_ids(query)
-    ? with langfuse.start_as_current_observation(name=&quot;rag-agent-stream&quot;)
-      ? ticker = extract_ticker(query)  — supports dotted (BRK.A), single-char (V), $prefix
-      ? Fallback chain: regex ? MCP resolve ? MCP validate (via get_shared_mcp())
-      ? asyncio.create_task(self._ensure_ingested(ticker))      (Phase 2 — fire-and-forget)
-      ? asyncio.create_task(self._ensure_news_ingested(ticker))
-      ? FinancialIndexManager.query(ticker, query)  — returns immediately from indexed data
-        +-- _classify_query_intent() ? sec_filings ? news ? earnings
-        +-- Multi-collection retrieval with hybrid scoring (dense + keyword + temporal)
-        +-- LlamaIndex response synthesizer (response_mode=&quot;compact&quot;, similarity_top_k=3)
-            — single LLM call per query, not N sequential refine calls
-      ? No intermediate WORKING yield — follows single-yield pattern (one data response on completion)
-      ? if EVAL_ENABLED: defer_eval(score_rag_response, ...) (deferred via shared/eval_gate.py — released by orchestrator's POST /release-evals)
-      ? return {response_type: &quot;data&quot;, content: result, ...}
+<span class="n">RAGAgent</span><span class="p">.</span><span class="n">_build_response</span><span class="p">(</span><span class="n">query</span><span class="p">)</span><span class="err">:</span>
+<span class="w">    </span><span class="vm">?</span><span class="w"> </span><span class="n">extract_trace_ids</span><span class="p">(</span><span class="n">query</span><span class="p">)</span>
+<span class="w">    </span><span class="vm">?</span><span class="w"> </span><span class="k">with</span><span class="w"> </span><span class="n">langfuse</span><span class="p">.</span><span class="n">start_as_current_observation</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="ss">&quot;rag-agent-stream&quot;</span><span class="p">)</span>
+<span class="w">      </span><span class="vm">?</span><span class="w"> </span><span class="n">ticker</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">extract_ticker</span><span class="p">(</span><span class="n">query</span><span class="p">)</span><span class="w">  </span><span class="err">—</span><span class="w"> </span><span class="n">supports</span><span class="w"> </span><span class="n">dotted</span><span class="w"> </span><span class="p">(</span><span class="n">BRK</span><span class="p">.</span><span class="n">A</span><span class="p">),</span><span class="w"> </span><span class="n">single</span><span class="o">-</span><span class="nc">char</span><span class="w"> </span><span class="p">(</span><span class="n">V</span><span class="p">),</span><span class="w"> </span><span class="err">$</span><span class="k">prefix</span>
+<span class="w">      </span><span class="vm">?</span><span class="w"> </span><span class="n">Fallback</span><span class="w"> </span><span class="nl">chain</span><span class="p">:</span><span class="w"> </span><span class="n">regex</span><span class="w"> </span><span class="vm">?</span><span class="w"> </span><span class="n">MCP</span><span class="w"> </span><span class="n">resolve</span><span class="w"> </span><span class="vm">?</span><span class="w"> </span><span class="n">MCP</span><span class="w"> </span><span class="n">validate</span><span class="w"> </span><span class="p">(</span><span class="n">via</span><span class="w"> </span><span class="n">get_shared_mcp</span><span class="p">())</span>
+<span class="w">      </span><span class="vm">?</span><span class="w"> </span><span class="n">asyncio</span><span class="p">.</span><span class="n">create_task</span><span class="p">(</span><span class="n">self</span><span class="p">.</span><span class="n">_ensure_ingested</span><span class="p">(</span><span class="n">ticker</span><span class="p">))</span><span class="w">      </span><span class="p">(</span><span class="n">Phase</span><span class="w"> </span><span class="mi">2</span><span class="w"> </span><span class="err">—</span><span class="w"> </span><span class="n">fire</span><span class="o">-</span><span class="ow">and</span><span class="o">-</span><span class="n">forget</span><span class="p">)</span>
+<span class="w">      </span><span class="vm">?</span><span class="w"> </span><span class="n">asyncio</span><span class="p">.</span><span class="n">create_task</span><span class="p">(</span><span class="n">self</span><span class="p">.</span><span class="n">_ensure_news_ingested</span><span class="p">(</span><span class="n">ticker</span><span class="p">))</span>
+<span class="w">      </span><span class="vm">?</span><span class="w"> </span><span class="n">FinancialIndexManager</span><span class="p">.</span><span class="n">query</span><span class="p">(</span><span class="n">ticker</span><span class="p">,</span><span class="w"> </span><span class="n">query</span><span class="p">)</span><span class="w">  </span><span class="err">—</span><span class="w"> </span><span class="k">returns</span><span class="w"> </span><span class="n">immediately</span><span class="w"> </span><span class="k">from</span><span class="w"> </span><span class="n">indexed</span><span class="w"> </span><span class="k">data</span>
+<span class="w">        </span><span class="o">+--</span><span class="w"> </span><span class="n">_classify_query_intent</span><span class="p">()</span><span class="w"> </span><span class="vm">?</span><span class="w"> </span><span class="n">sec_filings</span><span class="w"> </span><span class="vm">?</span><span class="w"> </span><span class="n">news</span><span class="w"> </span><span class="vm">?</span><span class="w"> </span><span class="n">earnings</span>
+<span class="w">        </span><span class="o">+--</span><span class="w"> </span><span class="n">Multi</span><span class="o">-</span><span class="n">collection</span><span class="w"> </span><span class="n">retrieval</span><span class="w"> </span><span class="k">with</span><span class="w"> </span><span class="n">hybrid</span><span class="w"> </span><span class="n">scoring</span><span class="w"> </span><span class="p">(</span><span class="n">dense</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">keyword</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">temporal</span><span class="p">)</span>
+<span class="w">        </span><span class="o">+--</span><span class="w"> </span><span class="n">LlamaIndex</span><span class="w"> </span><span class="n">response</span><span class="w"> </span><span class="n">synthesizer</span><span class="w"> </span><span class="p">(</span><span class="n">response_mode</span><span class="o">=</span><span class="ss">&quot;compact&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">similarity_top_k</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+<span class="w">            </span><span class="err">—</span><span class="w"> </span><span class="n">single</span><span class="w"> </span><span class="n">LLM</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="n">per</span><span class="w"> </span><span class="n">query</span><span class="p">,</span><span class="w"> </span><span class="ow">not</span><span class="w"> </span><span class="n">N</span><span class="w"> </span><span class="n">sequential</span><span class="w"> </span><span class="n">refine</span><span class="w"> </span><span class="n">calls</span>
+<span class="w">      </span><span class="vm">?</span><span class="w"> </span><span class="k">No</span><span class="w"> </span><span class="n">intermediate</span><span class="w"> </span><span class="n">WORKING</span><span class="w"> </span><span class="n">yield</span><span class="w"> </span><span class="err">—</span><span class="w"> </span><span class="n">follows</span><span class="w"> </span><span class="n">single</span><span class="o">-</span><span class="n">yield</span><span class="w"> </span><span class="n">pattern</span><span class="w"> </span><span class="p">(</span><span class="n">one</span><span class="w"> </span><span class="k">data</span><span class="w"> </span><span class="n">response</span><span class="w"> </span><span class="k">on</span><span class="w"> </span><span class="k">completion</span><span class="p">)</span>
+<span class="w">      </span><span class="vm">?</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="nl">EVAL_ENABLED</span><span class="p">:</span><span class="w"> </span><span class="n">defer_eval</span><span class="p">(</span><span class="n">score_rag_response</span><span class="p">,</span><span class="w"> </span><span class="p">...)</span><span class="w"> </span><span class="p">(</span><span class="k">deferred</span><span class="w"> </span><span class="n">via</span><span class="w"> </span><span class="n">shared</span><span class="o">/</span><span class="n">eval_gate</span><span class="p">.</span><span class="n">py</span><span class="w"> </span><span class="err">—</span><span class="w"> </span><span class="n">released</span><span class="w"> </span><span class="k">by</span><span class="w"> </span><span class="n">orchestrator</span><span class="err">&#39;</span><span class="n">s</span><span class="w"> </span><span class="n">POST</span><span class="w"> </span><span class="o">/</span><span class="k">release</span><span class="o">-</span><span class="n">evals</span><span class="p">)</span>
+<span class="w">      </span><span class="vm">?</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="err">{</span><span class="nl">response_type</span><span class="p">:</span><span class="w"> </span><span class="ss">&quot;data&quot;</span><span class="p">,</span><span class="w"> </span><span class="nl">content</span><span class="p">:</span><span class="w"> </span><span class="k">result</span><span class="p">,</span><span class="w"> </span><span class="p">...</span><span class="err">}</span>
 
-RAGAgent._ensure_ingested(ticker) [background]:
-  ? mcp = await get_shared_mcp()
-  ? MCP: get_financial_filings(ticker, annual_limit=3, quarterly_limit=4) ? {annual[], quarterly[]} with edgar_url + ix_url
-  ? Filter: is_filing_ingested(edgar_url) — skip already-indexed URLs
-  ? Parallel fetch via asyncio.gather:
-    +-- MCP: get_filing_content(edgar_url, ix_url) for candidate 1
-    +-- MCP: get_filing_content(edgar_url, ix_url) for candidate 2
-    +-- ... (all candidates concurrently, truncated server-side at 25k chars)
-  ? DocumentIngestionPipeline.ingest_sec_filings_batch() ? ChromaDB
-  ? mark_filing_ingested(edgar_url, ticker) for each new filing
+<span class="n">RAGAgent</span><span class="p">.</span><span class="n">_ensure_ingested</span><span class="p">(</span><span class="n">ticker</span><span class="p">)</span><span class="w"> </span><span class="o">[</span><span class="n">background</span><span class="o">]</span><span class="err">:</span>
+<span class="w">  </span><span class="vm">?</span><span class="w"> </span><span class="n">mcp</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">await</span><span class="w"> </span><span class="n">get_shared_mcp</span><span class="p">()</span>
+<span class="w">  </span><span class="vm">?</span><span class="w"> </span><span class="nl">MCP</span><span class="p">:</span><span class="w"> </span><span class="n">get_financial_filings</span><span class="p">(</span><span class="n">ticker</span><span class="p">,</span><span class="w"> </span><span class="n">annual_limit</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="n">quarterly_limit</span><span class="o">=</span><span class="mi">4</span><span class="p">)</span><span class="w"> </span><span class="vm">?</span><span class="w"> </span><span class="err">{</span><span class="n">annual</span><span class="err">[]</span><span class="p">,</span><span class="w"> </span><span class="n">quarterly</span><span class="err">[]}</span><span class="w"> </span><span class="k">with</span><span class="w"> </span><span class="n">edgar_url</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">ix_url</span>
+<span class="w">  </span><span class="vm">?</span><span class="w"> </span><span class="k">Filter</span><span class="err">:</span><span class="w"> </span><span class="n">is_filing_ingested</span><span class="p">(</span><span class="n">edgar_url</span><span class="p">)</span><span class="w"> </span><span class="err">—</span><span class="w"> </span><span class="n">skip</span><span class="w"> </span><span class="n">already</span><span class="o">-</span><span class="n">indexed</span><span class="w"> </span><span class="n">URLs</span>
+<span class="w">  </span><span class="vm">?</span><span class="w"> </span><span class="n">Parallel</span><span class="w"> </span><span class="k">fetch</span><span class="w"> </span><span class="n">via</span><span class="w"> </span><span class="n">asyncio</span><span class="p">.</span><span class="nl">gather</span><span class="p">:</span>
+<span class="w">    </span><span class="o">+--</span><span class="w"> </span><span class="nl">MCP</span><span class="p">:</span><span class="w"> </span><span class="n">get_filing_content</span><span class="p">(</span><span class="n">edgar_url</span><span class="p">,</span><span class="w"> </span><span class="n">ix_url</span><span class="p">)</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">candidate</span><span class="w"> </span><span class="mi">1</span>
+<span class="w">    </span><span class="o">+--</span><span class="w"> </span><span class="nl">MCP</span><span class="p">:</span><span class="w"> </span><span class="n">get_filing_content</span><span class="p">(</span><span class="n">edgar_url</span><span class="p">,</span><span class="w"> </span><span class="n">ix_url</span><span class="p">)</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">candidate</span><span class="w"> </span><span class="mi">2</span>
+<span class="w">    </span><span class="o">+--</span><span class="w"> </span><span class="p">...</span><span class="w"> </span><span class="p">(</span><span class="ow">all</span><span class="w"> </span><span class="n">candidates</span><span class="w"> </span><span class="n">concurrently</span><span class="p">,</span><span class="w"> </span><span class="n">truncated</span><span class="w"> </span><span class="n">server</span><span class="o">-</span><span class="n">side</span><span class="w"> </span><span class="k">at</span><span class="w"> </span><span class="mi">25</span><span class="n">k</span><span class="w"> </span><span class="n">chars</span><span class="p">)</span>
+<span class="w">  </span><span class="vm">?</span><span class="w"> </span><span class="n">DocumentIngestionPipeline</span><span class="p">.</span><span class="n">ingest_sec_filings_batch</span><span class="p">()</span><span class="w"> </span><span class="vm">?</span><span class="w"> </span><span class="n">ChromaDB</span>
+<span class="w">  </span><span class="vm">?</span><span class="w"> </span><span class="n">mark_filing_ingested</span><span class="p">(</span><span class="n">edgar_url</span><span class="p">,</span><span class="w"> </span><span class="n">ticker</span><span class="p">)</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="k">each</span><span class="w"> </span><span class="k">new</span><span class="w"> </span><span class="n">filing</span>
 
-News ingestion (separate from SEC filings):
-  ? Fetches get_news_sentiment (15 articles)
-  ? Daily dedup key: &quot;news_{ticker}&quot;
-  ? Independent of SEC filing ingestion — both run concurrently
-</code></pre>
+<span class="n">News</span><span class="w"> </span><span class="n">ingestion</span><span class="w"> </span><span class="p">(</span><span class="n">separate</span><span class="w"> </span><span class="k">from</span><span class="w"> </span><span class="n">SEC</span><span class="w"> </span><span class="n">filings</span><span class="p">)</span><span class="err">:</span>
+<span class="w">  </span><span class="vm">?</span><span class="w"> </span><span class="n">Fetches</span><span class="w"> </span><span class="n">get_news_sentiment</span><span class="w"> </span><span class="p">(</span><span class="mi">15</span><span class="w"> </span><span class="n">articles</span><span class="p">)</span>
+<span class="w">  </span><span class="vm">?</span><span class="w"> </span><span class="n">Daily</span><span class="w"> </span><span class="n">dedup</span><span class="w"> </span><span class="k">key</span><span class="err">:</span><span class="w"> </span><span class="ss">&quot;news_{ticker}&quot;</span>
+<span class="w">  </span><span class="vm">?</span><span class="w"> </span><span class="n">Independent</span><span class="w"> </span><span class="k">of</span><span class="w"> </span><span class="n">SEC</span><span class="w"> </span><span class="n">filing</span><span class="w"> </span><span class="n">ingestion</span><span class="w"> </span><span class="err">—</span><span class="w"> </span><span class="k">both</span><span class="w"> </span><span class="n">run</span><span class="w"> </span><span class="n">concurrently</span>
+</code></pre></div>
 
 <h4>Runtime Evaluation</h4>
 <p>After each response, fires <code>asyncio.create_task(score_rag_response(...))</code> with 4 metrics. Scored from <code>user_input</code>, <code>response</code>, and <code>context_texts</code> (ChromaDB source chunks). No ground-truth reference required.</p>
@@ -454,45 +454,45 @@ News ingestion (separate from SEC filings):
 </tbody>
 </table>
 <h3>Architecture</h3>
-<pre class="codehilite"><code>Request ? DefaultRequestHandler ? GenericAgentExecutor(QuantAgent)
-  ? QuantAgent.stream(query, context_id, task_id)
-    ? yield await self._build_response(query)
-    ? return {response_type: &quot;data&quot;, content: result, ...}
+<div class="codehilite"><pre><span></span><code><span class="n">Request</span><span class="w"> </span><span class="err">?</span><span class="w"> </span><span class="n">DefaultRequestHandler</span><span class="w"> </span><span class="err">?</span><span class="w"> </span><span class="n">GenericAgentExecutor</span><span class="p">(</span><span class="n">QuantAgent</span><span class="p">)</span>
+<span class="w">  </span><span class="err">?</span><span class="w"> </span><span class="n">QuantAgent</span><span class="o">.</span><span class="n">stream</span><span class="p">(</span><span class="n">query</span><span class="p">,</span><span class="w"> </span><span class="n">context_id</span><span class="p">,</span><span class="w"> </span><span class="n">task_id</span><span class="p">)</span>
+<span class="w">    </span><span class="err">?</span><span class="w"> </span><span class="nb">yield</span><span class="w"> </span><span class="n">await</span><span class="w"> </span><span class="bp">self</span><span class="o">.</span><span class="n">_build_response</span><span class="p">(</span><span class="n">query</span><span class="p">)</span>
+<span class="w">    </span><span class="err">?</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="p">{</span><span class="n">response_type</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;data&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">content</span><span class="p">:</span><span class="w"> </span><span class="n">result</span><span class="p">,</span><span class="w"> </span><span class="o">...</span><span class="p">}</span>
 
-QuantAgent._build_response(query):
-    ? extract_trace_ids(query)
-    ? with langfuse.start_as_current_observation(name=&quot;quant-agent-stream&quot;)
-      ? extract_holdings(query, exclude_ticker=ticker) ? [&quot;AAPL&quot;, &quot;MSFT&quot;, &quot;GOOGL&quot;]
-      ? QuantAgent.analyze(ticker, portfolio_holdings=holdings)
-        [Parallel fan-out from START — Phase 4 adds 3 behavioral nodes]
-          +-- fetch_prices ? compute_metrics ? technical_analysis
-          —     (SMA, MACD, RSI, Bollinger, support/resistance, trend)
-          —     ? volatility gate ? stress_test (beta-adjusted) XOR dcf_valuation
-          —         (data-driven WACC via CAPM + CoD, tapered growth)
-          —         Stress test: beta_adj_decline = mkt_decline * beta, floored at -95%
-          —         Live sector-aware shocks via MCP get_scenario_shocks (QQQ/XLP/XLF...)
-          —     ? monte_carlo (GBM, 5,000 paths, 252-day horizon) — runs in BOTH paths
-          —         (stress_test_node for high-vol, dcf_valuation_node for low-vol)
-          +-- fetch_fundamentals ? 25+ ratios (PE, ROE, margins, D/E, etc.)
-          —     + derived signals (golden cross, net debt, 52w extremes)
-          —     ? peer_comparison (dynamic via MCP get_peers — yfinance Industry/Sector classes,
-          —         ranks on PE, EV/EBITDA, growth, margins, ROE, D/E)
-          —         ? sector medians computed for relative scoring of fundamentals
-          +-- options_flow_node (put/call vol ratio, OI ratio, flow signal, no-data handling)
-          +-- insider_signals_node (get_insider_transactions MCP — structured buy/sell data, not Form 4 keyword parsing)
-          +-- analyst_positioning_node (consensus, upside %, short interest, squeeze, grade_momentum,
-          —     forward_estimates, eps_revision_momentum — enriched via MCP get_analyst_activity
-          —     and get_earnings_history, both non-fatal)
-          —     + valuation_history from MCP get_valuation_timeseries (non-fatal)
-        ? portfolio_correlation
-        ? format_output (8-group weighted voting, sum=1.0)
-          (risk_quality 0.15, dcf_value 0.20, fundamental_value 0.13, fundamental_quality 0.12,
-           technicals_trend 0.15, technicals_momentum 0.10, peer_positioning 0.10, behavioral 0.05)
-        ? llm_summary (data-readiness guard — skips if predecessors incomplete)
-               (CRITICAL priority queue — enriched 3-4 sentence summary)
-      ? if EVAL_ENABLED: defer_eval(score_quant_response, ...) (deferred via shared/eval_gate.py)
-      ? return {response_type: &quot;data&quot;, content: result, ...}
-</code></pre>
+<span class="n">QuantAgent</span><span class="o">.</span><span class="n">_build_response</span><span class="p">(</span><span class="n">query</span><span class="p">):</span>
+<span class="w">    </span><span class="err">?</span><span class="w"> </span><span class="n">extract_trace_ids</span><span class="p">(</span><span class="n">query</span><span class="p">)</span>
+<span class="w">    </span><span class="err">?</span><span class="w"> </span><span class="n">with</span><span class="w"> </span><span class="n">langfuse</span><span class="o">.</span><span class="n">start_as_current_observation</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;quant-agent-stream&quot;</span><span class="p">)</span>
+<span class="w">      </span><span class="err">?</span><span class="w"> </span><span class="n">extract_holdings</span><span class="p">(</span><span class="n">query</span><span class="p">,</span><span class="w"> </span><span class="n">exclude_ticker</span><span class="o">=</span><span class="n">ticker</span><span class="p">)</span><span class="w"> </span><span class="err">?</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;AAPL&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;MSFT&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;GOOGL&quot;</span><span class="p">]</span>
+<span class="w">      </span><span class="err">?</span><span class="w"> </span><span class="n">QuantAgent</span><span class="o">.</span><span class="n">analyze</span><span class="p">(</span><span class="n">ticker</span><span class="p">,</span><span class="w"> </span><span class="n">portfolio_holdings</span><span class="o">=</span><span class="n">holdings</span><span class="p">)</span>
+<span class="w">        </span><span class="p">[</span><span class="n">Parallel</span><span class="w"> </span><span class="n">fan</span><span class="o">-</span><span class="n">out</span><span class="w"> </span><span class="n">from</span><span class="w"> </span><span class="n">START</span><span class="w"> </span><span class="err">—</span><span class="w"> </span><span class="n">Phase</span><span class="w"> </span><span class="mi">4</span><span class="w"> </span><span class="n">adds</span><span class="w"> </span><span class="mi">3</span><span class="w"> </span><span class="n">behavioral</span><span class="w"> </span><span class="n">nodes</span><span class="p">]</span>
+<span class="w">          </span><span class="o">+--</span><span class="w"> </span><span class="n">fetch_prices</span><span class="w"> </span><span class="err">?</span><span class="w"> </span><span class="n">compute_metrics</span><span class="w"> </span><span class="err">?</span><span class="w"> </span><span class="n">technical_analysis</span>
+<span class="w">          </span><span class="err">—</span><span class="w">     </span><span class="p">(</span><span class="n">SMA</span><span class="p">,</span><span class="w"> </span><span class="n">MACD</span><span class="p">,</span><span class="w"> </span><span class="n">RSI</span><span class="p">,</span><span class="w"> </span><span class="n">Bollinger</span><span class="p">,</span><span class="w"> </span><span class="n">support</span><span class="o">/</span><span class="n">resistance</span><span class="p">,</span><span class="w"> </span><span class="n">trend</span><span class="p">)</span>
+<span class="w">          </span><span class="err">—</span><span class="w">     </span><span class="err">?</span><span class="w"> </span><span class="n">volatility</span><span class="w"> </span><span class="n">gate</span><span class="w"> </span><span class="err">?</span><span class="w"> </span><span class="n">stress_test</span><span class="w"> </span><span class="p">(</span><span class="n">beta</span><span class="o">-</span><span class="n">adjusted</span><span class="p">)</span><span class="w"> </span><span class="n">XOR</span><span class="w"> </span><span class="n">dcf_valuation</span>
+<span class="w">          </span><span class="err">—</span><span class="w">         </span><span class="p">(</span><span class="n">data</span><span class="o">-</span><span class="n">driven</span><span class="w"> </span><span class="n">WACC</span><span class="w"> </span><span class="n">via</span><span class="w"> </span><span class="n">CAPM</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">CoD</span><span class="p">,</span><span class="w"> </span><span class="n">tapered</span><span class="w"> </span><span class="n">growth</span><span class="p">)</span>
+<span class="w">          </span><span class="err">—</span><span class="w">         </span><span class="n">Stress</span><span class="w"> </span><span class="n">test</span><span class="p">:</span><span class="w"> </span><span class="n">beta_adj_decline</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">mkt_decline</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">beta</span><span class="p">,</span><span class="w"> </span><span class="n">floored</span><span class="w"> </span><span class="n">at</span><span class="w"> </span><span class="o">-</span><span class="mi">95</span><span class="o">%</span>
+<span class="w">          </span><span class="err">—</span><span class="w">         </span><span class="n">Live</span><span class="w"> </span><span class="n">sector</span><span class="o">-</span><span class="n">aware</span><span class="w"> </span><span class="n">shocks</span><span class="w"> </span><span class="n">via</span><span class="w"> </span><span class="n">MCP</span><span class="w"> </span><span class="n">get_scenario_shocks</span><span class="w"> </span><span class="p">(</span><span class="n">QQQ</span><span class="o">/</span><span class="n">XLP</span><span class="o">/</span><span class="n">XLF</span><span class="o">...</span><span class="p">)</span>
+<span class="w">          </span><span class="err">—</span><span class="w">     </span><span class="err">?</span><span class="w"> </span><span class="n">monte_carlo</span><span class="w"> </span><span class="p">(</span><span class="n">GBM</span><span class="p">,</span><span class="w"> </span><span class="mi">5</span><span class="p">,</span><span class="mi">000</span><span class="w"> </span><span class="n">paths</span><span class="p">,</span><span class="w"> </span><span class="mi">252</span><span class="o">-</span><span class="n">day</span><span class="w"> </span><span class="n">horizon</span><span class="p">)</span><span class="w"> </span><span class="err">—</span><span class="w"> </span><span class="n">runs</span><span class="w"> </span><span class="ow">in</span><span class="w"> </span><span class="n">BOTH</span><span class="w"> </span><span class="n">paths</span>
+<span class="w">          </span><span class="err">—</span><span class="w">         </span><span class="p">(</span><span class="n">stress_test_node</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">high</span><span class="o">-</span><span class="n">vol</span><span class="p">,</span><span class="w"> </span><span class="n">dcf_valuation_node</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">low</span><span class="o">-</span><span class="n">vol</span><span class="p">)</span>
+<span class="w">          </span><span class="o">+--</span><span class="w"> </span><span class="n">fetch_fundamentals</span><span class="w"> </span><span class="err">?</span><span class="w"> </span><span class="mi">25</span><span class="o">+</span><span class="w"> </span><span class="n">ratios</span><span class="w"> </span><span class="p">(</span><span class="n">PE</span><span class="p">,</span><span class="w"> </span><span class="n">ROE</span><span class="p">,</span><span class="w"> </span><span class="n">margins</span><span class="p">,</span><span class="w"> </span><span class="n">D</span><span class="o">/</span><span class="n">E</span><span class="p">,</span><span class="w"> </span><span class="n">etc</span><span class="o">.</span><span class="p">)</span>
+<span class="w">          </span><span class="err">—</span><span class="w">     </span><span class="o">+</span><span class="w"> </span><span class="n">derived</span><span class="w"> </span><span class="n">signals</span><span class="w"> </span><span class="p">(</span><span class="n">golden</span><span class="w"> </span><span class="n">cross</span><span class="p">,</span><span class="w"> </span><span class="n">net</span><span class="w"> </span><span class="n">debt</span><span class="p">,</span><span class="w"> </span><span class="mi">52</span><span class="n">w</span><span class="w"> </span><span class="n">extremes</span><span class="p">)</span>
+<span class="w">          </span><span class="err">—</span><span class="w">     </span><span class="err">?</span><span class="w"> </span><span class="n">peer_comparison</span><span class="w"> </span><span class="p">(</span><span class="n">dynamic</span><span class="w"> </span><span class="n">via</span><span class="w"> </span><span class="n">MCP</span><span class="w"> </span><span class="n">get_peers</span><span class="w"> </span><span class="err">—</span><span class="w"> </span><span class="n">yfinance</span><span class="w"> </span><span class="n">Industry</span><span class="o">/</span><span class="n">Sector</span><span class="w"> </span><span class="n">classes</span><span class="p">,</span>
+<span class="w">          </span><span class="err">—</span><span class="w">         </span><span class="n">ranks</span><span class="w"> </span><span class="n">on</span><span class="w"> </span><span class="n">PE</span><span class="p">,</span><span class="w"> </span><span class="n">EV</span><span class="o">/</span><span class="n">EBITDA</span><span class="p">,</span><span class="w"> </span><span class="n">growth</span><span class="p">,</span><span class="w"> </span><span class="n">margins</span><span class="p">,</span><span class="w"> </span><span class="n">ROE</span><span class="p">,</span><span class="w"> </span><span class="n">D</span><span class="o">/</span><span class="n">E</span><span class="p">)</span>
+<span class="w">          </span><span class="err">—</span><span class="w">         </span><span class="err">?</span><span class="w"> </span><span class="n">sector</span><span class="w"> </span><span class="n">medians</span><span class="w"> </span><span class="n">computed</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">relative</span><span class="w"> </span><span class="n">scoring</span><span class="w"> </span><span class="n">of</span><span class="w"> </span><span class="n">fundamentals</span>
+<span class="w">          </span><span class="o">+--</span><span class="w"> </span><span class="n">options_flow_node</span><span class="w"> </span><span class="p">(</span><span class="n">put</span><span class="o">/</span><span class="n">call</span><span class="w"> </span><span class="n">vol</span><span class="w"> </span><span class="n">ratio</span><span class="p">,</span><span class="w"> </span><span class="n">OI</span><span class="w"> </span><span class="n">ratio</span><span class="p">,</span><span class="w"> </span><span class="n">flow</span><span class="w"> </span><span class="k">signal</span><span class="p">,</span><span class="w"> </span><span class="n">no</span><span class="o">-</span><span class="n">data</span><span class="w"> </span><span class="n">handling</span><span class="p">)</span>
+<span class="w">          </span><span class="o">+--</span><span class="w"> </span><span class="n">insider_signals_node</span><span class="w"> </span><span class="p">(</span><span class="n">get_insider_transactions</span><span class="w"> </span><span class="n">MCP</span><span class="w"> </span><span class="err">—</span><span class="w"> </span><span class="n">structured</span><span class="w"> </span><span class="n">buy</span><span class="o">/</span><span class="n">sell</span><span class="w"> </span><span class="n">data</span><span class="p">,</span><span class="w"> </span><span class="ow">not</span><span class="w"> </span><span class="n">Form</span><span class="w"> </span><span class="mi">4</span><span class="w"> </span><span class="n">keyword</span><span class="w"> </span><span class="n">parsing</span><span class="p">)</span>
+<span class="w">          </span><span class="o">+--</span><span class="w"> </span><span class="n">analyst_positioning_node</span><span class="w"> </span><span class="p">(</span><span class="n">consensus</span><span class="p">,</span><span class="w"> </span><span class="n">upside</span><span class="w"> </span><span class="o">%</span><span class="p">,</span><span class="w"> </span><span class="n">short</span><span class="w"> </span><span class="n">interest</span><span class="p">,</span><span class="w"> </span><span class="n">squeeze</span><span class="p">,</span><span class="w"> </span><span class="n">grade_momentum</span><span class="p">,</span>
+<span class="w">          </span><span class="err">—</span><span class="w">     </span><span class="n">forward_estimates</span><span class="p">,</span><span class="w"> </span><span class="n">eps_revision_momentum</span><span class="w"> </span><span class="err">—</span><span class="w"> </span><span class="n">enriched</span><span class="w"> </span><span class="n">via</span><span class="w"> </span><span class="n">MCP</span><span class="w"> </span><span class="n">get_analyst_activity</span>
+<span class="w">          </span><span class="err">—</span><span class="w">     </span><span class="ow">and</span><span class="w"> </span><span class="n">get_earnings_history</span><span class="p">,</span><span class="w"> </span><span class="n">both</span><span class="w"> </span><span class="n">non</span><span class="o">-</span><span class="n">fatal</span><span class="p">)</span>
+<span class="w">          </span><span class="err">—</span><span class="w">     </span><span class="o">+</span><span class="w"> </span><span class="n">valuation_history</span><span class="w"> </span><span class="n">from</span><span class="w"> </span><span class="n">MCP</span><span class="w"> </span><span class="n">get_valuation_timeseries</span><span class="w"> </span><span class="p">(</span><span class="n">non</span><span class="o">-</span><span class="n">fatal</span><span class="p">)</span>
+<span class="w">        </span><span class="err">?</span><span class="w"> </span><span class="n">portfolio_correlation</span>
+<span class="w">        </span><span class="err">?</span><span class="w"> </span><span class="n">format_output</span><span class="w"> </span><span class="p">(</span><span class="mi">8</span><span class="o">-</span><span class="n">group</span><span class="w"> </span><span class="n">weighted</span><span class="w"> </span><span class="n">voting</span><span class="p">,</span><span class="w"> </span><span class="n">sum</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>
+<span class="w">          </span><span class="p">(</span><span class="n">risk_quality</span><span class="w"> </span><span class="mf">0.15</span><span class="p">,</span><span class="w"> </span><span class="n">dcf_value</span><span class="w"> </span><span class="mf">0.20</span><span class="p">,</span><span class="w"> </span><span class="n">fundamental_value</span><span class="w"> </span><span class="mf">0.13</span><span class="p">,</span><span class="w"> </span><span class="n">fundamental_quality</span><span class="w"> </span><span class="mf">0.12</span><span class="p">,</span>
+<span class="w">           </span><span class="n">technicals_trend</span><span class="w"> </span><span class="mf">0.15</span><span class="p">,</span><span class="w"> </span><span class="n">technicals_momentum</span><span class="w"> </span><span class="mf">0.10</span><span class="p">,</span><span class="w"> </span><span class="n">peer_positioning</span><span class="w"> </span><span class="mf">0.10</span><span class="p">,</span><span class="w"> </span><span class="n">behavioral</span><span class="w"> </span><span class="mf">0.05</span><span class="p">)</span>
+<span class="w">        </span><span class="err">?</span><span class="w"> </span><span class="n">llm_summary</span><span class="w"> </span><span class="p">(</span><span class="n">data</span><span class="o">-</span><span class="n">readiness</span><span class="w"> </span><span class="n">guard</span><span class="w"> </span><span class="err">—</span><span class="w"> </span><span class="n">skips</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">predecessors</span><span class="w"> </span><span class="n">incomplete</span><span class="p">)</span>
+<span class="w">               </span><span class="p">(</span><span class="n">CRITICAL</span><span class="w"> </span><span class="n">priority</span><span class="w"> </span><span class="n">queue</span><span class="w"> </span><span class="err">—</span><span class="w"> </span><span class="n">enriched</span><span class="w"> </span><span class="mi">3</span><span class="o">-</span><span class="mi">4</span><span class="w"> </span><span class="n">sentence</span><span class="w"> </span><span class="n">summary</span><span class="p">)</span>
+<span class="w">      </span><span class="err">?</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">EVAL_ENABLED</span><span class="p">:</span><span class="w"> </span><span class="n">defer_eval</span><span class="p">(</span><span class="n">score_quant_response</span><span class="p">,</span><span class="w"> </span><span class="o">...</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="n">deferred</span><span class="w"> </span><span class="n">via</span><span class="w"> </span><span class="n">shared</span><span class="o">/</span><span class="n">eval_gate</span><span class="o">.</span><span class="n">py</span><span class="p">)</span>
+<span class="w">      </span><span class="err">?</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="p">{</span><span class="n">response_type</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;data&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">content</span><span class="p">:</span><span class="w"> </span><span class="n">result</span><span class="p">,</span><span class="w"> </span><span class="o">...</span><span class="p">}</span>
+</code></pre></div>
 
 <h3>Startup Warm-up</h3>
 <p>On Starlette startup, <code>_prewarm()</code> runs an LLM ping via LangChain's <code>aiohttp</code> session to pre-warm the model server connection. Uses <code>LLMPriorityQueue</code> with <code>NORMAL</code> priority — ensures the warmup ping doesn't block production inference if startup coincides with concurrent eval scoring.</p>
@@ -593,30 +593,30 @@ QuantAgent._build_response(query):
 </tbody>
 </table>
 <h3>Architecture</h3>
-<pre class="codehilite"><code>Request ? DefaultRequestHandler ? GenericAgentExecutor(MarketContextAgent)
-  ? MarketContextAgent.stream(query, context_id, task_id)
-    ? yield await self._build_response(query)
-    ? return {response_type: &quot;data&quot;, content: result, ...}
+<div class="codehilite"><pre><span></span><code><span class="n">Request</span><span class="w"> </span><span class="err">?</span><span class="w"> </span><span class="n">DefaultRequestHandler</span><span class="w"> </span><span class="err">?</span><span class="w"> </span><span class="n">GenericAgentExecutor</span><span class="p">(</span><span class="n">MarketContextAgent</span><span class="p">)</span>
+<span class="w">  </span><span class="err">?</span><span class="w"> </span><span class="n">MarketContextAgent</span><span class="o">.</span><span class="n">stream</span><span class="p">(</span><span class="n">query</span><span class="p">,</span><span class="w"> </span><span class="n">context_id</span><span class="p">,</span><span class="w"> </span><span class="n">task_id</span><span class="p">)</span>
+<span class="w">    </span><span class="err">?</span><span class="w"> </span><span class="nb">yield</span><span class="w"> </span><span class="n">await</span><span class="w"> </span><span class="bp">self</span><span class="o">.</span><span class="n">_build_response</span><span class="p">(</span><span class="n">query</span><span class="p">)</span>
+<span class="w">    </span><span class="err">?</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="p">{</span><span class="n">response_type</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;data&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">content</span><span class="p">:</span><span class="w"> </span><span class="n">result</span><span class="p">,</span><span class="w"> </span><span class="o">...</span><span class="p">}</span>
 
-MarketContextAgent._build_response(query):
-    ? extract_trace_ids(query)
-    ? with langfuse.start_as_current_observation(name=&quot;market-context-agent-stream&quot;)
-      ? MarketContextAgent.analyze(ticker)
-        +-- mcp = await get_shared_mcp()
-        +-- _collect_data_parallel(ticker)  (Phase 3 — macro + peers)
-        —   +-- Step 1: asyncio.gather(get_macro_indicators(), get_financials(ticker))
-        —   —     ? macro regime (yields, VIX, DXY, sector ETFs, yield curve)
-        —   —     ? primary financials (sector/industry for peer resolution)
-        —   +-- Step 2: resolve peers via MCP get_peers (dynamic, Yahoo Finance API)
-        —   +-- Step 3: asyncio.gather(peer financials, peer prices for each peer)
-        +-- MarketContextCrew.analyze(ticker, precollected_data)  (CRITICAL priority queue — crew.kickoff() issues LLM call)
-            +-- Single Agent (&quot;Market Context Analyst&quot;) — no crew collaboration, data is pre-collected
-              ? Outputs MarketContextOutput (Pydantic model, v2.5): narrative, macro_regime,
-                overall_signal (bullish/bearish/neutral), confidence_score (0-1),
-                key_tailwinds, key_headwinds
-      ? if EVAL_ENABLED: defer_eval(score_market_context_response, ...) (deferred via shared/eval_gate.py)
-      ? return {response_type: &quot;data&quot;, content: result, ...}
-</code></pre>
+<span class="n">MarketContextAgent</span><span class="o">.</span><span class="n">_build_response</span><span class="p">(</span><span class="n">query</span><span class="p">):</span>
+<span class="w">    </span><span class="err">?</span><span class="w"> </span><span class="n">extract_trace_ids</span><span class="p">(</span><span class="n">query</span><span class="p">)</span>
+<span class="w">    </span><span class="err">?</span><span class="w"> </span><span class="n">with</span><span class="w"> </span><span class="n">langfuse</span><span class="o">.</span><span class="n">start_as_current_observation</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;market-context-agent-stream&quot;</span><span class="p">)</span>
+<span class="w">      </span><span class="err">?</span><span class="w"> </span><span class="n">MarketContextAgent</span><span class="o">.</span><span class="n">analyze</span><span class="p">(</span><span class="n">ticker</span><span class="p">)</span>
+<span class="w">        </span><span class="o">+--</span><span class="w"> </span><span class="n">mcp</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">await</span><span class="w"> </span><span class="n">get_shared_mcp</span><span class="p">()</span>
+<span class="w">        </span><span class="o">+--</span><span class="w"> </span><span class="n">_collect_data_parallel</span><span class="p">(</span><span class="n">ticker</span><span class="p">)</span><span class="w">  </span><span class="p">(</span><span class="n">Phase</span><span class="w"> </span><span class="mi">3</span><span class="w"> </span><span class="err">—</span><span class="w"> </span><span class="n">macro</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">peers</span><span class="p">)</span>
+<span class="w">        </span><span class="err">—</span><span class="w">   </span><span class="o">+--</span><span class="w"> </span><span class="n">Step</span><span class="w"> </span><span class="mi">1</span><span class="p">:</span><span class="w"> </span><span class="n">asyncio</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span><span class="n">get_macro_indicators</span><span class="p">(),</span><span class="w"> </span><span class="n">get_financials</span><span class="p">(</span><span class="n">ticker</span><span class="p">))</span>
+<span class="w">        </span><span class="err">—</span><span class="w">   </span><span class="err">—</span><span class="w">     </span><span class="err">?</span><span class="w"> </span><span class="n">macro</span><span class="w"> </span><span class="n">regime</span><span class="w"> </span><span class="p">(</span><span class="n">yields</span><span class="p">,</span><span class="w"> </span><span class="n">VIX</span><span class="p">,</span><span class="w"> </span><span class="n">DXY</span><span class="p">,</span><span class="w"> </span><span class="n">sector</span><span class="w"> </span><span class="n">ETFs</span><span class="p">,</span><span class="w"> </span><span class="nb">yield</span><span class="w"> </span><span class="n">curve</span><span class="p">)</span>
+<span class="w">        </span><span class="err">—</span><span class="w">   </span><span class="err">—</span><span class="w">     </span><span class="err">?</span><span class="w"> </span><span class="n">primary</span><span class="w"> </span><span class="n">financials</span><span class="w"> </span><span class="p">(</span><span class="n">sector</span><span class="o">/</span><span class="n">industry</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">peer</span><span class="w"> </span><span class="n">resolution</span><span class="p">)</span>
+<span class="w">        </span><span class="err">—</span><span class="w">   </span><span class="o">+--</span><span class="w"> </span><span class="n">Step</span><span class="w"> </span><span class="mi">2</span><span class="p">:</span><span class="w"> </span><span class="n">resolve</span><span class="w"> </span><span class="n">peers</span><span class="w"> </span><span class="n">via</span><span class="w"> </span><span class="n">MCP</span><span class="w"> </span><span class="n">get_peers</span><span class="w"> </span><span class="p">(</span><span class="n">dynamic</span><span class="p">,</span><span class="w"> </span><span class="n">Yahoo</span><span class="w"> </span><span class="n">Finance</span><span class="w"> </span><span class="n">API</span><span class="p">)</span>
+<span class="w">        </span><span class="err">—</span><span class="w">   </span><span class="o">+--</span><span class="w"> </span><span class="n">Step</span><span class="w"> </span><span class="mi">3</span><span class="p">:</span><span class="w"> </span><span class="n">asyncio</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span><span class="n">peer</span><span class="w"> </span><span class="n">financials</span><span class="p">,</span><span class="w"> </span><span class="n">peer</span><span class="w"> </span><span class="n">prices</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">each</span><span class="w"> </span><span class="n">peer</span><span class="p">)</span>
+<span class="w">        </span><span class="o">+--</span><span class="w"> </span><span class="n">MarketContextCrew</span><span class="o">.</span><span class="n">analyze</span><span class="p">(</span><span class="n">ticker</span><span class="p">,</span><span class="w"> </span><span class="n">precollected_data</span><span class="p">)</span><span class="w">  </span><span class="p">(</span><span class="n">CRITICAL</span><span class="w"> </span><span class="n">priority</span><span class="w"> </span><span class="n">queue</span><span class="w"> </span><span class="err">—</span><span class="w"> </span><span class="n">crew</span><span class="o">.</span><span class="n">kickoff</span><span class="p">()</span><span class="w"> </span><span class="n">issues</span><span class="w"> </span><span class="n">LLM</span><span class="w"> </span><span class="n">call</span><span class="p">)</span>
+<span class="w">            </span><span class="o">+--</span><span class="w"> </span><span class="n">Single</span><span class="w"> </span><span class="n">Agent</span><span class="w"> </span><span class="p">(</span><span class="s2">&quot;Market Context Analyst&quot;</span><span class="p">)</span><span class="w"> </span><span class="err">—</span><span class="w"> </span><span class="n">no</span><span class="w"> </span><span class="n">crew</span><span class="w"> </span><span class="n">collaboration</span><span class="p">,</span><span class="w"> </span><span class="n">data</span><span class="w"> </span><span class="k">is</span><span class="w"> </span><span class="n">pre</span><span class="o">-</span><span class="n">collected</span>
+<span class="w">              </span><span class="err">?</span><span class="w"> </span><span class="n">Outputs</span><span class="w"> </span><span class="n">MarketContextOutput</span><span class="w"> </span><span class="p">(</span><span class="n">Pydantic</span><span class="w"> </span><span class="n">model</span><span class="p">,</span><span class="w"> </span><span class="n">v2</span><span class="o">.</span><span class="mi">5</span><span class="p">):</span><span class="w"> </span><span class="n">narrative</span><span class="p">,</span><span class="w"> </span><span class="n">macro_regime</span><span class="p">,</span>
+<span class="w">                </span><span class="n">overall_signal</span><span class="w"> </span><span class="p">(</span><span class="n">bullish</span><span class="o">/</span><span class="n">bearish</span><span class="o">/</span><span class="n">neutral</span><span class="p">),</span><span class="w"> </span><span class="n">confidence_score</span><span class="w"> </span><span class="p">(</span><span class="mi">0</span><span class="o">-</span><span class="mi">1</span><span class="p">),</span>
+<span class="w">                </span><span class="n">key_tailwinds</span><span class="p">,</span><span class="w"> </span><span class="n">key_headwinds</span>
+<span class="w">      </span><span class="err">?</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">EVAL_ENABLED</span><span class="p">:</span><span class="w"> </span><span class="n">defer_eval</span><span class="p">(</span><span class="n">score_market_context_response</span><span class="p">,</span><span class="w"> </span><span class="o">...</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="n">deferred</span><span class="w"> </span><span class="n">via</span><span class="w"> </span><span class="n">shared</span><span class="o">/</span><span class="n">eval_gate</span><span class="o">.</span><span class="n">py</span><span class="p">)</span>
+<span class="w">      </span><span class="err">?</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="p">{</span><span class="n">response_type</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;data&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">content</span><span class="p">:</span><span class="w"> </span><span class="n">result</span><span class="p">,</span><span class="w"> </span><span class="o">...</span><span class="p">}</span>
+</code></pre></div>
 
 <p><strong>Note</strong>: The old Sentiment agent fetched <code>get_news_sentiment</code> and <code>get_company_filings</code> — both redundant with the RAG agent (Phase 1). As of Phase 3 (v1.31), Market Context fetches only macro indicators (15-min cached, no ticker argument) and peer financials/prices via dynamic MCP <code>get_peers</code>. News and filings are exclusively the RAG agent's domain. Peer sets use live Yahoo Finance API discovery, not <code>src/shared/peer_sets.py</code> (which exists as a fallback).</p>
 <p><strong>Note</strong>: The Market Context agent is a simple single-agent setup — not a multi-agent CrewAI crew. Data is pre-collected in <code>_collect_data_parallel()</code> and injected directly into the task context. The single CrewAI Agent produces a JSON narrative from the pre-collected data.</p>
@@ -645,8 +645,260 @@ MarketContextAgent._build_response(query):
 </tr>
 </tbody>
 </table>
+<hr />
+<h2>Agent 5: Analytics (PydanticAI)</h2>
+<table>
+<thead>
+<tr>
+<th>Property</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Framework</td>
+<td>PydanticAI</td>
+</tr>
+<tr>
+<td>Executor</td>
+<td><code>GenericAgentExecutor(AnalyticsAgent)</code> in <code>src/analytics/executor.py</code></td>
+</tr>
+<tr>
+<td>LLM</td>
+<td>LM Studio via <code>langfuse.openai.AsyncOpenAI</code> (API key from <code>LLM_API_KEY</code> env var)</td>
+</tr>
+<tr>
+<td>Data Source</td>
+<td>MCP (finsight-mcp <code>get_prices</code> via <code>get_shared_mcp()</code>)</td>
+</tr>
+<tr>
+<td>Port</td>
+<td>8005</td>
+</tr>
+<tr>
+<td>Agent Card</td>
+<td>Built programmatically in <code>src/analytics/server.py</code></td>
+</tr>
+<tr>
+<td>A2A Endpoint</td>
+<td><code>POST /a2a</code></td>
+</tr>
+<tr>
+<td>Health</td>
+<td><code>GET /health</code> → <code>{"status":"ok","agent":"analytics"}</code></td>
+</tr>
+</tbody>
+</table>
+<h3>Skills</h3>
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>Name</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>trend_analysis</code></td>
+<td>Trend Analysis</td>
+<td>Identify price trends, moving average crossovers, and directional momentum</td>
+</tr>
+<tr>
+<td><code>forecast_analysis</code></td>
+<td>Forecast Analysis</td>
+<td>Generate price forecasts with confidence intervals using statistical models</td>
+</tr>
+<tr>
+<td><code>anomaly_detection</code></td>
+<td>Anomaly Detection</td>
+<td>Detect unusual price movements, volume spikes, and regime changes</td>
+</tr>
+<tr>
+<td><code>statistical_metrics</code></td>
+<td>Statistical Metrics</td>
+<td>Compute Sharpe ratio, Sortino ratio, Calmar ratio, alpha, information ratio, and CAGR</td>
+</tr>
+<tr>
+<td><code>chart_data</code></td>
+<td>Chart Data</td>
+<td>Generate structured chart data for trend overlays and forecast visualizations</td>
+</tr>
+</tbody>
+</table>
+<h3>Architecture</h3>
+<div class="codehilite"><pre><span></span><code><span class="nx">Request</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="nx">DefaultRequestHandler</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="nx">GenericAgentExecutor</span><span class="p">(</span><span class="nx">AnalyticsAgent</span><span class="p">)</span>
+<span class="w">  </span><span class="err">→</span><span class="w"> </span><span class="nx">AnalyticsAgent</span><span class="p">.</span><span class="nx">stream</span><span class="p">(</span><span class="nx">query</span><span class="p">,</span><span class="w"> </span><span class="nx">context_id</span><span class="p">,</span><span class="w"> </span><span class="nx">task_id</span><span class="p">)</span>
+<span class="w">    </span><span class="err">→</span><span class="w"> </span><span class="nx">yield</span><span class="w"> </span><span class="nx">await</span><span class="w"> </span><span class="kp">self</span><span class="p">.</span><span class="nx">_build_response</span><span class="p">(</span><span class="nx">query</span><span class="p">)</span>
+<span class="w">    </span><span class="err">→</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="p">{</span><span class="nx">response_type</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;data&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">content</span><span class="p">:</span><span class="w"> </span><span class="nx">result</span><span class="p">,</span><span class="w"> </span><span class="o">...</span><span class="p">}</span>
+
+<span class="nx">AnalyticsAgent</span><span class="p">.</span><span class="nx">_build_response</span><span class="p">(</span><span class="nx">query</span><span class="p">):</span>
+<span class="w">    </span><span class="err">→</span><span class="w"> </span><span class="nx">extract_trace_ids</span><span class="p">(</span><span class="nx">query</span><span class="p">)</span>
+<span class="w">    </span><span class="err">→</span><span class="w"> </span><span class="nx">with</span><span class="w"> </span><span class="nx">langfuse</span><span class="p">.</span><span class="nx">start_as_current_observation</span><span class="p">(</span><span class="nx">name</span><span class="p">=</span><span class="s">&quot;analytics-agent-stream&quot;</span><span class="p">)</span>
+<span class="w">      </span><span class="err">→</span><span class="w"> </span><span class="nx">extract_ticker</span><span class="p">(</span><span class="nx">query</span><span class="p">)</span>
+<span class="w">      </span><span class="err">→</span><span class="w"> </span><span class="nx">AnalyticsAgent</span><span class="p">.</span><span class="nx">analyze</span><span class="p">(</span><span class="nx">ticker</span><span class="p">,</span><span class="w"> </span><span class="nx">period</span><span class="p">=</span><span class="s">&quot;1y&quot;</span><span class="p">)</span>
+<span class="w">        </span><span class="o">+--</span><span class="w"> </span><span class="nx">mcp</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">await</span><span class="w"> </span><span class="nx">get_shared_mcp</span><span class="p">()</span>
+<span class="w">        </span><span class="o">+--</span><span class="w"> </span><span class="nx">AnalyticsPipeline</span><span class="p">.</span><span class="nx">run</span><span class="p">(</span><span class="nx">ticker</span><span class="p">,</span><span class="w"> </span><span class="nx">period</span><span class="p">)</span>
+<span class="w">             </span><span class="o">+--</span><span class="w"> </span><span class="nx">data_fetch_node</span><span class="p">:</span><span class="w"> </span><span class="nx">MCP</span><span class="w"> </span><span class="nx">get_prices</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="nx">OHLCV</span>
+<span class="w">             </span><span class="o">+--</span><span class="w"> </span><span class="nx">trend_node</span><span class="p">:</span><span class="w"> </span><span class="nx">SMA</span><span class="w"> </span><span class="nx">crossover</span><span class="p">,</span><span class="w"> </span><span class="nx">direction</span><span class="p">,</span><span class="w"> </span><span class="nx">strength</span>
+<span class="w">             </span><span class="o">+--</span><span class="w"> </span><span class="nx">statistics_node</span><span class="p">:</span><span class="w"> </span><span class="nx">Sharpe</span><span class="p">,</span><span class="w"> </span><span class="nx">Sortino</span><span class="p">,</span><span class="w"> </span><span class="nx">Calmar</span><span class="p">,</span><span class="w"> </span><span class="nx">alpha</span><span class="p">,</span><span class="w"> </span><span class="nx">CAGR</span><span class="p">,</span><span class="w"> </span><span class="nx">VaR</span>
+<span class="w">             </span><span class="o">+--</span><span class="w"> </span><span class="nx">forecast_node</span><span class="p">:</span><span class="w"> </span><span class="nx">statistical</span><span class="w"> </span><span class="nx">forecast</span><span class="w"> </span><span class="nx">with</span><span class="w"> </span><span class="nx">confidence</span><span class="w"> </span><span class="nx">intervals</span>
+<span class="w">             </span><span class="o">+--</span><span class="w"> </span><span class="nx">anomaly_node</span><span class="p">:</span><span class="w"> </span><span class="nx">z</span><span class="o">-</span><span class="nx">score</span><span class="w"> </span><span class="nx">anomaly</span><span class="w"> </span><span class="nx">detection</span><span class="p">,</span><span class="w"> </span><span class="nx">regime</span><span class="w"> </span><span class="nx">changes</span>
+<span class="w">             </span><span class="o">+--</span><span class="w"> </span><span class="nx">charts_node</span><span class="p">:</span><span class="w"> </span><span class="nx">structured</span><span class="w"> </span><span class="nx">chart</span><span class="w"> </span><span class="nx">data</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="nx">visualizations</span>
+<span class="w">             </span><span class="o">+--</span><span class="w"> </span><span class="nx">summary_node</span><span class="p">:</span><span class="w"> </span><span class="nx">CRITICAL</span><span class="w"> </span><span class="nx">priority</span><span class="w"> </span><span class="nx">queue</span><span class="w"> </span><span class="err">—</span><span class="w"> </span><span class="nx">LLM</span><span class="w"> </span><span class="nx">synthesis</span>
+<span class="w">        </span><span class="err">→</span><span class="w"> </span><span class="nx">validated</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">AnalyticsAgentOutput</span><span class="p">.</span><span class="nx">model_validate</span><span class="p">(</span><span class="nx">result</span><span class="p">)</span>
+<span class="w">      </span><span class="err">→</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="nx">EVAL_ENABLED</span><span class="p">:</span><span class="w"> </span><span class="nx">defer_eval</span><span class="p">(</span><span class="nx">score_analytics_response</span><span class="p">,</span><span class="w"> </span><span class="o">...</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="nx">deferred</span><span class="w"> </span><span class="nx">via</span><span class="w"> </span><span class="nx">shared</span><span class="o">/</span><span class="nx">eval_gate</span><span class="p">.</span><span class="nx">py</span><span class="p">)</span>
+<span class="w">      </span><span class="err">→</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="p">{</span><span class="nx">response_type</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;data&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">content</span><span class="p">:</span><span class="w"> </span><span class="nx">result</span><span class="p">,</span><span class="w"> </span><span class="o">...</span><span class="p">}</span>
+</code></pre></div>
+
+<p><strong>Note</strong>: The analytics agent uses a PydanticAI pipeline with <code>Agent.instrument_all()</code> for full OpenTelemetry <code>gen_ai.*</code> span coverage. All metric computations use shared <code>MetricValue</code> from <code>src/shared/metrics.py</code>.</p>
+<h4>Runtime Evaluation</h4>
+<p>After each analysis, fires <code>defer_eval(score_analytics_response, ...)</code> with deterministic schema checks + deferred RAGAS metrics. Scored from <code>user_input</code>, <code>response</code>, and computed analytics result. RAGAS metric LLM calls use <code>LOW</code> priority in <code>LLMPriorityQueue</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>score_analytics_deterministic()</code></td>
+<td>Zero-LLM schema validation — checks all required fields present, metric ranges valid, forecast intervals consistent.</td>
+</tr>
+<tr>
+<td>Runtime RAGAS metrics</td>
+<td>Deferred LLM-based quality scoring for trend, forecast, and anomaly descriptions.</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>Agent 6: Reviewer (OpenAI Agents SDK)</h2>
+<table>
+<thead>
+<tr>
+<th>Property</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Framework</td>
+<td>OpenAI Agents SDK</td>
+</tr>
+<tr>
+<td>Executor</td>
+<td><code>GenericAgentExecutor(ReviewerAgent)</code> in <code>src/reviewer/executor.py</code></td>
+</tr>
+<tr>
+<td>LLM</td>
+<td>LM Studio via <code>langfuse.openai.AsyncOpenAI</code> (API key from <code>LLM_API_KEY</code> env var, <code>LLM_SUMMARY_MODEL</code>)</td>
+</tr>
+<tr>
+<td>Data Source</td>
+<td>Shared agent output store (<code>get_agent_outputs(session_id)</code>)</td>
+</tr>
+<tr>
+<td>Port</td>
+<td>8006</td>
+</tr>
+<tr>
+<td>Agent Card</td>
+<td>Built programmatically in <code>src/reviewer/server.py</code></td>
+</tr>
+<tr>
+<td>A2A Endpoint</td>
+<td><code>POST /a2a</code></td>
+</tr>
+<tr>
+<td>Health</td>
+<td><code>GET /health</code> → <code>{"status":"ok","agent":"reviewer"}</code></td>
+</tr>
+</tbody>
+</table>
+<h3>Skills</h3>
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>Name</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>cross_validation</code></td>
+<td>Cross-Validation</td>
+<td>Cross-validate outputs from all sub-agents for consistency and contradictions</td>
+</tr>
+<tr>
+<td><code>confidence_scoring</code></td>
+<td>Confidence Scoring</td>
+<td>Compute calibrated meta-confidence across all agent outputs</td>
+</tr>
+<tr>
+<td><code>recommendation_validation</code></td>
+<td>Recommendation Validation</td>
+<td>Validate the final BUY/HOLD/SELL recommendation against supporting evidence</td>
+</tr>
+<tr>
+<td><code>structured_review</code></td>
+<td>Structured Review</td>
+<td>Produce a structured review report with verdict, flags, and confidence breakdown</td>
+</tr>
+</tbody>
+</table>
+<h3>Architecture</h3>
+<div class="codehilite"><pre><span></span><code><span class="n">Request</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="n">DefaultRequestHandler</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="n">GenericAgentExecutor</span><span class="p">(</span><span class="n">ReviewerAgent</span><span class="p">)</span>
+<span class="w">  </span><span class="err">→</span><span class="w"> </span><span class="n">ReviewerAgent</span><span class="o">.</span><span class="n">stream</span><span class="p">(</span><span class="n">query</span><span class="p">,</span><span class="w"> </span><span class="n">context_id</span><span class="p">,</span><span class="w"> </span><span class="n">task_id</span><span class="p">)</span>
+<span class="w">    </span><span class="err">→</span><span class="w"> </span><span class="nb">yield</span><span class="w"> </span><span class="n">await</span><span class="w"> </span><span class="bp">self</span><span class="o">.</span><span class="n">_build_response</span><span class="p">(</span><span class="n">query</span><span class="p">,</span><span class="w"> </span><span class="n">context_id</span><span class="p">)</span>
+<span class="w">    </span><span class="err">→</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="p">{</span><span class="n">response_type</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;data&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">content</span><span class="p">:</span><span class="w"> </span><span class="n">result</span><span class="p">,</span><span class="w"> </span><span class="o">...</span><span class="p">}</span>
+
+<span class="n">ReviewerAgent</span><span class="o">.</span><span class="n">_build_response</span><span class="p">(</span><span class="n">query</span><span class="p">,</span><span class="w"> </span><span class="n">context_id</span><span class="p">):</span>
+<span class="w">    </span><span class="err">→</span><span class="w"> </span><span class="n">extract_trace_ids</span><span class="p">(</span><span class="n">query</span><span class="p">)</span>
+<span class="w">    </span><span class="err">→</span><span class="w"> </span><span class="n">with</span><span class="w"> </span><span class="n">langfuse</span><span class="o">.</span><span class="n">start_as_current_observation</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;reviewer-agent-stream&quot;</span><span class="p">)</span>
+<span class="w">      </span><span class="err">→</span><span class="w"> </span><span class="n">extract_ticker</span><span class="p">(</span><span class="n">query</span><span class="p">)</span>
+<span class="w">      </span><span class="err">→</span><span class="w"> </span><span class="n">agent_outputs</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">get_agent_outputs</span><span class="p">(</span><span class="n">session_id</span><span class="p">)</span><span class="w">  </span><span class="c1"># from shared store</span>
+<span class="w">      </span><span class="err">→</span><span class="w"> </span><span class="n">Deterministic</span><span class="w"> </span><span class="k">tool</span><span class="w"> </span><span class="n">chain</span><span class="w"> </span><span class="p">(</span><span class="n">all</span><span class="w"> </span><span class="ow">in</span><span class="w"> </span><span class="n">Python</span><span class="p">,</span><span class="w"> </span><span class="n">no</span><span class="w"> </span><span class="n">LLM</span><span class="p">):</span>
+<span class="w">          </span><span class="o">+--</span><span class="w"> </span><span class="n">validate_metric_integrity</span><span class="p">(</span><span class="n">agent_outputs</span><span class="p">)</span><span class="w">  </span><span class="c1"># mathematical invariants</span>
+<span class="w">          </span><span class="o">+--</span><span class="w"> </span><span class="n">check_contradictions</span><span class="p">(</span><span class="n">agent_outputs</span><span class="p">)</span><span class="w">        </span><span class="c1"># cross-agent contradiction detection</span>
+<span class="w">          </span><span class="o">+--</span><span class="w"> </span><span class="n">score_confidence</span><span class="p">(</span><span class="n">agent_outputs</span><span class="p">)</span><span class="w">            </span><span class="c1"># calibrated meta-confidence</span>
+<span class="w">          </span><span class="o">+--</span><span class="w"> </span><span class="n">validate_recommendation</span><span class="p">(</span><span class="n">agent_outputs</span><span class="p">)</span><span class="w">     </span><span class="c1"># BUY/HOLD/SELL evidence check</span>
+<span class="w">          </span><span class="o">+--</span><span class="w"> </span><span class="n">validate_dcf</span><span class="p">(</span><span class="n">agent_outputs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;quant&quot;</span><span class="p">))</span><span class="w">   </span><span class="c1"># DCF input validation</span>
+<span class="w">          </span><span class="o">+--</span><span class="w"> </span><span class="n">check_consistency</span><span class="p">(</span><span class="n">agent_outputs</span><span class="p">)</span><span class="w">           </span><span class="c1"># signal consistency checks</span>
+<span class="w">          </span><span class="o">+--</span><span class="w"> </span><span class="n">verify_sources</span><span class="p">(</span><span class="n">agent_outputs</span><span class="p">)</span><span class="w">              </span><span class="c1"># source verification</span>
+<span class="w">      </span><span class="err">→</span><span class="w"> </span><span class="n">LLM</span><span class="w"> </span><span class="n">synthesis</span><span class="w"> </span><span class="p">(</span><span class="n">CRITICAL</span><span class="w"> </span><span class="n">priority</span><span class="w"> </span><span class="n">queue</span><span class="w"> </span><span class="err">—</span><span class="w"> </span><span class="n">OpenAI</span><span class="w"> </span><span class="n">Agents</span><span class="w"> </span><span class="n">SDK</span><span class="p">):</span>
+<span class="w">          </span><span class="o">+--</span><span class="w"> </span><span class="n">reviewer_agent</span><span class="w"> </span><span class="n">with</span><span class="w"> </span><span class="n">agent_summaries</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="k">tool</span><span class="w"> </span><span class="n">results</span>
+<span class="w">          </span><span class="o">+--</span><span class="w"> </span><span class="n">Outputs</span><span class="w"> </span><span class="n">ReviewerAgentOutput</span><span class="w"> </span><span class="p">(</span><span class="n">Pydantic</span><span class="w"> </span><span class="n">model</span><span class="p">):</span><span class="w"> </span><span class="n">review_summary</span><span class="p">,</span><span class="w"> </span><span class="n">verdict</span><span class="p">,</span>
+<span class="w">              </span><span class="n">contradictions</span><span class="p">,</span><span class="w"> </span><span class="n">confidence_breakdown</span><span class="p">,</span><span class="w"> </span><span class="n">recommendation_validation</span><span class="p">,</span><span class="w"> </span><span class="n">flags</span>
+<span class="w">      </span><span class="err">→</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">EVAL_ENABLED</span><span class="p">:</span><span class="w"> </span><span class="n">defer_eval</span><span class="p">(</span><span class="n">score_reviewer_response</span><span class="p">,</span><span class="w"> </span><span class="o">...</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="n">deferred</span><span class="w"> </span><span class="n">via</span><span class="w"> </span><span class="n">shared</span><span class="o">/</span><span class="n">eval_gate</span><span class="o">.</span><span class="n">py</span><span class="p">)</span>
+<span class="w">      </span><span class="err">→</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="p">{</span><span class="n">response_type</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;data&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">content</span><span class="p">:</span><span class="w"> </span><span class="n">result</span><span class="p">,</span><span class="w"> </span><span class="o">...</span><span class="p">}</span>
+</code></pre></div>
+
+<p><strong>Note</strong>: The reviewer uses <code>langfuse.openai.AsyncOpenAI</code> for automatic LLM generation instrumentation. It reads agent outputs from the shared <code>agent_output_store</code> SQLite table — no direct A2A calls to sub-agents. The deterministic tool chain runs first, then the LLM receives tool results + agent summaries as structured input.</p>
+<p><strong>Guardrails</strong>: The reviewer has input/output guardrails defined in <code>src/reviewer/guardrails.py</code>. Input guardrails check for valid agent outputs; output guardrails validate the review structure and confidence bounds.</p>
+<h4>Runtime Evaluation</h4>
+<p>After each review, fires <code>defer_eval(score_reviewer_response, ...)</code> with deterministic schema checks + deferred RAGAS metrics. Scored from <code>user_input</code>, <code>response</code>, and reviewer output. RAGAS metric LLM calls use <code>LOW</code> priority in <code>LLMPriorityQueue</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>score_reviewer_deterministic()</code></td>
+<td>Zero-LLM schema validation — checks verdict present, confidence in [0,1], all required review fields populated.</td>
+</tr>
+<tr>
+<td>Runtime RAGAS metrics</td>
+<td>Deferred LLM-based quality scoring for review summary, contradiction detection quality, and recommendation validation.</td>
+</tr>
+</tbody>
+</table>
 <h2>Shared Infrastructure</h2>
-<p>All four agents share a common infrastructure layer:</p>
+<p>All five agents share a common infrastructure layer:</p>
 <table>
 <thead>
 <tr>
@@ -665,7 +917,7 @@ MarketContextAgent._build_response(query):
 </tr>
 <tr>
 <td><strong><code>@logged</code> timing decorator</strong></td>
-<td>Applied to all three sub-agent <code>_build_response()</code> methods and <code>SubAgentClient.send_message()</code>. Logs elapsed time and entry/exit.</td>
+<td>Applied to all five sub-agent <code>_build_response()</code> methods and <code>SubAgentClient.send_message()</code>. Logs elapsed time and entry/exit.</td>
 </tr>
 <tr>
 <td><strong>Lazy OpenTelemetry</strong></td>
@@ -673,7 +925,7 @@ MarketContextAgent._build_response(query):
 </tr>
 <tr>
 <td><strong>SQLiteTaskStore</strong></td>
-<td>Replaces <code>InMemoryTaskStore</code> in all four server entry points. Tasks survive process restarts.</td>
+<td>Replaces <code>InMemoryTaskStore</code> in all five server entry points. Tasks survive process restarts.</td>
 </tr>
 <tr>
 <td><strong><code>LLM_API_KEY</code> env var</strong></td>
@@ -697,7 +949,7 @@ MarketContextAgent._build_response(query):
 </tr>
 <tr>
 <td><strong>Deferred Eval Gate</strong></td>
-<td><code>src/shared/eval_gate.py</code> — holds sub-agent eval LLM calls until the orchestrator releases them via <code>POST /release-evals</code> after synthesis completes. Prevents 3 sub-agent eval processes from competing with orchestrator synthesis on a single LM Studio instance. Includes 120s safety-net auto-release.</td>
+<td><code>src/shared/eval_gate.py</code> — holds sub-agent eval LLM calls until the orchestrator releases them via <code>POST /release-evals</code> after synthesis completes. Prevents 5 sub-agent eval processes from competing with orchestrator synthesis on a single LM Studio instance. Includes 120s safety-net auto-release.</td>
 </tr>
 <tr>
 <td><strong>Pydantic Agent Output Models</strong></td>
@@ -832,6 +1084,11 @@ MarketContextAgent._build_response(query):
 <td><strong>—</strong></td>
 <td>v2.8</td>
 <td><code>SendMessageInput(agent_name, ticker)</code> Pydantic model eliminates ticker hallucination. Pre-reviewer metric integrity gate (<code>validate_metric_integrity()</code>). Report calculation fixes (Sharpe risk-free rate, momentum double-multiply, MAPE format, stress test division, Beta label, MC BUY→HOLD downgrade). Unified <code>resolve_and_validate_ticker()</code> across all agents. Trace context nesting fix. RAG stream simplified to single-yield pattern. Reviewer tool expansions (confidence <code>_derive_*</code>, contradiction cross-checks, validation expansion). Observability dashboard replaces trace page. Web UI agent response capture (<code>_collect_agent_extra()</code>). Lazy import reversal (removed <code>__getattr__</code> pattern). Analytics &amp; Reviewer frontend tiles. AG-UI keepalive streaming. <code>EVAL_TRACE_ENABLED</code> consolidated to <code>EVAL_ENABLED</code>. Eval gate timer reset on <code>defer_eval()</code>.</td>
+</tr>
+<tr>
+<td><strong>—</strong></td>
+<td>v2.18</td>
+<td>TTFT (Time to First Token) tracking via Langfuse <code>completion_start_time</code> on both sub-agent A2A streaming and orchestrator ADK runner streaming. Null-safety guard on <code>.text</code> before slicing in generation output.</td>
 </tr>
 </tbody>
 </table>

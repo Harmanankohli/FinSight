@@ -2,7 +2,7 @@
 
 ## Overview
 
-FinSight is a multi-agent investment research system where four specialized agents communicate via the **Google A2A Protocol** (Agent-to-Agent). The orchestrator (ADK `LlmAgent`) discovers sub-agents at startup via `A2ACardResolver`, delegates tasks via a single `send_message` tool, and the LLM routes to all agents in parallel (instructed via system prompt to emit all `send_message` calls in one assistant turn). Each sub-agent processes tasks internally using its own framework and tools.
+FinSight is a multi-agent investment research system where five specialized agents communicate via the **Google A2A Protocol** (Agent-to-Agent). The orchestrator (ADK `LlmAgent`) discovers sub-agents at startup via `A2ACardResolver`, delegates tasks via a single `send_message` tool, and the LLM routes to all agents in parallel (instructed via system prompt to emit all `send_message` calls in one assistant turn). Each sub-agent processes tasks internally using its own framework and tools.
 
 ## Trust Boundaries (Auth)
 
@@ -111,7 +111,7 @@ A2A Request ? FinSightAgentExecutor.execute()
 
 ## Agent Server Factory (v1.41)
 
-All three sub-agent servers (`src/financial_rag/server.py`, `src/quant/server.py`, `src/market_context/server.py`) use `build_agent_app()` from `src/shared/agent_server.py`. This shared factory:
+All five sub-agent servers (`src/financial_rag/server.py`, `src/quant/server.py`, `src/market_context/server.py`, `src/analytics/server.py`, `src/reviewer/server.py`) use `build_agent_app()` from `src/shared/agent_server.py`. This shared factory:
 - Creates Starlette app with A2A routes, health check, agent card, and `/release-evals` endpoint
 - Wraps with `AuthMiddleware` when auth is enabled
 - Sets up Langfuse instrumentation, file logging, and startup warm-up hooks
@@ -471,7 +471,7 @@ All agents use LM Studio (OpenAI-compatible local API). The `src/shared/settings
 
 ### Cross-Process Eval Coordination
 
-Sub-agent evals are deferred via `src/shared/eval_gate.py` to prevent three sub-agent eval processes from competing with orchestrator synthesis on the shared LM Studio instance. Each sub-agent calls `defer_eval()` instead of `asyncio.create_task()`. The orchestrator's `after_agent_callback` fires `_release_sub_agent_evals()` which POSTs to each sub-agent's `/release-evals` endpoint after synthesis completes. A 120s safety-net auto-release prevents evals from being silently dropped if the orchestrator crashes.
+Sub-agent evals are deferred via `src/shared/eval_gate.py` to prevent five sub-agent eval processes from competing with orchestrator synthesis on the shared LM Studio instance. Each sub-agent calls `defer_eval()` instead of `asyncio.create_task()`. The orchestrator's `after_agent_callback` fires `_release_sub_agent_evals()` which POSTs to each sub-agent's `/release-evals` endpoint after synthesis completes. A 120s safety-net auto-release prevents evals from being silently dropped if the orchestrator crashes.
 
 | Agent | Model (default / .env override) | Provider |
 |---|---|---|
@@ -482,7 +482,7 @@ Sub-agent evals are deferred via `src/shared/eval_gate.py` to prevent three sub-
 
 ## Observability & Tracing
 
-Langfuse provides distributed tracing across all four agent processes. Trace context is propagated through the A2A protocol via text-based injection.
+Langfuse provides distributed tracing across all six agent processes. Trace context is propagated through the A2A protocol via text-based injection.
 
 ### Trace Propagation Flow
 
@@ -551,6 +551,16 @@ lf.observation(
 ```
 
 When `EVAL_TRACE_ENABLED=true`, the same call also writes a JSON file to `src/tests/evaluation/eval_results/orchestrator_traces/` for use by the RAGAS orchestrator evaluation runner.
+
+### TTFT Tracking (v2.18)
+
+Time to First Token (TTFT) is tracked in two locations via Langfuse `generation.update(completion_start_time)`:
+
+1. **`sub_agent_client.py`**: Each A2A `send_message()` call wraps the streaming response. On the first event received, `generation.update(completion_start_time=now)` marks when the sub-agent started producing output. This gives per-sub-agent TTFT in the Langfuse trace tree.
+
+2. **`agent_executor.py`**: The ADK runner's `run_async()` stream similarly records the first event as `completion_start_time`, measuring the orchestrator LLM's TTFT.
+
+Both locations use a local `ttft_recorded` flag to ensure `completion_start_time` is set only once per generation. Langfuse computes the TTFT as `completion_start_time - start_time` automatically.
 
 ## Memory Layer Architecture
 
@@ -665,7 +675,7 @@ The dashboard queries Langfuse via its REST API. API limits are capped at 100 (L
 
 ## Health Endpoints
 
-All six services expose `GET /health`:
+All eight services expose `GET /health`:
 
 | Service | URL | Response |
 |---|---|---|
@@ -674,17 +684,21 @@ All six services expose `GET /health`:
 | RAG Agent | `http://localhost:8002/health` | `{"status":"ok","agent":"rag"}` |
 | Quant Agent | `http://localhost:8003/health` | `{"status":"ok","agent":"quant"}` |
 | Market Context Agent | `http://localhost:8004/health` | `{"status":"ok","agent":"market_context"}` |
+| Analytics Agent | `http://localhost:8005/health` | `{"status":"ok","agent":"analytics"}` |
+| Reviewer Agent | `http://localhost:8006/health` | `{"status":"ok","agent":"reviewer"}` |
 | MCP Server | `http://localhost:8010/health` | `{"status":"ok","agent":"mcp"}` |
 
 ### Eval Release Endpoints
 
-The three sub-agent servers expose `POST /release-evals` to trigger deferred eval coroutines:
+All five sub-agent servers expose `POST /release-evals` to trigger deferred eval coroutines:
 
 | Service | Endpoint | Response |
 |---|---|---|
 | RAG Agent | `POST http://localhost:8002/release-evals` | `{"released": N}` |
 | Quant Agent | `POST http://localhost:8003/release-evals` | `{"released": N}` |
 | Market Context Agent | `POST http://localhost:8004/release-evals` | `{"released": N}` |
+| Analytics Agent | `POST http://localhost:8005/release-evals` | `{"released": N}` |
+| Reviewer Agent | `POST http://localhost:8006/release-evals` | `{"released": N}` |
 
 The orchestrator calls these endpoints via `_release_sub_agent_evals()` as a fire-and-forget background task after synthesis completes (5s HTTP timeout, non-fatal on failure).
 
@@ -707,6 +721,8 @@ setup_file_logging("orchestrator")  # ? logs/orchestrator.log
 | RAG Agent | `logs/rag_agent.log` |
 | Quant Agent | `logs/quant.log` |
 | Market Context Agent | `logs/market_context.log` |
+| Analytics Agent | `logs/analytics.log` |
+| Reviewer Agent | `logs/reviewer.log` |
 | MCP Server | `logs/mcp.log` |
 
 ### Decorators
@@ -769,11 +785,13 @@ When the orchestrator runs through `adk web` (the path `run_adk_web.bat` uses), 
 `FinSightAgentExecutor` still keeps its eval call for completeness — it fires when an A2A client hits `src/orchestrator/main.py` directly. The A2A server is not started by `run_adk_web.bat` by default; start it manually with `uv run python -m orchestrator.main` if needed.
 
 | Agent | Background Task | Metrics | Why Each Metric | Data Required |
-|---|---|---|---|---|---|
-| Orchestrator | `score_response()` | AnswerRelevancy, citation_quality, risk_disclosure, recommendation_clarity, response_completeness | AnswerRelevancy: generic catch-all for response quality. citation_quality: unsubstantiated financial claims are worthless — must cite filing dates/amounts. risk_disclosure: an investment thesis without risk discussion is incomplete. recommendation_clarity: the core output is a BUY/HOLD/SELL signal — ambiguous synthesis fails. response_completeness: must synthesize all 3 analysis types, not just one. | `user_input`, `response` |
-| RAG | `score_rag_response()` | Faithfulness, AnswerRelevancy, ContextPrecisionWithoutReference | Faithfulness: prevents hallucinated dates/numbers by verifying claims against retrieved SEC text. ContextPrecisionWithoutReference: flags retrieval drift — when RAG returns irrelevant filings, this drops even if Faithfulness passes. | `user_input`, `response`, `context_texts` (ChromaDB nodes) |
-| Quant | `score_quant_response()` | FactualCorrectness, AnswerRelevancy | FactualCorrectness: compares LLM summary numbers (Sharpe, VaR, DCF) against actual computed values — primary failure mode is hallucinated numbers. AnswerRelevancy: generic catch-all. | `user_input`, `response`, `quant_result` (computed metrics dict) |
+|---|---|---|---|---|
+| Orchestrator | `score_response()` | AnswerRelevancy, citation_quality, risk_disclosure, recommendation_clarity, response_completeness, no_forward_guarantees | AnswerRelevancy: generic catch-all for response quality. citation_quality: unsubstantiated financial claims are worthless — must cite filing dates/amounts. risk_disclosure: an investment thesis without risk discussion is incomplete. recommendation_clarity: the core output is a BUY/HOLD/SELL signal — ambiguous synthesis fails. response_completeness: must synthesize all analysis types, not just one. no_forward_guarantees: flags any language suggesting guaranteed future performance. | `user_input`, `response` |
+| RAG | `score_rag_response()` | Faithfulness, ContextPrecisionWithoutReference, cross_collection_synthesis | Faithfulness: prevents hallucinated dates/numbers by verifying claims against retrieved SEC text. ContextPrecisionWithoutReference: flags retrieval drift — when RAG returns irrelevant filings, this drops even if Faithfulness passes. cross_collection_synthesis: checks whether the response cites sources from ≥2 collections (sec_filings, news, earnings). | `user_input`, `response`, `context_texts` (ChromaDB nodes) |
+| Quant | `score_quant_response()` | FactualCorrectness, signal_explanation_quality, deterministic (schema validator) | FactualCorrectness: compares LLM summary numbers (Sharpe, VaR, DCF) against actual computed values — primary failure mode is hallucinated numbers. signal_explanation_quality: scores whether the response explains three or more signal groups with specific numeric values. deterministic: zero-LLM schema validation — checks all 8 signal groups, weight sum, MC percentiles, peer fields, recommendation invariants. | `user_input`, `response`, `quant_result` (computed metrics dict) |
 | Market Context | `score_market_context_response()` | Faithfulness, macro_regime_analysis, peer_landscape_quality | Faithfulness: verifies narrative is grounded in collected macro and peer data. macro_regime_analysis: evaluates if narrative discusses yield curve, VIX, DXY, sector ETF performance with actual values. peer_landscape_quality: evaluates depth of peer comparison across multiple metrics. | `user_input`, `response`, `_retrieved_contexts` (macro + peer data) |
+| Analytics | `score_analytics_response()` | Runtime RAGAS eval + deterministic schema checks | Validates analytics output schema and defers LLM-based eval for trend, forecast, and anomaly quality. | `user_input`, `response`, analytics result |
+| Reviewer | `score_reviewer_response()` | Runtime RAGAS eval + deterministic schema checks | Validates reviewer output schema and defers LLM-based eval for review quality. | `user_input`, `response`, reviewer result |
 
 ### Per-Metric Streaming
 
@@ -781,7 +799,7 @@ Metrics within an agent are run concurrently via `asyncio.wait(FIRST_COMPLETED)`
 
 ### Client Caching
 
-`_setup_ragas_clients()` caches the `(InstructorLLM, _STEmbeddings)` tuple at module level after the first call. All four agents reuse the cached `SentenceTransformer` model — the previous approach loaded a fresh model (~1-2s, ~80MB) on every agent response, multiplying latency by 4 per query.
+`_setup_ragas_clients()` caches the `(InstructorLLM, _STEmbeddings)` tuple at module level after the first call. All six agents reuse the cached `SentenceTransformer` model — the previous approach loaded a fresh model (~1-2s, ~80MB) on every agent response, multiplying latency by 6 per query.
 
 ### Error Handling
 

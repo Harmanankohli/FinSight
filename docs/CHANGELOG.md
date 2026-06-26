@@ -1,5 +1,16 @@
 ﻿# Changelog
 
+## v2.18 — TTFT Tracking in Langfuse (7197b85–a568ba6)
+
+### TTFT (Time to First Token) Tracking (7197b85)
+
+- **`src/orchestrator/sub_agent_client.py`**: Added `completion_start_time` tracking on A2A `send_message()` streaming. On the first event received from a sub-agent, `generation.update(completion_start_time=datetime.now(UTC))` marks when the sub-agent started producing output. A `ttft_recorded` flag ensures the timestamp is set only once per generation. Langfuse automatically computes TTFT as `completion_start_time - start_time`.
+- **`src/orchestrator/agent_executor.py`**: Same pattern for the ADK runner's `run_async()` stream — the first event from the orchestrator LLM sets `completion_start_time`, measuring the orchestrator's own TTFT.
+
+### Null-Safety Fix for TTFT (a568ba6)
+
+- **`src/orchestrator/agent_executor.py`**: Guard `nullable .text` before slicing in TTFT generation output — `final_event.content.parts[0].text` can be `None` when the LLM produces only tool calls without a text part. The guard prevents `TypeError: 'NoneType' is not subscriptable` during generation output recording.
+
 ## v2.17 — ANSI Colored Logging, Full Agent Langfuse Instrumentation (11b8638–7321dfc)
 
 ### ANSI Colored Console Logging (11b8638)

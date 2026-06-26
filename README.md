@@ -16,7 +16,7 @@ An autonomous multi-agent system that answers investment queries like *"Should I
 - **Structured logging**: `@logged`/`@logged_sync` timing decorators emit `→ Enter`, `← Exit ⏱`, `✗ Fail ⏱` with `latency_ms`; ANSI colored console output with per-level colors and service badges (aligned with frontend CSS palette); JSON file logs remain plain for log aggregators; `NO_COLOR`/`FORCE_COLOR` support
 - **Portfolio correlation analysis**: When you explicitly mention portfolio holdings (e.g. "My portfolio holds AAPL, MSFT"), the quant agent computes cross-stock correlation matrices alongside the primary analysis
 - **Distributed tracing**: Langfuse traces span all seven agent processes in a single trace tree via text-based context propagation. All agents (including Analytics, Market Context, and Reviewer) are fully instrumented — Analytics via PydanticAI OTEL (`gen_ai.*` spans), Reviewer via `langfuse.openai.AsyncOpenAI`, Market Context via `@observe()` on CrewAI execution.
-- **Health monitoring**: `/health` endpoints on all seven services with docker-compose healthcheck integration
+- **Health monitoring**: `/health` endpoints on all eight services with docker-compose healthcheck integration
 - **Local LLM inference**: All agents use LM Studio (OpenAI-compatible API) — no cloud dependencies
 - **Frontend auth bypass**: `NEXT_PUBLIC_AUTH_ENABLED=false` short-circuits all frontend auth checks for local development, independently togglable from backend `AUTH_ENABLED`
 - **MCP data tools**: Unified server providing SEC filings (via EDGAR), price data (yfinance/yahooquery), financials, news sentiment, insider transactions, peer discovery, scenario shocks, analyst activity, valuation timeseries, and more
@@ -259,7 +259,7 @@ Key environment variables in `.env`:
 
 ## Testing
 
-**~268 test cases** across 50 test files — see [TESTS.md](docs/TESTS.md) for details.
+**~370 test cases** across 40+ test files — see [TESTS.md](docs/TESTS.md) for details.
 
 ## License
 

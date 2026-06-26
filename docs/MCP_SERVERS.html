@@ -50,21 +50,21 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 </div>
 
 <p>MCP server hosting both agent registry and data tools. Split from a single monolithic file (2095 lines) into per-tool modules (v1.41):</p>
-<pre class="codehilite"><code>src/mcp_tools/
-  ├── _app.py                # 78-line composition root with get_app() factory
-  ├── finsight_server.py     # re-exports get_app() for backward compat
-  ├── tools/
-  │   ├── agent_registry.py  # find_agent(), resource://agent_cards/*
-  │   ├── market_data.py     # get_prices(), get_financials(), get_options_chain()
-  │   ├── edgar.py           # SEC EDGAR tools (filings, content, search)
-  │   ├── ticker.py          # validate_ticker(), resolve_company_ticker()
-  │   ├── sentiment.py       # news, sentiment indicators, earnings history
-  │   └── sandbox.py         # execute_python() with AST gate + container mode
-  └── infra/
-      ├── rate_limiters.py   # TokenBucket rate limiter
-      ├── embed.py           # sentence-transformers lazy loader
-      └── news_fetch.py      # RSS feed fetchers (Yahoo, CNBC, MarketWatch, DDG fallback)
-</code></pre>
+<div class="codehilite"><pre><span></span><code><span class="n">src</span><span class="o">/</span><span class="n">mcp_tools</span><span class="o">/</span>
+<span class="w">  </span><span class="err">├──</span><span class="w"> </span><span class="n">_app</span><span class="o">.</span><span class="n">py</span><span class="w">                </span><span class="c1"># 78-line composition root with get_app() factory</span>
+<span class="w">  </span><span class="err">├──</span><span class="w"> </span><span class="n">finsight_server</span><span class="o">.</span><span class="n">py</span><span class="w">     </span><span class="c1"># re-exports get_app() for backward compat</span>
+<span class="w">  </span><span class="err">├──</span><span class="w"> </span><span class="n">tools</span><span class="o">/</span>
+<span class="w">  </span><span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">agent_registry</span><span class="o">.</span><span class="n">py</span><span class="w">  </span><span class="c1"># find_agent(), resource://agent_cards/*</span>
+<span class="w">  </span><span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">market_data</span><span class="o">.</span><span class="n">py</span><span class="w">     </span><span class="c1"># get_prices(), get_financials(), get_options_chain()</span>
+<span class="w">  </span><span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">edgar</span><span class="o">.</span><span class="n">py</span><span class="w">           </span><span class="c1"># SEC EDGAR tools (filings, content, search)</span>
+<span class="w">  </span><span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">ticker</span><span class="o">.</span><span class="n">py</span><span class="w">          </span><span class="c1"># validate_ticker(), resolve_company_ticker()</span>
+<span class="w">  </span><span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">sentiment</span><span class="o">.</span><span class="n">py</span><span class="w">       </span><span class="c1"># news, sentiment indicators, earnings history</span>
+<span class="w">  </span><span class="err">│</span><span class="w">   </span><span class="err">└──</span><span class="w"> </span><span class="n">sandbox</span><span class="o">.</span><span class="n">py</span><span class="w">         </span><span class="c1"># execute_python() with AST gate + container mode</span>
+<span class="w">  </span><span class="err">└──</span><span class="w"> </span><span class="n">infra</span><span class="o">/</span>
+<span class="w">      </span><span class="err">├──</span><span class="w"> </span><span class="n">rate_limiters</span><span class="o">.</span><span class="n">py</span><span class="w">   </span><span class="c1"># TokenBucket rate limiter</span>
+<span class="w">      </span><span class="err">├──</span><span class="w"> </span><span class="n">embed</span><span class="o">.</span><span class="n">py</span><span class="w">           </span><span class="c1"># sentence-transformers lazy loader</span>
+<span class="w">      </span><span class="err">└──</span><span class="w"> </span><span class="n">news_fetch</span><span class="o">.</span><span class="n">py</span><span class="w">      </span><span class="c1"># RSS feed fetchers (Yahoo, CNBC, MarketWatch, DDG fallback)</span>
+</code></pre></div>
 
 <h2>Overview</h2>
 <table>
@@ -85,8 +85,8 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 </table>
 <p>No API keys required (SEC uses public API, news uses RSS feeds). Windows-compatible — <code>import resource</code> guarded by platform check.</p>
 <h2>Running</h2>
-<pre class="codehilite"><code class="language-bash">uv run python -m uvicorn mcp_tools.finsight_server:get_app --host 0.0.0.0 --port 8010
-</code></pre>
+<div class="codehilite"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>uvicorn<span class="w"> </span>mcp_tools.finsight_server:get_app<span class="w"> </span>--host<span class="w"> </span><span class="m">0</span>.0.0.0<span class="w"> </span>--port<span class="w"> </span><span class="m">8010</span>
+</code></pre></div>
 
 <p>Health check: <code>GET http://localhost:8010/health</code> → <code>{"status":"ok","agent":"mcp"}</code></p>
 <h2>TTL Caching</h2>
@@ -360,38 +360,38 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <p><strong>Restricted imports</strong>: <code>os</code>, <code>subprocess</code>, <code>shutil</code>, <code>socket</code>, <code>ctypes</code>, <code>importlib</code>, <code>pickle</code>, <code>inspect</code>, <code>sys</code>, <code>builtins</code>, <code>gc</code>, <code>threading</code>, <code>multiprocessing</code>, <code>signal</code>, <code>mmap</code>, <code>resource</code>, <code>pwd</code>, <code>grp</code>, <code>crypt</code></p>
 <p><strong>Available</strong>: pandas, numpy, math, json, datetime, random, statistics, itertools, collections, functools, typing</p>
 <h2>Adding a New Tool</h2>
-<pre class="codehilite"><code class="language-python">@app.tool()
-async def my_tool(param: str) -&gt; dict:
-    &quot;&quot;&quot;Tool description.&quot;&quot;&quot;
-    return {&quot;result&quot;: param}
-</code></pre>
+<div class="codehilite"><pre><span></span><code><span class="nd">@app</span><span class="o">.</span><span class="n">tool</span><span class="p">()</span>
+<span class="k">async</span> <span class="k">def</span> <span class="nf">my_tool</span><span class="p">(</span><span class="n">param</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Tool description.&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;result&quot;</span><span class="p">:</span> <span class="n">param</span><span class="p">}</span>
+</code></pre></div>
 
 <p>Auto-discovered by any agent that connects and calls <code>list_tools()</code>.</p>
 <h2>MCP Client Usage</h2>
-<pre class="codehilite"><code class="language-python">from src.shared.mcp_client import MCPClient, MCPServerConfig
+<div class="codehilite"><pre><span></span><code><span class="kn">from</span> <span class="nn">src.shared.mcp_client</span> <span class="kn">import</span> <span class="n">MCPClient</span><span class="p">,</span> <span class="n">MCPServerConfig</span>
 
-mcp = MCPClient(configs=[MCPServerConfig(name=&quot;finsight&quot;, url=&quot;http://localhost:8010/sse&quot;)])
-await mcp.connect_all()
-result = await mcp.call_tool_by_name(&quot;get_prices&quot;, {&quot;ticker&quot;: &quot;NVDA&quot;})
-</code></pre>
+<span class="n">mcp</span> <span class="o">=</span> <span class="n">MCPClient</span><span class="p">(</span><span class="n">configs</span><span class="o">=</span><span class="p">[</span><span class="n">MCPServerConfig</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;finsight&quot;</span><span class="p">,</span> <span class="n">url</span><span class="o">=</span><span class="s2">&quot;http://localhost:8010/sse&quot;</span><span class="p">)])</span>
+<span class="k">await</span> <span class="n">mcp</span><span class="o">.</span><span class="n">connect_all</span><span class="p">()</span>
+<span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">mcp</span><span class="o">.</span><span class="n">call_tool_by_name</span><span class="p">(</span><span class="s2">&quot;get_prices&quot;</span><span class="p">,</span> <span class="p">{</span><span class="s2">&quot;ticker&quot;</span><span class="p">:</span> <span class="s2">&quot;NVDA&quot;</span><span class="p">})</span>
+</code></pre></div>
 
 <h3>Service Auth (v1.43)</h3>
 <p>When <code>AUTH_ENABLED=true</code>, pass the service token via <code>MCPServerConfig</code>:</p>
-<pre class="codehilite"><code class="language-python">config = MCPServerConfig(
-    name=&quot;finsight&quot;,
-    url=&quot;http://localhost:8010/sse&quot;,
-    token=SERVICE_AUTH_TOKEN  # injected as Authorization: Bearer &lt;token&gt;
-)
-</code></pre>
+<div class="codehilite"><pre><span></span><code><span class="n">config</span> <span class="o">=</span> <span class="n">MCPServerConfig</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;finsight&quot;</span><span class="p">,</span>
+    <span class="n">url</span><span class="o">=</span><span class="s2">&quot;http://localhost:8010/sse&quot;</span><span class="p">,</span>
+    <span class="n">token</span><span class="o">=</span><span class="n">SERVICE_AUTH_TOKEN</span>  <span class="c1"># injected as Authorization: Bearer &lt;token&gt;</span>
+<span class="p">)</span>
+</code></pre></div>
 
 <p>The MCP server wraps its SSE mount with <code>AuthMiddleware(accept={"service"})</code> — only valid service tokens can establish SSE connections.</p>
 <h3>Parsing Tool Results</h3>
 <p>Use the <code>parse_mcp_result()</code> utility for consistent response handling:</p>
-<pre class="codehilite"><code class="language-python">from src.shared.mcp_client import parse_mcp_result
+<div class="codehilite"><pre><span></span><code><span class="kn">from</span> <span class="nn">src.shared.mcp_client</span> <span class="kn">import</span> <span class="n">parse_mcp_result</span>
 
-result = await mcp.call_tool_by_name(&quot;get_company_filings&quot;, {&quot;ticker&quot;: &quot;NVDA&quot;})
-data = parse_mcp_result(result)  # Returns dict, list, str, or {&quot;error&quot;: &quot;...&quot;}
-</code></pre>
+<span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">mcp</span><span class="o">.</span><span class="n">call_tool_by_name</span><span class="p">(</span><span class="s2">&quot;get_company_filings&quot;</span><span class="p">,</span> <span class="p">{</span><span class="s2">&quot;ticker&quot;</span><span class="p">:</span> <span class="s2">&quot;NVDA&quot;</span><span class="p">})</span>
+<span class="n">data</span> <span class="o">=</span> <span class="n">parse_mcp_result</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>  <span class="c1"># Returns dict, list, str, or {&quot;error&quot;: &quot;...&quot;}</span>
+</code></pre></div>
 
 <p>Handles various MCP response formats including <code>.content</code> attributes with text parts, direct dicts, and JSON strings.</p>
 
