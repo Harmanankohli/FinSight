@@ -247,7 +247,7 @@ Key environment variables in `.env`:
 
 | Document | Description |
 |---|---|
-| `docs/ARCHITECTURE.md` | System architecture, communication patterns, caching layer, guardrails, agent internals |
+| `docs/ARCHITECTURE.md` | System architecture, communication patterns, caching layer, guardrails, agent internals, data model (ER diagram + DDL + lifecycle) |
 | `docs/AGENTS.md` | Detailed agent reference (skills, architecture, streaming flow) |
 | `docs/API_REFERENCE.md` | Complete endpoint reference — REST routes, A2A protocol, AG-UI, health checks |
 | `docs/MCP_SERVERS.md` | MCP server tools, TTL caching, registry, client usage |
@@ -255,6 +255,7 @@ Key environment variables in `.env`:
 | `docs/CHANGELOG.md` | Version history |
 | `docs/TESTS.md` | Test coverage, patterns, RAGAS evaluation, running instructions |
 | `docs/SECURITY.md` | Auth model, Python sandbox, trusted proxies, hardening history |
+| `docs/diagrams/` | Interactive architecture diagrams (C4, UML sequence, DFD, ER) with zoom/pan/hover |
 | `src/web/nextjs-app/README.md` | Frontend architecture — pages, components, design system, data flow |
 
 ## Testing

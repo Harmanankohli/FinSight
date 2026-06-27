@@ -388,24 +388,25 @@ After each analysis, fires `asyncio.create_task(score_market_context_response(..
 
 | Property | Value |
 |---|---|
-| Framework | PydanticAI |
+| Framework | PydanticAI + `pydantic-graph` (DAG pipeline, not LangGraph) |
 | Executor | `GenericAgentExecutor(AnalyticsAgent)` in `src/analytics/executor.py` |
-| LLM | LM Studio via `langfuse.openai.AsyncOpenAI` (API key from `LLM_API_KEY` env var) |
-| Data Source | MCP (finsight-mcp `get_prices` via `get_shared_mcp()`) |
+| LLM | LM Studio via `pydantic_ai` + `OpenAIModel` with `OpenAIProvider` (summary node only) |
+| Data Source | MCP (finsight-mcp `get_prices`, `get_financials` via `get_shared_mcp()`) |
 | Port | 8005 |
 | Agent Card | Built programmatically in `src/analytics/server.py` |
 | A2A Endpoint | `POST /a2a` |
 | Health | `GET /health` → `{"status":"ok","agent":"analytics"}` |
+| Instrumentation | `Agent.instrument_all()` for full OpenTelemetry `gen_ai.*` span coverage |
 
 ### Skills
 
 | ID | Name | Description |
 |---|---|---|
-| `trend_analysis` | Trend Analysis | Identify price trends, moving average crossovers, and directional momentum |
-| `forecast_analysis` | Forecast Analysis | Generate price forecasts with confidence intervals using statistical models |
-| `anomaly_detection` | Anomaly Detection | Detect unusual price movements, volume spikes, and regime changes |
-| `statistical_metrics` | Statistical Metrics | Compute Sharpe ratio, Sortino ratio, Calmar ratio, alpha, information ratio, and CAGR |
-| `chart_data` | Chart Data | Generate structured chart data for trend overlays and forecast visualizations |
+| `trend_analysis` | Trend Analysis | SMA20/50/200 crossovers, MACD, momentum (ROC), RSI — composite scoring → bull/neutral/bear |
+| `forecast_analysis` | Forecast Analysis | Holt-Winters exponential smoothing (30-day horizon) with linearly-widening confidence bands |
+| `anomaly_detection` | Anomaly Detection | Z-score price spikes (>2.5σ), volume spikes (>3.0σ), fundamental outliers (PE <5 or >100, D/E >5) |
+| `statistical_metrics` | Statistical Metrics | Skewness, kurtosis, Jarque-Bera normality test, distribution class, SPY correlation (beta, R²) |
+| `chart_data` | Chart Data | Structured ChartPayload list for frontend rendering (trend overlays, forecast distributions) |
 
 ### Architecture
 
@@ -418,23 +419,53 @@ Request → DefaultRequestHandler → GenericAgentExecutor(AnalyticsAgent)
 AnalyticsAgent._build_response(query):
     → extract_trace_ids(query)
     → with langfuse.start_as_current_observation(name="analytics-agent-stream")
-      → extract_ticker(query)
+      → resolve_and_validate_ticker(query) → ticker, company
       → AnalyticsAgent.analyze(ticker, period="1y")
         +-- mcp = await get_shared_mcp()
-        +-- AnalyticsPipeline.run(ticker, period)
-             +-- data_fetch_node: MCP get_prices → OHLCV
-             +-- trend_node: SMA crossover, direction, strength
-             +-- statistics_node: Sharpe, Sortino, Calmar, alpha, CAGR, VaR
-             +-- forecast_node: statistical forecast with confidence intervals
-             +-- anomaly_node: z-score anomaly detection, regime changes
-             +-- charts_node: structured chart data for visualizations
-             +-- summary_node: CRITICAL priority queue — LLM synthesis
-        → validated = AnalyticsAgentOutput.model_validate(result)
-      → if EVAL_ENABLED: defer_eval(score_analytics_response, ...) (deferred via shared/eval_gate.py)
+        +-- AnalyticsPipeline.run(ticker, period, mcp_client)
+             [PydanticAI Graph — 4 nodes sequential]
+             1. FetchDataNode (parallel):
+                  ├── _fetch_prices(mcp, ticker, "1y") → close_data, ohlcv_data
+                  └── _fetch_fundamentals(mcp, ticker) → fundamentals_data
+             2. AnalyzeNode (5 parallel analyses):
+                  ├── _detect_trends(price_data) → TrendAnalysis
+                  │     SMA20/50/200, MACD, momentum(ROC), RSI
+                  │     composite scoring (max ~10) → bull/neutral/bear
+                  ├── _run_forecast(price_data) → ForecastResult
+                  │     Holt-Winters (α=0.3, β=0.1, γ=0.1, period=5)
+                  │     30-day forecast + confidence bands
+                  ├── _compute_statistics(price_data, mcp_client) → StatisticalSummary
+                  │     scipy: skewness, kurtosis, Jarque-Bera
+                  │     distribution: lepto/platykurtic/normal
+                  │     SPY correlation via MCP get_prices("SPY") → beta, R² (non-fatal)
+                  ├── _detect_anomalies(price_data, ohlcv_data, fundamentals_data) → AnomalyReport
+                  │     price spikes (|z| > 2.5 log-returns)
+                  │     volume spikes (|z| > 3.0)
+                  │     fundamental outliers (PE <5 or >100, D/E >5)
+                  │     severity: none/low/medium/high
+                  │     [if severity ≥ medium] web_search catalyst context
+                  └── _generate_charts(ohlcv_data, price_data) → list[ChartPayload]
+             3. FormatOutputNode:
+                  aggregates 5 signal dimensions (-1, 0, +1 each):
+                  trend direction, forecast change >5%, anomaly severity, leptokurtic dist
+                  avg_signal > 0.3 → bullish; < -0.3 → bearish; else neutral
+                  confidence = |avg_signal| clamped to [0, 1]
+             4. LLMSummaryNode (terminal):
+                  PydanticAI Agent + OpenAIModel (LLM_SUMMARY_MODEL)
+                  generates 3-4 sentence prose summary
+                  CRITICAL priority queue (never starved)
+                  output: AnalyticsAgentOutput schema
+        → AnalyticsAgentOutput.model_validate(result) → validated output
+      → score_analytics_deterministic(result) → schema_validation
+      → if EVAL_ENABLED: defer_eval(score_analytics_response, ...)
       → return {response_type: "data", content: result, ...}
 ```
 
-**Note**: The analytics agent uses a PydanticAI pipeline with `Agent.instrument_all()` for full OpenTelemetry `gen_ai.*` span coverage. All metric computations use shared `MetricValue` from `src/shared/metrics.py`.
+**AnalyticsState** (`src/analytics/state.py`): Mutable dataclass carried through the pipeline. Fields: `ticker`, `period`, `price_data` (dict[date, close]), `ohlcv_data`, `fundamentals_data`, `trend_analysis`, `forecast_result`, `chart_payloads`, `statistical_summary`, `anomaly_report`, `analytics_signal` (bullish/bearish/neutral), `analytics_confidence` (float [0,1]), `reasoning` (LLM prose).
+
+**Anomaly Catalyst Search**: When anomalies reach medium/high severity, the agent performs a DuckDuckGo web search (`web_search` MCP tool) for "{ticker} stock price spike catalyst news" and filters boilerplate/sign-in pages to provide context for the LLM summary.
+
+**Output Schema** (`AnalyticsAgentOutput`): `ticker`, `trend_analysis` (TrendAnalysis), `forecast` (ForecastResult), `charts` (list[ChartPayload]), `statistical_summary` (StatisticalSummary), `anomalies` (AnomalyReport), `analytics_signal`, `analytics_confidence`, `reasoning`.
 
 #### Runtime Evaluation
 
@@ -442,7 +473,7 @@ After each analysis, fires `defer_eval(score_analytics_response, ...)` with dete
 
 | Metric | Why |
 |---|---|
-| `score_analytics_deterministic()` | Zero-LLM schema validation — checks all required fields present, metric ranges valid, forecast intervals consistent. |
+| `score_analytics_deterministic()` | Zero-LLM schema validation — checks all required fields present, metric ranges valid, forecast intervals consistent, chart payloads well-formed. |
 | Runtime RAGAS metrics | Deferred LLM-based quality scoring for trend, forecast, and anomaly descriptions. |
 
 ---
@@ -453,25 +484,30 @@ After each analysis, fires `defer_eval(score_analytics_response, ...)` with dete
 |---|---|
 | Framework | OpenAI Agents SDK |
 | Executor | `GenericAgentExecutor(ReviewerAgent)` in `src/reviewer/executor.py` |
-| LLM | LM Studio via `langfuse.openai.AsyncOpenAI` (API key from `LLM_API_KEY` env var, `LLM_SUMMARY_MODEL`) |
-| Data Source | Shared agent output store (`get_agent_outputs(session_id)`) |
+| LLM | LM Studio via `langfuse.openai.AsyncOpenAI` (auto-instrumented generations) |
+| Data Source | Inline agent_outputs from orchestrator (preferred) OR shared `agent_output_store` SQLite table fallback |
 | Port | 8006 |
 | Agent Card | Built programmatically in `src/reviewer/server.py` |
 | A2A Endpoint | `POST /a2a` |
 | Health | `GET /health` → `{"status":"ok","agent":"reviewer"}` |
+| Instrumentation | `langfuse.openai.AsyncOpenAI` — automatic span creation for every LLM call |
 
 ### Skills
 
 | ID | Name | Description |
 |---|---|---|
-| `cross_validation` | Cross-Validation | Cross-validate outputs from all sub-agents for consistency and contradictions |
-| `confidence_scoring` | Confidence Scoring | Compute calibrated meta-confidence across all agent outputs |
-| `recommendation_validation` | Recommendation Validation | Validate the final BUY/HOLD/SELL recommendation against supporting evidence |
-| `structured_review` | Structured Review | Produce a structured review report with verdict, flags, and confidence breakdown |
+| `cross_validation` | Cross-Validation | Detect contradictions across quant, RAG, market context, and analytics outputs (14 checks) |
+| `confidence_scoring` | Confidence Scoring | Per-agent confidence derivation + meta-confidence weighted aggregate (35% agent avg + 25% agreement + 25% consistency + 15% verification) |
+| `recommendation_validation` | Recommendation Validation | Evaluate BUY/HOLD/SELL against DCF, technicals, macro, fundamentals, Monte Carlo, RAG sentiment |
+| `source_verification` | Source Verification | Check DCF math consistency, RAG source presence, market signal enum validity, forecast date integrity |
+| `metric_integrity` | Metric Integrity | Pre-reviewer gate: mathematical invariants (DCF upside %, Sharpe/VaR ranges, PE/ROE plausibility) |
+| `structured_review` | Structured Review | Produce review report with verdict, confidence breakdown, contradiction flags, and integrity alerts |
 
 ### Architecture
 
 ```
+[Called by orchestrator AFTER all Phase-1 agents complete — Phase 2]
+
 Request → DefaultRequestHandler → GenericAgentExecutor(ReviewerAgent)
   → ReviewerAgent.stream(query, context_id, task_id)
     → yield await self._build_response(query, context_id)
@@ -480,27 +516,74 @@ Request → DefaultRequestHandler → GenericAgentExecutor(ReviewerAgent)
 ReviewerAgent._build_response(query, context_id):
     → extract_trace_ids(query)
     → with langfuse.start_as_current_observation(name="reviewer-agent-stream")
-      → extract_ticker(query)
-      → agent_outputs = get_agent_outputs(session_id)  # from shared store
-      → Deterministic tool chain (all in Python, no LLM):
-          +-- validate_metric_integrity(agent_outputs)  # mathematical invariants
-          +-- check_contradictions(agent_outputs)        # cross-agent contradiction detection
-          +-- score_confidence(agent_outputs)            # calibrated meta-confidence
-          +-- validate_recommendation(agent_outputs)     # BUY/HOLD/SELL evidence check
-          +-- validate_dcf(agent_outputs.get("quant"))   # DCF input validation
-          +-- check_consistency(agent_outputs)           # signal consistency checks
-          +-- verify_sources(agent_outputs)              # source verification
-      → LLM synthesis (CRITICAL priority queue — OpenAI Agents SDK):
-          +-- reviewer_agent with agent_summaries + tool results
-          +-- Outputs ReviewerAgentOutput (Pydantic model): review_summary, verdict,
-              contradictions, confidence_breakdown, recommendation_validation, flags
-      → if EVAL_ENABLED: defer_eval(score_reviewer_response, ...) (deferred via shared/eval_gate.py)
+      → Parse JSON payload: {ticker, session_id, agent_outputs}
+          ├── Inline agent_outputs (preferred — injected by orchestrator send_message callback)
+          └── Fallback: get_agent_outputs(session_id) from shared SQLite store
+      → [guardrail] payload_structure_guardrail (InputGuardrail):
+          → tripwire if: invalid JSON, missing ticker, missing session_id+agent_outputs
+      → Pre-reviewer integrity gate:
+          → validate_metric_integrity(agent_outputs) → alerts (critical/warning/info)
+              checks: DCF upside % consistency, Sharpe/VaR range, PE/ROE plausibility
+      → 6 deterministic tools (pure Python — no LLM round-trips):
+          ├── check_contradictions(agent_outputs) → list[ContradictionFlag]
+          │     14 cross-agent signal conflict checks:
+          │     - quant BUY vs bearish analytics trend (HIGH)
+          │     - quant BUY vs negative RAG sentiment (MEDIUM)
+          │     - market bearish vs quant bullish signal (MEDIUM)
+          │     - DCF vs Monte Carlo divergence >40% (MEDIUM)
+          │     - quant BUY but RSI >75 overbought (MEDIUM)
+          │     - quant BUY but MC prob_profit <50% (MEDIUM)
+          │     - anomaly severity vs high confidence (LOW)
+          │     - DCF vs market signal, RSI vs recommendation, analytics vs market...
+          │     deduplicated by (field, description) pair
+          ├── verify_sources(agent_outputs) → list[SourceVerification]
+          │     - DCF upside % recalculated vs reported (1% tolerance)
+          │     - RAG summary present but no sources listed
+          │     - market signal enum validation (bullish/bearish/neutral)
+          │     - analytics forecast dates not in past, chart datasets non-empty
+          ├── score_confidence(agent_outputs) → ConfidenceBreakdown
+          │     Per-agent derivation:
+          │     - quant: 30% freshness + 25% signal agreement + 25% source quality + 20% base
+          │     - rag: 0.3 base + 0.2 length + 0.3 sources (max 1.0)
+          │     - market: 0.3 base + 0.2 narrative + 0.1 signal + 0.1 each tail/headwinds + 0.1 macro
+          │     - analytics: 0.3 base + 0.2 trend + 0.2 forecast + 0.1 stats + 0.1 charts
+          │     agreement_score: max(bullish,bearish,neutral) / total
+          │     data_quality: 35% completeness + 35% consistency + 20% freshness + 10% verification
+          │     meta_confidence: 35% avg_agent + 25% agreement + 25% consistency + 15% verification
+          ├── validate_recommendation(agent_outputs) → RecommendationValidation
+          │     evaluates quant recommendation against DCF, technicals, macro, fundamentals, MC, RAG
+          │     returns: supporting_evidence[], contradicting_evidence[], evidence_supports, evidence_strength
+          ├── check_consistency(agent_outputs) → ConsistencyResult
+          │     RSI extreme warnings (<30 or >70), DCF vs MC divergence
+          │     returns: consistency_score (0-1), warnings[], contradiction_summary
+          └── validate_dcf(quant) → DCFValidation
+                intrinsic/market ratio: <0.30 (undervalued warning), >3.0 (overvalued warning)
+                negative WACC check, zero growth sanity, upside % sign consistency
+
+      → Build synthesis prompt (JSON):
+          {ticker, agent_summaries (condensed per-agent),
+           contradictions, verifications, confidence (as percentages),
+           validation, consistency, dcf_validation, integrity_alerts}
+
+      → LLM synthesis (CRITICAL priority queue — OpenAI Agents SDK Runner.run):
+          → reviewer_agent (instructions: cross-validation reviewer)
+          → output_type: ReviewerAgentOutput (structured Pydantic model)
+          → generates: review_summary, contradictions, source_verifications,
+            confidence_breakdown, recommendation_validation, verdict, review_confidence, flags
+
+      → Attach _tool_results for extraction pipeline
+      → score_reviewer_deterministic(output) → schema_validation
+      → if EVAL_ENABLED: defer_eval(score_reviewer_response, ...)
       → return {response_type: "data", content: result, ...}
 ```
 
-**Note**: The reviewer uses `langfuse.openai.AsyncOpenAI` for automatic LLM generation instrumentation. It reads agent outputs from the shared `agent_output_store` SQLite table — no direct A2A calls to sub-agents. The deterministic tool chain runs first, then the LLM receives tool results + agent summaries as structured input.
+**Design Principles**:
+- **Deterministic tools first, LLM once**: All 6 validation tools run in pure Python. The LLM receives pre-computed results — exactly 1 LLM call per query.
+- **Guardrail on input**: `InputGuardrail` trips on invalid JSON, missing ticker, or missing agent outputs.
+- **Pre-reviewer integrity gate**: `validate_metric_integrity()` flags critical mathematical impossibilities before the LLM runs.
+- **Meta-confidence scoring**: Distinguishes individual agent confidence from overall meta-confidence. LLM is explicitly instructed never to conflate them.
 
-**Guardrails**: The reviewer has input/output guardrails defined in `src/reviewer/guardrails.py`. Input guardrails check for valid agent outputs; output guardrails validate the review structure and confidence bounds.
+**Output Schema** (`ReviewerAgentOutput`): `review_summary` (3-5 sentences citing specific numbers), `contradictions` (list[ContradictionFlag]), `source_verifications` (list[SourceVerification]), `confidence_breakdown` (ConfidenceBreakdown), `recommendation_validation` (RecommendationValidation), `verdict` (BUY/HOLD/SELL), `review_confidence` (float [0,1]), `flags` (list[str] for data quality concerns).
 
 #### Runtime Evaluation
 
@@ -528,7 +611,7 @@ All five agents share a common infrastructure layer:
 | **`SEC_USER_AGENT` env var** | Replaces hardcoded SEC user agent string in MCP server filing requests. |
 | **LLM Priority Queue** | `LLMPriorityQueue` in `src/shared/llm_queue.py` (process-local, heap-based async semaphore). Three tiers: `CRITICAL` (quant summary, crew kickoff), `NORMAL` (warmup ping), `LOW` (RAGAS eval). Default `LLM_MAX_CONCURRENT=2`. Prevents eval starvation of production inference. |
 | **Deferred Eval Gate** | `src/shared/eval_gate.py` — holds sub-agent eval LLM calls until the orchestrator releases them via `POST /release-evals` after synthesis completes. Prevents 5 sub-agent eval processes from competing with orchestrator synthesis on a single LM Studio instance. Includes 120s safety-net auto-release. |
-| **Pydantic Agent Output Models** | `src/shared/agent_models.py` (v2.5) — typed models (`QuantAgentOutput`, `MarketContextOutput`, `RAGAgentOutput`) at every agent boundary, replacing ~220 lines of fragile regex/`.get()` chains. Fixes zeroed KPI chips, raw JSON narrative from CrewAI, and DCF key mismatch. Falls back to legacy dict extraction for old briefs. |
+| **Pydantic Agent Output Models** | `src/shared/agent_models.py` (v2.5) — typed models (`QuantAgentOutput`, `MarketContextOutput`, `RAGAgentOutput`, `AnalyticsAgentOutput`, `ReviewerAgentOutput`) at every agent boundary, replacing ~220 lines of fragile regex/`.get()` chains. Fixes zeroed KPI chips, raw JSON narrative from CrewAI, and DCF key mismatch. Falls back to legacy dict extraction for old briefs. |
 | **`SERVICE_AUTH_TOKEN`** | `SubAgentClient` accepts `bearer_token` from `settings.service_auth_token`. When `AUTH_ENABLED=true`, orchestrator-to-sub-agent A2A requests carry the service bearer token. |
 | **Shared Agent Output Store** | `src/shared/memory/agent_output_store.py` (v2.7) — SQLite table `agent_output_store` keyed by `(session_id, agent_name)`. Full agent outputs persisted by orchestrator `send_message` callback, fetched by reviewer executor via `get_agent_outputs()`. TTL-pruned at startup. |
 | **Shared Metrics (MetricValue)** | `src/shared/metrics.py` (v2.9) — `MetricValue` float subclass with validation metadata (status, warning, methodology, to_dict). Used by Quant and Analytics agents for all metric computations. Re-exports from `shared.__init__`. |

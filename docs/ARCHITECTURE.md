@@ -255,6 +255,152 @@ A2A Request ? DefaultRequestHandler ? GenericAgentExecutor(MarketContextAgent)
 
 **Note**: The old Sentiment agent fetched `get_news_sentiment` and `get_company_filings`. Both were redundant with the RAG agent after Phase 1 and are no longer called. Market Context exclusively owns macro regime analysis and peer landscape positioning.
 
+### Analytics Agent (PydanticAI)
+
+```
+A2A Request → DefaultRequestHandler → GenericAgentExecutor(AnalyticsAgent)
+  → AnalyticsAgent.stream()
+    → resolve_and_validate_ticker(query) → ticker, company
+    → AnalyticsAgent.analyze(ticker, period="1y")
+      → AnalyticsPipeline.run(ticker, period, mcp_client)
+        [PydanticAI DAG — 4 nodes in sequence]
+
+        1. FetchDataNode (parallel):
+             ├── _fetch_prices(mcp, ticker, "1y") → close_data, ohlcv_data
+             └── _fetch_fundamentals(mcp, ticker) → fundamentals_data
+
+        2. AnalyzeNode (5 parallel analyses):
+             ├── _detect_trends(price_data)
+             │     → SMA20/50/200, MACD, momentum (ROC), RSI
+             │     → composite scoring → bull/neutral/bear trend
+             ├── _run_forecast(price_data)
+             │     → Holt-Winters exponential smoothing (30-day horizon)
+             │     → confidence bands (linearly widening)
+             ├── _compute_statistics(price_data, mcp_client)
+             │     → skewness, kurtosis, Jarque-Bera normality test
+             │     → distribution class (lepto/platykurtic/normal)
+             │     → SPY correlation (beta, R²) via MCP get_prices("SPY")
+             ├── _detect_anomalies(price_data, ohlcv_data, fundamentals_data)
+             │     → price spikes (|z| > 2.5 on log-returns)
+             │     → volume spikes (|z| > 3.0)
+             │     → fundamental outliers (PE <5 or >100, D/E >5)
+             │     → severity: none/low/medium/high
+             │     → [if severity ≥ medium] web_search catalyst context
+             └── _generate_charts(ohlcv_data, price_data)
+                   → ChartPayload list for frontend rendering
+
+        3. FormatOutputNode:
+             → aggregates 5 signal dimensions (-1, 0, +1 each):
+               trend direction, forecast change >5%, anomaly severity,
+               leptokurtic distribution
+             → avg_signal > 0.3 → bullish; < -0.3 → bearish; else neutral
+             → confidence = |avg_signal| clamped to [0, 1]
+
+        4. LLMSummaryNode (terminal):
+             → PydanticAI Agent + OpenAI-compatible LLM
+             → generates 3-4 sentence prose summary
+             → priority: CRITICAL (never starved by eval)
+             → output: AnalyticsAgentOutput schema
+
+    → score_analytics_deterministic(result) → schema_validation
+    → [if EVAL_ENABLED] defer_eval(score_analytics_response)
+    → Yields data response
+```
+
+**Analytics Agent — PydanticAI DAG Pipeline**: The agent uses `pydantic-graph` (not LangGraph) for a 4-node sequential pipeline. Each node is a `BaseNode[AnalyticsState, AnalyticsDeps]` that mutates a shared `AnalyticsState` dataclass and transitions to the next node via its return type annotation. The `AnalyticsDeps` dataclass carries `ticker`, `period`, and `mcp_client` through the graph.
+
+**Statistical Analysis**: Uses scipy for normality testing (Jarque-Bera), numpy for moving averages and MACD. SPY correlation is fetched via MCP — failure is non-fatal (returns empty correlations). All `MetricValue` results carry `.status`, `.warning`, `.methodology` metadata.
+
+**Anomaly Catalyst Search**: When anomalies reach medium/high severity, the agent performs a DuckDuckGo web search for "{ticker} stock price spike catalyst news" and filters boilerplate results to provide context for the LLM summary.
+
+**Output Schema** (`AnalyticsAgentOutput`): `ticker`, `trend_analysis` (TrendAnalysis), `forecast` (ForecastResult), `charts` (list[ChartPayload]), `statistical_summary` (StatisticalSummary), `anomalies` (AnomalyReport), `analytics_signal` (bullish/bearish/neutral), `analytics_confidence` (float [0,1]), `reasoning` (LLM prose).
+
+### Reviewer Agent (OpenAI Agents SDK)
+
+```
+[Called by orchestrator AFTER all Phase-1 agents complete]
+
+Orchestrator builds SendMessageInput("reviewer", ticker, session_id)
+  → sends condensed per-agent summaries + metrics to Reviewer
+
+A2A Request → DefaultRequestHandler → GenericAgentExecutor(ReviewerAgent)
+  → ReviewerAgent.stream()
+    → extract_trace_context(query) → clean_query
+    → Parse JSON payload: {ticker, session_id, agent_outputs}
+         ├── Inline agent_outputs (preferred — injected by orchestrator)
+         └── Fallback: get_agent_outputs(session_id) from SQLite store
+    → [guardrail] payload_structure_guardrail:
+         → tripwire if: invalid JSON, missing ticker, missing session_id+agent_outputs
+
+    → Pre-reviewer integrity gate:
+         → validate_metric_integrity(agent_outputs)
+           → checks: DCF upside % consistency, Sharpe/VaR range, PE/ROE plausibility
+           → returns alerts: critical / warning / info severity
+
+    → 6 deterministic tools (no LLM round-trips — pure Python):
+         ├── check_contradictions(agent_outputs) → list[ContradictionFlag]
+         │     → cross-agent signal conflicts:
+         │       quant BUY vs bearish analytics trend (HIGH)
+         │       quant BUY vs negative RAG sentiment (MEDIUM)
+         │       market bearish vs quant bullish signal (MEDIUM)
+         │       DCF vs Monte Carlo divergence >40% (MEDIUM)
+         │       quant BUY but RSI >75 overbought (MEDIUM)
+         │       quant BUY but Monte Carlo prob_profit <50% (MEDIUM)
+         │       anomaly severity vs high confidence (LOW)
+         │     → deduplicated by (field, description) pair
+         ├── verify_sources(agent_outputs) → list[SourceVerification]
+         │     → DCF upside % recalculated vs reported (tolerance 1%)
+         │     → RAG summary present but no sources listed
+         │     → market signal enum validation (bullish/bearish/neutral)
+         │     → analytics forecast dates not in past, chart datasets non-empty
+         ├── score_confidence(agent_outputs) → ConfidenceBreakdown
+         │     → per-agent confidence derivation:
+         │       quant: 30% data freshness + 25% signal agreement + 25% source quality + 20% base
+         │       rag: 0.3 base + 0.2 length + 0.3 sources (max 1.0)
+         │       market: 0.3 base + 0.2 narrative + 0.1 signal + 0.1 tailwinds + 0.1 headwinds + 0.1 macro
+         │       analytics: 0.3 base + 0.2 trend + 0.2 forecast + 0.1 stats + 0.1 charts
+         │     → agreement_score: max(bullish,bearish,neutral) / total directional signals
+         │     → data_quality: 35% completeness + 35% consistency + 20% freshness + 10% verification
+         │     → meta_confidence: 35% avg_agent + 25% agreement + 25% consistency + 15% verification
+         ├── validate_recommendation(agent_outputs) → RecommendationValidation
+         │     → evaluates quant recommendation against DCF, technicals, macro, fundamentals, MC, RAG
+         │     → returns: supporting_evidence[], contradicting_evidence[], evidence_supports, evidence_strength
+         ├── check_consistency(agent_outputs) → ConsistencyResult
+         │     → RSI extreme warnings (<30 or >70)
+         │     → DCF vs Monte Carlo divergence check
+         │     → returns: consistency_score (0-1), warnings[], contradiction_summary
+         └── validate_dcf(quant) → DCFValidation
+               → intrinsic/market ratio sanity: <0.30 (warning: undervalued), >3.0 (warning: overvalued)
+               → negative WACC check, zero growth sanity, upside % sign consistency
+
+    → Build synthesis prompt (JSON):
+         {ticker, agent_summaries (condensed per-agent),
+          contradictions, verifications, confidence (as percentages),
+          validation, consistency, dcf_validation, integrity_alerts}
+
+    → Runner.run(reviewer_agent, input=synthesis_prompt)
+         → OpenAI Agents SDK agent with Langfuse-instrumented LLM
+         → priority: CRITICAL
+         → output_type: ReviewerAgentOutput (structured)
+         → generates: review_summary, contradictions, source_verifications,
+           confidence_breakdown, recommendation_validation, verdict, review_confidence, flags
+
+    → Attach _tool_results for extraction pipeline
+    → score_reviewer_deterministic(output) → schema_validation
+    → [if EVAL_ENABLED] defer_eval(score_reviewer_response)
+    → Yields data response
+```
+
+**Reviewer Agent — Design Principles**:
+
+- **Deterministic tools first, LLM once**: All 6 validation tools run in pure Python (no LLM calls). The LLM receives pre-computed results and synthesizes them into a structured report. This keeps the reviewer to exactly 1 LLM call per query.
+- **Guardrail on input**: An `InputGuardrail` trips on invalid JSON, missing ticker, or missing agent outputs — prevents the LLM from hallucinating review data on bad input.
+- **Pre-reviewer integrity gate**: `validate_metric_integrity()` runs before the LLM and flags critical mathematical impossibilities (e.g., DCF upside that doesn't match intrinsic/current ratio). Critical alerts are attached to the output for downstream visibility.
+- **Meta-confidence scoring**: The confidence breakdown distinguishes individual agent confidence from the overall meta-confidence (weighted aggregate). The LLM is explicitly instructed never to conflate them.
+- **Structured output**: `ReviewerAgentOutput` enforces `verdict` (BUY/HOLD/SELL), `review_confidence` (meta_confidence), `contradictions`, `source_verifications`, `confidence_breakdown`, `recommendation_validation`, and `flags`.
+
+**Output Schema** (`ReviewerAgentOutput`): `review_summary` (3-5 sentences citing specific numbers), `contradictions` (list[ContradictionFlag]), `source_verifications` (list[SourceVerification]), `confidence_breakdown` (ConfidenceBreakdown with agent_scores, agreement_score, data_quality_score, meta_confidence), `recommendation_validation` (RecommendationValidation), `verdict` (BUY/HOLD/SELL), `review_confidence` (float [0,1]), `flags` (list[str] for data quality concerns).
+
 ## Caching Layer
 
 Four independent caching tiers reduce latency and external API load:
@@ -751,20 +897,239 @@ Key events emit structured log lines (visible in service log files):
 - **Memory**: brief store/update in `ticker_memory.py`; portfolio upsert in `portfolio_store.py`; recommendation record in `performance_tracker.py`
 - **Reports**: format + byte count for each generated report in `api_routes.py`
 
-### SQLite Schema
+### Entity-Relationship Diagram
 
-```sql
-sessions (id, user_id, created_at, updated_at)
-events (id, session_id, event_type, data, created_at)
-ticker_briefs (id, ticker, recommendation, confidence, response_text, created_at, analysis_date)
-user_profiles (id, user_id, holdings_json, risk_profile, investment_horizon, updated_at)
-recommendation_records (id, ticker, recommendation, confidence, price_at_rec, created_at,
-                        evaluated_at, realized_return)
-memory_entries (id, session_id, content_hash, content, search_text, created_at)
-ingested_filings (edgar_url PRIMARY KEY, ticker, ingested_at)  -- v1.18
+FinSight uses two separate SQLite databases (since v2.6 — `db/finsight_memory.db` for business data, `db/adk_sessions.db` for conversation state). All tables live in the `db/` folder at the project root.
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        finsight_memory.db                                │
+│                                                                         │
+│  ┌──────────────┐       ┌──────────────────┐       ┌────────────────┐  │
+│  │ sessions      │──1:N──│ events            │       │ memory_entries │  │
+│  │              │       │                   │       │                │  │
+│  │ id (PK)      │       │ id (PK)           │──N:1─│ id (PK)        │  │
+│  │ user_id      │       │ session_id (FK)   │       │ session_id (FK)│  │
+│  │ created_at   │       │ event_type        │       │ content_hash   │  │
+│  │ updated_at   │       │ data (JSON)       │       │ content        │  │
+│  └──────────────┘       │ created_at        │       │ search_text    │  │
+│                         └──────────────────┘       │ created_at     │  │
+│                                                    └────────────────┘  │
+│  ┌──────────────┐       ┌──────────────────┐                          │
+│  │ ticker_briefs │       │ recommendation_  │                          │
+│  │              │       │ records           │                          │
+│  │ id (PK)      │       │ id (PK)           │                          │
+│  │ ticker       │       │ ticker            │                          │
+│  │ recommendation│       │ recommendation    │                          │
+│  │ confidence   │       │ confidence        │                          │
+│  │ response_text│       │ price_at_rec      │                          │
+│  │ analysis_date│       │ created_at        │                          │
+│  │ created_at   │       │ evaluated_at      │                          │
+│  └──────────────┘       │ realized_return   │                          │
+│                         └──────────────────┘                          │
+│  ┌──────────────┐       ┌──────────────────┐       ┌────────────────┐  │
+│  │ user_profiles │       │ ingested_filings  │       │ agent_output_  │  │
+│  │              │       │                   │       │ store          │  │
+│  │ id (PK)      │       │ edgar_url (PK)    │       │                │  │
+│  │ user_id      │       │ ticker            │       │ session_id     │  │
+│  │ holdings_json│       │ ingested_at       │       │ agent_name     │  │
+│  │ risk_profile │       └──────────────────┘       │ output_json    │  │
+│  │ investment_  │                                  │ created_at     │  │
+│  │ horizon      │                                  └────────────────┘  │
+│  │ updated_at   │                                                     │
+│  └──────────────┘                                                     │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                          adk_sessions.db                                │
+│                                                                         │
+│  ┌──────────────┐       ┌──────────────────┐                          │
+│  │ sessions      │──1:N──│ events            │                          │
+│  │              │       │                   │                          │
+│  │ id (PK)      │       │ id (PK)           │                          │
+│  │ user_id      │       │ session_id (FK)   │                          │
+│  │ app_name     │       │ author            │                          │
+│  │ created_at   │       │ timestamp         │                          │
+│  └──────────────┘       │ content (JSON)    │                          │
+│                         └──────────────────┘                          │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
-`ingested_filings` tracks which SEC EDGAR document URLs have been indexed into ChromaDB. The RAG agent checks this table before fetching filing content — already-indexed URLs are skipped, preventing redundant ingest on restart.
+### Table Relationships
+
+**Core conversation flow** (`adk_sessions.db`):
+- `sessions` → `events`: One session has many events. Each event is a single turn (user message, agent response, tool call). The `data` JSON column stores the full event payload including LLM content parts and tool call/response metadata.
+
+**Memory and persistence** (`finsight_memory.db`):
+- `sessions` → `events`: Mirrors the ADK schema but used by the memory layer for cross-session search via `memory_entries`.
+- `sessions` → `memory_entries`: One session has many memory entries. `content_hash` enables deduplication. `search_text` is the FTS5-indexed column queried by `load_memory`.
+- `ticker_briefs`: Independent table keyed by ticker + analysis_date. Each row is a complete BUY/HOLD/SELL analysis. Linked to the orchestrator's `save_brief` flow — not directly to sessions.
+- `recommendation_records`: Tracks the same recommendation with a `price_at_rec` snapshot. Updated asynchronously by `PerformanceTracker` when evaluation completes, populating `evaluated_at` and `realized_return`.
+- `user_profiles`: One row per `user_id`. Stores portfolio holdings as JSON (`holdings_json`), risk tolerance, and investment horizon. Updated by `PortfolioStore.update_holdings()`.
+- `ingested_filings`: Deduplication table for RAG ingestion. `edgar_url` is the primary key (SEC URLs are immutable and canonical).
+- `agent_output_store`: Cross-process data bridge. Keyed by `(session_id, agent_name)`. The orchestrator writes sub-agent outputs here via `store_agent_output()`; the reviewer reads them via `get_agent_outputs()`.
+
+### Data Lifecycle
+
+```
+User Query (e.g. "Should I invest in NVDA?")
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────┐
+│ 1. INGESTION & ROUTING (Orchestrator)                        │
+│    • Extract ticker via regex + MCP validate_ticker          │
+│    • Check same-day cache (ticker_briefs.analysis_date)      │
+│    • Check semantic cache (ChromaDB cosine similarity)        │
+│    • Inject memory context (ticker_briefs + user_profiles)   │
+│    • LLM routes to sub-agents via send_message               │
+└─────────────────────────────────────────────────────────────┘
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────┐
+│ 2. ANALYSIS (Sub-agents, parallel)                          │
+│    • RAG: fetch SEC filings → ChromaDB → LlamaIndex query    │
+│    • Quant: MCP prices/financials → LangGraph computation    │
+│    • Market: MCP macro/peers → CrewAI narrative              │
+│    • Analytics: MCP prices → PydanticAI DAG (trend/forecast/ │
+│      anomaly/stats/charts)                                   │
+│    • Each agent writes its own output to agent_output_store   │
+└─────────────────────────────────────────────────────────────┘
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────┐
+│ 3. REVIEW (Reviewer Agent, sequential)                       │
+│    • Fetch agent outputs from agent_output_store             │
+│    • Run 6 deterministic validation tools (Python)           │
+│    • LLM synthesizes structured review + meta-confidence     │
+│    • Output: verdict, contradictions, confidence_breakdown   │
+└─────────────────────────────────────────────────────────────┘
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────┐
+│ 4. PERSISTENCE (Orchestrator after_agent_callback)           │
+│    • save_brief() → ticker_briefs (full synthesis text)      │
+│    • PortfolioStore.update_holdings() → user_profiles        │
+│    • PerformanceTracker.record_recommendation() →            │
+│      recommendation_records (with price_at_rec snapshot)     │
+│    • add_events_to_memory() → memory_entries (FTS5 indexed)  │
+│    • _release_sub_agent_evals() → POST /release-evals        │
+└─────────────────────────────────────────────────────────────┘
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────┐
+│ 5. EVALUATION (Background, fire-and-forget)                  │
+│    • Each agent's score_*_response() runs RAGAS metrics      │
+│    • Scores pushed to Langfuse under rags/{agent}/{metric}   │
+│    • PerformanceTracker evaluates past recommendations       │
+│      against current prices → recommendation_records          │
+│      (realized_return, evaluated_at)                         │
+└─────────────────────────────────────────────────────────────┘
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────┐
+│ 6. PRUNING (Startup + background)                            │
+│    • prune_old_records(): delete ticker_briefs,               │
+│      recommendation_records, memory_entries older than        │
+│      MEMORY_RETENTION_DAYS=90                                │
+│    • prune_stale_outputs(): delete agent_output_store        │
+│      entries older than 600s                                 │
+│    • ChromaDB semantic cache: entries never expire (date-     │
+│      scoped queries prevent stale reads)                     │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Schema DDL
+
+```sql
+-- Conversation state (adk_sessions.db)
+CREATE TABLE sessions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    app_name TEXT DEFAULT 'orchestrator',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE events (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES sessions(id),
+    author TEXT NOT NULL DEFAULT 'orchestrator',
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    content JSON NOT NULL,          -- Array of {type, text, name, args, ...}
+    FOREIGN KEY (session_id) REFERENCES sessions(id)
+);
+
+-- Memory and persistence (finsight_memory.db)
+CREATE TABLE ticker_briefs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker TEXT NOT NULL,
+    recommendation TEXT NOT NULL,   -- BUY/HOLD/SELL
+    confidence REAL,                -- 0.0-1.0
+    response_text TEXT,             -- Full LLM synthesis (up to 4000 chars)
+    analysis_date TEXT,             -- YYYY-MM-DD (IST timezone)
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE recommendation_records (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker TEXT NOT NULL,
+    recommendation TEXT NOT NULL,
+    confidence REAL,
+    price_at_rec REAL,              -- yfinance snapshot at recommendation time
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    evaluated_at TIMESTAMP,         -- NULL until performance eval runs
+    realized_return REAL            -- NULL until evaluated
+);
+
+CREATE TABLE user_profiles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL UNIQUE,
+    holdings_json TEXT,             -- {"AAPL": 10, "MSFT": 5, ...}
+    risk_profile TEXT,              -- conservative/moderate/aggressive
+    investment_horizon TEXT,        -- short/medium/long
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE memory_entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    content_hash TEXT NOT NULL,     -- SHA-256 for dedup
+    content TEXT NOT NULL,          -- Original event content
+    search_text TEXT NOT NULL,      -- FTS5-indexed plain text
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE ingested_filings (
+    edgar_url TEXT PRIMARY KEY,     -- Canonical SEC URL (immutable)
+    ticker TEXT NOT NULL,
+    ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE agent_output_store (
+    session_id TEXT NOT NULL,
+    agent_name TEXT NOT NULL,       -- rag, quant, market_context, analytics, reviewer
+    output_json TEXT NOT NULL,      -- Full agent output as JSON
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (session_id, agent_name)
+);
+
+-- Indexes
+CREATE INDEX idx_ticker_briefs_ticker ON ticker_briefs(ticker);
+CREATE INDEX idx_ticker_briefs_date ON ticker_briefs(analysis_date);
+CREATE INDEX idx_events_session ON events(session_id);
+CREATE INDEX idx_memory_session ON memory_entries(session_id);
+CREATE INDEX idx_memory_hash ON memory_entries(content_hash);
+CREATE INDEX idx_recommendation_ticker ON recommendation_records(ticker);
+CREATE INDEX idx_ingested_ticker ON ingested_filings(ticker);
+```
+
+### Key Design Decisions
+
+- **Two databases**: `adk_sessions.db` is owned by the ADK framework (conversation state); `finsight_memory.db` is owned by FinSight's memory layer (business data). Separating them prevents schema conflicts (v2.6).
+- **`analysis_date` vs `created_at`**: `ticker_briefs` uses a separate `analysis_date` (YYYY-MM-DD) for same-day cache comparisons. This avoids timezone ambiguity — `created_at` is a full ISO-8601 timestamp that requires parsing to determine the day boundary.
+- **`agent_output_store` as cross-process bridge**: Rather than passing full agent outputs through A2A message payloads (size limits, serialization overhead), the orchestrator writes them to SQLite and the reviewer reads by `session_id`. The 600s TTL keeps the table small.
+- **`content_hash` dedup in memory_entries**: SHA-256 hash of the content prevents duplicate entries when the same session is processed multiple times (e.g., retry after failure). FTS5 indexing on `search_text` enables fast full-text search for `load_memory`.
+- **`ingested_filings` dedup**: SEC EDGAR URLs are canonical and immutable — using `edgar_url` as primary key makes re-ingestion checks a simple indexed lookup.
 
 ### HF_HUB_OFFLINE
 

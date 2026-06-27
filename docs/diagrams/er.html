@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Entity-Relationship Diagram — FinSight</title>
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+<div class="container">
+<div class="back"><a href="index.html">&larr; Back to Diagrams</a></div>
+<h1>Entity-Relationship Diagram</h1>
+<p>All persistent data stores: two SQLite databases (conversation state + business data) and one vector store (ChromaDB). <strong>Drag to pan, scroll to zoom, hover nodes for details.</strong></p>
+<div class="zoom-controls">
+  <button onclick="zoomIn()">+ Zoom In</button>
+  <button onclick="zoomOut()">- Zoom Out</button>
+  <button onclick="zoomReset()">Reset</button>
+  <span class="zoom-level" id="zoomLevel">100%</span>
+</div>
+<div class="diagram-wrap" id="diagramContainer">
+<div class="mermaid">
+%%{init: {'theme': 'base', 'themeVariables': {'background': '#ffffff', 'primaryColor': '#d4e6f1', 'primaryTextColor': '#1a1a1a', 'primaryBorderColor': '#2980b9', 'lineColor': '#8b6f4e', 'secondaryColor': '#d5f5e3', 'tertiaryColor': '#fadbd8', 'clusterBkg': '#faf8f5', 'clusterBorder': '#d5c4a1', 'fontSize': '11px'}}}%%
+erDiagram
+    SESSIONS ||--o{ EVENTS : "has many"
+    SESSIONS ||--o{ MEMORY_ENTRIES : "has many"
+    SESSIONS ||--o{ AGENT_OUTPUT_STORE : "has many"
+
+    SESSIONS {
+        text id PK
+        text user_id
+        text app_name
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    EVENTS {
+        text id PK
+        text session_id FK
+        text author
+        timestamp timestamp
+        json content
+    }
+
+    TICKER_BRIFFS {
+        integer id PK
+        text ticker
+        text recommendation
+        real confidence
+        text response_text
+        text analysis_date
+        timestamp created_at
+    }
+
+    RECOMMENDATION_RECORDS {
+        integer id PK
+        text ticker
+        text recommendation
+        real confidence
+        real price_at_rec
+        timestamp created_at
+        timestamp evaluated_at
+        real realized_return
+    }
+
+    USER_PROFILES {
+        integer id PK
+        text user_id UNIQUE
+        text holdings_json
+        text risk_profile
+        text investment_horizon
+        timestamp updated_at
+    }
+
+    MEMORY_ENTRIES {
+        integer id PK
+        text session_id FK
+        text content_hash
+        text content
+        text search_text
+        timestamp created_at
+    }
+
+    INGESTED_FILINGS {
+        text edgar_url PK
+        text ticker
+        timestamp ingested_at
+    }
+
+    AGENT_OUTPUT_STORE {
+        text session_id PK,FK
+        text agent_name PK
+        text output_json
+        timestamp created_at
+    }
+
+    style SESSIONS fill:#d4e6f1,stroke:#2980b9,color:#1a1a1a
+    style EVENTS fill:#d4e6f1,stroke:#2980b9,color:#1a1a1a
+    style TICKER_BRIEFS fill:#fdebd0,stroke:#e67e22,color:#1a1a1a
+    style RECOMMENDATION_RECORDS fill:#fdebd0,stroke:#e67e22,color:#1a1a1a
+    style USER_PROFILES fill:#fadbd8,stroke:#c0392b,color:#1a1a1a
+    style MEMORY_ENTRIES fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
+    style INGESTED_FILINGS fill:#d5f5e3,stroke:#27ae60,color:#1a1a1a
+    style AGENT_OUTPUT_STORE fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
+</div>
+</div>
+
+<h2>Database Split</h2>
+<table style="width:100%;border-collapse:collapse;font-size:.9rem">
+<tr><th style="padding:.5rem .75rem;text-align:left;border-bottom:1px solid #e0d8cc;background:#f0ebe3;font-weight:600">Database</th><th style="padding:.5rem .75rem;text-align:left;border-bottom:1px solid #e0d8cc;background:#f0ebe3;font-weight:600">Owner</th><th style="padding:.5rem .75rem;text-align:left;border-bottom:1px solid #e0d8cc;background:#f0ebe3;font-weight:600">Tables</th></tr>
+<tr><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc"><code>adk_sessions.db</code></td><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc">ADK framework</td><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc"><code>sessions</code>, <code>events</code></td></tr>
+<tr><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc"><code>finsight_memory.db</code></td><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc">FinSight memory layer</td><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc"><code>sessions</code>, <code>events</code>, <code>ticker_briefs</code>, <code>recommendation_records</code>, <code>user_profiles</code>, <code>memory_entries</code>, <code>ingested_filings</code>, <code>agent_output_store</code></td></tr>
+<tr><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc"><code>db/chroma_db/</code></td><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc">ChromaDB vector store</td><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc"><code>sec_filings</code>, <code>news</code>, <code>earnings</code>, <code>finsight_semantic_cache</code></td></tr>
+</table>
+
+<h2>Key Relationships</h2>
+<ul>
+<li><strong>sessions → events</strong>: One session has many events. Each event is a single turn (user message, agent response, tool call). The <code>content</code> JSON column stores the full event payload.</li>
+<li><strong>sessions → memory_entries</strong>: FTS5-indexed plain text for cross-session <code>load_memory</code> search. <code>content_hash</code> prevents duplicates.</li>
+<li><strong>sessions → agent_output_store</strong>: Cross-process bridge. Orchestrator writes sub-agent outputs; reviewer reads by session_id. 600s TTL.</li>
+<li><strong>ticker_briefs</strong>: Independent table keyed by ticker + analysis_date. Each row is a complete BUY/HOLD/SELL analysis with full synthesis text.</li>
+<li><strong>recommendation_records</strong>: Same recommendation with price_at_rec snapshot. Updated asynchronously by PerformanceTracker when evaluation completes.</li>
+<li><strong>ingested_filings</strong>: Dedup for RAG ingestion. <code>edgar_url</code> is the canonical primary key (SEC URLs are immutable).</li>
+</ul>
+
+<h2>Data Lifecycle Overview</h2>
+<table style="width:100%;border-collapse:collapse;font-size:.9rem">
+<tr><th style="padding:.5rem .75rem;text-align:left;border-bottom:1px solid #e0d8cc;background:#f0ebe3;font-weight:600">Stage</th><th style="padding:.5rem .75rem;text-align:left;border-bottom:1px solid #e0d8cc;background:#f0ebe3;font-weight:600">Tables Written</th><th style="padding:.5rem .75rem;text-align:left;border-bottom:1px solid #e0d8cc;background:#f0ebe3;font-weight:600">Tables Read</th></tr>
+<tr><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc">1. Query Routing</td><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc">—</td><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc"><code>ticker_briefs</code>, <code>memory_entries</code>, <code>user_profiles</code>, ChromaDB</td></tr>
+<tr><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc">2. Agent Analysis</td><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc"><code>agent_output_store</code>, <code>ingested_filings</code></td><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc">MCP cache, ChromaDB</td></tr>
+<tr><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc">3. Review</td><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc"><code>agent_output_store</code> (reviewer output)</td><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc"><code>agent_output_store</code> (all agents)</td></tr>
+<tr><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc">4. Persistence</td><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc"><code>ticker_briefs</code>, <code>recommendation_records</code>, <code>user_profiles</code>, <code>memory_entries</code>, <code>events</code></td><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc"><code>agent_output_store</code></td></tr>
+<tr><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc">5. Evaluation</td><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc"><code>recommendation_records</code> (async update)</td><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc"><code>ticker_briefs</code></td></tr>
+<tr><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc">6. Pruning</td><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc">DELETE from <code>ticker_briefs</code>, <code>recommendation_records</code>, <code>memory_entries</code>, <code>agent_output_store</code></td><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc">—</td></tr>
+</table>
+
+<hr style="margin-top:2rem">
+<p style="font-size:.85rem;color:#888">FinSight — Architecture Diagrams</p>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="shared.js"></script>
+</body>
+</html>
