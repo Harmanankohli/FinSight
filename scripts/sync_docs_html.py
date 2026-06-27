@@ -8,6 +8,9 @@ import markdown
 
 DOCS = Path(__file__).resolve().parent.parent / "docs"
 
+# Also sync the frontend README
+FRONTEND_README = Path(__file__).resolve().parent.parent / "src" / "web" / "nextjs-app" / "README.md"
+
 CSS = """\
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,
@@ -110,7 +113,16 @@ def main() -> int:
         html_path.write_text(html_content, encoding="utf-8")
         print(f"  {md_path.name} -> {html_path.name}")
         converted += 1
-    print(f"\nConverted {converted} files ({DOCS})")
+
+    # Also sync frontend README
+    if FRONTEND_README.exists():
+        html_path = FRONTEND_README.with_suffix(".html")
+        html_content = convert(FRONTEND_README)
+        html_path.write_text(html_content, encoding="utf-8")
+        print(f"  {FRONTEND_README.name} -> {html_path.name} (frontend)")
+        converted += 1
+
+    print(f"\nConverted {converted} files")
     return 0
 
 
