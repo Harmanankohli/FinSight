@@ -1,6 +1,0 @@
-{
-  "agent_name": "Financial RAG Agent",
-  "task_sent": "{\"_trace\": {\"trace_id\": \"0eb62265e5f28073f1a8ceb5caaf35fb\", \"parent_span_id\": \"639c66cc6d7ba5b1\"}}\n<<<TASK>>>\nAnalyze NVDA (NVIDIA) SEC filings for recent financial performance. Include details on revenue, earnings, cash flow, and any material developments from the latest 10-Q and 10-K filings.",
-  "response": "{\"relevance_scores\": [], \"ticker\": \"NVDA\", \"confidence_score\": 0.0, \"summary\": \"Error: Error code: 400 - {'error': 'Model unloaded.'}\", \"sources\": [], \"context_texts\": []}",
-  "latency_ms": 112750
-}

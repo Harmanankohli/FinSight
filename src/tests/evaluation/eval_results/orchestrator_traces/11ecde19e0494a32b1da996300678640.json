@@ -1,6 +1,0 @@
-{
-  "agent_name": "Financial RAG Agent",
-  "task_sent": "{\"_trace\": {\"trace_id\": \"8e9054743546b01564633eae79dfcf21\", \"parent_span_id\": \"0da9e86b6735c6a7\"}}\n<<<TASK>>>\nAnalyze WMT (Walmart) SEC filings for recent financial performance on 2026-06-06.",
-  "response": "{\"error\": \"Network communication error: \"}",
-  "latency_ms": 17328
-}

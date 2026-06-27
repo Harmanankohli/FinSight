@@ -1,6 +1,0 @@
-{
-  "agent_name": "Financial RAG Agent",
-  "task_sent": "{\"_trace\": {\"trace_id\": \"d11f2a707e325becf2d1790cb33028f7\", \"parent_span_id\": \"bdadb3cb1bdca354\"}}\n<<<TASK>>>\nAnalyze MSFT (Microsoft) SEC filings for recent financial performance, including revenue growth, margins, and key business segments. Focus on the most recent 10-K or 10-Q filing.",
-  "response": "{\"error\": \"HTTP Error 401: Client error '401 Unauthorized' for url 'http://localhost:8002/a2a'\\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/401\"}",
-  "latency_ms": 844
-}

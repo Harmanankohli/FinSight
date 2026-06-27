@@ -1,6 +1,0 @@
-{
-  "agent_name": "Financial RAG Agent",
-  "task_sent": "{\"_trace\": {\"trace_id\": \"f7d7a922290c819f9703e46da64381ae\", \"parent_span_id\": \"9761646ae9eed799\"}}\n<<<TASK>>>\nAnalyze WMT (Walmart) SEC filings for recent financial performance, including revenue growth, gross margins, and capital allocation trends as of 2026-05-27.",
-  "response": "{\"relevance_scores\": [], \"ticker\": \"WMT\", \"confidence_score\": 0.0, \"summary\": \"Error: Request timed out.\", \"sources\": []}",
-  "latency_ms": 262515
-}

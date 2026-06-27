@@ -1,6 +1,0 @@
-{
-  "agent_name": "Quant Analysis Agent",
-  "task_sent": "{\"_trace\": {\"trace_id\": \"ae02c36aa7ee7b789ea330edd48d294b\", \"parent_span_id\": \"2deec2dc02884fff\"}}\n<<<TASK>>>\nPerform comprehensive quantitative analysis on NVDA (NVIDIA Corporation) as of 2026-05-28, including valuation metrics (P/E, PEG, EV/EBITDA), DCF model with 5-year projection, Monte Carlo simulation for downside risk, technical indicators (RSI, MACD, moving averages), insider trading activity, options positioning (put/call ratio, open interest), and peer comparison vs. AMD, TSM, and INTL.",
-  "response": "Quant analysis failed: At key 'positioning': Can receive only one value per step. Use an Annotated key to handle multiple values.\nFor troubleshooting, visit: https://docs.langchain.com/oss/python/langgraph/errors/INVALID_CONCURRENT_GRAPH_UPDATE",
-  "latency_ms": 22593
-}

@@ -1,6 +1,0 @@
-{
-  "agent_name": "Quant Analysis Agent",
-  "task_sent": "{\"_trace\": {\"trace_id\": \"59cacd5ca68fd347dff47768c9aa3fde\", \"parent_span_id\": \"47d50e54d2b69069\"}}\n<<<TASK>>>\nPerform comprehensive quantitative analysis on NVDA (NVIDIA Corporation) including fundamental metrics (P/E, PEG, ROE), technical indicators (RSI, MACD, moving averages), DCF valuation, Monte Carlo simulation for price range, peer comparison (AMD, TSM, INTC), and behavioral signals (insider trading, options activity, short interest).",
-  "response": "{\"error\": \"No response from agent\"}",
-  "latency_ms": 302468
-}

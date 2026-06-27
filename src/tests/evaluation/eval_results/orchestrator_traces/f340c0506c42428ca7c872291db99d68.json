@@ -1,6 +1,0 @@
-{
-  "agent_name": "Financial RAG Agent",
-  "task_sent": "{\"_trace\": {\"trace_id\": \"ae02c36aa7ee7b789ea330edd48d294b\", \"parent_span_id\": \"3a85eeb060363b0a\"}}\n<<<TASK>>>\nAnalyze NVDA (NVIDIA Corporation) SEC filings for recent financial performance, including Q1 2026 earnings report, revenue growth, gross margin trends, and guidance for Q2 2026.",
-  "response": "{\"relevance_scores\": [], \"ticker\": \"NVDA\", \"confidence_score\": 0.0, \"summary\": \"Index is warming for NVDA \\u2014 initial fetch in progress. Try again in 10\\u201320 seconds for full results.\", \"sources\": [], \"context_texts\": [], \"_warming\": true}",
-  "latency_ms": 10125
-}

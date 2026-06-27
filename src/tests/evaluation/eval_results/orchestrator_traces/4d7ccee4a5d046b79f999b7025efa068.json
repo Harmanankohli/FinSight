@@ -1,6 +1,0 @@
-{
-  "agent_name": "Financial RAG Agent",
-  "task_sent": "{\"_trace\": {\"trace_id\": \"30ebf61cca14d1e9d51050cb39fe910b\", \"parent_span_id\": \"c0f07b4b7eed8490\"}}\n<<<TASK>>>\nAnalyze NVDA (NVIDIA) SEC filings for recent financial performance.",
-  "response": "{\"error\": \"Network communication error: \"}",
-  "latency_ms": 20063
-}

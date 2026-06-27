@@ -1,6 +1,0 @@
-{
-  "agent_name": "Market Context Agent",
-  "task_sent": "{\"_trace\": {\"trace_id\": \"59cacd5ca68fd347dff47768c9aa3fde\", \"parent_span_id\": \"a40bab1c347269c8\"}}\n<<<TASK>>>\nProvide macro regime analysis for NVDA (NVIDIA Corporation) including current yield curve position, VIX level, DXY trend, sector rotation signals (especially tech and semiconductors), and competitive peer landscape positioning relative to AMD, ASML, and TSMC.",
-  "response": "{\"error\": \"No response from agent\"}",
-  "latency_ms": 301875
-}

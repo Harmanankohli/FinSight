@@ -1,6 +1,0 @@
-{
-  "agent_name": "Market Context Agent",
-  "task_sent": "{\"_trace\": {\"trace_id\": \"0eb62265e5f28073f1a8ceb5caaf35fb\", \"parent_span_id\": \"aef49086cb636494\"}}\n<<<TASK>>>\nAnalyze NVDA (NVIDIA) market context including macro regime (yield curve, VIX, DXY, sector rotation), competitive peer landscape positioning, and industry trends affecting semiconductor and AI stocks.",
-  "response": "{\"key_tailwinds\": [], \"key_headwinds\": [], \"confidence_score\": 0.0, \"overall_signal\": \"neutral\", \"peer_comparison\": [{\"ticker\": \"AVGO\", \"metrics\": {\"Operating Margin\": \"49.0%\", \"P/E Ratio\": \"63.7x\", \"Revenue Growth\": \"47.9%\", \"ROE\": \"37.3%\"}}, {\"ticker\": \"MU\", \"metrics\": {\"Operating Margin\": \"67.6%\", \"P/E Ratio\": \"46.3x\", \"Revenue Growth\": \"196.3%\", \"ROE\": \"39.8%\"}}, {\"ticker\": \"AMD\", \"metrics\": {\"Operating Margin\": \"14.4%\", \"P/E Ratio\": \"169.4x\", \"Revenue Growth\": \"37.8%\", \"ROE\": \"8.1%\"}}], \"narrative\": \"Analysis failed: litellm.BadRequestError: OpenAIException - Failed to load model \\\"zai-org/glm-4.7-flash\\\". Error: Operation canceled.\"}",
-  "latency_ms": 113079
-}
