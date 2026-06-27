@@ -60,25 +60,14 @@ _SIGNAL_RE = re.compile(r"\b(BUY|HOLD|SELL)\b")
 async def _release_sub_agent_evals() -> None:
     """POST /release-evals to each sub-agent so they fire deferred evals."""
     import httpx
-    from opentelemetry.context import attach, detach, set_value
-    from opentelemetry.instrumentation.utils import (
-        _SUPPRESS_HTTP_INSTRUMENTATION_KEY,
-        _SUPPRESS_INSTRUMENTATION_KEY,
-    )
 
-    ctx = set_value(_SUPPRESS_HTTP_INSTRUMENTATION_KEY, True)
-    ctx = set_value(_SUPPRESS_INSTRUMENTATION_KEY, True, ctx)
-    token = attach(ctx)
-    try:
-        urls = [u.strip().rstrip("/") for u in AGENT_SEED_URLS.split(",") if u.strip()]
-        async with httpx.AsyncClient(timeout=5) as client:
-            for base in urls:
-                try:
-                    await client.post(f"{base}/release-evals")
-                except Exception:
-                    logger.debug("release-evals failed for %s (non-fatal)", base)
-    finally:
-        detach(token)
+    urls = [u.strip().rstrip("/") for u in AGENT_SEED_URLS.split(",") if u.strip()]
+    async with httpx.AsyncClient(timeout=5) as client:
+        for base in urls:
+            try:
+                await client.post(f"{base}/release-evals")
+            except Exception:
+                logger.debug("release-evals failed for %s (non-fatal)", base)
 
 
 def _extract_confidence(agent_outputs: dict, response_text: str) -> float:

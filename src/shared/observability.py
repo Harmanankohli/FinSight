@@ -5,33 +5,10 @@ import logging
 import os
 from typing import Any
 
-from langfuse.span_filter import is_default_export_span
-from opentelemetry.sdk.trace import ReadableSpan
-
 from shared.settings import LANGFUSE_HOST, LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY
 from shared.trace_context import current_user_id
 
 logger = logging.getLogger(__name__)
-
-
-def _should_export_span(span: ReadableSpan) -> bool:
-    """Wrap default filter to drop orphan RAGAS eval OpenAI calls.
-
-    The Langfuse SDK auto-instruments all openai calls via its own tracer
-    (scope 'langfuse-sdk'). RAGAS eval LLM calls run in fire-and-forget
-    tasks with no parent span, creating orphan root traces in Langfuse.
-    Drop those while keeping all legitimately-parented spans.
-    """
-    if not is_default_export_span(span):
-        return False
-    if (
-        span.parent is None
-        and span.instrumentation_scope is not None
-        and span.instrumentation_scope.name == "langfuse-sdk"
-        and span.name.startswith("OpenAI")
-    ):
-        return False
-    return True
 
 # Lazy singleton: _langfuse_client is created once on first init_langfuse() call.
 # This avoids importing / configuring Langfuse at import time, which is important
@@ -60,21 +37,30 @@ def init_langfuse(service_name: str = "finsight") -> Any:
     )
 
     from langfuse import Langfuse
+    from opentelemetry.sdk.trace import TracerProvider
 
-    # Langfuse client: sends traces/spans/scores via OTLP or direct REST.
-    # should_export_span filters out Langfuse's own internal spans to avoid noise.
+    # Isolated TracerProvider — only spans created by the Langfuse SDK's own
+    # tracer (start_as_current_observation, etc.) are exported to Langfuse.
+    # reviewer/agent.py imports `from langfuse.openai import AsyncOpenAI` which
+    # globally monkey-patches the openai module.  Without isolation, every
+    # AsyncOpenAI call in the process (including RAGAS eval's instructor client)
+    # gets a langfuse-sdk span.  Fire-and-forget eval tasks inherit a stale
+    # parent context via asyncio.create_task, producing orphan root traces.
+    # An isolated provider stops those spans from reaching Langfuse.
+    langfuse_provider = TracerProvider()
+
     _langfuse_client = Langfuse(
         public_key=LANGFUSE_PUBLIC_KEY,
         secret_key=LANGFUSE_SECRET_KEY,
         base_url=LANGFUSE_HOST,
-        should_export_span=_should_export_span,
+        tracer_provider=langfuse_provider,
         additional_headers={
             "x-langfuse-ingestion-version": "4",
         },
     )
 
     _initialized = True
-    logger.info("Langfuse initialized for %s (%s)", service_name, LANGFUSE_HOST)
+    logger.info("Langfuse initialized for %s (%s) [isolated provider]", service_name, LANGFUSE_HOST)
     return _langfuse_client
 
 
