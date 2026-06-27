@@ -134,6 +134,9 @@ from starlette.responses import FileResponse
 
 from shared.auth.middleware import require as _require_auth
 
+# __import__ used inline to avoid adding `import re` above the deferred-import
+# block that follows bootstrap(); ruff noqa E402 suppresses the file but not
+# individual lines, and keeping re off the top-level import list is cleaner here.
 _SAFE_FILENAME_RE = __import__("re", fromlist=["compile"]).compile(r"[^A-Za-z0-9._-]")
 
 

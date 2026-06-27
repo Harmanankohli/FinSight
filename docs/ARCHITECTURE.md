@@ -2,7 +2,7 @@
 
 ## Overview
 
-FinSight is a multi-agent investment research system where four specialized agents communicate via the **Google A2A Protocol** (Agent-to-Agent). The orchestrator (ADK `LlmAgent`) discovers sub-agents at startup via `A2ACardResolver`, delegates tasks via a single `send_message` tool, and the LLM routes to all agents in parallel (instructed via system prompt to emit all `send_message` calls in one assistant turn). Each sub-agent processes tasks internally using its own framework and tools.
+FinSight is a multi-agent investment research system where five specialized agents communicate via the **Google A2A Protocol** (Agent-to-Agent). The orchestrator (ADK `LlmAgent`) discovers sub-agents at startup via `A2ACardResolver`, delegates tasks via a single `send_message` tool, and the LLM routes to all agents in parallel (instructed via system prompt to emit all `send_message` calls in one assistant turn). Each sub-agent processes tasks internally using its own framework and tools.
 
 ## Trust Boundaries (Auth)
 
@@ -11,38 +11,37 @@ Phase 2 introduced three trust boundaries between components. All default to ope
 ```
                            AUTH_ENABLED=true
 +------------------------------------------------------------------+
-│                        Boundary A (User?Frontend?Orchestrator)    —
-│  Browser --https--? Next proxy --Bearer JWT--? Starlette app      —
-│  /login  ? refresh cookie  —  /api/* ? access_token in header     —
+│                        Boundary A (User↔Frontend↔Orchestrator)   —
+│  Browser --https--> Next proxy --Bearer JWT--> Starlette app      —
+│  /login  → refresh cookie  —  /api/* → access_token in header     —
 │  Public: /health, /.well-known/, /auth/login|refresh|logout       —
 │  AuthMiddleware(accept={"user","service"}) on all /api/* paths    —
 +------------------------------------------------------------------+
-                         │
+                         ↓
                          │ A2A JSON-RPC (Boundary B)
                          │ Service bearer token in Authorization header
-                         ?
+                         ↓
 +------------------------------------------------------------------+
-│                     Boundary B (Orchestrator?Sub-Agents)          —
-│  Orchestrator --A2A /a2a--? Sub-agent (RAG/Quant/Market)         —
+│                     Boundary B (Orchestrator↔Sub-Agents)         —
+│  Orchestrator --A2A /a2a--> Sub-agent (RAG/Quant/Market)         —
 │  Service token in client default headers                          —
 │  AuthMiddleware(accept={"service"}) on /a2a, /release-evals       —
 │  User context propagated via A2A message metadata (_user envelope)—
 +------------------------------------------------------------------+
-                         │
+                         ↓
                          │ MCP SSE (Boundary C)
                          │ Service bearer token in SSE headers
-                         ?
+                         ↓
 +------------------------------------------------------------------+
-│                     Boundary C (Agents?MCP Server)                —
-│  Sub-agents --SSE--? MCP Server (finsight-mcp)                   —
+│                     Boundary C (Agents↔MCP Server)               —
+│  Sub-agents --SSE--> MCP Server (finsight-mcp)                   —
 │  MCPServerConfig.headers injects bearer token                     —
 │  AuthMiddleware(accept={"service"}) on SSE Mount                  —
 │  Public: /health (compose healthchecks)                           —
 +------------------------------------------------------------------+
-
-When AUTH_ENABLED=false (default): all boundaries are open, X-FinSight-User-Id
-header used as dev convention for user identity (no verification).
 ```
+
+When `AUTH_ENABLED=false` (default): all boundaries are open, `X-FinSight-User-Id` header used as dev convention for user identity (no verification).
 
 ## Communication Pattern
 
@@ -61,7 +60,7 @@ header used as dev convention for user identity (no verification).
 │  +------------------------------------------------------+    —
 │  +------------------------------------------------------+    —
 │  — Task Lifecycle                                        │    —
-│  — SUBMITTED ? WORKING ? (artifacts) ? COMPLETED        │    —
+│  — SUBMITTED → WORKING → (artifacts) → COMPLETED        │    —
 │  +------------------------------------------------------+    —
 +--------------------------------------------------------------+
 ```
@@ -72,31 +71,31 @@ The orchestrator (`src/orchestrator/`) uses a single `LlmAgent` with two tools (
 
 ```
 Module load (standalone — src/orchestrator/main.py):
-  ? SubAgentClient.discover() in lifespan background task
+  → SubAgentClient.discover() in lifespan background task
     +-- A2ACardResolver(httpx.AsyncClient, url) per seed URL
     +-- Returns typed AgentCard (protobuf)
     +-- self.agents populated
 
 ADK Web UI (src/orchestrator/services.py fires memory service registration):
-  ? Discovery fires inside _memory_cache_callback on first turn
+  → Discovery fires inside _memory_cache_callback on first turn
     — root_agent.instruction = _instruction_provider (callable, per-turn rebuild)
 
-A2A Request ? FinSightAgentExecutor.execute()
-  ? _get_today_cached_text(ticker)  — [CACHE: return today brief if exists]
-  ? _build_memory_context(query)    │ inject [MEMORY CONTEXT] with [TODAY]/[STALE] tag
-  ? RUNNER.run_async(user_query)
-    ? LlmAgent (no pre-fetch)
-    ? before_agent_callback: _memory_cache_callback  — [CACHE: return types.Content if today brief exists]
-    ? LLM emits ALL send_message calls in ONE assistant turn (parallel per system prompt instruction)
-    ? SubAgentClient ? A2A task to sub-agent (parallel)
-    ? SubAgentClient ? A2A response (text or data parts)
-    ? LLM receives all results together in the next turn
-    ? LLM synthesizes BUY/HOLD/SELL
-  ? after_agent_callback: _persist_memory_callback
-    ? add_events_to_memory()
-    ? if EVAL_ENABLED: score_response()
-    ? _release_sub_agent_evals() — POST /release-evals to all sub-agents (they defer evals until this signal)
-  ? COMPLETED with synthesis
+A2A Request → FinSightAgentExecutor.execute()
+  → _get_today_cached_text(ticker)  — [CACHE: return today brief if exists]
+  → _build_memory_context(query)    │ inject [MEMORY CONTEXT] with [TODAY]/[STALE] tag
+  → RUNNER.run_async(user_query)
+    → LlmAgent (no pre-fetch)
+    → before_agent_callback: _memory_cache_callback  — [CACHE: return types.Content if today brief exists]
+    → LLM emits ALL send_message calls in ONE assistant turn (parallel per system prompt instruction)
+    → SubAgentClient → A2A task to sub-agent (parallel)
+    → SubAgentClient → A2A response (text or data parts)
+    → LLM receives all results together in the next turn
+    → LLM synthesizes BUY/HOLD/SELL
+  → after_agent_callback: _persist_memory_callback
+    → add_events_to_memory()
+    → if EVAL_ENABLED: score_response()
+    → _release_sub_agent_evals() — POST /release-evals to all sub-agents (they defer evals until this signal)
+  → COMPLETED with synthesis
 ```
 
 **Key design choices:**
@@ -111,7 +110,7 @@ A2A Request ? FinSightAgentExecutor.execute()
 
 ## Agent Server Factory (v1.41)
 
-All three sub-agent servers (`src/financial_rag/server.py`, `src/quant/server.py`, `src/market_context/server.py`) use `build_agent_app()` from `src/shared/agent_server.py`. This shared factory:
+All five sub-agent servers (`src/financial_rag/server.py`, `src/quant/server.py`, `src/market_context/server.py`, `src/analytics/server.py`, `src/reviewer/server.py`) use `build_agent_app()` from `src/shared/agent_server.py`. This shared factory:
 - Creates Starlette app with A2A routes, health check, agent card, and `/release-evals` endpoint
 - Wraps with `AuthMiddleware` when auth is enabled
 - Sets up Langfuse instrumentation, file logging, and startup warm-up hooks
@@ -122,11 +121,11 @@ All three sub-agent servers (`src/financial_rag/server.py`, `src/quant/server.py
 All sub-agents extend `BaseAgent` and implement `stream()`. A shared `GenericAgentExecutor` handles A2A lifecycle:
 
 ```
-A2A Request ? DefaultRequestHandler ? GenericAgentExecutor.execute()
-  ? BaseAgent.stream(query, context_id, task_id)
-  ? Yields: {response_type, content, is_task_complete, require_user_input}
-  ? GenericAgentExecutor converts to TaskStatusUpdateEvent / TaskArtifactUpdateEvent
-  ? COMPLETED state
+A2A Request → DefaultRequestHandler → GenericAgentExecutor.execute()
+  → BaseAgent.stream(query, context_id, task_id)
+  → Yields: {response_type, content, is_task_complete, require_user_input}
+  → GenericAgentExecutor converts to TaskStatusUpdateEvent / TaskArtifactUpdateEvent
+  → COMPLETED state
 ```
 
 ## Agent Architecture
@@ -134,29 +133,29 @@ A2A Request ? DefaultRequestHandler ? GenericAgentExecutor.execute()
 ### RAG Agent (LlamaIndex)
 
 ```
-A2A Request ? DefaultRequestHandler ? GenericAgentExecutor(RAGAgent)
-  ? RAGAgent.stream()
-    ? RAGAgent._build_response(query)
-      ? Fire-and-forget (asyncio.create_task):
+A2A Request → DefaultRequestHandler → GenericAgentExecutor(RAGAgent)
+  → RAGAgent.stream()
+    → RAGAgent._build_response(query)
+      → Fire-and-forget (asyncio.create_task):
         +-- self._ensure_ingested(ticker) — runs in background, non-blocking
         +-- self._ensure_news_ingested(ticker) — runs in background, non-blocking
-      ? FinancialIndexManager.query(ticker, query) — returns from indexed data
-        +-- _classify_query_intent() ? sec_filings ? news ? earnings
+      → FinancialIndexManager.query(ticker, query) — returns from indexed data
+        +-- _classify_query_intent() → sec_filings → news → earnings
         +-- Multi-collection retrieval with score-sorted dedup
         +-- LlamaIndex response synthesizer (response_mode="compact")
-      ? No intermediate WORKING yield — follows single-yield pattern (one data response on completion)
-  ? Yields data response with summary + sources
+      → No intermediate WORKING yield — follows single-yield pattern (one data response on completion)
+  → Yields data response with summary + sources
 
 RAGAgent._ensure_ingested(ticker) [background]:
-  ? MCPClient.connect_all()
-  ? MCP: get_company_filings(ticker) ? filings with edgar_url + ix_url
-  ? Filter: is_filing_ingested(edgar_url) — skip already-indexed URLs
-  ? Parallel fetch via asyncio.gather:
+  → MCPClient.connect_all()
+  → MCP: get_company_filings(ticker) → filings with edgar_url + ix_url
+  → Filter: is_filing_ingested(edgar_url) — skip already-indexed URLs
+  → Parallel fetch via asyncio.gather:
     +-- MCP: get_filing_content(edgar_url, ix_url) for candidate 1
     +-- MCP: get_filing_content(edgar_url, ix_url) for candidate 2
     +-- ... (all candidates concurrently, truncated server-side at 25k chars)
-  ? DocumentIngestionPipeline.ingest_sec_filings_batch() ? ChromaDB
-  ? mark_filing_ingested(edgar_url, ticker) for each new filing
+  → DocumentIngestionPipeline.ingest_sec_filings_batch() → ChromaDB
+  → mark_filing_ingested(edgar_url, ticker) for each new filing
 ```
 
 **Incremental Ingestion**: `_ensure_ingested()` checks the `ingested_filings` SQLite table before fetching any filing content. URLs already indexed in a previous run are skipped entirely — restarts and same-day re-queries do not re-ingest immutable historical filings.
@@ -168,21 +167,21 @@ RAGAgent._ensure_ingested(ticker) [background]:
 ### Quant Agent (LangGraph)
 
 ```
-A2A Request ? DefaultRequestHandler ? GenericAgentExecutor(QuantAgent)
-  ? QuantAgent.stream()
-    ? extract_holdings(query) ? portfolio_holdings list
-    ? analyze(ticker, portfolio_holdings=holdings)
+A2A Request → DefaultRequestHandler → GenericAgentExecutor(QuantAgent)
+  → QuantAgent.stream()
+    → extract_holdings(query) → portfolio_holdings list
+    → analyze(ticker, portfolio_holdings=holdings)
       [Parallel fan-out from START]
-        +-- fetch_prices [MCP: get_prices ? parse Close data]
-        │     ? compute_base_metrics (Sharge, vol, VaR, beta)
-        │     ? technical_analysis (SMA, MACD, RSI, Bollinger, trend)
-          │     ? volatility gate
-          │         +-- high vol (> 35%) ? stress_test [sector-aware scenario shocks]
-          │         +-- low vol (= 35%) ? dcf_valuation [data-driven WACC + growth]
-          │     ? monte_carlo (GBM, 5k paths, 252d horizon) — runs in BOTH paths
-          +-- fetch_fundamentals [MCP: get_financials ? 25+ ratios]
-          |     ? PE, PB, ROE, margins, D/E, growth, golden cross
-          |     ? peer_comparison (dynamic yfinance Industry/Sector peers, ranks on PE,
+        +-- fetch_prices [MCP: get_prices → parse Close data]
+        │     → compute_base_metrics (Sharge, vol, VaR, beta)
+        │     → technical_analysis (SMA, MACD, RSI, Bollinger, trend)
+          │     → volatility gate
+          │         +-- high vol (> 35%) → stress_test [sector-aware scenario shocks]
+          │         +-- low vol (= 35%) → dcf_valuation [data-driven WACC + growth]
+          │     → monte_carlo (GBM, 5k paths, 252d horizon) — runs in BOTH paths
+          +-- fetch_fundamentals [MCP: get_financials → 25+ ratios]
+          |     → PE, PB, ROE, margins, D/E, growth, golden cross
+          |     → peer_comparison (dynamic yfinance Industry/Sector peers, ranks on PE,
           |         EV/EBITDA, growth, margins, ROE, D/E + sector medians for relative scoring)
           +-- options_flow_node (put/call vol ratio, OI ratio, flow signal, no-data handling)
           +-- insider_signals_node (get_insider_transactions MCP — structured buy/sell data)
@@ -191,13 +190,13 @@ A2A Request ? DefaultRequestHandler ? GenericAgentExecutor(QuantAgent)
             +-- portfolio_correlation [MCP: get_prices per holding + target]
             +-- format_output (8-group weighted voting: risk 0.15, dcf 0.20, fund_value 0.13,
                   fund_quality 0.12, tech_trend 0.15, tech_momentum 0.10,
-                  peer 0.10, behavioral 0.05 ? sum=1.0)
-            ? llm_summary (enriched 3-4 sentence summary)
-            ? Live sector-aware shocks via MCP get_scenario_shocks (QQQ/XLP/XLF per sector)
-   ? Yields data response
+                  peer 0.10, behavioral 0.05 → sum=1.0)
+            → llm_summary (enriched 3-4 sentence summary)
+            → Live sector-aware shocks via MCP get_scenario_shocks (QQQ/XLP/XLF per sector)
+   → Yields data response
 ```
 
-**Portfolio Holdings Extraction**: `stream()` uses `extract_holdings(query, exclude_ticker=ticker)` from `src/shared/ticker_utils.py` to extract holdings from natural language (e.g. "My portfolio holds AAPL, MSFT, GOOGL"). Holdings are passed through the full chain: `stream()` ? `analyze()` ? `graph.run()` ? `correlation_node`.
+**Portfolio Holdings Extraction**: `stream()` uses `extract_holdings(query, exclude_ticker=ticker)` from `src/shared/ticker_utils.py` to extract holdings from natural language (e.g. "My portfolio holds AAPL, MSFT, GOOGL"). Holdings are passed through the full chain: `stream()` → `analyze()` → `graph.run()` → `correlation_node`.
 
 **Correlation only on explicit request**: The orchestrator prompt instructs the LLM to include holdings in the quant agent task only when the user explicitly mentions portfolio holdings or asks for correlation in their current message. Memory context portfolio lines are labelled as background reference so the LLM does not auto-include them for every single-ticker query.
 
@@ -230,7 +229,7 @@ The quant agent's LangGraph state machine required fixes across multiple version
 
 - **Annotated reducers** (`src/quant/state.py`): State keys written by multiple nodes (`metrics`, `reasoning`, `recommendation`, `stress_test_result`, `dcf_error`) use `Annotated[type, reducer]` — `_merge_dict`, `_last_str`, `_last_nonnull`. Without reducers, LangGraph raises `INVALID_CONCURRENT_GRAPH_UPDATE` when two nodes write to the same key in the same checkpoint step.
 
-- **Diamond dependency removed** (`src/quant/graph.py`): The direct `fetch_fundamentals ? format_output` edge was removed. `fetch_fundamentals` already fans into `peer_comparison_node` which fans into `format_output` — the direct edge created a diamond pattern where `format_output` triggered twice in the same step.
+- **Diamond dependency removed** (`src/quant/graph.py`): The direct `fetch_fundamentals → format_output` edge was removed. `fetch_fundamentals` already fans into `peer_comparison_node` which fans into `format_output` — the direct edge created a diamond pattern where `format_output` triggered twice in the same step.
 
 - **Passthrough keys removed** (`src/quant/nodes.py`): `format_output_node` was returning copies of state keys (`positioning`, `dcf_valuation`, `correlation_matrix`, `fundamentals`) that other nodes already wrote. Now only emits `recommendation`, `reasoning`, `metrics`, and `stress_test_result` — only what it actually computes.
 
@@ -239,21 +238,167 @@ The quant agent's LangGraph state machine required fixes across multiple version
 ### Market Context Agent (CrewAI)
 
 ```
-A2A Request ? DefaultRequestHandler ? GenericAgentExecutor(MarketContextAgent)
-  ? MarketContextAgent.stream()
-    ? 3-step parallel data collection (Phase 3):
-      +-- Step 1: get_macro_indicators() ? get_financials(ticker)
-      │     ? macro regime (yields, VIX, DXY, sector ETFs, yield curve)
-      │     ? primary financials (sector/industry for peer resolution)
+A2A Request → DefaultRequestHandler → GenericAgentExecutor(MarketContextAgent)
+  → MarketContextAgent.stream()
+    → 3-step parallel data collection (Phase 3):
+      +-- Step 1: get_macro_indicators() → get_financials(ticker)
+      │     → macro regime (yields, VIX, DXY, sector ETFs, yield curve)
+      │     → primary financials (sector/industry for peer resolution)
       +-- Step 2: resolve peers via MCP get_peers (dynamic yfinance Industry/Sector)
       +-- Step 3: asyncio.gather(peer financials, peer prices)
-    ? 1-agent CrewAI ("Market Context Analyst"):
-      ? Outputs JSON: narrative, macro_regime, relative_peer_positioning,
+    → 1-agent CrewAI ("Market Context Analyst"):
+      → Outputs JSON: narrative, macro_regime, relative_peer_positioning,
         overall_signal, confidence_score (0-1), key_tailwinds, key_headwinds
-  ? Yields data response
+  → Yields data response
 ```
 
 **Note**: The old Sentiment agent fetched `get_news_sentiment` and `get_company_filings`. Both were redundant with the RAG agent after Phase 1 and are no longer called. Market Context exclusively owns macro regime analysis and peer landscape positioning.
+
+### Analytics Agent (PydanticAI)
+
+```
+A2A Request → DefaultRequestHandler → GenericAgentExecutor(AnalyticsAgent)
+  → AnalyticsAgent.stream()
+    → resolve_and_validate_ticker(query) → ticker, company
+    → AnalyticsAgent.analyze(ticker, period="1y")
+      → AnalyticsPipeline.run(ticker, period, mcp_client)
+        [PydanticAI DAG — 4 nodes in sequence]
+
+        1. FetchDataNode (parallel):
+             ├── _fetch_prices(mcp, ticker, "1y") → close_data, ohlcv_data
+             └── _fetch_fundamentals(mcp, ticker) → fundamentals_data
+
+        2. AnalyzeNode (5 parallel analyses):
+             ├── _detect_trends(price_data)
+             │     → SMA20/50/200, MACD, momentum (ROC), RSI
+             │     → composite scoring → bull/neutral/bear trend
+             ├── _run_forecast(price_data)
+             │     → Holt-Winters exponential smoothing (30-day horizon)
+             │     → confidence bands (linearly widening)
+             ├── _compute_statistics(price_data, mcp_client)
+             │     → skewness, kurtosis, Jarque-Bera normality test
+             │     → distribution class (lepto/platykurtic/normal)
+             │     → SPY correlation (beta, R²) via MCP get_prices("SPY")
+             ├── _detect_anomalies(price_data, ohlcv_data, fundamentals_data)
+             │     → price spikes (|z| > 2.5 on log-returns)
+             │     → volume spikes (|z| > 3.0)
+             │     → fundamental outliers (PE <5 or >100, D/E >5)
+             │     → severity: none/low/medium/high
+             │     → [if severity ≥ medium] web_search catalyst context
+             └── _generate_charts(ohlcv_data, price_data)
+                   → ChartPayload list for frontend rendering
+
+        3. FormatOutputNode:
+             → aggregates 5 signal dimensions (-1, 0, +1 each):
+               trend direction, forecast change >5%, anomaly severity,
+               leptokurtic distribution
+             → avg_signal > 0.3 → bullish; < -0.3 → bearish; else neutral
+             → confidence = |avg_signal| clamped to [0, 1]
+
+        4. LLMSummaryNode (terminal):
+             → PydanticAI Agent + OpenAI-compatible LLM
+             → generates 3-4 sentence prose summary
+             → priority: CRITICAL (never starved by eval)
+             → output: AnalyticsAgentOutput schema
+
+    → score_analytics_deterministic(result) → schema_validation
+    → [if EVAL_ENABLED] defer_eval(score_analytics_response)
+    → Yields data response
+```
+
+**Analytics Agent — PydanticAI DAG Pipeline**: The agent uses `pydantic-graph` (not LangGraph) for a 4-node sequential pipeline. Each node is a `BaseNode[AnalyticsState, AnalyticsDeps]` that mutates a shared `AnalyticsState` dataclass and transitions to the next node via its return type annotation. The `AnalyticsDeps` dataclass carries `ticker`, `period`, and `mcp_client` through the graph.
+
+**Statistical Analysis**: Uses scipy for normality testing (Jarque-Bera), numpy for moving averages and MACD. SPY correlation is fetched via MCP — failure is non-fatal (returns empty correlations). All `MetricValue` results carry `.status`, `.warning`, `.methodology` metadata.
+
+**Anomaly Catalyst Search**: When anomalies reach medium/high severity, the agent performs a DuckDuckGo web search for "{ticker} stock price spike catalyst news" and filters boilerplate results to provide context for the LLM summary.
+
+**Output Schema** (`AnalyticsAgentOutput`): `ticker`, `trend_analysis` (TrendAnalysis), `forecast` (ForecastResult), `charts` (list[ChartPayload]), `statistical_summary` (StatisticalSummary), `anomalies` (AnomalyReport), `analytics_signal` (bullish/bearish/neutral), `analytics_confidence` (float [0,1]), `reasoning` (LLM prose).
+
+### Reviewer Agent (OpenAI Agents SDK)
+
+```
+[Called by orchestrator AFTER all Phase-1 agents complete]
+
+Orchestrator builds SendMessageInput("reviewer", ticker, session_id)
+  → sends condensed per-agent summaries + metrics to Reviewer
+
+A2A Request → DefaultRequestHandler → GenericAgentExecutor(ReviewerAgent)
+  → ReviewerAgent.stream()
+    → extract_trace_context(query) → clean_query
+    → Parse JSON payload: {ticker, session_id, agent_outputs}
+         ├── Inline agent_outputs (preferred — injected by orchestrator)
+         └── Fallback: get_agent_outputs(session_id) from SQLite store
+    → [guardrail] payload_structure_guardrail:
+         → tripwire if: invalid JSON, missing ticker, missing session_id+agent_outputs
+
+    → Pre-reviewer integrity gate:
+         → validate_metric_integrity(agent_outputs)
+           → checks: DCF upside % consistency, Sharpe/VaR range, PE/ROE plausibility
+           → returns alerts: critical / warning / info severity
+
+    → 6 deterministic tools (no LLM round-trips — pure Python):
+         ├── check_contradictions(agent_outputs) → list[ContradictionFlag]
+         │     → cross-agent signal conflicts:
+         │       quant BUY vs bearish analytics trend (HIGH)
+         │       quant BUY vs negative RAG sentiment (MEDIUM)
+         │       market bearish vs quant bullish signal (MEDIUM)
+         │       DCF vs Monte Carlo divergence >40% (MEDIUM)
+         │       quant BUY but RSI >75 overbought (MEDIUM)
+         │       quant BUY but Monte Carlo prob_profit <50% (MEDIUM)
+         │       anomaly severity vs high confidence (LOW)
+         │     → deduplicated by (field, description) pair
+         ├── verify_sources(agent_outputs) → list[SourceVerification]
+         │     → DCF upside % recalculated vs reported (tolerance 1%)
+         │     → RAG summary present but no sources listed
+         │     → market signal enum validation (bullish/bearish/neutral)
+         │     → analytics forecast dates not in past, chart datasets non-empty
+         ├── score_confidence(agent_outputs) → ConfidenceBreakdown
+         │     → per-agent confidence derivation:
+         │       quant: 30% data freshness + 25% signal agreement + 25% source quality + 20% base
+         │       rag: 0.3 base + 0.2 length + 0.3 sources (max 1.0)
+         │       market: 0.3 base + 0.2 narrative + 0.1 signal + 0.1 tailwinds + 0.1 headwinds + 0.1 macro
+         │       analytics: 0.3 base + 0.2 trend + 0.2 forecast + 0.1 stats + 0.1 charts
+         │     → agreement_score: max(bullish,bearish,neutral) / total directional signals
+         │     → data_quality: 35% completeness + 35% consistency + 20% freshness + 10% verification
+         │     → meta_confidence: 35% avg_agent + 25% agreement + 25% consistency + 15% verification
+         ├── validate_recommendation(agent_outputs) → RecommendationValidation
+         │     → evaluates quant recommendation against DCF, technicals, macro, fundamentals, MC, RAG
+         │     → returns: supporting_evidence[], contradicting_evidence[], evidence_supports, evidence_strength
+         ├── check_consistency(agent_outputs) → ConsistencyResult
+         │     → RSI extreme warnings (<30 or >70)
+         │     → DCF vs Monte Carlo divergence check
+         │     → returns: consistency_score (0-1), warnings[], contradiction_summary
+         └── validate_dcf(quant) → DCFValidation
+               → intrinsic/market ratio sanity: <0.30 (warning: undervalued), >3.0 (warning: overvalued)
+               → negative WACC check, zero growth sanity, upside % sign consistency
+
+    → Build synthesis prompt (JSON):
+         {ticker, agent_summaries (condensed per-agent),
+          contradictions, verifications, confidence (as percentages),
+          validation, consistency, dcf_validation, integrity_alerts}
+
+    → Runner.run(reviewer_agent, input=synthesis_prompt)
+         → OpenAI Agents SDK agent with Langfuse-instrumented LLM
+         → priority: CRITICAL
+         → output_type: ReviewerAgentOutput (structured)
+         → generates: review_summary, contradictions, source_verifications,
+           confidence_breakdown, recommendation_validation, verdict, review_confidence, flags
+
+    → Attach _tool_results for extraction pipeline
+    → score_reviewer_deterministic(output) → schema_validation
+    → [if EVAL_ENABLED] defer_eval(score_reviewer_response)
+    → Yields data response
+```
+
+**Reviewer Agent — Design Principles**:
+
+- **Deterministic tools first, LLM once**: All 6 validation tools run in pure Python (no LLM calls). The LLM receives pre-computed results and synthesizes them into a structured report. This keeps the reviewer to exactly 1 LLM call per query.
+- **Guardrail on input**: An `InputGuardrail` trips on invalid JSON, missing ticker, or missing agent outputs — prevents the LLM from hallucinating review data on bad input.
+- **Pre-reviewer integrity gate**: `validate_metric_integrity()` runs before the LLM and flags critical mathematical impossibilities (e.g., DCF upside that doesn't match intrinsic/current ratio). Critical alerts are attached to the output for downstream visibility.
+- **Meta-confidence scoring**: The confidence breakdown distinguishes individual agent confidence from the overall meta-confidence (weighted aggregate). The LLM is explicitly instructed never to conflate them.
+- **Structured output**: `ReviewerAgentOutput` enforces `verdict` (BUY/HOLD/SELL), `review_confidence` (meta_confidence), `contradictions`, `source_verifications`, `confidence_breakdown`, `recommendation_validation`, and `flags`.
+
+**Output Schema** (`ReviewerAgentOutput`): `review_summary` (3-5 sentences citing specific numbers), `contradictions` (list[ContradictionFlag]), `source_verifications` (list[SourceVerification]), `confidence_breakdown` (ConfidenceBreakdown with agent_scores, agreement_score, data_quality_score, meta_confidence), `recommendation_validation` (RecommendationValidation), `verdict` (BUY/HOLD/SELL), `review_confidence` (float [0,1]), `flags` (list[str] for data quality concerns).
 
 ## Caching Layer
 
@@ -289,7 +434,7 @@ def make_cache(ttl_seconds=300, name=""):
     return TTLCache(ttl_seconds=ttl_seconds)
 ```
 
-L1 miss ? read from Redis ? populate L1. Every L1 `set()` propagates to Redis via write-through. Transparent drop-in: when `REDIS_URL` is unset, `make_cache()` returns a bare `TTLCache` with identical behavior.
+L1 miss → read from Redis → populate L1. Every L1 `set()` propagates to Redis via write-through. Transparent drop-in: when `REDIS_URL` is unset, `make_cache()` returns a bare `TTLCache` with identical behavior.
 
 ### LangChain SQLiteCache (Tier 1B)
 
@@ -336,7 +481,7 @@ Sized by `LLM_MAX_CONCURRENT` (default 2). Uses `heapq` with `(priority, seq, as
 
 `src/orchestrator/agent_executor.py`, in `_process_response()`:
 
-1. **Empty/short response guard** — `len(text.strip()) < 50` ? `TASK_STATE_FAILED` with structured error.
+1. **Empty/short response guard** — `len(text.strip()) < 50` → `TASK_STATE_FAILED` with structured error.
 2. **Signal check** — if response lacks BUY/HOLD/SELL and the query was a stock analysis request, emits a Langfuse warning span with `missing_signal: true`.
 
 ## MCP Architecture
@@ -420,6 +565,22 @@ The `agent_output_store` table (`session_id TEXT, agent_name TEXT, output_json T
 | `compute_information_ratio(returns, benchmark, ...)` | Active return / tracking error (returns float) |
 | `compute_cagr(values)` | Compound annual growth rate (returns float\|None) |
 
+## Per-Agent Dependency Groups (v2.16)
+
+`pyproject.toml` defines per-agent optional dependency groups so each Docker image installs only its own framework:
+
+| Group | Framework | Used By |
+|---|---|---|
+| `orchestrator` | google-adk, a2a-sdk, starlette | Orchestrator |
+| `rag` | llama-index, sentence-transformers | RAG Agent |
+| `quant` | langchain, langchain-openai | Quant Agent |
+| `market` | crewai | Market Context Agent |
+| `analytics` | pydantic-ai | Analytics Agent |
+| `reviewer` | openai-agents | Reviewer Agent |
+| `mcp_server` | fastmcp | MCP Server |
+
+Core `[project.dependencies]` contains only the shared base (~30 packages: a2a-sdk, starlette, pydantic, observability, auth). Each Dockerfile installs `".[svc]"` via `uv pip install --system`. Package counts per image dropped from 315 to 99-184.
+
 ## CI Pipeline
 
 A GitHub Actions CI pipeline runs on every push (v1.41, Phase 0):
@@ -431,15 +592,15 @@ A GitHub Actions CI pipeline runs on every push (v1.41, Phase 0):
 | **test** | `pytest tests/unit/ -v` | Unit tests with slim deps (no PyTorch/CUDA) |
 | **frontend** | `npx next lint` + `npx tsc --noEmit` | web/nextjs-app/ |
 | **openapi** | `python scripts/generate_openapi.py --check` | docs/openapi.json freshness |
-| **docker** | Docker build for all 5 services (continue-on-error) | Dockerfiles |
+| **docker** | Docker build for all 8 services (continue-on-error) | 7 Python Dockerfiles + 1 Next.js Dockerfile |
 
-Test job uses `--no-deps -e .` to install only ~15 packages instead of all 293 base deps (avoids PyTorch, CUDA, all agent frameworks). A `AUTH_ENABLED={false,true}` matrix runs auth contract tests twice.
+Test job uses `--no-deps -e .` to install only ~15 packages instead of all 293 base deps (avoids PyTorch, CUDA, all agent frameworks). A `AUTH_ENABLED={false,true}` matrix runs auth contract tests twice. The Docker build matrix includes `web-frontend` (Next.js standalone image) alongside the 7 Python agent images.
 
 ## Centralized Settings & Bootstrap
 
 Configuration migrated from `src/shared/config.py` (re-exporting shim, removed in v2.0) to `src/shared/settings.py`:
 
-- **pydantic-settings `BaseSettings`**: Type-safe env var loading with back-compat aliases (`LLM_BASE_URL` ? `OPENAI_BASE_URL` ? `LM_STUDIO_BASE_URL`)
+- **pydantic-settings `BaseSettings`**: Type-safe env var loading with back-compat aliases (`LLM_BASE_URL` → `OPENAI_BASE_URL` → `LM_STUDIO_BASE_URL`)
 - **`get_settings()` singleton**: Lazy-loaded, cached after first call
 - **`validate_runtime()`**: Production-mode enforcement (e.g., refuses `ast` sandbox on Windows)
 
@@ -455,7 +616,7 @@ All agents use LM Studio (OpenAI-compatible local API). The `src/shared/settings
 
 ### Cross-Process Eval Coordination
 
-Sub-agent evals are deferred via `src/shared/eval_gate.py` to prevent three sub-agent eval processes from competing with orchestrator synthesis on the shared LM Studio instance. Each sub-agent calls `defer_eval()` instead of `asyncio.create_task()`. The orchestrator's `after_agent_callback` fires `_release_sub_agent_evals()` which POSTs to each sub-agent's `/release-evals` endpoint after synthesis completes. A 120s safety-net auto-release prevents evals from being silently dropped if the orchestrator crashes.
+Sub-agent evals are deferred via `src/shared/eval_gate.py` to prevent five sub-agent eval processes from competing with orchestrator synthesis on the shared LM Studio instance. Each sub-agent calls `defer_eval()` instead of `asyncio.create_task()`. The orchestrator's `after_agent_callback` fires `_release_sub_agent_evals()` which POSTs to each sub-agent's `/release-evals` endpoint after synthesis completes. A 120s safety-net auto-release prevents evals from being silently dropped if the orchestrator crashes.
 
 | Agent | Model (default / .env override) | Provider |
 |---|---|---|
@@ -466,7 +627,7 @@ Sub-agent evals are deferred via `src/shared/eval_gate.py` to prevent three sub-
 
 ## Observability & Tracing
 
-Langfuse provides distributed tracing across all four agent processes. Trace context is propagated through the A2A protocol via text-based injection.
+Langfuse provides distributed tracing across all six agent processes. Trace context is propagated through the A2A protocol via text-based injection.
 
 ### Trace Propagation Flow
 
@@ -475,13 +636,13 @@ Orchestrator (orchestrator)
   +-- agent_executor.py: langfuse.trace(name="finsight-query")
   +-- start_as_current_observation(name="orchestrator-execute")
   +-- send_message() tool: get_current_trace_id() + get_current_observation_id()
-  +-- inject_trace_context(task, trace_id, parent_span_id) ? A2A text prefix
+  +-- inject_trace_context(task, trace_id, parent_span_id) → A2A text prefix
 
 A2A Protocol (JSON-RPC over HTTP)
   +-- Task text prefixed with {"_trace": {"trace_id": "...", "parent_span_id": "..."}}
 
 Sub-agents (agent_2, agent_3, agent_4)
-  +-- extract_trace_ids(query) ? (trace_id, parent_span_id, clean_query)
+  +-- extract_trace_ids(query) → (trace_id, parent_span_id, clean_query)
   +-- start_observation(trace_context={"trace_id": ..., "parent_span_id": ...})
   +-- Langfuse joins the span to the orchestrator's trace tree
 ```
@@ -505,8 +666,20 @@ The Langfuse client uses `is_default_export_span` to filter out noisy A2A intern
 | Orchestrator | `orchestrator` | GoogleADKInstrumentor, HTTPXClientInstrumentor | `orchestrator-execute` span, per-sub-agent latency spans |
 | RAG Agent | `rag_agent` | LlamaIndexInstrumentor | `rag-agent-stream` span |
 | Quant Agent | `quant_agent` | StarletteInstrumentor | `quant-agent-stream` span + CallbackHandler for LangGraph nodes |
-| Market Context Agent | `market_context_agent` | CrewAIInstrumentor, StarletteInstrumentor | `market-context-agent-stream` span |
+| Market Context Agent | `market_context_agent` | CrewAIInstrumentor, StarletteInstrumentor, `@observe()` on `analyze()` | `market-context-agent-stream` span + `crewai-market-analysis` observation |
+| Analytics Agent | `analytics_agent` | PydanticAI `Agent.instrument_all()`, StarletteInstrumentor | `analytics-agent-stream` span + `gen_ai.*` OTEL spans |
+| Reviewer Agent | `reviewer_agent` | StarletteInstrumentor, `langfuse.openai.AsyncOpenAI` | `reviewer-agent-stream` span + auto-instrumented LLM generations |
 | MCP Server | `mcp_server` | — | `@observe()` on individual tools |
+
+### Colored Console Logging (v2.17)
+
+`src/shared/logging_config.py` provides a `ColoredFormatter` for console output:
+- Per-level ANSI colors (DEBUG=cyan, INFO=green, WARNING=yellow, ERROR=red, CRITICAL=bold white on red)
+- Service badge colors aligned with the frontend CSS palette
+- Decorator lifecycle markers: `→ Enter`, `← Exit ⏱`, `✗ Fail ⏱`
+- `NO_COLOR=1` disables all ANSI codes; `FORCE_COLOR=1` forces them on non-TTY
+- JSON file logs remain plain (zero ANSI codes)
+- Frontend counterpart: `src/web/nextjs-app/lib/logger.ts` with ANSI (server) and CSS `%c` (browser)
 
 ### Sub-Agent Latency Spans
 
@@ -523,6 +696,16 @@ lf.observation(
 ```
 
 When `EVAL_TRACE_ENABLED=true`, the same call also writes a JSON file to `src/tests/evaluation/eval_results/orchestrator_traces/` for use by the RAGAS orchestrator evaluation runner.
+
+### TTFT Tracking (v2.18)
+
+Time to First Token (TTFT) is tracked in two locations via Langfuse `generation.update(completion_start_time)`:
+
+1. **`sub_agent_client.py`**: Each A2A `send_message()` call wraps the streaming response. On the first event received, `generation.update(completion_start_time=now)` marks when the sub-agent started producing output. This gives per-sub-agent TTFT in the Langfuse trace tree.
+
+2. **`agent_executor.py`**: The ADK runner's `run_async()` stream similarly records the first event as `completion_start_time`, measuring the orchestrator LLM's TTFT.
+
+Both locations use a local `ttft_recorded` flag to ensure `completion_start_time` is set only once per generation. Langfuse computes the TTFT as `completion_start_time - start_time` automatically.
 
 ## Memory Layer Architecture
 
@@ -579,15 +762,15 @@ The executor-level path (`src/orchestrator/agent_executor.py`) has a parallel ch
 When the cache callback misses (no today brief), the executor injects memory context into the user message:
 
 ```
-User Query ? Executor._build_memory_context(query)
-  +-- extract_ticker(query) ? "NVDA"
-  +-- TickerMemory.get_latest("NVDA") ? last brief (with analysis_date)
+User Query → Executor._build_memory_context(query)
+  +-- extract_ticker(query) → "NVDA"
+  +-- TickerMemory.get_latest("NVDA") → last brief (with analysis_date)
   +-- Compare analysis_date with today
-  │     [TODAY]  ? tag as current; LLM MUST return directly (strict directive)
-  │     [STALE]  ? tag as outdated; LLM MUST call all agents fresh
-  +-- PortfolioStore.get() ? current holdings
+  │     [TODAY]  → tag as current; LLM MUST return directly (strict directive)
+  │     [STALE]  → tag as outdated; LLM MUST call all agents fresh
+  +-- PortfolioStore.get() → current holdings
   +-- Prepend: [MEMORY CONTEXT] ... [/MEMORY CONTEXT]
-       ? Runner receives augmented query
+       → Runner receives augmented query
 ```
 
 The memory context is compact (~300 tokens) and includes:
@@ -605,27 +788,62 @@ The memory context is compact (~300 tokens) and includes:
 | `PerformanceTracker` | `src/shared/memory/performance_tracker.py` | Recommendation outcome tracking, accuracy evaluation |
 | `SQLiteMemoryService` | `src/shared/memory/memory_service.py` | ADK `BaseMemoryService` implementation for `load_memory` tool |
 
+## Web Frontend (Next.js)
+
+The web frontend (`src/web/nextjs-app/`) is a Next.js 16 application running on port 3000, served either via `next start` (standalone Docker image) or `next dev` (local development). It provides the user-facing UI: overview page, research chat (CopilotKit), dashboard metrics, and operator controls.
+
+### Service Architecture
+
+```
+Next.js (port 3000)
+  +-- /app/overview          — landing page with system overview
+  +-- /app/research          — CopilotKit chat interface (proxied to orchestrator /a2a-agui)
+  +-- /app/dashboard         — Langfuse metrics dashboard (KPIs, agent breakdown, latency charts)
+  +-- /app/operator          — service health dashboard
+  +-- /api/copilotkit         — POST proxy to orchestrator /a2a-agui
+  +-- /api/dashboard         — GET aggregated dashboard metrics
+  +-- /api/dashboard/scores  — GET RAGAS score timeseries
+  +-- /api/reports/*         — GET report downloads (proxied to backend)
+  +-- /api/auth/*            — login/logout endpoints
+```
+
+### Docker Build
+
+Multi-stage Dockerfile (`src/web/nextjs-app/Dockerfile`):
+1. **deps**: `node:20-alpine` + `npm ci`
+2. **build**: `npm run build` (standalone output via `output: 'standalone'` in `next.config.ts`)
+3. **runner**: `node:20-alpine` + standalone build output — no `node_modules`, ~120MB final image
+
+### Langfuse API Integration
+
+The dashboard queries Langfuse via its REST API. API limits are capped at 100 (Langfuse cloud tier limit) to prevent 400 errors. The dashboard and overview pages display actual API error messages rather than generic fallbacks.
+
 ## Health Endpoints
 
-All five services expose `GET /health`:
+All eight services expose `GET /health`:
 
 | Service | URL | Response |
 |---|---|---|
+| Web Frontend | `http://localhost:3000/api/health` | `{"status":"ok","agent":"web"}` |
 | Orchestrator | `http://localhost:8001/health` | `{"status":"ok","agent":"orchestrator"}` |
 | RAG Agent | `http://localhost:8002/health` | `{"status":"ok","agent":"rag"}` |
 | Quant Agent | `http://localhost:8003/health` | `{"status":"ok","agent":"quant"}` |
 | Market Context Agent | `http://localhost:8004/health` | `{"status":"ok","agent":"market_context"}` |
+| Analytics Agent | `http://localhost:8005/health` | `{"status":"ok","agent":"analytics"}` |
+| Reviewer Agent | `http://localhost:8006/health` | `{"status":"ok","agent":"reviewer"}` |
 | MCP Server | `http://localhost:8010/health` | `{"status":"ok","agent":"mcp"}` |
 
 ### Eval Release Endpoints
 
-The three sub-agent servers expose `POST /release-evals` to trigger deferred eval coroutines:
+All five sub-agent servers expose `POST /release-evals` to trigger deferred eval coroutines:
 
 | Service | Endpoint | Response |
 |---|---|---|
 | RAG Agent | `POST http://localhost:8002/release-evals` | `{"released": N}` |
 | Quant Agent | `POST http://localhost:8003/release-evals` | `{"released": N}` |
 | Market Context Agent | `POST http://localhost:8004/release-evals` | `{"released": N}` |
+| Analytics Agent | `POST http://localhost:8005/release-evals` | `{"released": N}` |
+| Reviewer Agent | `POST http://localhost:8006/release-evals` | `{"released": N}` |
 
 The orchestrator calls these endpoints via `_release_sub_agent_evals()` as a fire-and-forget background task after synthesis completes (5s HTTP timeout, non-fatal on failure).
 
@@ -637,7 +855,7 @@ All services write structured logs to the `logs/` directory via `src/shared/logg
 
 ```python
 from shared.logging_config import setup_file_logging
-setup_file_logging("orchestrator")  # ? logs/orchestrator.log
+setup_file_logging("orchestrator")  # → logs/orchestrator.log
 ```
 
 `setup_file_logging(service_name)` attaches a `RotatingFileHandler` (10 MB max, 5 backups) and a `StreamHandler` to the root logger. Called at module level in each server entry point. Duplicate handler registration is guarded.
@@ -648,6 +866,8 @@ setup_file_logging("orchestrator")  # ? logs/orchestrator.log
 | RAG Agent | `logs/rag_agent.log` |
 | Quant Agent | `logs/quant.log` |
 | Market Context Agent | `logs/market_context.log` |
+| Analytics Agent | `logs/analytics.log` |
+| Reviewer Agent | `logs/reviewer.log` |
 | MCP Server | `logs/mcp.log` |
 
 ### Decorators
@@ -676,20 +896,239 @@ Key events emit structured log lines (visible in service log files):
 - **Memory**: brief store/update in `ticker_memory.py`; portfolio upsert in `portfolio_store.py`; recommendation record in `performance_tracker.py`
 - **Reports**: format + byte count for each generated report in `api_routes.py`
 
-### SQLite Schema
+### Entity-Relationship Diagram
 
-```sql
-sessions (id, user_id, created_at, updated_at)
-events (id, session_id, event_type, data, created_at)
-ticker_briefs (id, ticker, recommendation, confidence, response_text, created_at, analysis_date)
-user_profiles (id, user_id, holdings_json, risk_profile, investment_horizon, updated_at)
-recommendation_records (id, ticker, recommendation, confidence, price_at_rec, created_at,
-                        evaluated_at, realized_return)
-memory_entries (id, session_id, content_hash, content, search_text, created_at)
-ingested_filings (edgar_url PRIMARY KEY, ticker, ingested_at)  -- v1.18
+FinSight uses two separate SQLite databases (since v2.6 — `db/finsight_memory.db` for business data, `db/adk_sessions.db` for conversation state). All tables live in the `db/` folder at the project root.
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        finsight_memory.db                                │
+│                                                                         │
+│  ┌──────────────┐       ┌──────────────────┐       ┌────────────────┐  │
+│  │ sessions      │──1:N──│ events            │       │ memory_entries │  │
+│  │              │       │                   │       │                │  │
+│  │ id (PK)      │       │ id (PK)           │──N:1─│ id (PK)        │  │
+│  │ user_id      │       │ session_id (FK)   │       │ session_id (FK)│  │
+│  │ created_at   │       │ event_type        │       │ content_hash   │  │
+│  │ updated_at   │       │ data (JSON)       │       │ content        │  │
+│  └──────────────┘       │ created_at        │       │ search_text    │  │
+│                         └──────────────────┘       │ created_at     │  │
+│                                                    └────────────────┘  │
+│  ┌──────────────┐       ┌──────────────────┐                          │
+│  │ ticker_briefs │       │ recommendation_  │                          │
+│  │              │       │ records           │                          │
+│  │ id (PK)      │       │ id (PK)           │                          │
+│  │ ticker       │       │ ticker            │                          │
+│  │ recommendation│       │ recommendation    │                          │
+│  │ confidence   │       │ confidence        │                          │
+│  │ response_text│       │ price_at_rec      │                          │
+│  │ analysis_date│       │ created_at        │                          │
+│  │ created_at   │       │ evaluated_at      │                          │
+│  └──────────────┘       │ realized_return   │                          │
+│                         └──────────────────┘                          │
+│  ┌──────────────┐       ┌──────────────────┐       ┌────────────────┐  │
+│  │ user_profiles │       │ ingested_filings  │       │ agent_output_  │  │
+│  │              │       │                   │       │ store          │  │
+│  │ id (PK)      │       │ edgar_url (PK)    │       │                │  │
+│  │ user_id      │       │ ticker            │       │ session_id     │  │
+│  │ holdings_json│       │ ingested_at       │       │ agent_name     │  │
+│  │ risk_profile │       └──────────────────┘       │ output_json    │  │
+│  │ investment_  │                                  │ created_at     │  │
+│  │ horizon      │                                  └────────────────┘  │
+│  │ updated_at   │                                                     │
+│  └──────────────┘                                                     │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                          adk_sessions.db                                │
+│                                                                         │
+│  ┌──────────────┐       ┌──────────────────┐                          │
+│  │ sessions      │──1:N──│ events            │                          │
+│  │              │       │                   │                          │
+│  │ id (PK)      │       │ id (PK)           │                          │
+│  │ user_id      │       │ session_id (FK)   │                          │
+│  │ app_name     │       │ author            │                          │
+│  │ created_at   │       │ timestamp         │                          │
+│  └──────────────┘       │ content (JSON)    │                          │
+│                         └──────────────────┘                          │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
-`ingested_filings` tracks which SEC EDGAR document URLs have been indexed into ChromaDB. The RAG agent checks this table before fetching filing content — already-indexed URLs are skipped, preventing redundant ingest on restart.
+### Table Relationships
+
+**Core conversation flow** (`adk_sessions.db`):
+- `sessions` → `events`: One session has many events. Each event is a single turn (user message, agent response, tool call). The `data` JSON column stores the full event payload including LLM content parts and tool call/response metadata.
+
+**Memory and persistence** (`finsight_memory.db`):
+- `sessions` → `events`: Mirrors the ADK schema but used by the memory layer for cross-session search via `memory_entries`.
+- `sessions` → `memory_entries`: One session has many memory entries. `content_hash` enables deduplication. `search_text` is the FTS5-indexed column queried by `load_memory`.
+- `ticker_briefs`: Independent table keyed by ticker + analysis_date. Each row is a complete BUY/HOLD/SELL analysis. Linked to the orchestrator's `save_brief` flow — not directly to sessions.
+- `recommendation_records`: Tracks the same recommendation with a `price_at_rec` snapshot. Updated asynchronously by `PerformanceTracker` when evaluation completes, populating `evaluated_at` and `realized_return`.
+- `user_profiles`: One row per `user_id`. Stores portfolio holdings as JSON (`holdings_json`), risk tolerance, and investment horizon. Updated by `PortfolioStore.update_holdings()`.
+- `ingested_filings`: Deduplication table for RAG ingestion. `edgar_url` is the primary key (SEC URLs are immutable and canonical).
+- `agent_output_store`: Cross-process data bridge. Keyed by `(session_id, agent_name)`. The orchestrator writes sub-agent outputs here via `store_agent_output()`; the reviewer reads them via `get_agent_outputs()`.
+
+### Data Lifecycle
+
+```
+User Query (e.g. "Should I invest in NVDA?")
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────┐
+│ 1. INGESTION & ROUTING (Orchestrator)                        │
+│    • Extract ticker via regex + MCP validate_ticker          │
+│    • Check same-day cache (ticker_briefs.analysis_date)      │
+│    • Check semantic cache (ChromaDB cosine similarity)        │
+│    • Inject memory context (ticker_briefs + user_profiles)   │
+│    • LLM routes to sub-agents via send_message               │
+└─────────────────────────────────────────────────────────────┘
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────┐
+│ 2. ANALYSIS (Sub-agents, parallel)                          │
+│    • RAG: fetch SEC filings → ChromaDB → LlamaIndex query    │
+│    • Quant: MCP prices/financials → LangGraph computation    │
+│    • Market: MCP macro/peers → CrewAI narrative              │
+│    • Analytics: MCP prices → PydanticAI DAG (trend/forecast/ │
+│      anomaly/stats/charts)                                   │
+│    • Each agent writes its own output to agent_output_store   │
+└─────────────────────────────────────────────────────────────┘
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────┐
+│ 3. REVIEW (Reviewer Agent, sequential)                       │
+│    • Fetch agent outputs from agent_output_store             │
+│    • Run 6 deterministic validation tools (Python)           │
+│    • LLM synthesizes structured review + meta-confidence     │
+│    • Output: verdict, contradictions, confidence_breakdown   │
+└─────────────────────────────────────────────────────────────┘
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────┐
+│ 4. PERSISTENCE (Orchestrator after_agent_callback)           │
+│    • save_brief() → ticker_briefs (full synthesis text)      │
+│    • PortfolioStore.update_holdings() → user_profiles        │
+│    • PerformanceTracker.record_recommendation() →            │
+│      recommendation_records (with price_at_rec snapshot)     │
+│    • add_events_to_memory() → memory_entries (FTS5 indexed)  │
+│    • _release_sub_agent_evals() → POST /release-evals        │
+└─────────────────────────────────────────────────────────────┘
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────┐
+│ 5. EVALUATION (Background, fire-and-forget)                  │
+│    • Each agent's score_*_response() runs RAGAS metrics      │
+│    • Scores pushed to Langfuse under rags/{agent}/{metric}   │
+│    • PerformanceTracker evaluates past recommendations       │
+│      against current prices → recommendation_records          │
+│      (realized_return, evaluated_at)                         │
+└─────────────────────────────────────────────────────────────┘
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────┐
+│ 6. PRUNING (Startup + background)                            │
+│    • prune_old_records(): delete ticker_briefs,               │
+│      recommendation_records, memory_entries older than        │
+│      MEMORY_RETENTION_DAYS=90                                │
+│    • prune_stale_outputs(): delete agent_output_store        │
+│      entries older than 600s                                 │
+│    • ChromaDB semantic cache: entries never expire (date-     │
+│      scoped queries prevent stale reads)                     │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Schema DDL
+
+```sql
+-- Conversation state (adk_sessions.db)
+CREATE TABLE sessions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    app_name TEXT DEFAULT 'orchestrator',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE events (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES sessions(id),
+    author TEXT NOT NULL DEFAULT 'orchestrator',
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    content JSON NOT NULL,          -- Array of {type, text, name, args, ...}
+    FOREIGN KEY (session_id) REFERENCES sessions(id)
+);
+
+-- Memory and persistence (finsight_memory.db)
+CREATE TABLE ticker_briefs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker TEXT NOT NULL,
+    recommendation TEXT NOT NULL,   -- BUY/HOLD/SELL
+    confidence REAL,                -- 0.0-1.0
+    response_text TEXT,             -- Full LLM synthesis (up to 4000 chars)
+    analysis_date TEXT,             -- YYYY-MM-DD (IST timezone)
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE recommendation_records (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker TEXT NOT NULL,
+    recommendation TEXT NOT NULL,
+    confidence REAL,
+    price_at_rec REAL,              -- yfinance snapshot at recommendation time
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    evaluated_at TIMESTAMP,         -- NULL until performance eval runs
+    realized_return REAL            -- NULL until evaluated
+);
+
+CREATE TABLE user_profiles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL UNIQUE,
+    holdings_json TEXT,             -- {"AAPL": 10, "MSFT": 5, ...}
+    risk_profile TEXT,              -- conservative/moderate/aggressive
+    investment_horizon TEXT,        -- short/medium/long
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE memory_entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    content_hash TEXT NOT NULL,     -- SHA-256 for dedup
+    content TEXT NOT NULL,          -- Original event content
+    search_text TEXT NOT NULL,      -- FTS5-indexed plain text
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE ingested_filings (
+    edgar_url TEXT PRIMARY KEY,     -- Canonical SEC URL (immutable)
+    ticker TEXT NOT NULL,
+    ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE agent_output_store (
+    session_id TEXT NOT NULL,
+    agent_name TEXT NOT NULL,       -- rag, quant, market_context, analytics, reviewer
+    output_json TEXT NOT NULL,      -- Full agent output as JSON
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (session_id, agent_name)
+);
+
+-- Indexes
+CREATE INDEX idx_ticker_briefs_ticker ON ticker_briefs(ticker);
+CREATE INDEX idx_ticker_briefs_date ON ticker_briefs(analysis_date);
+CREATE INDEX idx_events_session ON events(session_id);
+CREATE INDEX idx_memory_session ON memory_entries(session_id);
+CREATE INDEX idx_memory_hash ON memory_entries(content_hash);
+CREATE INDEX idx_recommendation_ticker ON recommendation_records(ticker);
+CREATE INDEX idx_ingested_ticker ON ingested_filings(ticker);
+```
+
+### Key Design Decisions
+
+- **Two databases**: `adk_sessions.db` is owned by the ADK framework (conversation state); `finsight_memory.db` is owned by FinSight's memory layer (business data). Separating them prevents schema conflicts (v2.6).
+- **`analysis_date` vs `created_at`**: `ticker_briefs` uses a separate `analysis_date` (YYYY-MM-DD) for same-day cache comparisons. This avoids timezone ambiguity — `created_at` is a full ISO-8601 timestamp that requires parsing to determine the day boundary.
+- **`agent_output_store` as cross-process bridge**: Rather than passing full agent outputs through A2A message payloads (size limits, serialization overhead), the orchestrator writes them to SQLite and the reviewer reads by `session_id`. The 600s TTL keeps the table small.
+- **`content_hash` dedup in memory_entries**: SHA-256 hash of the content prevents duplicate entries when the same session is processed multiple times (e.g., retry after failure). FTS5 indexing on `search_text` enables fast full-text search for `load_memory`.
+- **`ingested_filings` dedup**: SEC EDGAR URLs are canonical and immutable — using `edgar_url` as primary key makes re-ingestion checks a simple indexed lookup.
 
 ### HF_HUB_OFFLINE
 
@@ -710,11 +1149,13 @@ When the orchestrator runs through `adk web` (the path `run_adk_web.bat` uses), 
 `FinSightAgentExecutor` still keeps its eval call for completeness — it fires when an A2A client hits `src/orchestrator/main.py` directly. The A2A server is not started by `run_adk_web.bat` by default; start it manually with `uv run python -m orchestrator.main` if needed.
 
 | Agent | Background Task | Metrics | Why Each Metric | Data Required |
-|---|---|---|---|---|---|
-| Orchestrator | `score_response()` | AnswerRelevancy, citation_quality, risk_disclosure, recommendation_clarity, response_completeness | AnswerRelevancy: generic catch-all for response quality. citation_quality: unsubstantiated financial claims are worthless — must cite filing dates/amounts. risk_disclosure: an investment thesis without risk discussion is incomplete. recommendation_clarity: the core output is a BUY/HOLD/SELL signal — ambiguous synthesis fails. response_completeness: must synthesize all 3 analysis types, not just one. | `user_input`, `response` |
-| RAG | `score_rag_response()` | Faithfulness, AnswerRelevancy, ContextPrecisionWithoutReference | Faithfulness: prevents hallucinated dates/numbers by verifying claims against retrieved SEC text. ContextPrecisionWithoutReference: flags retrieval drift — when RAG returns irrelevant filings, this drops even if Faithfulness passes. | `user_input`, `response`, `context_texts` (ChromaDB nodes) |
-| Quant | `score_quant_response()` | FactualCorrectness, AnswerRelevancy | FactualCorrectness: compares LLM summary numbers (Sharpe, VaR, DCF) against actual computed values — primary failure mode is hallucinated numbers. AnswerRelevancy: generic catch-all. | `user_input`, `response`, `quant_result` (computed metrics dict) |
+|---|---|---|---|---|
+| Orchestrator | `score_response()` | AnswerRelevancy, citation_quality, risk_disclosure, recommendation_clarity, response_completeness, no_forward_guarantees | AnswerRelevancy: generic catch-all for response quality. citation_quality: unsubstantiated financial claims are worthless — must cite filing dates/amounts. risk_disclosure: an investment thesis without risk discussion is incomplete. recommendation_clarity: the core output is a BUY/HOLD/SELL signal — ambiguous synthesis fails. response_completeness: must synthesize all analysis types, not just one. no_forward_guarantees: flags any language suggesting guaranteed future performance. | `user_input`, `response` |
+| RAG | `score_rag_response()` | Faithfulness, ContextPrecisionWithoutReference, cross_collection_synthesis | Faithfulness: prevents hallucinated dates/numbers by verifying claims against retrieved SEC text. ContextPrecisionWithoutReference: flags retrieval drift — when RAG returns irrelevant filings, this drops even if Faithfulness passes. cross_collection_synthesis: checks whether the response cites sources from ≥2 collections (sec_filings, news, earnings). | `user_input`, `response`, `context_texts` (ChromaDB nodes) |
+| Quant | `score_quant_response()` | FactualCorrectness, signal_explanation_quality, deterministic (schema validator) | FactualCorrectness: compares LLM summary numbers (Sharpe, VaR, DCF) against actual computed values — primary failure mode is hallucinated numbers. signal_explanation_quality: scores whether the response explains three or more signal groups with specific numeric values. deterministic: zero-LLM schema validation — checks all 8 signal groups, weight sum, MC percentiles, peer fields, recommendation invariants. | `user_input`, `response`, `quant_result` (computed metrics dict) |
 | Market Context | `score_market_context_response()` | Faithfulness, macro_regime_analysis, peer_landscape_quality | Faithfulness: verifies narrative is grounded in collected macro and peer data. macro_regime_analysis: evaluates if narrative discusses yield curve, VIX, DXY, sector ETF performance with actual values. peer_landscape_quality: evaluates depth of peer comparison across multiple metrics. | `user_input`, `response`, `_retrieved_contexts` (macro + peer data) |
+| Analytics | `score_analytics_response()` | Runtime RAGAS eval + deterministic schema checks | Validates analytics output schema and defers LLM-based eval for trend, forecast, and anomaly quality. | `user_input`, `response`, analytics result |
+| Reviewer | `score_reviewer_response()` | Runtime RAGAS eval + deterministic schema checks | Validates reviewer output schema and defers LLM-based eval for review quality. | `user_input`, `response`, reviewer result |
 
 ### Per-Metric Streaming
 
@@ -722,7 +1163,7 @@ Metrics within an agent are run concurrently via `asyncio.wait(FIRST_COMPLETED)`
 
 ### Client Caching
 
-`_setup_ragas_clients()` caches the `(InstructorLLM, _STEmbeddings)` tuple at module level after the first call. All four agents reuse the cached `SentenceTransformer` model — the previous approach loaded a fresh model (~1-2s, ~80MB) on every agent response, multiplying latency by 4 per query.
+`_setup_ragas_clients()` caches the `(InstructorLLM, _STEmbeddings)` tuple at module level after the first call. All six agents reuse the cached `SentenceTransformer` model — the previous approach loaded a fresh model (~1-2s, ~80MB) on every agent response, multiplying latency by 6 per query.
 
 ### Error Handling
 
@@ -759,8 +1200,8 @@ These metrics require a human-curated reference dataset and live in `src/tests/e
 After each successful response, the executor automatically persists:
 
 ```
-Response Complete ? Executor._auto_save_memory(query, response)
-  +-- extract_ticker(query) ? "NVDA"
+Response Complete → Executor._auto_save_memory(query, response)
+  +-- extract_ticker(query) → "NVDA"
   +-- TickerMemory.store_brief(ticker, recommendation, response)
   +-- PortfolioStore.update_holdings(extracted_holdings)
   +-- PerformanceTracker.record_recommendation(ticker, rec, confidence)
@@ -841,19 +1282,19 @@ Route ordering is significant: `/ticker/{symbol}/latest/{format}` must be declar
 ### Data Flow
 
 ```
-HTTP Request ? api_routes.py handler
-  ? _load_brief_data(brief_id_or_symbol)  — loads from TickerMemory
-  ? generate_html / generate_pdf_async
-    ? _extract_deck_data(brief)  — shared pipeline (Pydantic models)
-      +-- _extract_metric(deck, "sharpe_ratio")   ? 1.45
-      +-- _extract_recommendation(brief)           ? "BUY"
-      +-- _extract_scorecards(metrics)             ? Momentum, RSI scorecards
-      +-- _extract_advanced_scorecard(metrics)     ? VaR, beta, volatility
-      +-- _extract_fundamentals(metrics)           ? PE, ROE, margins
-      +-- _extract_executive_sections(brief)       ? [Price Target, Thesis, Recommendation]
-      +-- _populate_from_agent_outputs(brief)      ? Pydantic model parsing
-      +-- _extract_holdings(metrics)               ? portfolio table
-    ? format-specific generator (HTML scrollable page or A4 PDF)
+HTTP Request → api_routes.py handler
+  → _load_brief_data(brief_id_or_symbol)  — loads from TickerMemory
+  → generate_html / generate_pdf_async
+    → _extract_deck_data(brief)  — shared pipeline (Pydantic models)
+      +-- _extract_metric(deck, "sharpe_ratio")   → 1.45
+      +-- _extract_recommendation(brief)           → "BUY"
+      +-- _extract_scorecards(metrics)             → Momentum, RSI scorecards
+      +-- _extract_advanced_scorecard(metrics)     → VaR, beta, volatility
+      +-- _extract_fundamentals(metrics)           → PE, ROE, margins
+      +-- _extract_executive_sections(brief)       → [Price Target, Thesis, Recommendation]
+      +-- _populate_from_agent_outputs(brief)      → Pydantic model parsing
+      +-- _extract_holdings(metrics)               → portfolio table
+    → format-specific generator (HTML scrollable page or A4 PDF)
 ```
 
 ### Format-Specific Generators
@@ -887,17 +1328,17 @@ The orchestrator captures parsed sub-agent responses at the `send_message` tool 
 ```
 A2A path (agent_executor.py):
   send_message tool callback
-    ? Extract response text from A2A artifact
-    ? Parse into structured fields (quant metrics, RAG summary, sentiment narrative)
-    ? Store in session event metadata via extra_data parameter
-    ? store_minimal() persists extra_data as JSON in brief record
+    → Extract response text from A2A artifact
+    → Parse into structured fields (quant metrics, RAG summary, sentiment narrative)
+    → Store in session event metadata via extra_data parameter
+    → store_minimal() persists extra_data as JSON in brief record
 
 ADK Web UI path (web/agent.py):
   after_agent_callback
-    ? _collect_agent_extra() — pop agent responses from send_message events
-    ? Map into brief_json keys via update_brief_json()
-    ? Recommendation/confidence columns updated on same-day re-analysis
-    ? Previously, structured agent data was silently lost on every ADK web query
+    → _collect_agent_extra() — pop agent responses from send_message events
+    → Map into brief_json keys via update_brief_json()
+    → Recommendation/confidence columns updated on same-day re-analysis
+    → Previously, structured agent data was silently lost on every ADK web query
 ```
 
 This enables `_populate_from_agent_outputs()` in the extraction pipeline to build report sections from structured data instead of parsing prose, improving extraction accuracy for metrics, scorecards, and peer comparisons.

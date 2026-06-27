@@ -28,6 +28,9 @@ def run_bank_valuation(
         }
 
     book_value_ps = current_price / price_to_book
+    # 1.2× P/B = conservative median for financial-sector banks (historical
+    # range ~0.8–2.0); lower than tech peers because banking ROE is more
+    # commodity-like and capital requirements compress upside.
     fair_pb = 1.2
     pb_fair_value = book_value_ps * fair_pb
     pb_upside = (pb_fair_value - current_price) / current_price

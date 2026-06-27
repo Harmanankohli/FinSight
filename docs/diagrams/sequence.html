@@ -38,7 +38,7 @@ participant Mkt as MktContext(CrewAI)
 participant Analytics as Analytics(PydanticAI)
 participant Reviewer as Reviewer(OpenAI Agents SDK)
 participant MCP as MCP Server
-Note over User,MCP: ═══ Phase 1: Input Processing (&lt; 5s) ═══
+Note over User,MCP: ═══ Phase 1: Input Processing (< 5s) ═══
 
 User->>UI: ① "Should I invest in NVIDIA?"
 UI->>Orch: ② POST /a2a-agui + X-FinSight-User-Id

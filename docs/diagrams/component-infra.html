@@ -48,6 +48,7 @@ SI_MCP("MCPClient\nsrc/shared/mcp_client.py\nSSE session singleton\nAuto-reconne
 SI_Gate("Deferred Eval Gate\nsrc/shared/eval_gate.py\nSub-agents defer evals\nOrchestrator POST /release-evals\n120s safety-net auto-release")
 SI_Sett("Settings\nsrc/shared/settings.py\nPydantic-settings config\nPer-agent A2A timeouts\nLLM queue + eval config")
 SI_Boot("Bootstrap\nsrc/shared/bootstrap.py\nStartup side-effects\nEvent loop + logging + env")
+ColoredLog("ColoredFormatter\nsrc/shared/logging_config.py\nANSI per-level colors\nService badge colors\nNO_COLOR / FORCE_COLOR")
 SI_Metric("MetricValue\nsrc/shared/metrics.py\nFloat subclass w/ validation\n.status / .warning / .to_dict()\nUsed by Quant + Analytics")
 end
 subgraph DataTools["MCP Data Tools (20)"]
@@ -72,6 +73,8 @@ SI_MCP -. "connects to" .-> MCP_SSE
 SI_Sett -. "config" .-> SI_LLM
 SI_Sett -. "config" .-> SI_Eval
 SI_Boot -. "init" .-> SI_Sett
+SI_Boot -. "init" .-> ColoredLog
+style ColoredLog fill:#e8daef,stroke:#8e44ad,color:#1a1a1a
 style SEC fill:#fadbd8,stroke:#c0392b,color:#1a1a1a
 style YF fill:#fadbd8,stroke:#c0392b,color:#1a1a1a
 style RSS fill:#fadbd8,stroke:#c0392b,color:#1a1a1a

@@ -1,5 +1,51 @@
 # Design Decisions
 
+## TTFT Tracking via Langfuse `completion_start_time` (v2.18)
+
+### Why track TTFT via `completion_start_time` instead of custom spans?
+
+Langfuse natively computes Time to First Token when a `generation` observation has both `start_time` and `completion_start_time` set. Using the built-in field means TTFT appears automatically in the Langfuse UI alongside token counts and latency — no custom span needed. The alternative (a separate `ttft_ms` metadata field) would require manual dashboard queries and wouldn't integrate with Langfuse's built-in TTFT charts.
+
+### Why record TTFT at both sub-agent and orchestrator levels?
+
+Sub-agent TTFT measures how fast each specialist agent (RAG, Quant, Market Context, Analytics, Reviewer) begins producing output — this isolates slow agents. Orchestrator TTFT measures how fast the ADK LLM starts streaming — this isolates model loading or queue contention. Together they distinguish "the LLM was slow" from "a specific sub-agent was slow" from "the priority queue was backed up".
+
+### Why a `ttft_recorded` flag instead of checking `completion_start_time is None`?
+
+The `generation.update()` call is async and the flag check is synchronous. Checking the field would require accessing the Langfuse observation object, which may not be safely readable mid-update. A simple boolean flag is deterministic and has zero risk of race conditions in the streaming loop.
+
+## Colored Console Logging (v2.17)
+
+### Why ANSI colors for console but plain JSON for files?
+
+The system has two logging consumers: human operators watching console output (who benefit from color-coded severity and service badges) and log aggregators parsing JSON lines (where ANSI escape codes would corrupt parsing). The `ColoredFormatter` is attached only to the `StreamHandler`; the `FileHandler` uses the plain `JsonFormatter`. A regression test (`test_colored_logging.py`) guarantees zero ANSI codes in file output.
+
+### Why service badge colors aligned with the frontend CSS palette?
+
+Operators reading console logs can mentally correlate log lines with the frontend's agent tile colors. Blue = RAG, Green = Quant, Brown = Market Context, etc. This reduces cognitive load when switching between terminal and browser during debugging.
+
+### Why `NO_COLOR` / `FORCE_COLOR` env vars?
+
+`NO_COLOR` (https://no-color.org/) is a community standard adopted by major CLI tools. Respecting it ensures the logs are clean when piped to `grep`, `jq`, or CI log collectors. `FORCE_COLOR=1` is set in GitHub Actions to get colored output in the CI web UI, which renders ANSI codes as styled spans.
+
+### Why decorator lifecycle markers?
+
+The `@logged()` decorator previously emitted `Enter`/`Exit`/`Fail` text. The v2.17 update added Unicode arrows (`→`, `←`, `✗`) and a timer emoji (`⏱`) to make scanability faster — an operator can spot a failed call by looking for `✗` without reading the surrounding text.
+
+## Full Agent Langfuse Instrumentation (v2.17)
+
+### Why `langfuse.openai.AsyncOpenAI` for the reviewer instead of manual traces?
+
+The reviewer agent previously used a raw `openai.AsyncOpenAI` client with no Langfuse instrumentation. Swapping to `langfuse.openai.AsyncOpenAI` gives automatic span creation for every LLM call (prompt, completion, latency, token counts) without any manual trace setup. This brings the reviewer in line with all other agents.
+
+### Why `Agent.instrument_all()` for analytics?
+
+PydanticAI's `Agent.instrument_all()` enables OpenTelemetry tracing (`gen_ai.*` spans) for all LLM calls made by the agent. The previous implementation had no instrumentation for analytics LLM calls, creating a blind spot in Langfuse traces.
+
+### Why `@observe()` on CrewAI `analyze()`?
+
+CrewAI runs its crew in a thread pool (not the async event loop). Langfuse's async context propagation doesn't cross the thread boundary. The `@observe()` decorator creates a Langfuse observation that wraps the synchronous thread-pool execution, ensuring the crew's work appears in the trace tree.
+
 ## Caching Strategy
 
 ### Why `_TTLCache` with `OrderedDict` instead of a library?
@@ -100,7 +146,7 @@ Fixing them would require a full rewrite against the current codebase — essent
 
 ### Why test shared infrastructure before agent logic?
 
-The four agents (orchestrator, RAG, quant, market context) depend on shared infrastructure: settings, MCP client, ticker utilities, TTL cache, rate limiter, memory store, task store, trace context, log sanitizer, timing decorator. Testing agents directly requires spinning up LLM instances, databases, and MCP servers — fragile, slow, and expensive. Testing the shared primitives catches the bugs that affect all agents, with no LLM calls required.
+The six agents (orchestrator, RAG, quant, market context, analytics, reviewer) depend on shared infrastructure: settings, MCP client, ticker utilities, TTL cache, rate limiter, memory store, task store, trace context, log sanitizer, timing decorator. Testing agents directly requires spinning up LLM instances, databases, and MCP servers — fragile, slow, and expensive. Testing the shared primitives catches the bugs that affect all agents, with no LLM calls required.
 
 ### Solution
 
@@ -128,6 +174,29 @@ Integration tests that spin up all 4 agents + MCP server + orchestrator would ta
 - ✅ Zero agent framework imports in test dependencies — slim CI install possible
 - ✅ Integration tests exist as manual scripts, not CI gates
 - ✅ Contract tests cover A2A protocol compliance in-process
+
+## Per-Agent Dependency Groups (v2.16)
+
+### Why split dependencies into per-agent optional groups?
+
+Before v2.16, `pyproject.toml` listed all dependencies (LlamaIndex, LangChain, CrewAI, PydanticAI, OpenAI Agents, sentence-transformers, etc.) in the core `[project.dependencies]`. Every Docker image installed all 315 packages even though each agent only uses one framework. The orchestrator doesn't need LangChain; the quant agent doesn't need CrewAI.
+
+Moving heavy framework deps into optional groups (`[project.optional-dependencies] orchestrator`, `rag`, `quant`, `market`, `analytics`, `reviewer`, `mcp_server`) lets each Dockerfile install `".[svc]"` — only its own framework plus the shared base. Package counts per image dropped from 315 to 99-184.
+
+**Why not use a single `requirements.txt` per agent?** uv's native extras are version-locked in `uv.lock`, ensuring reproducible builds. Separate `requirement.txt` files drift without lockfile enforcement. Extras also work with `uv pip install --system --no-cache` in Docker without additional tooling.
+
+### Why Next.js standalone Docker output?
+
+Next.js `output: 'standalone'` produces a self-contained build with only the minimal `node_modules` needed to run `next start`. The final Docker image (~120MB) contains no source code, no `node_modules` (except the trimmed subset), and no build tools. This:
+- Eliminates the `node_modules` bloat (~1.2GB in dev) from production images
+- Reduces attack surface (no build tools, no source)
+- Allows the same image for dev and prod (port 3000, no volume mounts)
+
+**Why multi-stage?** A single-stage build would include the full `node_modules` + `.next` + source in the final image. Multi-stage copies only the standalone output to a clean `node:20-alpine` base.
+
+### Why cap Langfuse API limit at 100?
+
+Langfuse cloud tier enforces a maximum of 100 API calls per minute per trace. The dashboard was requesting 200-500 spans in a single query, triggering HTTP 400 errors. Capping the limit parameter at 100 prevents the errors while still returning enough data for dashboard visualizations.
 
 ## Same-Day Memory Cache & analysis_date Column
 
@@ -245,7 +314,7 @@ When `adk web` is the entry point, the orchestrator goes through ADK's built-in 
 
 ### Why namespace Langfuse scores by agent (`ragas/{agent}/{metric}`)?
 
-The previous `ragas/{metric}` naming flattened all four agents into one dimension. `ragas/AnswerRelevancy` could be the orchestrator's synthesis score, the RAG agent's filing-answer score, the quant agent's metric-summary score, or the sentiment agent's narrative score — Langfuse had no way to tell them apart in dashboards or aggregations. Adding the agent prefix surfaces the source in every existing Langfuse view (score breakdowns, trends, filters) without requiring custom metadata processing. The redundant `comment="agent=<name>"` tag gives a second filter dimension if anyone wants to query by comment instead of name prefix.
+The previous `ragas/{metric}` naming flattened all agents into one dimension. `ragas/AnswerRelevancy` could be the orchestrator's synthesis score, the RAG agent's filing-answer score, the quant agent's metric-summary score, or the sentiment agent's narrative score — Langfuse had no way to tell them apart in dashboards or aggregations. Adding the agent prefix surfaces the source in every existing Langfuse view (score breakdowns, trends, filters) without requiring custom metadata processing. The redundant `comment="agent=<name>"` tag gives a second filter dimension if anyone wants to query by comment instead of name prefix.
 
 ### Why not introduce a separate batch-eval runner (`_invoke_agent`)?
 
@@ -270,7 +339,7 @@ All 2.0 breaking changes were checked against the codebase before upgrading:
 | No manual `enqueue_event()` on ADK events | No — `enqueue_event()` calls in `src/shared/generic_executor.py` are on A2A's `EventQueue`, not ADK |
 | No broad `try/except BaseException` | No — the three matches are in `src/shared/mcp_client.py` and `src/shared/runtime_eval.py`, both outside the ADK execution path |
 
-Smoke-tested at upgrade time: all imports from `google.adk.agents`, `google.adk.tools`, `google.adk.runners`, `google.adk.sessions`, `google.adk.events`, `google.adk.memory`, `google.adk.cli.service_registry` resolve. `SQLiteMemoryService` still satisfies the 2.x `BaseMemoryService` interface (signatures match). `orchestrator.agent.root_agent` loads and registers all four tools. `after_agent_callback` still fires.
+Smoke-tested at upgrade time: all imports from `google.adk.agents`, `google.adk.tools`, `google.adk.runners`, `google.adk.sessions`, `google.adk.events`, `google.adk.memory`, `google.adk.cli.service_registry` resolve. `SQLiteMemoryService` still satisfies the 2.x `BaseMemoryService` interface (signatures match). `orchestrator.agent.root_agent` loads and registers tools (`send_message`, `load_memory`). `after_agent_callback` still fires.
 
 ### Why pin `>=2.0,<3.0` instead of an exact version?
 
@@ -624,7 +693,7 @@ Phase 0 established:
 
 ### Why separate test dependencies from production?
 
-The full dependency install (`pip install -e .` without `--no-deps`) pulls 293 packages including PyTorch (2.8 GB), CUDA libraries, all four agent frameworks (ADK, LlamaIndex, LangChain/LangGraph, CrewAI), and ChromaDB + sentence-transformers. A CI job that installs all of these spends 5-10 minutes on pip install alone, most of which is downloading binaries for frameworks the tests don't use.
+The full dependency install (`pip install -e .` without `--no-deps`) pulls 293 packages including PyTorch (2.8 GB), CUDA libraries, all six agent frameworks (ADK, LlamaIndex, LangChain/LangGraph, CrewAI, PydanticAI, OpenAI Agents SDK), and ChromaDB + sentence-transformers. A CI job that installs all of these spends 5-10 minutes on pip install alone, most of which is downloading binaries for frameworks the tests don't use.
 
 ### Solution
 
@@ -1615,7 +1684,7 @@ Each MCP server (finsight-mcp) runs as a separate process. The ContextVar doesn'
 
 ### Why `generic_executor` sets both ContextVars instead of individual executors?
 
-`generic_executor` is the single entry point for all A2A requests to any sub-agent. Setting ContextVars there guarantees every sub-agent (RAG, Quant, Sentiment) gets automatic correlation IDs without each implementing its own extraction logic. It's a single line in one place instead of four lines in four files.
+`generic_executor` is the single entry point for all A2A requests to any sub-agent. Setting ContextVars there guarantees every sub-agent (RAG, Quant, Market Context, Analytics, Reviewer) gets automatic correlation IDs without each implementing its own extraction logic. It's a single line in one place instead of five lines in five files.
 
 ### Key properties
 - ✅ Zero parameter changes — trace_id flows implicitly via ContextVar
@@ -1628,7 +1697,7 @@ Each MCP server (finsight-mcp) runs as a separate process. The ContextVar doesn'
 
 ### Why shared functions instead of inheriting from a base class?
 
-Inheritance would require the executors to share a common base class — which they don't (ADK's `AgentExecutor`, LlamaIndex's `BaseAgent`, LangGraph's `BaseAgent`, CrewAI's `BaseAgent`). A mixin would need to be slotted into four different class hierarchies. Shared functions in `src/shared/ticker_utils.py` are language-level composition — no inheritance, no mixins, just `await validate_ticker(ticker)` anywhere it's needed.
+Inheritance would require the executors to share a common base class — which they don't (ADK's `AgentExecutor`, LlamaIndex's `BaseAgent`, LangGraph's `BaseAgent`, CrewAI's `BaseAgent`, PydanticAI's `Agent`, OpenAI Agents SDK's `Agent`). A mixin would need to be slotted into six different class hierarchies. Shared functions in `src/shared/ticker_utils.py` are language-level composition — no inheritance, no mixins, just `await validate_ticker(ticker)` anywhere it's needed.
 
 The functions are pure wrappers around `validate_ticker_via_mcp()` and `resolve_ticker_via_mcp()` (which already existed in `ticker_utils.py`), adding only the MCP lifecycle management via `get_shared_mcp()`.
 
@@ -2802,7 +2871,7 @@ Now a single +1.0 signal with weight 0.15 (scaled to 1.0) produces composite = 1
 
 ### Why a priority queue instead of more concurrent LLM slots?
 
-The system runs four agents against a single local LM Studio instance with limited GPU memory. When RAGAS eval scoring fires (up to 6 metrics per agent response, each calling the LLM), eval can consume all available LLM slots and starve production inference — a user's quant summary or CrewAI kickoff sits behind eval metrics in the queue. Simply increasing `LLM_MAX_CONCURRENT` (default 2) makes the LM Studio model server the bottleneck instead, degrading latency for everyone.
+The system runs six agents against a single local LM Studio instance with limited GPU memory. When RAGAS eval scoring fires (up to 6 metrics per agent response, each calling the LLM), eval can consume all available LLM slots and starve production inference — a user's quant summary or CrewAI kickoff sits behind eval metrics in the queue. Simply increasing `LLM_MAX_CONCURRENT` (default 2) makes the LM Studio model server the bottleneck instead, degrading latency for everyone.
 
 A priority semaphore solves this without increasing concurrency: production calls (`CRITICAL`) jump ahead of eval calls (`LOW`), and warmup/ping calls (`NORMAL`) sit between them. When all slots are full, the highest-priority waiter is served next.
 
@@ -3292,7 +3361,7 @@ Making `root_agent.instruction = _instruction_provider` (a callable) means ADK i
 
 ### Why not re-discover agents on every turn?
 
-The `_discovery_done` flag in `web/agent.py` ensures `SubAgentClient.discover()` runs exactly once — on the first `before_agent_callback` invocation. Subsequent turns reuse the cached agent list. Re-discovery per turn would add ~3s latency (3 sub-agents × 1s HTTP timeout) to every user interaction with no benefit, since agent availability rarely changes within a session.
+The `_discovery_done` flag in `web/agent.py` ensures `SubAgentClient.discover()` runs exactly once — on the first `before_agent_callback` invocation. Subsequent turns reuse the cached agent list. Re-discovery per turn would add ~5s latency (5 sub-agents × 1s HTTP timeout) to every user interaction with no benefit, since agent availability rarely changes within a session.
 
 ## RAG Filing Source: `get_company_filings` → `get_financial_filings` (v2.4)
 
@@ -3333,7 +3402,7 @@ Commit 2b8b1d3 added explanatory comments to every production source file (~40 f
 
 ### Why not rely on the DESIGN_DECISIONS doc alone?
 
-DESIGN_DECISIONS.md documents architectural-level decisions (why IST timezone, why RAGAS, why four frameworks). But many decisions are *local* — why a specific `asyncio.Lock` pattern in one function, why a `run_in_executor` call around a specific yfinance wrapper. A design doc with 3000+ lines would bury these local decisions. Inline comments put the reasoning at the point of use, where a future reader needs it.
+DESIGN_DECISIONS.md documents architectural-level decisions (why IST timezone, why RAGAS, why six frameworks). But many decisions are *local* — why a specific `asyncio.Lock` pattern in one function, why a `run_in_executor` call around a specific yfinance wrapper. A design doc with 3000+ lines would bury these local decisions. Inline comments put the reasoning at the point of use, where a future reader needs it.
 
 ### What comment style was used?
 

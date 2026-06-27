@@ -52,7 +52,7 @@ h3{font-size:1.1rem;margin-top:1rem;margin-bottom:.25rem}
 <p>Internal components across all containers: orchestrator guardrails/cache/memory, agent internals, MCP server tools, shared infrastructure. <em>Sub-parts for focused views:</em></p>
 <div class="sub-links">
   <a href="component-orch.html">Orchestrator</a>
-  <a href="component-agents.html">Agents (RAG, Quant, Market)</a>
+  <a href="component-agents.html">Agents (RAG, Quant, Market, Analytics, Reviewer)</a>
   <a href="component-infra.html">MCP + Shared Infra</a>
 </div>
 <div class="meta">Components: 25+ | Sub-views: 3</div>
@@ -84,9 +84,15 @@ h3{font-size:1.1rem;margin-top:1rem;margin-bottom:.25rem}
 </div>
 <div class="meta">Stages: 12 | Data stores: 3 | External APIs: 3</div>
 </div>
+
+<div class="section" data-tags="er entity relationship database schema tables">
+<h3><span class="badge badge-c4">ER</span> <a href="er.html">Entity-Relationship Diagram</a></h3>
+<p>Two SQLite databases (<code>adk_sessions.db</code> + <code>finsight_memory.db</code>) and ChromaDB vector store. 9 tables covering conversation state, ticker briefs, portfolio, memory search, agent output bridge, and RAG ingestion dedup. Includes data lifecycle and key design decisions.</p>
+<div class="meta">Tables: 9 | Databases: 2 | Vector collections: 4</div>
+</div>
 </div>
 
-<div class="count" id="countDisplay">6 of 6 diagrams</div>
+<div class="count" id="countDisplay">7 of 7 diagrams</div>
 
 <hr>
 
@@ -96,6 +102,7 @@ h3{font-size:1.1rem;margin-top:1rem;margin-bottom:.25rem}
 <tr><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc">Context Diagram</td><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc">Understand what the system does and depends on</td></tr>
 <tr><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc">Container Diagram</td><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc">Deploy, debug, or configure the runtime services</td></tr>
 <tr><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc">Component sub-parts</td><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc">Understand a specific container's internal components</td></tr>
+<tr><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc">Entity-Relationship Diagram</td><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc">Understand the data model, table relationships, and data lifecycle</td></tr>
 <tr><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc">Code Diagram</td><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc">Navigate source files or understand class relationships</td></tr>
 <tr><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc">Sequence sub-parts</td><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc">Trace a specific phase of the request lifecycle</td></tr>
 <tr><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc">Data Flow sub-parts</td><td style="padding:.5rem .75rem;border-bottom:1px solid #e0d8cc">Understand data transformations in the pipeline</td></tr>

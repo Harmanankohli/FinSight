@@ -1,6 +1,6 @@
 # Test Coverage
 
-**~285 test functions (~370 parametrized cases) across 35 test files + offline evaluation driver. v1.39 added DOCX/HTML/PPTX regression tests. Phase 0 added 45 characterization tests (4 files). Phase 3 added auth contract tests (3 files). Phase R added corpus regression harness (1 file). v2.2 added agent output extraction tests (1 file). v2.6 added 5 new test files for Analytics Agent, Reviewer Agent, and new agent models. v2.7 added agent_output_store memory test and Windows/locking fixes. v2.12 added 7 new characterization tests for yahooquery tools and expanded MCP tool shapes. v2.13 added `conftest.py` for unit tests (langfuse.observe stubs). All tests now live under `src/tests/`.**
+**~370 parametrized test cases across 40+ test files + offline evaluation driver. Phase 0 added 45 characterization tests (4 files). Phase 3 added auth contract tests (3 files). Phase R added corpus regression harness (1 file). v2.2 added agent output extraction tests (1 file). v2.6 added new test files for Analytics Agent, Reviewer Agent, and new agent models. v2.7 added agent_output_store memory test and Windows/locking fixes. v2.12 added 7 new characterization tests for yahooquery tools and expanded MCP tool shapes. v2.13 added `conftest.py` for unit tests (langfuse.observe stubs). v2.16 added characterization test golden fixtures for structured agent outputs. All tests live under `src/tests/`.**
 
 ## Running Tests
 
@@ -34,8 +34,10 @@ src/tests/
 │   └── test_quant_nodes_io.py           #   per-node state-in/state-out
 ├── integration/
 │   ├── test_mcp_server_smoke.py         #   4 - MCP + agent card endpoint reachability
-│   └── test_behavioral_signals_e2e.py   #   5 - options flow, insider, positioning,
-│                                        #       peer comparison, Monte Carlo (Phase 4)
+│   ├── test_behavioral_signals_e2e.py   #   5 - options flow, insider, positioning,
+│   │                                        #       peer comparison, Monte Carlo (Phase 4)
+│   ├── test_analytics_smoke.py          #   analytics endpoint reachability
+│   └── test_reviewer_smoke.py           #   reviewer endpoint reachability
 ├── security/
 │   └── test_sandbox.py                  #  11 (parametrized ~45+) - AST gate + subprocess
 ├── regression/                          # Report generator + corpus tests
@@ -48,7 +50,10 @@ src/tests/
 │   └── test_corpus_invariants.py        #   7 - Phase R: corpus fixture invariants
 │                                        #       (hostile, one_liner, quant_heavy, etc.)
 └── unit/
+    ├── conftest.py                          # v2.13 — stubs langfuse.observe as identity decorator,
+    │                                        #   evicts mcp_tools.tools submodule cache for clean re-imports
     ├── test_models.py                   #  10 - Pydantic model construction, round-trip
+    ├── test_new_agent_models.py         #   5 - Analytics/Reviewer/Agent output models
     ├── test_quant_graph_nodes.py        #  18 - quant metrics, signals, voting
     ├── test_parallel_dispatch.py        #   3 - concurrent gather, timeout map
     ├── test_runtime_eval_gates.py       #   9 - circuit breaker, dedup, burst
@@ -56,9 +61,13 @@ src/tests/
     ├── test_ttl_cache.py                #   9 - hit/miss/expiry, LRU
     ├── test_rate_limiter.py             #   4 - burst, refill
     ├── test_trace_context.py            #   8 - inject/extract
-    ├── test_settings.py                 #   Phase 1: pydantic-settings validation
+    ├── test_settings.py                 #  Phase 1: pydantic-settings validation
     ├── test_deck_data_extraction.py     #  38 - Phase R: extraction pipeline edge cases
     ├── test_agent_outputs_extraction.py #  16 - v2.2: agent output capture + extraction routing
+    ├── test_analytics_nodes.py          #  10 - analytics pipeline, MetricValue integration
+    ├── test_reviewer_tools.py           #   8 - reviewer tools (contradiction, confidence, validation)
+    ├── test_web_search_tool.py          #   5 - DuckDuckGo search tool
+    ├── test_colored_logging.py          #  18 - v2.17: formatter, decorator markers, NO_COLOR, FORCE_COLOR
     ├── test_auth_tokens.py              # 132 - Phase 2: JWT gen, validation, rotation
     ├── test_auth_middleware.py          # 189 - Phase 2: middleware chain, routing
     ├── test_auth_routes.py              # 145 - Phase 2: login/refresh/logout, lockout
@@ -73,7 +82,7 @@ src/tests/
         └── test_save_brief_persists_synthesis.py  # 2 - synthesis wins, rationale fallback
     └── test_agent_output_store.py   # 10 - v2.7: store/get/prune, cross-agent isolation, TTL expiry
 
-**Total: ~370 parametrized test cases across 35 test files (34 + unit/conftest.py).**
+**Total: ~370 parametrized test cases across 40+ test files.**
 ```
 
 ## Key Patterns

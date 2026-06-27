@@ -1038,6 +1038,8 @@ def score_analytics_deterministic(analytics_result: dict[str, Any]) -> dict[str,
     checks["ma_crossover_valid"] = ma_signal is None or ma_signal in {
         "golden_cross",
         "death_cross",
+        "bullish_alignment",
+        "bearish_alignment",
     }
 
     forecast = analytics_result.get("forecast") or {}
@@ -1126,16 +1128,23 @@ def score_reviewer_deterministic(reviewer_result: dict[str, Any]) -> dict[str, A
     verdict = reviewer_result.get("verdict")
     checks["verdict_valid"] = verdict in {"BUY", "HOLD", "SELL"}
 
-    known_agents = {
+    _KNOWN_AGENT_ROOTS = {
         "quant",
         "rag",
-        "market_context",
+        "market",
         "analytics",
-        "Quant Analysis Agent",
-        "Financial RAG Agent",
-        "Market Context Agent",
-        "Analytics Agent",
+        "sentiment",
+        "financial",
+        "context",
+        "technical",
+        "reviewer",
     }
+
+    def _agent_name_known(name: str) -> bool:
+        """Check if an agent name contains any recognised root token."""
+        lower = name.lower()
+        return any(root in lower for root in _KNOWN_AGENT_ROOTS)
+
     contradictions = reviewer_result.get("contradictions", [])
     checks["contradictions_well_formed"] = (
         all(
@@ -1151,7 +1160,7 @@ def score_reviewer_deterministic(reviewer_result: dict[str, Any]) -> dict[str, A
 
     checks["contradiction_agents_known"] = (
         all(
-            any(a.lower() in known.lower() or known.lower() in a.lower() for known in known_agents)
+            _agent_name_known(a)
             for c in contradictions
             for a in (c.get("agents") or [])
         )

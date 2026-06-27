@@ -100,6 +100,8 @@ def fit_text(text: str, w_in: float, h_in: float, start_size: int = 20) -> tuple
     Explicit newlines start new segments; each segment consumes ceil(len/cpl) lines.
     """
     for size in range(start_size, 10, -2):
+        # 96 = assumed screen DPI; 0.55 = empirical avg char-width-to-point ratio
+        # for proportional fonts; 72 pt/in; 1.25 = standard 1.25× line-height.
         chars_per_line = w_in * 96 / (size * 0.55)
         lines_available = int(h_in * 72 / (size * 1.25))
         segments = text.split("\n")

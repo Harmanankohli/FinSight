@@ -12,6 +12,7 @@ _STUB_MODULES = [
     # Langfuse (observability)
     "langfuse",
     "langfuse.client",
+    "langfuse.openai",
     "langfuse.span_filter",
     "langfuse.decorators",
     "langfuse.decorators.langfuse_decorator",
@@ -71,6 +72,13 @@ import langfuse as _langfuse_mod  # noqa: E402 (already stubbed above)
 _langfuse_mod.observe = _identity_decorator
 if hasattr(_langfuse_mod, "decorators"):
     _langfuse_mod.decorators.observe = _identity_decorator
+
+# Make langfuse.openai re-export the real openai classes so type checks pass
+import openai as _real_openai  # noqa: E402
+
+_lf_openai = sys.modules["langfuse.openai"]
+_lf_openai.AsyncOpenAI = _real_openai.AsyncOpenAI
+_lf_openai.OpenAI = _real_openai.OpenAI
 
 # Stub orchestrator.agent so api_routes lazy-imports don't trigger real ADK+a2a-sdk
 # (a2a-sdk loads real protobuf descriptors at import time which requires libprotobuf)

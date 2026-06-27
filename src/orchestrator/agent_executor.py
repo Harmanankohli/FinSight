@@ -5,6 +5,7 @@ semantic caching, ticker validation, and automatic memory persistence.
 """
 
 import asyncio
+import datetime
 import json
 import logging
 import os
@@ -278,18 +279,37 @@ class FinSightAgentExecutor(AgentExecutor):
             with propagate_attributes(session_id=context_id, user_id=user_id):
                 collected_events: list[Any] = []
                 final_event = None
-                # Main execute loop: run the ADK agent and collect all streaming events
                 try:
                     if context_id is None:
                         raise ValueError("context_id is required for runner")
-                    async for event in self._runner.run_async(
-                        user_id=user_id,
-                        session_id=context_id,
-                        new_message=content,
-                    ):
-                        collected_events.append(event)
-                        if event.is_final_response():
-                            final_event = event
+                    with langfuse.start_as_current_observation(
+                        as_type="generation",
+                        name="orchestrator-llm",
+                        input=user_input,
+                    ) as generation:
+                        ttft_recorded = False
+                        async for event in self._runner.run_async(
+                            user_id=user_id,
+                            session_id=context_id,
+                            new_message=content,
+                        ):
+                            if not ttft_recorded:
+                                generation.update(
+                                    completion_start_time=datetime.datetime.now(
+                                        datetime.UTC
+                                    )
+                                )
+                                ttft_recorded = True
+                            collected_events.append(event)
+                            if event.is_final_response():
+                                final_event = event
+                        final_text = (
+                            final_event.content.parts[0].text
+                            if final_event and final_event.content and final_event.content.parts
+                            else None
+                        )
+                        if final_text:
+                            generation.update(output=final_text[:2000])
 
                     if final_event:
                         await self._process_response(

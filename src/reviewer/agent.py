@@ -2,14 +2,16 @@
 
 import logging
 
-from agents import Agent
+from agents import Agent, set_tracing_disabled
 from agents.models.openai_chatcompletions import OpenAIChatCompletionsModel
-from openai import AsyncOpenAI
+from langfuse.openai import AsyncOpenAI
 
 from shared.agent_models import ReviewerAgentOutput
 from shared.settings import LLM_BASE_URL, LLM_SUMMARY_MODEL
 
 logger = logging.getLogger(__name__)
+
+set_tracing_disabled(True)
 
 _client = AsyncOpenAI(base_url=LLM_BASE_URL, api_key="lm-studio")
 _model = OpenAIChatCompletionsModel(model=LLM_SUMMARY_MODEL, openai_client=_client)

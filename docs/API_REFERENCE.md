@@ -232,7 +232,7 @@ Content-Disposition: attachment; filename="FinSight_{ticker}_{date}.pdf" (PDF on
 GET /reports/{filename}
 ```
 
-Serves generated report files (PPTX/DOCX) from `db/reports/` as static downloads.
+Serves generated report files (HTML/PDF) from `db/reports/` as static downloads.
 
 ---
 

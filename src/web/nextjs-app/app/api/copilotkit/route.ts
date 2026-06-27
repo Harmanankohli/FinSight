@@ -6,6 +6,9 @@ import {
 } from "@copilotkit/runtime";
 import { HttpAgent } from "@ag-ui/client";
 import { NextRequest } from "next/server";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api/copilotkit");
 
 const ORCHESTRATOR_URL =
   process.env.NEXT_PUBLIC_ORCHESTRATOR_URL || "http://localhost:8001";
@@ -17,6 +20,7 @@ export const POST = async (req: NextRequest) => {
     req.cookies.get("finsight_user_id")?.value ||
     "";
   const isNewAnon = !userId;
+  log.info("Chat request", { userId: userId || "anon", newAnon: isNewAnon });
   if (isNewAnon) {
     userId = `anon-${crypto.randomUUID()}`;
   }

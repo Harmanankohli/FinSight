@@ -1,4 +1,36 @@
-"""JSON-structured logging with JsonFormatter and @logged/@logged_sync decorators."""
+"""JSON-structured logging with JsonFormatter and @logged/@logged_sync decorators.
+
+Console output is ANSI-colored by log level and service name. File output is
+plain JSON lines (no color codes) for log aggregators.
+
+Color scheme
+------------
+Level colors (console StreamHandler only):
+  DEBUG    → Cyan        \033[36m
+  INFO     → Green       \033[32m
+  WARNING  → Yellow      \033[33m
+  ERROR    → Red         \033[31m
+  CRITICAL → Bold white on red  \033[1;37;41m
+
+Service badge colors (aligned with frontend CSS palette in globals.css):
+  orchestrator   → Yellow    \033[33m   (#8b6f4e gold)
+  rag            → Blue      \033[34m   (#2c4a7c)
+  quant          → Green     \033[32m   (#2a6b2a)
+  market_context → Brown     \033[38;5;130m  (#8b4513)
+  mcp            → Magenta   \033[35m   (#5a3e7c)
+  analytics      → Cyan      \033[36m   (#1a7a7a)
+  reviewer       → Red       \033[31m   (#9b2335)
+
+Decorator lifecycle markers (visible in both colored and plain output):
+  →  Enter  (U+2192)
+  ←  Exit   (U+2190)
+  ✗  Fail   (U+2717)
+  ⏱  timer  (U+23F1)
+
+Environment controls:
+  NO_COLOR=1      — disable all ANSI codes (https://no-color.org/)
+  FORCE_COLOR=1   — force ANSI codes even on non-TTY (useful for CI pipelines)
+"""
 
 import functools
 import inspect
@@ -24,6 +56,64 @@ from shared.trace_context import current_session_id, current_trace_id
 
 # Logs directory: two levels up from src/shared/ at project-root/logs/
 _LOGS_DIR = Path(__file__).resolve().parent.parent.parent / "logs"
+
+# ---------------------------------------------------------------------------
+# ANSI color constants (console only — never written to JSON file logs)
+# ---------------------------------------------------------------------------
+
+_RESET = "\033[0m"
+_BOLD = "\033[1m"
+_DIM = "\033[2m"
+
+# Log-level foreground colors
+_LEVEL_COLORS: dict[int, str] = {
+    logging.DEBUG:    "\033[36m",       # Cyan
+    logging.INFO:     "\033[32m",       # Green
+    logging.WARNING:  "\033[33m",       # Yellow
+    logging.ERROR:    "\033[31m",       # Red
+    logging.CRITICAL: "\033[1;37;41m",  # Bold white on red background
+}
+
+# Dim white/gray for timestamps — visually recedes to reduce noise
+_TIMESTAMP_COLOR = "\033[2;37m"
+
+# Service name badge colors — aligned with frontend CSS palette (globals.css)
+_SERVICE_COLORS: dict[str, str] = {
+    "orchestrator":   "\033[33m",        # Yellow   (--orch: #8b6f4e gold)
+    "rag":            "\033[34m",        # Blue     (--rag: #2c4a7c)
+    "quant":          "\033[32m",        # Green    (--quant: #2a6b2a)
+    "market_context": "\033[38;5;130m",  # Brown    (--market: #8b4513)
+    "mcp":            "\033[35m",        # Magenta  (--mcp: #5a3e7c)
+    "analytics":      "\033[36m",        # Cyan     (--analytics: #1a7a7a)
+    "reviewer":       "\033[31m",        # Red      (--reviewer: #9b2335)
+    "adk_web":        "\033[33m",        # Yellow   (ADK web variant of orchestrator)
+}
+
+# Decorator lifecycle Unicode markers — visible in colored and plain output
+_ENTER_MARKER = "→"   # →
+_EXIT_MARKER  = "←"   # ←
+_FAIL_MARKER  = "✗"   # ✗
+_LATENCY_MARKER = "⏱" # ⏱
+
+
+def _should_colorize(stream: Any) -> bool:
+    """Return True if ANSI colors should be emitted on this stream.
+
+    Respects NO_COLOR (https://no-color.org/) and FORCE_COLOR conventions.
+    """
+    if os.environ.get("NO_COLOR") is not None:
+        return False
+    if os.environ.get("FORCE_COLOR") is not None:
+        return True
+    try:
+        return hasattr(stream, "isatty") and stream.isatty()
+    except Exception:
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Formatters
+# ---------------------------------------------------------------------------
 
 
 class JsonFormatter(logging.Formatter):
@@ -58,6 +148,61 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(payload, default=str)
 
 
+class ColoredFormatter(logging.Formatter):
+    """Console formatter that applies ANSI colors by log level and service.
+
+    Dims timestamps, colors the level name, renders a bold service badge,
+    and colors the message. Falls back to no-op when colors are disabled.
+
+    Decorator lifecycle messages (starting with →/←/✗) get their own colors
+    independent of log level to make function entry/exit/failure stand out.
+    """
+
+    def __init__(self, service_name: str = ""):
+        super().__init__()
+        self._service_name = service_name
+        self._svc_color = _SERVICE_COLORS.get(service_name, "")
+
+    def format(self, record: logging.LogRecord) -> str:
+        ts = datetime.now(UTC).strftime("%H:%M:%S.%f")[:-3]  # HH:MM:SS.mmm
+        level = record.levelname
+        level_color = _LEVEL_COLORS.get(record.levelno, "")
+        msg = record.getMessage()
+
+        # Decorator lifecycle messages get their own color scheme
+        if msg.startswith(_ENTER_MARKER):
+            msg_colored = f"\033[36m{msg}{_RESET}"     # Cyan for enter
+        elif msg.startswith(_EXIT_MARKER):
+            msg_colored = f"\033[32m{msg}{_RESET}"     # Green for exit
+        elif msg.startswith(_FAIL_MARKER):
+            msg_colored = f"\033[1;31m{msg}{_RESET}"   # Bold red for fail
+        else:
+            msg_colored = f"{level_color}{msg}{_RESET}"
+
+        svc_badge = (
+            f" {self._svc_color}{_BOLD}[{self._service_name}]{_RESET}"
+            if self._service_name
+            else ""
+        )
+
+        line = (
+            f"{_TIMESTAMP_COLOR}{ts}{_RESET} "
+            f"{level_color}{_BOLD}{level:<8}{_RESET} "
+            f"{record.name}{svc_badge}: "
+            f"{msg_colored}"
+        )
+
+        if record.exc_info:
+            line += "\n" + self.formatException(record.exc_info)
+
+        return line
+
+
+# ---------------------------------------------------------------------------
+# Filters
+# ---------------------------------------------------------------------------
+
+
 class SanitizeFilter(logging.Filter):
     """Scrub known secret patterns from log records before they are written."""
 
@@ -65,7 +210,7 @@ class SanitizeFilter(logging.Filter):
         (re.compile(r"(api_key\s*=\s*)['\"]?[^'\"\s,)]+['\"]?"), r"\1***"),
         (re.compile(r"sk-[A-Za-z0-9]{20,}"), "sk-***"),
         (re.compile(r"pk-[A-Za-z0-9]{20,}"), "pk-***"),
-        (re.compile(r"(Authorization:\s*Bearer\s+)\S+"), r"\1***"),
+        (re.compile(r"(Authorization:\s*Bearer)\s+\S+", re.IGNORECASE), r"\1 ***"),
         (re.compile(r"(LANGFUSE_(?:PUBLIC|SECRET)_KEY\s*[=:]\s*)\S+"), r"\1***"),
     ]
 
@@ -84,6 +229,11 @@ class SanitizeFilter(logging.Filter):
         return True
 
 
+# ---------------------------------------------------------------------------
+# Utilities
+# ---------------------------------------------------------------------------
+
+
 def _trunc_repr(obj: Any, max_len: int = 500) -> str:
     """Safely truncate repr of an object for logging."""
     try:
@@ -93,6 +243,11 @@ def _trunc_repr(obj: Any, max_len: int = 500) -> str:
         return s
     except Exception:
         return "<repr-error>"
+
+
+# ---------------------------------------------------------------------------
+# Decorators
+# ---------------------------------------------------------------------------
 
 
 def logged(level: int = logging.INFO, log_args: bool = True, log_result: bool = True) -> Any:
@@ -115,13 +270,14 @@ def logged(level: int = logging.INFO, log_args: bool = True, log_result: bool = 
             if log_args:
                 _logger.log(
                     level,
-                    "Enter %s — args=%s kwargs=%s",
+                    "%s Enter %s — args=%s kwargs=%s",
+                    _ENTER_MARKER,
                     _log_name,
                     _trunc_repr(args),
                     _trunc_repr(kwargs),
                 )
             else:
-                _logger.log(level, "Enter %s", _log_name)
+                _logger.log(level, "%s Enter %s", _ENTER_MARKER, _log_name)
             t0 = time.monotonic()
             try:
                 result = await fn(*args, **kwargs)
@@ -129,8 +285,10 @@ def logged(level: int = logging.INFO, log_args: bool = True, log_result: bool = 
                 if log_result:
                     _logger.log(
                         level,
-                        "Exit %s (%.0fms) → %s",
+                        "%s Exit %s %s %.0fms → %s",
+                        _EXIT_MARKER,
                         _log_name,
+                        _LATENCY_MARKER,
                         elapsed,
                         _trunc_repr(result),
                         extra={"latency_ms": int(elapsed)},
@@ -138,8 +296,10 @@ def logged(level: int = logging.INFO, log_args: bool = True, log_result: bool = 
                 else:
                     _logger.log(
                         level,
-                        "Exit %s (%.0fms)",
+                        "%s Exit %s %s %.0fms",
+                        _EXIT_MARKER,
                         _log_name,
+                        _LATENCY_MARKER,
                         elapsed,
                         extra={"latency_ms": int(elapsed)},
                     )
@@ -148,8 +308,10 @@ def logged(level: int = logging.INFO, log_args: bool = True, log_result: bool = 
                 elapsed = (time.monotonic() - t0) * 1000
                 _logger.log(
                     level,
-                    "Fail %s (%.0fms): %s",
+                    "%s Fail %s %s %.0fms: %s",
+                    _FAIL_MARKER,
                     _log_name,
+                    _LATENCY_MARKER,
                     elapsed,
                     exc,
                     extra={"latency_ms": int(elapsed)},
@@ -172,13 +334,14 @@ def logged_sync(level: int = logging.INFO, log_args: bool = True, log_result: bo
             if log_args:
                 _logger.log(
                     level,
-                    "Enter %s — args=%s kwargs=%s",
+                    "%s Enter %s — args=%s kwargs=%s",
+                    _ENTER_MARKER,
                     _log_name,
                     _trunc_repr(args),
                     _trunc_repr(kwargs),
                 )
             else:
-                _logger.log(level, "Enter %s", _log_name)
+                _logger.log(level, "%s Enter %s", _ENTER_MARKER, _log_name)
             t0 = time.monotonic()
             try:
                 result = fn(*args, **kwargs)
@@ -186,8 +349,10 @@ def logged_sync(level: int = logging.INFO, log_args: bool = True, log_result: bo
                 if log_result:
                     _logger.log(
                         level,
-                        "Exit %s (%.0fms) → %s",
+                        "%s Exit %s %s %.0fms → %s",
+                        _EXIT_MARKER,
                         _log_name,
+                        _LATENCY_MARKER,
                         elapsed,
                         _trunc_repr(result),
                         extra={"latency_ms": int(elapsed)},
@@ -195,8 +360,10 @@ def logged_sync(level: int = logging.INFO, log_args: bool = True, log_result: bo
                 else:
                     _logger.log(
                         level,
-                        "Exit %s (%.0fms)",
+                        "%s Exit %s %s %.0fms",
+                        _EXIT_MARKER,
                         _log_name,
+                        _LATENCY_MARKER,
                         elapsed,
                         extra={"latency_ms": int(elapsed)},
                     )
@@ -205,8 +372,10 @@ def logged_sync(level: int = logging.INFO, log_args: bool = True, log_result: bo
                 elapsed = (time.monotonic() - t0) * 1000
                 _logger.log(
                     level,
-                    "Fail %s (%.0fms): %s",
+                    "%s Fail %s %s %.0fms: %s",
+                    _FAIL_MARKER,
                     _log_name,
+                    _LATENCY_MARKER,
                     elapsed,
                     exc,
                     extra={"latency_ms": int(elapsed)},
@@ -255,12 +424,18 @@ def logged_class(level: int = logging.INFO, log_args: bool = True, log_result: b
     return class_decorator
 
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
+
+
 def setup_file_logging(service_name: str, level: int | None = None) -> None:
     """Configure the root logger to write to logs/<service_name>.log.
 
     Safe to call multiple times — duplicate handlers are skipped.
-    StreamHandler uses plaintext (readable in terminals); file handler uses
-    JSON lines (ingestible by log aggregators without custom parsers).
+    StreamHandler uses ColoredFormatter on TTYs (plain text fallback when
+    NO_COLOR is set or output is not a terminal); file handler uses JSON lines
+    (ingestible by log aggregators without custom parsers, no ANSI codes).
     """
     if level is None:
         env_key = f"LOG_LEVEL_{service_name.upper().replace('-', '_')}"
@@ -279,20 +454,31 @@ def setup_file_logging(service_name: str, level: int | None = None) -> None:
         if isinstance(h, RotatingFileHandler) and h.baseFilename == str(log_path):
             return
 
-    plain_fmt = logging.Formatter("%(asctime)s %(levelname)-8s %(name)s: %(message)s")
+    # Enable ANSI escape code support on Windows terminals.
+    if sys.platform == "win32":
+        try:
+            import colorama
+            colorama.just_fix_windows_console()
+        except ImportError:
+            pass  # degrade gracefully on environments without colorama
+
     sanitize = SanitizeFilter()
 
-    # Console handler: plaintext so terminal output stays readable.
+    # Console handler: colored on TTYs, plain fallback otherwise.
     if not any(
         isinstance(h, logging.StreamHandler) and not isinstance(h, RotatingFileHandler)
         for h in root.handlers
     ):
         sh = logging.StreamHandler(sys.stderr)
-        sh.setFormatter(plain_fmt)
+        if _should_colorize(sys.stderr):
+            sh.setFormatter(ColoredFormatter(service_name))
+        else:
+            plain_fmt = logging.Formatter("%(asctime)s %(levelname)-8s %(name)s: %(message)s")
+            sh.setFormatter(plain_fmt)
         sh.addFilter(sanitize)
         root.addHandler(sh)
 
-    # File handler: JSON lines, 10 MB per file, keep 5 backups.
+    # File handler: JSON lines, 10 MB per file, keep 5 backups. Never colored.
     fh = RotatingFileHandler(log_path, maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8")
     fh.setFormatter(JsonFormatter(service_name))
     fh.addFilter(sanitize)
@@ -320,3 +506,9 @@ def setup_file_logging(service_name: str, level: int | None = None) -> None:
             _lib_logger.setLevel(getattr(logging, _override.upper(), logging.WARNING))
         elif _lib_logger.level == logging.NOTSET or _lib_logger.level < logging.WARNING:
             _lib_logger.setLevel(logging.WARNING)
+
+    # OTel context-detach errors are harmless in async — the token was
+    # created in a different asyncio.Task's contextvars.Context.
+    _otel_ctx = logging.getLogger("opentelemetry.context")
+    if not os.environ.get("LOG_LEVEL_OPENTELEMETRY_CONTEXT"):
+        _otel_ctx.setLevel(logging.CRITICAL)

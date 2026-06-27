@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FinSight Frontend &mdash; FinSight</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:1.7;color:#2c2c2c;background:#faf8f5;padding:2rem 1rem}.container{max-width:740px;margin:0 auto}h1,h2,h3,h4,h5,h6{font-family:Georgia,"Times New Roman",serif;color:#1a1a1a;line-height:1.3}h1{font-size:2.2rem;margin-bottom:0.25rem;border-bottom:2px solid #e8dcc8;padding-bottom:0.5rem}h2{font-size:1.5rem;margin-top:2.5rem;margin-bottom:0.75rem;border-bottom:1px solid #e8dcc8;padding-bottom:0.3rem}h3{font-size:1.2rem;margin-top:1.5rem;margin-bottom:0.5rem}h4{font-size:1.05rem;margin-top:1.25rem;margin-bottom:0.4rem}p{margin-bottom:1rem;color:#444}a{color:#8b6f4e;text-decoration:none;font-weight:500}a:hover{text-decoration:underline}ul,ol{margin-bottom:1rem;padding-left:1.5rem;color:#444}li{margin-bottom:0.25rem}li>ul,li>ol{margin-bottom:0}code{background:#f0ebe3;padding:0.15em 0.4em;border-radius:3px;font-size:0.875em;font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace}pre{background:#1a1a1a;color:#e8dcc8;padding:1rem 1.25rem;border-radius:8px;overflow-x:auto;margin-bottom:1rem;line-height:1.5;font-size:0.85rem}pre code{background:none;padding:0;color:inherit;font-size:inherit}table{width:100%;border-collapse:collapse;margin-bottom:1rem;font-size:0.9rem}th,td{padding:0.5rem 0.75rem;text-align:left;border-bottom:1px solid #e0d8cc}th{background:#f0ebe3;font-weight:600}blockquote{border-left:3px solid #e8dcc8;margin:0 0 1rem 0;padding:0.5rem 1rem;color:#666;background:#fff}hr{border:none;border-top:1px solid #e0d8cc;margin:1.5rem 0}img{max-width:100%;height:auto}.header-nav{margin-bottom:2rem;padding-bottom:1rem;border-bottom:1px solid #e0d8cc}.header-nav a{margin-right:1.2rem;font-size:0.9rem}.header-nav a.active{color:#1a1a1a;font-weight:700;border-bottom:2px solid #8b6f4e}.diagrams-box{background:#fff;border:1px solid #e0d8cc;border-radius:8px;padding:1.25rem 1.5rem;margin-top:2.5rem}.diagrams-box h3{margin-top:0;margin-bottom:0.75rem;font-size:1.1rem}.diagram-grid{display:flex;flex-wrap:wrap;gap:0.5rem}.diagram-grid a{background:#f0ebe3;border:1px solid #e0d8cc;border-radius:4px;padding:4px 10px;font-size:0.8rem;color:#2c2c2c;transition:background .15s}.diagram-grid a:hover{background:#e0d8cc;text-decoration:none}.footer{font-size:0.85rem;color:#888;margin-top:2.5rem;border-top:1px solid #e0d8cc;padding-top:1rem}
+</style>
+</head>
+<body>
+<div class="container">
+<div class="header-nav">
+<a href="index.html">Home</a>
+<a href="README.html">Overview</a>
+<a href="ARCHITECTURE.html">Architecture</a>
+<a href="AGENTS.html">Agents</a>
+<a href="MCP_SERVERS.html">MCP Servers</a>
+<a href="DESIGN_DECISIONS.html">Design Decisions</a>
+<a href="API_REFERENCE.html">API</a>
+<a href="SECURITY.html">Security</a>
+<a href="CHANGELOG.html">Changelog</a>
+<a href="TESTS.html">Tests</a>
+<a href="FRONTEND.html" class="active">Frontend</a>
+<a href="diagrams/index.html">Diagrams</a>
+</div>
+<h1 id="finsight-frontend">FinSight Frontend<a class="headerlink" href="#finsight-frontend" title="Link">&para;</a></h1>
+<p>Next.js 16 (App Router) + React 19 + CopilotKit 1.59 + AG-UI client. Five-page investment research dashboard.</p>
+<h2 id="quick-start">Quick Start<a class="headerlink" href="#quick-start" title="Link">&para;</a></h2>
+<pre><code class="language-bash">cd web/nextjs-app
+npm install
+npm run dev
+</code></pre>
+<p>Open <code>http://localhost:3000</code>. Requires the backend orchestrator on port 8001.</p>
+<h2 id="pages">Pages<a class="headerlink" href="#pages" title="Link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Route</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/</code></td>
+<td>Overview landing — architecture diagram, feature grid, CTAs</td>
+</tr>
+<tr>
+<td><code>/research</code></td>
+<td><strong>Primary page</strong> — CopilotKit chat, agent activity tiles, BUY/HOLD/SELL badges, HTML/PDF downloads</td>
+</tr>
+<tr>
+<td><code>/dashboard</code></td>
+<td>Observability dashboard — KPIs, agent metrics, latency charts, RAGAS quality scores</td>
+</tr>
+<tr>
+<td><code>/memory</code></td>
+<td>Persistent briefs browser — search by ticker, expandable cards, report downloads</td>
+</tr>
+<tr>
+<td><code>/operator</code></td>
+<td>Service health dashboard — LED status for all 7 backend services</td>
+</tr>
+</tbody>
+</table>
+<h2 id="architecture">Architecture<a class="headerlink" href="#architecture" title="Link">&para;</a></h2>
+<pre><code>Browser → /api/copilotkit (Next.js) → /a2a-agui (Orchestrator, port 8001)
+                                        ↓ ADK Runner
+                                   Agent Pool (RAG, Quant, Market Context)
+                                        ↓
+                                   MCP Server (port 8010)
+</code></pre>
+<p>CopilotKit connects via <code>HttpAgent</code> pointing at the orchestrator&rsquo;s AG-UI streaming endpoint. The Next.js layer is a pure pass-through — all LLM inference runs on the backend.</p>
+<h2 id="components">Components<a class="headerlink" href="#components" title="Link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>components/Providers.tsx</code></td>
+<td>CopilotKit provider + app shell (Sidebar + main content)</td>
+</tr>
+<tr>
+<td><code>components/Sidebar.tsx</code></td>
+<td>Left nav — workspace links, recent queries</td>
+</tr>
+</tbody>
+</table>
+<h2 id="api-routes">API Routes<a class="headerlink" href="#api-routes" title="Link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Route</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>POST /api/copilotkit</code></td>
+<td>CopilotKit runtime → orchestrator AG-UI bridge</td>
+</tr>
+<tr>
+<td><code>GET /api/dashboard</code></td>
+<td>Dashboard metrics — KPIs, agent breakdown, time series (<code>?hours=24</code>)</td>
+</tr>
+<tr>
+<td><code>GET /api/dashboard/scores</code></td>
+<td>RAGAS quality scores per agent</td>
+</tr>
+<tr>
+<td><code>GET /api/health</code></td>
+<td>Backend health proxy (<code>?svc=orchestrator\|rag\|quant\|market\|analytics\|reviewer\|mcp</code>)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="rewrites">Rewrites<a class="headerlink" href="#rewrites" title="Link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Pattern</th>
+<th>Target</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/api/orch/:path*</code></td>
+<td><code>http://localhost:8001/:path*</code> (orchestrator REST)</td>
+</tr>
+<tr>
+<td><code>/auth/:path*</code></td>
+<td><code>http://localhost:8001/auth/:path*</code> (login/refresh/logout)</td>
+</tr>
+<tr>
+<td><code>/reports/:path*</code></td>
+<td><code>http://localhost:8001/reports/:path*</code> (report downloads)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="design-system">Design System<a class="headerlink" href="#design-system" title="Link">&para;</a></h2>
+<p>Warm ivory/clay palette. All CSS in <code>app/globals.css</code> — no Tailwind utility classes used despite being installed.</p>
+<h3 id="colors">Colors<a class="headerlink" href="#colors" title="Link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Token</th>
+<th>Value</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--clay</code></td>
+<td><code>#8b6f4e</code></td>
+<td>Primary accent</td>
+</tr>
+<tr>
+<td><code>--ivory</code></td>
+<td><code>#faf8f5</code></td>
+<td>Background</td>
+</tr>
+<tr>
+<td><code>--sand</code></td>
+<td><code>#e0d8cc</code></td>
+<td>Borders</td>
+</tr>
+<tr>
+<td><code>--buy</code></td>
+<td><code>#2a6b2a</code></td>
+<td>BUY signal</td>
+</tr>
+<tr>
+<td><code>--hold</code></td>
+<td><code>#8b6f00</code></td>
+<td>HOLD signal</td>
+</tr>
+<tr>
+<td><code>--sell</code></td>
+<td><code>#7a2c2c</code></td>
+<td>SELL signal</td>
+</tr>
+</tbody>
+</table>
+<h3 id="agent-colors">Agent Colors<a class="headerlink" href="#agent-colors" title="Link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Agent</th>
+<th>Foreground</th>
+<th>Background</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RAG</td>
+<td><code>#2c4a7c</code> (blue)</td>
+<td><code>#e0e6f0</code></td>
+</tr>
+<tr>
+<td>Quant</td>
+<td><code>#2a6b2a</code> (green)</td>
+<td><code>#e3f0e3</code></td>
+</tr>
+<tr>
+<td>Market Context</td>
+<td><code>#8b4513</code> (brown)</td>
+<td><code>#fce8d9</code></td>
+</tr>
+<tr>
+<td>Orchestrator</td>
+<td><code>#8b6f4e</code> (clay)</td>
+<td><code>#efe6d8</code></td>
+</tr>
+<tr>
+<td>MCP</td>
+<td><code>#5a3e7c</code> (purple)</td>
+<td><code>#ece2f4</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="typography">Typography<a class="headerlink" href="#typography" title="Link">&para;</a></h3>
+<ul>
+<li><strong>Headings</strong>: Georgia, Times New Roman (<code>--serif</code>)</li>
+<li><strong>Body</strong>: System font stack (<code>--sans</code>)</li>
+<li><strong>Code/Metadata</strong>: JetBrains Mono (<code>--mono</code>)</li>
+</ul>
+<h2 id="lib">Lib<a class="headerlink" href="#lib" title="Link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>lib/recentQueries.ts</code></td>
+<td>localStorage-backed recent query history (max 12)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="environment-variables">Environment Variables<a class="headerlink" href="#environment-variables" title="Link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Required</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>NEXT_PUBLIC_ORCHESTRATOR_URL</code></td>
+<td>Yes</td>
+<td>Backend orchestrator URL (default <code>http://localhost:8001</code>)</td>
+</tr>
+<tr>
+<td><code>NEXT_PUBLIC_COPILOTKIT_API_KEY</code></td>
+<td>Yes</td>
+<td>CopilotKit public API key</td>
+</tr>
+<tr>
+<td><code>LANGFUSE_PUBLIC_KEY</code></td>
+<td>For <code>/api/dashboard</code></td>
+<td>Langfuse public key</td>
+</tr>
+<tr>
+<td><code>LANGFUSE_SECRET_KEY</code></td>
+<td>For <code>/api/dashboard</code></td>
+<td>Langfuse secret key</td>
+</tr>
+<tr>
+<td><code>LANGFUSE_BASE_URL</code></td>
+<td>For <code>/api/dashboard</code></td>
+<td>Langfuse base URL (default <code>https://jp.cloud.langfuse.com</code>)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="scripts">Scripts<a class="headerlink" href="#scripts" title="Link">&para;</a></h2>
+<pre><code class="language-bash">npm run dev     # Development server (port 3000)
+npm run build   # Production build
+npm run start   # Production server
+npm run lint    # ESLint
+</code></pre>
+<p>Use <code>run_ui.bat</code> / <code>stop_ui.bat</code> from the project root to start/stop all services including Next.js.</p>
+<h2 id="docker">Docker<a class="headerlink" href="#docker" title="Link">&para;</a></h2>
+<p>Multi-stage Dockerfile (<code>Dockerfile</code>) for production deployment:</p>
+<pre><code class="language-bash"># Build and run via docker-compose (from project root)
+docker compose up --build web
+</code></pre>
+<p>The Dockerfile has three stages:
+1. <strong>deps</strong> — <code>node:20-alpine</code> + <code>npm ci</code>
+2. <strong>build</strong> — <code>npm run build</code> with <code>output: 'standalone'</code>
+3. <strong>runner</strong> — <code>node:20-alpine</code> + standalone output (~120MB final image, no <code>node_modules</code>)</p>
+<p>The web service runs on port 3000 and is included in the CI Docker build matrix.</p>
+<div class="diagrams-box">
+<h3>Architecture Diagrams</h3>
+<div class="diagram-grid">
+<a href="diagrams/context.html">Context (C4 L1)</a>
+<a href="diagrams/container.html">Container (C4 L2)</a>
+<a href="diagrams/component.html">Component (C4 L3)</a>
+<a href="diagrams/component-orch.html">Orchestrator</a>
+<a href="diagrams/component-agents.html">Agents</a>
+<a href="diagrams/component-infra.html">Infra</a>
+<a href="diagrams/code.html">Code (C4 L4)</a>
+<a href="diagrams/sequence.html">Sequence</a>
+<a href="diagrams/sequence-phase1.html">Phase 1: Input</a>
+<a href="diagrams/sequence-phase2.html">Phase 2: Dispatch</a>
+<a href="diagrams/sequence-phase3.html">Phase 3: Synthesis</a>
+<a href="diagrams/dataflow.html">Data Flow</a>
+<a href="diagrams/dataflow-input.html">Input Pipeline</a>
+<a href="diagrams/dataflow-processing.html">Agent Processing</a>
+<a href="diagrams/er.html">Entity-Relationship</a>
+</div>
+</div>
+<div class="footer">FinSight &mdash; Multi-Agent Investment Research System</div>
+</div>
+</body>
+</html>

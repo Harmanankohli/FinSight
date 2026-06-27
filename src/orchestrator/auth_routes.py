@@ -50,6 +50,8 @@ async def _check_lockout(username: str, ip: str) -> bool:
         bucket = _login_buckets.get(key)
         if bucket is None:
             s = get_settings()
+            # rate = max_attempts / 900 s refills the burst over a 15-min window;
+            # try_acquire() returns False (locked out) once burst is exhausted.
             bucket = TokenBucket(rate=s.login_max_attempts / 900.0, burst=s.login_max_attempts)
             _login_buckets[key] = bucket
         return not await bucket.try_acquire()

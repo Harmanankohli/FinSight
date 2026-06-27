@@ -117,6 +117,9 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _resolve_back_compat(self) -> Settings:
+        # Pydantic v2 models are immutable; object.__setattr__ bypasses the
+        # frozen-model validator so we can mutate post-construction. Safe here
+        # because this validator runs once at init before the instance is shared.
         # A2A_TIMEOUT_SENTINEL → a2a_timeout_market_context (old env var name)
         if "A2A_TIMEOUT_MARKET_CONTEXT" not in os.environ and "A2A_TIMEOUT_SENTIMENT" in os.environ:
             try:

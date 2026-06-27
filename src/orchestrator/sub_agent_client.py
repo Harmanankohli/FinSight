@@ -2,6 +2,7 @@
 
 # ruff: noqa: E402
 import asyncio
+import datetime
 import json
 import logging
 import time
@@ -283,76 +284,92 @@ class SubAgentClient:
         t0 = time.monotonic()
         result_text = json.dumps({"error": "No response from agent"})
 
-        async def _stream() -> str:
-            nonlocal result_text
-            async for event in client.send_message(req):
-                # 1. Direct message response (immediate, stateless)
-                if event.HasField("message"):
-                    result_text = get_message_text(event.message)
-                    return result_text
+        lf = get_langfuse_client()
+        with lf.start_as_current_observation(
+            as_type="generation",
+            name=f"a2a-{agent_name}",
+            input=task_str[:2000],
+        ) as generation:
+            ttft_recorded = False
 
-                # 2. Artifact update — streaming result data
-                if event.HasField("artifact_update"):
-                    parts = event.artifact_update.artifact.parts
-                    data_parts = _get_data_parts(parts)
-                    if data_parts:
-                        result_text = _data_part_to_json(data_parts[0])
+            async def _stream() -> str:
+                nonlocal result_text, ttft_recorded
+                async for event in client.send_message(req):
+                    if not ttft_recorded:
+                        generation.update(
+                            completion_start_time=datetime.datetime.now(
+                                datetime.UTC
+                            )
+                        )
+                        ttft_recorded = True
+                    # 1. Direct message response (immediate, stateless)
+                    if event.HasField("message"):
+                        result_text = get_message_text(event.message)
                         return result_text
-                    art_text = get_artifact_text(event.artifact_update.artifact)
-                    if art_text:
-                        result_text = art_text
-                        return result_text
-                    continue
 
-                # 3. Status update — skip intermediate, handle terminal
-                if event.HasField("status_update"):
-                    state = event.status_update.status.state
-                    if state not in _TERMINAL_STATES:
-                        continue  # SUBMITTED, WORKING → skip
-                    result_text = self._extract_terminal_result(event.status_update)
-                    return result_text
-
-                # 4. Full task — only process if terminal (skip SUBMITTED/WORKING)
-                if event.HasField("task"):
-                    if event.task.status.state not in _TERMINAL_STATES:
+                    # 2. Artifact update — streaming result data
+                    if event.HasField("artifact_update"):
+                        parts = event.artifact_update.artifact.parts
+                        data_parts = _get_data_parts(parts)
+                        if data_parts:
+                            result_text = _data_part_to_json(data_parts[0])
+                            return result_text
+                        art_text = get_artifact_text(event.artifact_update.artifact)
+                        if art_text:
+                            result_text = art_text
+                            return result_text
                         continue
-                    result_text = self._extract_task_result(event.task)
-                    return result_text
 
-            return result_text
+                    # 3. Status update — skip intermediate, handle terminal
+                    if event.HasField("status_update"):
+                        state = event.status_update.status.state
+                        if state not in _TERMINAL_STATES:
+                            continue  # SUBMITTED, WORKING → skip
+                        result_text = self._extract_terminal_result(event.status_update)
+                        return result_text
 
-        try:
-            result_text = await asyncio.wait_for(_stream(), timeout=timeout)
-        except TimeoutError:
-            logger.warning("Agent '%s' timed out after %.0fs", agent_name, timeout)
-            result_text = json.dumps(
-                {
-                    "error": "agent_timeout",
-                    "agent": agent_name,
-                    "timeout": timeout,
-                }
-            )
-        except Exception as e:
-            logger.exception("Error sending message to '%s'", agent_name)
-            result_text = json.dumps({"error": str(e)})
-        finally:
-            latency_ms = round((time.monotonic() - t0) * 1000)
-            # Capture sub-agent interactions as JSON traces for offline RAGAS batch evaluation
-            if _EVAL_TRACE_ENABLED:
-                try:
-                    import uuid as _uuid
+                    # 4. Full task — only process if terminal (skip SUBMITTED/WORKING)
+                    if event.HasField("task"):
+                        if event.task.status.state not in _TERMINAL_STATES:
+                            continue
+                        result_text = self._extract_task_result(event.task)
+                        return result_text
 
-                    _EVAL_TRACES_DIR.mkdir(parents=True, exist_ok=True)
-                    trace = {
-                        "agent_name": agent_name,
-                        "task_sent": task_str,
-                        "response": result_text,
-                        "latency_ms": latency_ms,
+                return result_text
+
+            try:
+                result_text = await asyncio.wait_for(_stream(), timeout=timeout)
+            except TimeoutError:
+                logger.warning("Agent '%s' timed out after %.0fs", agent_name, timeout)
+                result_text = json.dumps(
+                    {
+                        "error": "agent_timeout",
+                        "agent": agent_name,
+                        "timeout": timeout,
                     }
-                    trace_path = _EVAL_TRACES_DIR / f"{_uuid.uuid4().hex}.json"
-                    trace_path.write_text(json.dumps(trace, indent=2))
-                except Exception as _te:
-                    logger.debug("Eval trace write failed: %s", _te)
+                )
+            except Exception as e:
+                logger.exception("Error sending message to '%s'", agent_name)
+                result_text = json.dumps({"error": str(e)})
+            finally:
+                latency_ms = round((time.monotonic() - t0) * 1000)
+                generation.update(output=result_text[:2000])
+                # Capture sub-agent interactions as JSON traces for offline RAGAS batch evaluation
+                if _EVAL_TRACE_ENABLED:
+                    try:
+                        import uuid as _uuid
+
+                        _EVAL_TRACES_DIR.mkdir(parents=True, exist_ok=True)
+                        trace = {
+                            "agent_name": agent_name,
+                            "task_sent": task_str,
+                            "response": result_text,
+                            "latency_ms": latency_ms,
+                        }
+                        trace_path = _EVAL_TRACES_DIR / f"{_uuid.uuid4().hex}.json"
+                        trace_path.write_text(json.dumps(trace, indent=2))
+                    except Exception as _te:
+                        logger.debug("Eval trace write failed: %s", _te)
 
         return result_text
 

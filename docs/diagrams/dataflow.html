@@ -29,7 +29,7 @@ graph LR
 UserRaw("User Input\nNatural language query")
 UserID("Anon User ID Resolution\nCookie → X-FinSight-User-Id\nStable UUID for cache affinity")
 TickExtract("Ticker Extraction\nregex + MCP resolve")
-InputGuard["Input Guardrails\nOff-topic + validate_ticker\n(&lt; 2s)"]
+InputGuard["Input Guardrails\nOff-topic + validate_ticker\n(< 2s)"]
 Cache["Caches\nSemantic (ChromaDB)\n+ Today Brief (SQLite)"]
 MemCtx("Memory Context\n[TODAY]/[STALE] labels\n+ portfolio holdings")
 subgraph Agents["Parallel Agents (A2A)"]
@@ -42,7 +42,7 @@ Analytics("Analytics Agent\nTrends, forecast,\nstats, anomalies")
 IntegrityGate("Integrity Gate\nvalidate_metric_integrity()")
 Reviewer("Reviewer Agent\nCross-validation\nVerdict → synthesis")
 end
-Synth("LLM Synthesis\nMerge 4 outputs + verdict\n→ BUY/HOLD/SELL")
+Synth("LLM Synthesis\nMerge 5 outputs + verdict\n→ BUY/HOLD/SELL")
 OutGuard("Output Guardrails\n≥50 chars + signal\nAuto-retry × 3")
 MemStore("Memory Persist\nTickerMemory\n+ Portfolio + Perf")
 CacheWrite("Cache Write\nChromaDB upsert")

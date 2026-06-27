@@ -40,7 +40,6 @@ test_server.py
 restart_adk.ps1
 # Docs
 AGENTS.md
-AGENTS.html
 CLAUDE.md
 graphify-out
 .opencode

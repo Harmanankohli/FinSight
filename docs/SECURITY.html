@@ -3,55 +3,31 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>FinSight &mdash; Security</title>
+<title>Security &mdash; FinSight</title>
 <style>
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,
-Arial,sans-serif;font-size:16px;line-height:1.7;
-color:#2c2c2c;background:#faf8f5;padding:2rem 1rem}
-.container{max-width:740px;margin:0 auto}
-h1,h2,h3,h4{font-family:Georgia,"Times New Roman",serif;color:#1a1a1a;line-height:1.3}
-h1{font-size:2.2rem;margin-bottom:.25rem;border-bottom:2px solid #e8dcc8;padding-bottom:.5rem}
-h2{font-size:1.5rem;margin-top:2.5rem;margin-bottom:.75rem}
-h3{font-size:1.2rem;margin-top:1.5rem;margin-bottom:.5rem}
-h4{font-size:1.05rem;margin-top:1.2rem;margin-bottom:.4rem}
-p{margin-bottom:1rem;color:#444}
-a{color:#8b6f4e;text-decoration:none;font-weight:500}
-a:hover{text-decoration:underline}
-code{background:#f0ebe3;padding:.15em .4em;border-radius:3px;
-font-size:.875em;font-family:"SF Mono","Fira Code","Fira Mono",monospace}
-pre{background:#f0ebe3;padding:1rem;border-radius:6px;overflow-x:auto;margin-bottom:1rem;font-size:.875em;line-height:1.5}
-pre code{background:0 0;padding:0}
-table{width:100%;border-collapse:collapse;margin-bottom:1rem;font-size:.925rem}
-th,td{padding:.5rem .75rem;text-align:left;border-bottom:1px solid #e0d8cc}
-th{background:#f0ebe3;font-weight:600}
-ul,ol{margin-bottom:1rem;padding-left:1.5rem}
-li{margin-bottom:.25rem}
-hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
-.header-nav{margin-bottom:2rem;padding-bottom:1rem;border-bottom:1px solid #e0d8cc}
-.header-nav a{margin-right:1.2rem;font-size:.9rem}
-@media(max-width:600px){body{padding:1rem}h1{font-size:1.8rem}table{font-size:.85rem}}
-
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:1.7;color:#2c2c2c;background:#faf8f5;padding:2rem 1rem}.container{max-width:740px;margin:0 auto}h1,h2,h3,h4,h5,h6{font-family:Georgia,"Times New Roman",serif;color:#1a1a1a;line-height:1.3}h1{font-size:2.2rem;margin-bottom:0.25rem;border-bottom:2px solid #e8dcc8;padding-bottom:0.5rem}h2{font-size:1.5rem;margin-top:2.5rem;margin-bottom:0.75rem;border-bottom:1px solid #e8dcc8;padding-bottom:0.3rem}h3{font-size:1.2rem;margin-top:1.5rem;margin-bottom:0.5rem}h4{font-size:1.05rem;margin-top:1.25rem;margin-bottom:0.4rem}p{margin-bottom:1rem;color:#444}a{color:#8b6f4e;text-decoration:none;font-weight:500}a:hover{text-decoration:underline}ul,ol{margin-bottom:1rem;padding-left:1.5rem;color:#444}li{margin-bottom:0.25rem}li>ul,li>ol{margin-bottom:0}code{background:#f0ebe3;padding:0.15em 0.4em;border-radius:3px;font-size:0.875em;font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace}pre{background:#1a1a1a;color:#e8dcc8;padding:1rem 1.25rem;border-radius:8px;overflow-x:auto;margin-bottom:1rem;line-height:1.5;font-size:0.85rem}pre code{background:none;padding:0;color:inherit;font-size:inherit}table{width:100%;border-collapse:collapse;margin-bottom:1rem;font-size:0.9rem}th,td{padding:0.5rem 0.75rem;text-align:left;border-bottom:1px solid #e0d8cc}th{background:#f0ebe3;font-weight:600}blockquote{border-left:3px solid #e8dcc8;margin:0 0 1rem 0;padding:0.5rem 1rem;color:#666;background:#fff}hr{border:none;border-top:1px solid #e0d8cc;margin:1.5rem 0}img{max-width:100%;height:auto}.header-nav{margin-bottom:2rem;padding-bottom:1rem;border-bottom:1px solid #e0d8cc}.header-nav a{margin-right:1.2rem;font-size:0.9rem}.header-nav a.active{color:#1a1a1a;font-weight:700;border-bottom:2px solid #8b6f4e}.diagrams-box{background:#fff;border:1px solid #e0d8cc;border-radius:8px;padding:1.25rem 1.5rem;margin-top:2.5rem}.diagrams-box h3{margin-top:0;margin-bottom:0.75rem;font-size:1.1rem}.diagram-grid{display:flex;flex-wrap:wrap;gap:0.5rem}.diagram-grid a{background:#f0ebe3;border:1px solid #e0d8cc;border-radius:4px;padding:4px 10px;font-size:0.8rem;color:#2c2c2c;transition:background .15s}.diagram-grid a:hover{background:#e0d8cc;text-decoration:none}.footer{font-size:0.85rem;color:#888;margin-top:2.5rem;border-top:1px solid #e0d8cc;padding-top:1rem}
 </style>
 </head>
 <body>
 <div class="container">
 <div class="header-nav">
 <a href="index.html">Home</a>
+<a href="README.html">Overview</a>
 <a href="ARCHITECTURE.html">Architecture</a>
 <a href="AGENTS.html">Agents</a>
 <a href="MCP_SERVERS.html">MCP Servers</a>
 <a href="DESIGN_DECISIONS.html">Design Decisions</a>
 <a href="API_REFERENCE.html">API</a>
-<a href="SECURITY.html">Security</a>
+<a href="SECURITY.html" class="active">Security</a>
 <a href="CHANGELOG.html">Changelog</a>
 <a href="TESTS.html">Tests</a>
+<a href="FRONTEND.html">Frontend</a>
 <a href="diagrams/index.html">Diagrams</a>
 </div>
-
-<p>FinSight's security model focuses on two layers: <strong>network authentication</strong> (service-to-service and user-facing) and the <strong>Python sandbox</strong> (<code>execute_python</code> MCP tool), which is the primary attack surface — user-supplied code is executed on the host machine.</p>
-<h2>Authentication</h2>
-<h3>Bearer Token Auth</h3>
+<h1 id="security">Security<a class="headerlink" href="#security" title="Link">&para;</a></h1>
+<p>FinSight&rsquo;s security model focuses on two layers: <strong>network authentication</strong> (service-to-service and user-facing) and the <strong>Python sandbox</strong> (<code>execute_python</code> MCP tool), which is the primary attack surface — user-supplied code is executed on the host machine.</p>
+<h2 id="authentication">Authentication<a class="headerlink" href="#authentication" title="Link">&para;</a></h2>
+<h3 id="bearer-token-auth">Bearer Token Auth<a class="headerlink" href="#bearer-token-auth" title="Link">&para;</a></h3>
 <p>All HTTP endpoints are protected by <code>AuthMiddleware</code> (Starlette ASGI middleware in <code>src/shared/auth/middleware.py</code>). Auth is enabled via <code>AUTH_ENABLED=true</code> in <code>.env</code>.</p>
 <table>
 <thead>
@@ -75,7 +51,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 </tbody>
 </table>
 <p>Tokens are validated on every request. Unauthenticated requests receive <code>401 Unauthorized</code> immediately.</p>
-<h3>JWT Authentication (User)</h3>
+<h3 id="jwt-authentication-user">JWT Authentication (User)<a class="headerlink" href="#jwt-authentication-user" title="Link">&para;</a></h3>
 <ul>
 <li>Login at <code>POST /auth/login</code> with <code>username</code> + <code>password</code></li>
 <li>Server returns an httpOnly <code>refresh_token</code> cookie + JSON body with <code>access_token</code> (short-lived JWT) and <code>expires_in</code> seconds</li>
@@ -85,7 +61,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <li>Logout at <code>POST /auth/logout</code> — deletes refresh token from DB</li>
 <li>Rate-limited lockout: 5 failed attempts → 60s cooldown (per username+IP). IP is taken from the socket address unless the direct peer is in <code>TRUSTED_PROXIES</code>, in which case <code>X-Forwarded-For</code> is used. In Docker Compose, set <code>TRUSTED_PROXIES</code> to the Next.js container IP so per-IP lockout works correctly behind the proxy. <strong>Known tradeoff:</strong> username-keyed lockout allows an attacker to DoS a known username; this is accepted given the single-host deployment model.</li>
 </ul>
-<h3>Service-to-Service Authentication</h3>
+<h3 id="service-to-service-authentication">Service-to-Service Authentication<a class="headerlink" href="#service-to-service-authentication" title="Link">&para;</a></h3>
 <ul>
 <li>Sub-agents bind their A2A + eval endpoints to <code>accept=frozenset({"service"})</code> — only valid service tokens pass</li>
 <li>The orchestrator allows both user and service tokens on different paths, with per-route principal-kind checks</li>
@@ -93,33 +69,29 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <li>MCP client (<code>src/shared/mcp_client.py</code>) injects <code>SERVICE_AUTH_TOKEN</code> into every outbound SSE connection</li>
 <li>Agent cards include <code>securitySchemes</code> + <code>securityRequirements</code> for automatic A2A SDK negotiation</li>
 </ul>
-<h3>Trusted Proxies (IP Lockout)</h3>
-<p>The rate-limited lockout key combines username + IP. By default, the IP is read from the direct socket address (<code>request.client.host</code>). In Docker Compose, the Next.js proxy forwards requests — the socket address is the proxy's IP, not the browser's. Set <code>TRUSTED_PROXIES</code> to the proxy's IP so <code>X-Forwarded-For</code> is used:</p>
-<div class="codehilite"><pre><span></span><code><span class="na">TRUSTED_PROXIES</span><span class="o">=</span><span class="s">172.18.0.5</span><span class="w">   </span><span class="c1"># Next.js proxy container IP</span>
-</code></pre></div>
-
+<h3 id="trusted-proxies-ip-lockout">Trusted Proxies (IP Lockout)<a class="headerlink" href="#trusted-proxies-ip-lockout" title="Link">&para;</a></h3>
+<p>The rate-limited lockout key combines username + IP. By default, the IP is read from the direct socket address (<code>request.client.host</code>). In Docker Compose, the Next.js proxy forwards requests — the socket address is the proxy&rsquo;s IP, not the browser&rsquo;s. Set <code>TRUSTED_PROXIES</code> to the proxy&rsquo;s IP so <code>X-Forwarded-For</code> is used:</p>
+<pre><code class="language-ini">TRUSTED_PROXIES=172.18.0.5   # Next.js proxy container IP
+</code></pre>
 <p>Empty list (default) always uses socket address — <code>X-Forwarded-For</code> is never trusted.</p>
-<h3>Token Generation</h3>
-<div class="codehilite"><pre><span></span><code><span class="c1"># User JWT signing secret (32+ hex characters)</span>
-openssl<span class="w"> </span>rand<span class="w"> </span>-hex<span class="w"> </span><span class="m">32</span>
+<h3 id="token-generation">Token Generation<a class="headerlink" href="#token-generation" title="Link">&para;</a></h3>
+<pre><code class="language-bash"># User JWT signing secret (32+ hex characters)
+openssl rand -hex 32
 
-<span class="c1"># Service-to-service shared secret (16+ characters)</span>
-openssl<span class="w"> </span>rand<span class="w"> </span>-hex<span class="w"> </span><span class="m">16</span>
-</code></pre></div>
-
+# Service-to-service shared secret (16+ characters)
+openssl rand -hex 16
+</code></pre>
 <p>Add these to <code>.env</code>:</p>
-<div class="codehilite"><pre><span></span><code><span class="na">AUTH_ENABLED</span><span class="o">=</span><span class="s">true</span>
-<span class="na">AUTH_JWT_SECRETS</span><span class="o">=</span><span class="s">&lt;32-byte-hex&gt;</span>
-<span class="na">SERVICE_AUTH_TOKEN</span><span class="o">=</span><span class="s">&lt;16-byte-hex&gt;</span>
-</code></pre></div>
-
-<h3>Creating Users</h3>
-<div class="codehilite"><pre><span></span><code>python<span class="w"> </span>scripts/create_user.py<span class="w"> </span>&lt;username&gt;
-</code></pre></div>
-
+<pre><code class="language-ini">AUTH_ENABLED=true
+AUTH_JWT_SECRETS=&lt;32-byte-hex&gt;
+SERVICE_AUTH_TOKEN=&lt;16-byte-hex&gt;
+</code></pre>
+<h3 id="creating-users">Creating Users<a class="headerlink" href="#creating-users" title="Link">&para;</a></h3>
+<pre><code class="language-bash">python scripts/create_user.py &lt;username&gt;
+</code></pre>
 <p>Prompts for password (interactive). Passwords hashed with Argon2id. User records stored in <code>db/users.db</code> (SQLite).</p>
-<h2>Python Sandbox</h2>
-<h3>Three-Layer Defense</h3>
+<h2 id="python-sandbox">Python Sandbox<a class="headerlink" href="#python-sandbox" title="Link">&para;</a></h2>
+<h3 id="three-layer-defense">Three-Layer Defense<a class="headerlink" href="#three-layer-defense" title="Link">&para;</a></h3>
 <table>
 <thead>
 <tr>
@@ -146,7 +118,7 @@ openssl<span class="w"> </span>rand<span class="w"> </span>-hex<span class="w"> 
 </tr>
 </tbody>
 </table>
-<h3>Sandbox Modes</h3>
+<h3 id="sandbox-modes">Sandbox Modes<a class="headerlink" href="#sandbox-modes" title="Link">&para;</a></h3>
 <p>Controlled by <code>SANDBOX_MODE</code> env var (<code>ast</code> | <code>container</code> | <code>disabled</code>):</p>
 <table>
 <thead>
@@ -169,7 +141,7 @@ openssl<span class="w"> </span>rand<span class="w"> </span>-hex<span class="w"> 
 </tr>
 <tr>
 <td><code>disabled</code></td>
-<td>Returns error: "Sandbox is disabled"</td>
+<td>Returns error: &ldquo;Sandbox is disabled&rdquo;</td>
 <td>Controlled deployments where code execution is unnecessary</td>
 </tr>
 </tbody>
@@ -179,7 +151,7 @@ openssl<span class="w"> </span>rand<span class="w"> </span>-hex<span class="w"> 
 <li>Production startup (<code>PRODUCTION=true</code>) refuses to start with <code>ast</code> on Windows or <code>container</code> without Docker</li>
 <li>Every invocation is logged via <code>log_sandbox_execution()</code> (principal, mode, exit code, truncated output)</li>
 </ul>
-<h3>Restricted Imports</h3>
+<h3 id="restricted-imports">Restricted Imports<a class="headerlink" href="#restricted-imports" title="Link">&para;</a></h3>
 <p>The AST gate blocks imports of modules that provide filesystem, network, process, or reflection capabilities:</p>
 <table>
 <thead>
@@ -211,22 +183,22 @@ openssl<span class="w"> </span>rand<span class="w"> </span>-hex<span class="w"> 
 </tr>
 </tbody>
 </table>
-<h3>Restricted Builtins</h3>
+<h3 id="restricted-builtins">Restricted Builtins<a class="headerlink" href="#restricted-builtins" title="Link">&para;</a></h3>
 <p>The AST gate blocks direct calls to:</p>
 <p><code>exec</code>, <code>eval</code>, <code>open</code>, <code>__import__</code>, <code>compile</code>, <code>globals</code>, <code>locals</code>, <code>vars</code>, <code>dir</code>, <code>delattr</code>, <code>setattr</code></p>
-<h3>Restricted Attributes</h3>
+<h3 id="restricted-attributes">Restricted Attributes<a class="headerlink" href="#restricted-attributes" title="Link">&para;</a></h3>
 <p>The AST gate blocks attribute access and method calls on:</p>
 <p><code>system</code>, <code>popen</code>, <code>execv</code>, <code>execve</code>, <code>execl</code>, <code>execvp</code>, <code>spawn</code>, <code>spawnl</code>, <code>fork</code>, <code>forkpty</code>, <code>exec</code>, <code>eval</code>, <code>__class__</code>, <code>bases__</code>, <code>__subclasses__</code>, <code>__mro__</code>, <code>__globals__</code>, <code>__builtins__</code>, <code>__code__</code>, <code>__closure__</code>, <code>__wrapped__</code></p>
-<h3>Subprocess Hardening</h3>
+<h3 id="subprocess-hardening">Subprocess Hardening<a class="headerlink" href="#subprocess-hardening" title="Link">&para;</a></h3>
 <p>The child process runs with:</p>
 <ul>
 <li><strong><code>-I</code> flag</strong>: Isolated mode — ignores <code>PYTHONPATH</code>, <code>PYTHONHOME</code>, and user site-packages</li>
 <li><strong><code>-S</code> flag</strong>: No <code>site</code> module — prevents <code>usercustomize.py</code> and <code>sitecustomize.py</code> injection</li>
-<li><strong>Whitelisted <code>__builtins__</code></strong>: The child's <code>__builtins__</code> dict is replaced with a safe subset (print, len, range, int, float, str, bool, list, dict, etc.) — no <code>open</code>, <code>exec</code>, <code>__import__</code></li>
+<li><strong>Whitelisted <code>__builtins__</code></strong>: The child&rsquo;s <code>__builtins__</code> dict is replaced with a safe subset (print, len, range, int, float, str, bool, list, dict, etc.) — no <code>open</code>, <code>exec</code>, <code>__import__</code></li>
 <li><strong>No filesystem FDs</strong>: <code>RLIMIT_NOFILE</code> set to 0 on Unix — blocks filesystem writes even if the AST gate is bypassed</li>
 <li><strong>Cleaned up</strong>: Temporary runner script deleted via <code>os.unlink()</code> in <code>finally</code> block</li>
 </ul>
-<h3>Container Hardening</h3>
+<h3 id="container-hardening">Container Hardening<a class="headerlink" href="#container-hardening" title="Link">&para;</a></h3>
 <p>When <code>SANDBOX_MODE=container</code>:</p>
 <ul>
 <li><code>--network none</code> — no network access</li>
@@ -238,38 +210,38 @@ openssl<span class="w"> </span>rand<span class="w"> </span>-hex<span class="w"> 
 <li><code>--rm</code> — container auto-removed on exit</li>
 <li>Timeout via <code>docker kill</code> with container label matching on timeout</li>
 </ul>
-<h3>Allowed Libraries</h3>
+<h3 id="allowed-libraries">Allowed Libraries<a class="headerlink" href="#allowed-libraries" title="Link">&para;</a></h3>
 <p>The following libraries are available in the sandbox:</p>
 <p><code>pandas</code>, <code>numpy</code>, <code>math</code>, <code>json</code>, <code>datetime</code>, <code>random</code>, <code>statistics</code>, <code>itertools</code>, <code>collections</code>, <code>functools</code>, <code>typing</code></p>
-<h3>Test Coverage</h3>
+<h3 id="test-coverage">Test Coverage<a class="headerlink" href="#test-coverage" title="Link">&para;</a></h3>
 <p><code>src/tests/security/test_sandbox.py</code> contains <strong>60+ parametrized test cases</strong>:</p>
 <ul>
 <li><strong>Negative cases</strong>: Every restricted import, builtin call, dunder attribute, getattr-with-dunder, and subscript-with-dunder pattern</li>
 <li><strong>Positive cases</strong>: Safe code (math, json, list comprehensions, <code>isinstance</code>, <code>str</code>) is not blocked</li>
 <li><strong>Integration tests</strong> (marked <code>@pytest.mark.integration</code>): Spawn actual subprocess to verify runtime enforcement, timeout handling, and runtime import blocking</li>
 </ul>
-<h2>Network Security</h2>
-<h3>CORS</h3>
+<h2 id="network-security">Network Security<a class="headerlink" href="#network-security" title="Link">&para;</a></h2>
+<h3 id="cors">CORS<a class="headerlink" href="#cors" title="Link">&para;</a></h3>
 <p>The orchestrator allows cross-origin requests from <code>http://localhost:3000</code> and <code>http://127.0.0.1:3000</code> only. No other origins are permitted.</p>
-<h3>Internal Rate Limiting</h3>
+<h3 id="internal-rate-limiting">Internal Rate Limiting<a class="headerlink" href="#internal-rate-limiting" title="Link">&para;</a></h3>
 <p>The MCP server applies rate limits to upstream data sources:</p>
 <p>| Source | Rate | Burst |
-|---|---|---|---|
+|&mdash;|&mdash;|&mdash;|&mdash;|
 | SEC EDGAR | 8 req/s | 10 |
 | yfinance | 4 req/s | 8 |
 | yahooquery | 4 req/s | 8 |
 | RSS feeds | 2 req/s | 4 |</p>
-<h3>Secrets in Environment</h3>
+<h3 id="secrets-in-environment">Secrets in Environment<a class="headerlink" href="#secrets-in-environment" title="Link">&para;</a></h3>
 <p>All secrets and API keys are loaded from environment variables via <code>src/shared/settings.py</code>. No hardcoded secrets exist in source code. The <code>.env.example</code> file contains placeholder values.</p>
-<h3>Service Binding</h3>
+<h3 id="service-binding">Service Binding<a class="headerlink" href="#service-binding" title="Link">&para;</a></h3>
 <ul>
 <li>MCP server binds to <code>127.0.0.1</code> by default (localhost-only for Docker host access)</li>
 <li>Docker Compose overrides to <code>0.0.0.0</code> for inter-container communication</li>
 <li>Agent HTTP servers bind to <code>0.0.0.0</code> (container-required) but accept only authenticated requests</li>
 </ul>
-<h3>TLS Termination</h3>
-<p>In production, deploy behind a reverse proxy (Caddy, nginx) for TLS termination. See <code>deploy/Caddyfile.example</code>.</p>
-<h2>Known Limitations</h2>
+<h3 id="tls-termination">TLS Termination<a class="headerlink" href="#tls-termination" title="Link">&para;</a></h3>
+<p>In production, deploy behind a reverse proxy (Caddy, nginx) for TLS termination.</p>
+<h2 id="known-limitations">Known Limitations<a class="headerlink" href="#known-limitations" title="Link">&para;</a></h2>
 <table>
 <thead>
 <tr>
@@ -306,7 +278,7 @@ openssl<span class="w"> </span>rand<span class="w"> </span>-hex<span class="w"> 
 </tr>
 </tbody>
 </table>
-<h2>Responsible Disclosure</h2>
+<h2 id="responsible-disclosure">Responsible Disclosure<a class="headerlink" href="#responsible-disclosure" title="Link">&para;</a></h2>
 <p>If you discover a security vulnerability in FinSight:</p>
 <ol>
 <li><strong>Do not</strong> open a public GitHub issue</li>
@@ -314,7 +286,7 @@ openssl<span class="w"> </span>rand<span class="w"> </span>-hex<span class="w"> 
 <li>Include: description, reproduction steps, affected component, potential impact</li>
 <li>Allow 90 days for a fix before public disclosure</li>
 </ol>
-<h2>Hardening History</h2>
+<h2 id="hardening-history">Hardening History<a class="headerlink" href="#hardening-history" title="Link">&para;</a></h2>
 <table>
 <thead>
 <tr>
@@ -381,10 +353,27 @@ openssl<span class="w"> </span>rand<span class="w"> </span>-hex<span class="w"> 
 </tr>
 </tbody>
 </table>
-
-<hr>
-<p style="font-size:0.85rem;color:#888;margin-top:1rem">
-FinSight &mdash; Multi-Agent Investment Research System</p>
+<div class="diagrams-box">
+<h3>Architecture Diagrams</h3>
+<div class="diagram-grid">
+<a href="diagrams/context.html">Context (C4 L1)</a>
+<a href="diagrams/container.html">Container (C4 L2)</a>
+<a href="diagrams/component.html">Component (C4 L3)</a>
+<a href="diagrams/component-orch.html">Orchestrator</a>
+<a href="diagrams/component-agents.html">Agents</a>
+<a href="diagrams/component-infra.html">Infra</a>
+<a href="diagrams/code.html">Code (C4 L4)</a>
+<a href="diagrams/sequence.html">Sequence</a>
+<a href="diagrams/sequence-phase1.html">Phase 1: Input</a>
+<a href="diagrams/sequence-phase2.html">Phase 2: Dispatch</a>
+<a href="diagrams/sequence-phase3.html">Phase 3: Synthesis</a>
+<a href="diagrams/dataflow.html">Data Flow</a>
+<a href="diagrams/dataflow-input.html">Input Pipeline</a>
+<a href="diagrams/dataflow-processing.html">Agent Processing</a>
+<a href="diagrams/er.html">Entity-Relationship</a>
+</div>
+</div>
+<div class="footer">FinSight &mdash; Multi-Agent Investment Research System</div>
 </div>
 </body>
 </html>

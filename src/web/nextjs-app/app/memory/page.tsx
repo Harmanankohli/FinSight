@@ -22,8 +22,6 @@ interface Brief {
   brief_json: string; created_at: string; analysis_date: string;
 }
 
-const COMMON_TICKERS = ["NVDA", "AAPL", "MSFT", "TSLA", "GOOGL", "AMZN", "META", "LLY"];
-
 /** Memory page component wrapped in Suspense. Renders search form and brief cards. */
 export default function MemoryPage() {
   return (
@@ -39,7 +37,7 @@ function MemoryContent() {
   const [briefs, setBriefs] = useState<Brief[]>([]);
   const [input, setInput] = useState(urlTicker);
   const [searchedTicker, setSearchedTicker] = useState("all");
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!!urlTicker);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [downloading, setDownloading] = useState<string | null>(null); // "{id}-{format}"
 
@@ -62,52 +60,21 @@ function MemoryContent() {
     setLoading(false);
   };
 
-  const fetchAll = async () => {
-    setLoading(true);
-    setSearchedTicker("all");
-    const all: Brief[] = [];
-    const seen = new Set<string>();
-    await Promise.all(COMMON_TICKERS.map(async (t) => {
-      try {
-        const r = await fetch(`/api/orch/api/memory/ticker/${t}`);
-        if (r.ok) for (const b of await r.json()) if (!seen.has(b.id)) { seen.add(b.id); all.push(b); }
-      } catch { /* skip */ }
-    }));
-    all.sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
-    setBriefs(all);
-    setLoading(false);
-  };
-
   useEffect(() => {
-    const ticker = urlTicker;
-    if (ticker) {
-      fetch(`/api/orch/api/memory/ticker/${ticker.toUpperCase()}`)
-        .then((r) => r.ok ? r.json() : [])
-        .then((data) => { setSearchedTicker(ticker.toUpperCase()); setBriefs(data); })
-        .catch(() => { setBriefs([]); })
-        .finally(() => setLoading(false));
-    } else {
-      const all: Brief[] = [];
-      const seen = new Set<string>();
-      Promise.all(COMMON_TICKERS.map((t) =>
-        fetch(`/api/orch/api/memory/ticker/${t}`)
-          .then((r) => r.ok ? r.json() : [])
-          .then((items: Brief[]) => { for (const b of items) if (!seen.has(b.id)) { seen.add(b.id); all.push(b); } })
-          .catch(() => {})
-      ))
-        .then(() => {
-          all.sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
-          setSearchedTicker("all");
-          setBriefs(all);
-        })
-        .finally(() => setLoading(false));
-    }
+    if (!urlTicker) return;
+    const controller = new AbortController();
+    const { signal } = controller;
+    fetch(`/api/orch/api/memory/ticker/${urlTicker}`, { signal })
+      .then((r) => r.ok ? r.json() : [])
+      .then((data) => { if (!signal.aborted) { setSearchedTicker(urlTicker); setBriefs(data); } })
+      .catch(() => { if (!signal.aborted) setBriefs([]); })
+      .finally(() => { if (!signal.aborted) setLoading(false); });
+    return () => controller.abort();
   }, [urlTicker]);
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
     if (input.trim()) fetchBriefs(input.trim());
-    else fetchAll();
   };
 
   const toggleExpand = (id: string) => {
@@ -149,7 +116,6 @@ function MemoryContent() {
               placeholder="TICKER"
             />
             <button type="submit" className="pill" style={{ cursor: "pointer", padding: "8px 16px" }}>Search</button>
-            <button type="button" onClick={fetchAll} className="pill" style={{ cursor: "pointer", padding: "8px 16px" }}>Show all</button>
           </form>
 
           {/* Brief cards */}
@@ -228,7 +194,7 @@ function MemoryContent() {
             })}
             {!loading && briefs.length === 0 && (
               <div style={{ textAlign: "center", padding: 40, color: "var(--text-muted)", fontSize: 13 }}>
-                {searchedTicker === "all" ? "No briefs stored yet. Run an analysis on the Research page." : `No briefs for ${searchedTicker}.`}
+                {searchedTicker === "all" ? "Search for a ticker to view stored briefs." : `No briefs for ${searchedTicker}.`}
               </div>
             )}
           </div>
