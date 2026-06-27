@@ -70,6 +70,29 @@ async def _release_sub_agent_evals() -> None:
                 logger.debug("release-evals failed for %s (non-fatal)", base)
 
 
+def _extract_confidence(agent_outputs: dict, response_text: str) -> float:
+    """Extract confidence from structured agent data, falling back to regex on response text."""
+    reviewer = agent_outputs.get("reviewer_response", {})
+    if isinstance(reviewer, dict):
+        rc = reviewer.get("review_confidence")
+        if isinstance(rc, (int, float)) and 0.0 <= rc <= 1.0:
+            return round(rc, 2)
+        cb = (reviewer.get("confidence_breakdown") or {}).get("meta_confidence")
+        if isinstance(cb, (int, float)) and 0.0 <= cb <= 1.0:
+            return round(cb, 2)
+
+    conf_match = re.search(
+        r"(?:confidence|conf)(?:\s+score)?[:\s]*(\d+(?:\.\d+)?)\s*%?"
+        r"|(\d+(?:\.\d+)?)\s*%\s*(?:confidence|conf)",
+        response_text,
+        re.IGNORECASE,
+    )
+    if conf_match:
+        raw = float(conf_match.group(1) or conf_match.group(2))
+        return round(raw / 100.0 if raw > 1.0 else raw, 2)
+    return 0.5
+
+
 class FinSightAgentExecutor(AgentExecutor):
     """Executor that runs the ADK orchestrator agent directly.
 
@@ -632,17 +655,7 @@ class FinSightAgentExecutor(AgentExecutor):
                         bj.update(extra)
                     if needs_update:
                         bj["response_text"] = response_text
-                    conf_match = re.search(
-                        r"(?:confidence|conf)[:\s]*(\d+(?:\.\d+)?)",
-                        response_text, re.IGNORECASE,
-                    )
-                    new_conf = (
-                        float(conf_match.group(1))
-                        if conf_match
-                        else None
-                    )
-                    if new_conf and new_conf > 1:
-                        new_conf = new_conf / 100.0
+                    new_conf = _extract_confidence(extra, response_text)
                     await tm.update_brief_json(
                         existing["id"],
                         json.dumps(bj),
@@ -665,16 +678,7 @@ class FinSightAgentExecutor(AgentExecutor):
         rec_match = re.search(r"\b(BUY|HOLD|SELL)\b", response_text, re.IGNORECASE)
         recommendation = rec_match.group(1).upper() if rec_match else "UNKNOWN"
 
-        confidence = 0.5
-        conf_match = re.search(
-            r"(?:confidence|conf)(?:\s+score)?[:\s]*(\d+(?:\.\d+)?)\s*%?"
-            r"|(\d+(?:\.\d+)?)\s*%\s*(?:confidence|conf)",
-            response_text,
-            re.IGNORECASE,
-        )
-        if conf_match:
-            raw = float(conf_match.group(1) or conf_match.group(2))
-            confidence = raw / 100.0 if raw > 1.0 else raw
+        confidence = _extract_confidence(extra, response_text)
 
         await tm.store_minimal(
             ticker=ticker,

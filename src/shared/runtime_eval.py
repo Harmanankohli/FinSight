@@ -224,20 +224,32 @@ async def _setup_ragas_clients() -> tuple[Any, Any] | None:
 
 
 async def _score_metric(metric: Any, **kwargs: Any) -> float:
+    from opentelemetry.context import attach, detach, set_value
+    from opentelemetry.instrumentation.utils import (
+        _SUPPRESS_HTTP_INSTRUMENTATION_KEY,
+        _SUPPRESS_INSTRUMENTATION_KEY,
+    )
+
     from shared.llm_queue import Priority, llm_queue
 
-    async with llm_queue.acquire(Priority.LOW, f"eval/{metric.name}"):
-        try:
-            result = await metric.ascore(**kwargs)
-            return float(result.value)
-        except Exception:
-            logger.warning(
-                "RAGAS metric '%s' ascore failed (kwargs keys: %s)",
-                metric.name,
-                list(kwargs.keys()),
-                exc_info=True,
-            )
-            raise
+    ctx = set_value(_SUPPRESS_HTTP_INSTRUMENTATION_KEY, True)
+    ctx = set_value(_SUPPRESS_INSTRUMENTATION_KEY, True, ctx)
+    token = attach(ctx)
+    try:
+        async with llm_queue.acquire(Priority.LOW, f"eval/{metric.name}"):
+            try:
+                result = await metric.ascore(**kwargs)
+                return float(result.value)
+            except Exception:
+                logger.warning(
+                    "RAGAS metric '%s' ascore failed (kwargs keys: %s)",
+                    metric.name,
+                    list(kwargs.keys()),
+                    exc_info=True,
+                )
+                raise
+    finally:
+        detach(token)
 
 
 async def _score_metric_with_timeout(metric: Any, **kwargs: Any) -> float:
