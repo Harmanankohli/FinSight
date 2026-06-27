@@ -37,7 +37,7 @@ function MemoryContent() {
   const [briefs, setBriefs] = useState<Brief[]>([]);
   const [input, setInput] = useState(urlTicker);
   const [searchedTicker, setSearchedTicker] = useState("all");
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!!urlTicker);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [downloading, setDownloading] = useState<string | null>(null); // "{id}-{format}"
 
@@ -61,7 +61,7 @@ function MemoryContent() {
   };
 
   useEffect(() => {
-    if (!urlTicker) { setLoading(false); return; }
+    if (!urlTicker) return;
     const controller = new AbortController();
     const { signal } = controller;
     fetch(`/api/orch/api/memory/ticker/${urlTicker}`, { signal })

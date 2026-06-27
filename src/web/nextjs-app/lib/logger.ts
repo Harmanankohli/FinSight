@@ -63,11 +63,9 @@ function _emit(level: LogLevel, module: string, msg: string, ...args: unknown[])
     const color = ANSI[level];
     const label = level.toUpperCase().padEnd(5);
     const line = `${ANSI_DIM}${ts}${ANSI_RESET} ${color}${ANSI_BOLD}${label}${ANSI_RESET} [${module}] ${color}${msg}${ANSI_RESET}`;
-    // eslint-disable-next-line no-console
     (level === "debug" ? console.log : console[level])(line, ...args);
   } else {
     const label = level.toUpperCase().padEnd(5);
-    // eslint-disable-next-line no-console
     (level === "debug" ? console.log : console[level])(
       `%c${ts}%c ${label}%c [${module}] ${msg}`,
       "color: gray; font-weight: normal",

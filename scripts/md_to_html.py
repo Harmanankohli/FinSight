@@ -66,39 +66,70 @@ DIAGRAM_LINKS = [
     ("Entity-Relationship", "diagrams/er.html"),
 ]
 
-STYLE = """\
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:1.7;color:#2c2c2c;background:#faf8f5;padding:2rem 1rem}
-.container{max-width:740px;margin:0 auto}
-h1,h2,h3,h4,h5,h6{font-family:Georgia,"Times New Roman",serif;color:#1a1a1a;line-height:1.3}
-h1{font-size:2.2rem;margin-bottom:0.25rem;border-bottom:2px solid #e8dcc8;padding-bottom:0.5rem}
-h2{font-size:1.5rem;margin-top:2.5rem;margin-bottom:0.75rem;border-bottom:1px solid #e8dcc8;padding-bottom:0.3rem}
-h3{font-size:1.2rem;margin-top:1.5rem;margin-bottom:0.5rem}
-h4{font-size:1.05rem;margin-top:1.25rem;margin-bottom:0.4rem}
-p{margin-bottom:1rem;color:#444}
-a{color:#8b6f4e;text-decoration:none;font-weight:500}
-a:hover{text-decoration:underline}
-ul,ol{margin-bottom:1rem;padding-left:1.5rem;color:#444}
-li{margin-bottom:0.25rem}
-li>ul,li>ol{margin-bottom:0}
-code{background:#f0ebe3;padding:0.15em 0.4em;border-radius:3px;font-size:0.875em;font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace}
-pre{background:#1a1a1a;color:#e8dcc8;padding:1rem 1.25rem;border-radius:8px;overflow-x:auto;margin-bottom:1rem;line-height:1.5;font-size:0.85rem}
-pre code{background:none;padding:0;color:inherit;font-size:inherit}
-table{width:100%;border-collapse:collapse;margin-bottom:1rem;font-size:0.9rem}
-th,td{padding:0.5rem 0.75rem;text-align:left;border-bottom:1px solid #e0d8cc}
-th{background:#f0ebe3;font-weight:600}
-blockquote{border-left:3px solid #e8dcc8;margin:0 0 1rem 0;padding:0.5rem 1rem;color:#666;background:#fff}
-hr{border:none;border-top:1px solid #e0d8cc;margin:1.5rem 0}
-img{max-width:100%;height:auto}
-.header-nav{margin-bottom:2rem;padding-bottom:1rem;border-bottom:1px solid #e0d8cc}
-.header-nav a{margin-right:1.2rem;font-size:0.9rem}
-.header-nav a.active{color:#1a1a1a;font-weight:700;border-bottom:2px solid #8b6f4e}
-.diagrams-box{background:#fff;border:1px solid #e0d8cc;border-radius:8px;padding:1.25rem 1.5rem;margin-top:2.5rem}
-.diagrams-box h3{margin-top:0;margin-bottom:0.75rem;font-size:1.1rem}
-.diagram-grid{display:flex;flex-wrap:wrap;gap:0.5rem}
-.diagram-grid a{background:#f0ebe3;border:1px solid #e0d8cc;border-radius:4px;padding:4px 10px;font-size:0.8rem;color:#2c2c2c;transition:background .15s}
-.diagram-grid a:hover{background:#e0d8cc;text-decoration:none}
-.footer{font-size:0.85rem;color:#888;margin-top:2.5rem;border-top:1px solid #e0d8cc;padding-top:1rem}"""
+STYLE = (
+    "*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}"
+    "body{font-family:-apple-system,BlinkMacSystemFont,"
+    '"Segoe UI",Roboto,Helvetica,Arial,sans-serif;'
+    "font-size:16px;line-height:1.7;color:#2c2c2c;"
+    "background:#faf8f5;padding:2rem 1rem}"
+    ".container{max-width:740px;margin:0 auto}"
+    "h1,h2,h3,h4,h5,h6{font-family:Georgia,"
+    '"Times New Roman",serif;color:#1a1a1a;line-height:1.3}'
+    "h1{font-size:2.2rem;margin-bottom:0.25rem;"
+    "border-bottom:2px solid #e8dcc8;padding-bottom:0.5rem}"
+    "h2{font-size:1.5rem;margin-top:2.5rem;"
+    "margin-bottom:0.75rem;"
+    "border-bottom:1px solid #e8dcc8;padding-bottom:0.3rem}"
+    "h3{font-size:1.2rem;margin-top:1.5rem;margin-bottom:0.5rem}"
+    "h4{font-size:1.05rem;margin-top:1.25rem;"
+    "margin-bottom:0.4rem}"
+    "p{margin-bottom:1rem;color:#444}"
+    "a{color:#8b6f4e;text-decoration:none;font-weight:500}"
+    "a:hover{text-decoration:underline}"
+    "ul,ol{margin-bottom:1rem;padding-left:1.5rem;color:#444}"
+    "li{margin-bottom:0.25rem}"
+    "li>ul,li>ol{margin-bottom:0}"
+    "code{background:#f0ebe3;padding:0.15em 0.4em;"
+    "border-radius:3px;font-size:0.875em;"
+    'font-family:"SFMono-Regular",Consolas,'
+    '"Liberation Mono",Menlo,monospace}'
+    "pre{background:#1a1a1a;color:#e8dcc8;"
+    "padding:1rem 1.25rem;border-radius:8px;"
+    "overflow-x:auto;margin-bottom:1rem;"
+    "line-height:1.5;font-size:0.85rem}"
+    "pre code{background:none;padding:0;"
+    "color:inherit;font-size:inherit}"
+    "table{width:100%;border-collapse:collapse;"
+    "margin-bottom:1rem;font-size:0.9rem}"
+    "th,td{padding:0.5rem 0.75rem;text-align:left;"
+    "border-bottom:1px solid #e0d8cc}"
+    "th{background:#f0ebe3;font-weight:600}"
+    "blockquote{border-left:3px solid #e8dcc8;"
+    "margin:0 0 1rem 0;padding:0.5rem 1rem;"
+    "color:#666;background:#fff}"
+    "hr{border:none;border-top:1px solid #e0d8cc;margin:1.5rem 0}"
+    "img{max-width:100%;height:auto}"
+    ".header-nav{margin-bottom:2rem;padding-bottom:1rem;"
+    "border-bottom:1px solid #e0d8cc}"
+    ".header-nav a{margin-right:1.2rem;font-size:0.9rem}"
+    ".header-nav a.active{color:#1a1a1a;font-weight:700;"
+    "border-bottom:2px solid #8b6f4e}"
+    ".diagrams-box{background:#fff;"
+    "border:1px solid #e0d8cc;border-radius:8px;"
+    "padding:1.25rem 1.5rem;margin-top:2.5rem}"
+    ".diagrams-box h3{margin-top:0;"
+    "margin-bottom:0.75rem;font-size:1.1rem}"
+    ".diagram-grid{display:flex;flex-wrap:wrap;gap:0.5rem}"
+    ".diagram-grid a{background:#f0ebe3;"
+    "border:1px solid #e0d8cc;border-radius:4px;"
+    "padding:4px 10px;font-size:0.8rem;"
+    "color:#2c2c2c;transition:background .15s}"
+    ".diagram-grid a:hover{background:#e0d8cc;"
+    "text-decoration:none}"
+    ".footer{font-size:0.85rem;color:#888;"
+    "margin-top:2.5rem;border-top:1px solid #e0d8cc;"
+    "padding-top:1rem}"
+)
 
 
 def _title_from_md(md_text: str, fallback: str) -> str:
