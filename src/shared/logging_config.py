@@ -210,7 +210,7 @@ class SanitizeFilter(logging.Filter):
         (re.compile(r"(api_key\s*=\s*)['\"]?[^'\"\s,)]+['\"]?"), r"\1***"),
         (re.compile(r"sk-[A-Za-z0-9]{20,}"), "sk-***"),
         (re.compile(r"pk-[A-Za-z0-9]{20,}"), "pk-***"),
-        (re.compile(r"(Authorization:\s*Bearer\s+)\S+"), r"\1***"),
+        (re.compile(r"(Authorization:\s*Bearer)\s+\S+", re.IGNORECASE), r"\1 ***"),
         (re.compile(r"(LANGFUSE_(?:PUBLIC|SECRET)_KEY\s*[=:]\s*)\S+"), r"\1***"),
     ]
 
