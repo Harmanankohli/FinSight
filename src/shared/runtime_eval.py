@@ -1038,6 +1038,8 @@ def score_analytics_deterministic(analytics_result: dict[str, Any]) -> dict[str,
     checks["ma_crossover_valid"] = ma_signal is None or ma_signal in {
         "golden_cross",
         "death_cross",
+        "bullish_alignment",
+        "bearish_alignment",
     }
 
     forecast = analytics_result.get("forecast") or {}

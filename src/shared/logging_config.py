@@ -506,3 +506,9 @@ def setup_file_logging(service_name: str, level: int | None = None) -> None:
             _lib_logger.setLevel(getattr(logging, _override.upper(), logging.WARNING))
         elif _lib_logger.level == logging.NOTSET or _lib_logger.level < logging.WARNING:
             _lib_logger.setLevel(logging.WARNING)
+
+    # OTel context-detach errors are harmless in async — the token was
+    # created in a different asyncio.Task's contextvars.Context.
+    _otel_ctx = logging.getLogger("opentelemetry.context")
+    if not os.environ.get("LOG_LEVEL_OPENTELEMETRY_CONTEXT"):
+        _otel_ctx.setLevel(logging.CRITICAL)
