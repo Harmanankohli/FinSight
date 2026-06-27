@@ -1,6 +1,6 @@
 # FinSight — Multi-Agent Investment Research System
 
-An autonomous multi-agent system that answers investment queries like *"Should I invest in NVIDIA?"* by coordinating **six specialized agents** across different frameworks, communicating via the **Agent-to-Agent (A2A)** protocol, and using **MCP (Model Context Protocol)** servers for external tool access.
+An autonomous multi-agent system that answers investment queries like *"Should I invest in NVIDIA?"* by coordinating **five specialized sub-agents** (RAG, Quant, Market Context, Analytics, Reviewer) under an ADK orchestrator, communicating via the **Agent-to-Agent (A2A)** protocol, and using **MCP (Model Context Protocol)** servers for external tool access.
 
 ## Key Features
 
@@ -26,13 +26,13 @@ An autonomous multi-agent system that answers investment queries like *"Should I
 
 ```
 +--------------------------------------------------------------+
-│              ADK Web UI (port 8080)                           │
-│           Orchestrator (ADK LlmAgent)                        │
-│         Discovers agents ? LLM routes via send_message       │
-│         Tools: send_message(name, task), load_memory(query)  │
+│  Orchestrator (ADK) — port 8001 (A2A JSON-RPC)              │
+│  also serves ADK Web UI on port 8080 (browser dev)          │
+│  Discovers agents → LLM routes via send_message              │
+│  Tools: send_message(name, task), load_memory(query)         │
 +--------------------------------------------------------------+
                        │ A2A Protocol (JSON-RPC over HTTP, streaming)
-                       ?
+                       ↓
 +--------------------------------------------------------------------+
 │  Agent Pool                                                         │
 │  RAG (:8002)   Quant (:8003)   Market Context (:8004)              │
@@ -41,7 +41,7 @@ An autonomous multi-agent system that answers investment queries like *"Should I
 │  (PydanticAI)                 (OpenAI Agents SDK)                  │
 +--------------------------------------------------------------------+
          │            │                │
-         ?            ?                ?
+         ↓            ↓                ↓
 +--------------------------------------------------------------+
 │          Unified finsight-mcp Server (port 8010)              │
 │  +-----------------+  +---------------------------------+   │
@@ -49,7 +49,6 @@ An autonomous multi-agent system that answers investment queries like *"Should I
 │  │  │ find_agent()    │  │  get_prices, get_financials,  │   │
 │  │  │                 │  │  get_options_chain,           │   │
 │  │  +-----------------+  │  get_financial_filings,       │   │
-│                        │  get_financial_filings,       │   │
 │                        │  get_filing_content,          │   │
 │                        │  validate_ticker,             │   │
 │                        │  resolve_company_ticker,      │   │
