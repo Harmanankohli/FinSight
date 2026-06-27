@@ -155,7 +155,7 @@ uv run python -m market_context.server
 uv run adk web --port 8080 --session_service_uri sqlite://./db/adk_sessions.db --memory_service_uri finsight:// agents
 ```
 
-**Startup order:** LM Studio ? MCP Server ? RAG ? Quant ? Market Context ? ADK Web UI
+**Startup order:** LM Studio → MCP Server → RAG → Quant → Market Context → ADK Web UI
 
 Open http://127.0.0.1:8080 in your browser.
 

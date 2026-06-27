@@ -62,7 +62,7 @@ style LF fill:#e8daef,stroke:#8e44ad,stroke-width:2px,color:#1a1a1a
 <tr><td>LM Studio LLM</td><td>HTTP (OpenAI-compatible)</td><td>Priority semaphore (CRITICAL/NORMAL/LOW)</td><td>Inference requests</td></tr>
 <tr><td>SEC EDGAR</td><td>REST (HTTPS)</td><td>8 req/s (TokenBucket)</td><td>10-K, 10-Q, 8-K filings, XBRL</td></tr>
 <tr><td>Yahoo Finance</td><td>REST (unofficial)</td><td>4 req/s (TokenBucket)</td><td>Prices, financials, options, peers</td></tr>
-<tr><td>RSS Feeds</td><td>RSS/Atom</td><td>2 req/s (TokenBucket)</td><td>News headlines ? YF API ? DDG fallback chain</td></tr>
+<tr><td>RSS Feeds</td><td>RSS/Atom</td><td>2 req/s (TokenBucket)</td><td>News headlines → YF API → DDG fallback chain</td></tr>
 <tr><td>Langfuse</td><td>HTTP (OTLP/REST)</td><td>Async, no limit</td><td>Traces, spans, evaluation scores</td></tr>
 </table>
 <h2>Data Flow Steps</h2>

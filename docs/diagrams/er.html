@@ -38,10 +38,10 @@ erDiagram
         text session_id FK
         text author
         timestamp timestamp
-        json content
+        varchar content
     }
 
-    TICKER_BRIFFS {
+    TICKER_BRIEFS {
         integer id PK
         text ticker
         text recommendation
@@ -64,7 +64,7 @@ erDiagram
 
     USER_PROFILES {
         integer id PK
-        text user_id UNIQUE
+        text user_id UK
         text holdings_json
         text risk_profile
         text investment_horizon
@@ -87,7 +87,7 @@ erDiagram
     }
 
     AGENT_OUTPUT_STORE {
-        text session_id PK,FK
+        text session_id PK
         text agent_name PK
         text output_json
         timestamp created_at

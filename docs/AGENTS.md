@@ -9,7 +9,7 @@
 | Agent Card | Built programmatically in `src/orchestrator/main.py` |
 | Discovery | `A2ACardResolver` via `/.well-known/agent-card.json`, async with 3x retry |
 | A2A Endpoint | `POST /a2a` (via Starlette + `create_jsonrpc_routes`) |
-| Health | `GET /health` ? `{"status":"ok","agent":"orchestrator"}` |
+| Health | `GET /health` → `{"status":"ok","agent":"orchestrator"}` |
 
 The orchestrator uses a single `LlmAgent` with two tools (`send_message`, `load_memory`). The `save_brief` function is still defined in `agent.py` but is no longer exposed as an LLM-callable tool — briefs are auto-saved via `after_agent_callback`. The LLM delegates tasks to sub-agents by name and synthesizes results:
 
@@ -151,7 +151,7 @@ Triggered from `after_agent_callback` (ADK Web path) — see step 10 above. Fire
 | Port | 8002 |
 | Agent Card | Built programmatically in `src/financial_rag/server.py` |
 | A2A Endpoint | `POST /a2a` |
-| Health | `GET /health` ? `{"status":"ok","agent":"rag"}` |
+| Health | `GET /health` → `{"status":"ok","agent":"rag"}` |
 
 ### Skills
 
@@ -236,7 +236,7 @@ After each response, fires `asyncio.create_task(score_rag_response(...))` with 4
 | Port | 8003 |
 | Agent Card | Built programmatically in `src/quant/server.py` |
 | A2A Endpoint | `POST /a2a` |
-| Health | `GET /health` ? `{"status":"ok","agent":"quant"}` |
+| Health | `GET /health` → `{"status":"ok","agent":"quant"}` |
 
 ### Skills
 
@@ -329,7 +329,7 @@ After each analysis, fires `asyncio.create_task(score_quant_response(...))` with
 | Port | 8004 |
 | Agent Card | Built programmatically in `src/market_context/server.py` |
 | A2A Endpoint | `POST /a2a` |
-| Health | `GET /health` ? `{"status":"ok","agent":"market_context"}` |
+| Health | `GET /health` → `{"status":"ok","agent":"market_context"}` |
 
 ### Skills
 
@@ -624,14 +624,14 @@ The project evolved through thirteen phases, each adding distinct agent capabili
 |---|---|---|
 | **Phase 1** | v1.29 | RAG news/earnings ingestion, Quant fundamentals/technicals/DCF |
 | **Phase 2** | v1.30 | Parallel dispatch to sub-agents, parallel filing downloads, single-flight ingestion dedup |
-| **Phase 3** | v1.31 | Sentiment Agent ? Market Context Agent rebrand. Quant behavioral signals (options, insider, positioning). RAGAS runtime eval for all 4 agents. Eval circuit breaker, dedup, burst limiter. Date-scoped memory persistence gate (`_is_analysis_turn`). |
+| **Phase 3** | v1.31 | Sentiment Agent → Market Context Agent rebrand. Quant behavioral signals (options, insider, positioning). RAGAS runtime eval for all 4 agents. Eval circuit breaker, dedup, burst limiter. Date-scoped memory persistence gate (`_is_analysis_turn`). |
 | **Phase 4** | v1.31-1.32 | Date-scoped semantic cache. RAG startup warm-up. `no_forward_guarantees` AspectCritic. Stress test beta-adjusted formula. 8-group weighted voting normalization fix. |
 | **Phase 5** | v1.33-1.35 | Quant graph fan-in reducer fixes (concurrent update, diamond dependency, duplicate fan-in). Dynamic peer discovery via yfinance Industry/Sector classes. Live sector-aware scenario shocks with sector ETF benchmarks. Sector-relative fundamental scoring. Structured `get_insider_transactions` MCP tool replacing Form 4 text parsing. `get_peers` MCP tool using yfinance. Expanded `peer_sets.py` with normalised key matching. Monte Carlo runs on both high-vol and low-vol paths. Options flow zero-volume edge case handling. Null-safe schema validator for quant deterministic eval. yfinance blocking calls moved to thread executor (`run_in_executor`). Peer concurrency capped at 3 (`asyncio.Semaphore`). Redis auto-start in `run_adk_web.bat`. MCP client timeout simplification (removed fail-fast first-attempt timeout). All 9 sync yfinance calls now wrapped in `run_in_executor` (7 more added: prices, financials, macro, options chain, earnings calendar, sentiment indicators, earnings history). `httpx.ReadError`/`ConnectError`/`NetworkError` added to MCP client transient retry set. RAGAS eval retry tuning: `max_retries=5`, separate `asyncio.TimeoutError` handling, empty exception message classification. |
 | **Phase 6** | v1.37 | LLM Priority Queue (`src/shared/llm_queue.py`) — 3-tier heap-based async semaphore to prevent RAGAS eval starvation of production LLM inference. Quant `llm_summary_node` and CrewAI `crew.kickoff()` use `CRITICAL` priority; server warmup uses `NORMAL`; all runtime eval metrics use `LOW` priority. Controlled by `LLM_MAX_CONCURRENT` env var (default 2). |
 | **Phase 7** | v1.38 | Deferred Eval Gate (`src/shared/eval_gate.py`) — cross-process eval coordination. Sub-agents defer evals via `defer_eval()` instead of `asyncio.create_task()`; orchestrator POSTs `/release-evals` after synthesis. Confidence regex updated for "Confidence Score: X" format. AG-UI bridge auto-saves briefs and strips null optional fields recursively for CopilotKit Zod compatibility. |
 | **Phase 8** | v1.39 | Report generator overhaul: `_resolve_ticker_info()` via yfinance replaces hardcoded 28-symbol dict; `_parse_markdown_tables()` captures structured LLM table data before markdown cleanup (fixes empty Financial Performance slides); Momentum/RSI added as 6th scorecard dimension; `generate_html()` added as public API using Jinja2 templates (`src/shared/templates/`), wired into routes and agent tool dispatch; 9 PPTX slide generators extracted into standalone functions; AG-UI bridge serialization fix for `LoadMemoryResponse`; report route ordering fixed so `/ticker/{symbol}/latest/{format}` matches before generic `/{brief_id}/{format}` catch-all; Python 3.12 lookbehind crash fixed; 30 new regression + unit tests. |
 | **Phase 9** | v1.40 | Report extraction hardening: section parser extended to `###`/`####` headers; Bear Case target, bare ticker peers (DLTR/COST), Bearish/Bullish Signals inline blocks, Tailwinds/Headwinds labels added to extraction pipeline; structured peer comparison from Quant + Sentiment agents; Monte Carlo p10/p50/p90 scenario cards. Agent: custom `load_memory` wrapper returns plain `str` (fixes serialization crash); `send_message`-first instruction hardened; `generate_report` removed from LLM tool list. Circular import in `src/shared/trace_context.py` fixed. Logging overhaul: 11 silent excepts fixed, 7 files got logger, operational log statements, noisy third-party loggers suppressed, `@logged` on `GenericAgentExecutor.execute()`. Diagram Mermaid syntax + zoom/drag fixed. |
-| **Phase 10** | v1.41 | Centralized settings (`src/shared/settings.py` pydantic-settings), module splits (MCP server ? `tools/` + `infra/`, report_generator ? `src/shared/reports/`, nodes.py ? `nodes/`), guardrails unification, Docker hardening (non-root USER, per-service extras, healthchecks), `build_agent_app()` factory. |
+| **Phase 10** | v1.41 | Centralized settings (`src/shared/settings.py` pydantic-settings), module splits (MCP server → `tools/` + `infra/`, report_generator → `src/shared/reports/`, nodes.py → `nodes/`), guardrails unification, Docker hardening (non-root USER, per-service extras, healthchecks), `build_agent_app()` factory. |
 | **Phase R** | v1.42 | Table classification, bounded bull/bear extraction, staged extraction pipeline, corpus regression harness (7 fixtures, invariant tests), `export_brief_fixtures.py` script. |
 | **Phase 11** | v1.43 | Full auth implementation — JWT tokens, Argon2 passwords, refresh rotation, AuthMiddleware with principal-kind routing, user store, rate-limited lockout, A2A service auth, MCP SSE auth, sandbox container mode (`SANDBOX_MODE=container`), Caddyfile.example, 42 auth unit tests. |
 | **Phase 12** | v2.0 | Contract tests (auth matrix, A2A protocol), OpenAPI spec (13 paths, 16 schemas, CI-enforced), trace filter (`traceFilter.ts`, `trace_with_user()`), shim removal (`src/shared/config.py`/`report_generator.py` deleted, ruff/mypy clean). |

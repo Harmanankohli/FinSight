@@ -29,7 +29,7 @@ graph LR
 UserRaw("User Input\nNatural language query")
 UserID("Anon User ID Resolution\nCookie → X-FinSight-User-Id\nStable UUID for cache affinity")
 TickExtract("Ticker Extraction\nregex + MCP resolve")
-InputGuard["Input Guardrails\nOff-topic + validate_ticker\n(&lt; 2s)"]
+InputGuard["Input Guardrails\nOff-topic + validate_ticker\n(< 2s)"]
 Cache["Caches\nSemantic (ChromaDB)\n+ Today Brief (SQLite)"]
 MemCtx("Memory Context\n[TODAY]/[STALE] labels\n+ portfolio holdings")
 subgraph Agents["Parallel Agents (A2A)"]

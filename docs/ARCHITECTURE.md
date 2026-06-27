@@ -12,7 +12,7 @@ Phase 2 introduced three trust boundaries between components. All default to ope
                            AUTH_ENABLED=true
 +------------------------------------------------------------------+
 │                        Boundary A (User↔Frontend↔Orchestrator)   —
-│  Browser --https--↓ Next proxy --Bearer JWT--↓ Starlette app      —
+│  Browser --https--> Next proxy --Bearer JWT--> Starlette app      —
 │  /login  → refresh cookie  —  /api/* → access_token in header     —
 │  Public: /health, /.well-known/, /auth/login|refresh|logout       —
 │  AuthMiddleware(accept={"user","service"}) on all /api/* paths    —
@@ -23,7 +23,7 @@ Phase 2 introduced three trust boundaries between components. All default to ope
                          ↓
 +------------------------------------------------------------------+
 │                     Boundary B (Orchestrator↔Sub-Agents)         —
-│  Orchestrator --A2A /a2a--↓ Sub-agent (RAG/Quant/Market)         —
+│  Orchestrator --A2A /a2a--> Sub-agent (RAG/Quant/Market)         —
 │  Service token in client default headers                          —
 │  AuthMiddleware(accept={"service"}) on /a2a, /release-evals       —
 │  User context propagated via A2A message metadata (_user envelope)—
@@ -34,7 +34,7 @@ Phase 2 introduced three trust boundaries between components. All default to ope
                          ↓
 +------------------------------------------------------------------+
 │                     Boundary C (Agents↔MCP Server)               —
-│  Sub-agents --SSE--↓ MCP Server (finsight-mcp)                   —
+│  Sub-agents --SSE--> MCP Server (finsight-mcp)                   —
 │  MCPServerConfig.headers injects bearer token                     —
 │  AuthMiddleware(accept={"service"}) on SSE Mount                  —
 │  Public: /health (compose healthchecks)                           —
@@ -197,7 +197,7 @@ A2A Request → DefaultRequestHandler → GenericAgentExecutor(QuantAgent)
    → Yields data response
 ```
 
-**Portfolio Holdings Extraction**: `stream()` uses `extract_holdings(query, exclude_ticker=ticker)` from `src/shared/ticker_utils.py` to extract holdings from natural language (e.g. "My portfolio holds AAPL, MSFT, GOOGL"). Holdings are passed through the full chain: `stream()` ? `analyze()` ? `graph.run()` ? `correlation_node`.
+**Portfolio Holdings Extraction**: `stream()` uses `extract_holdings(query, exclude_ticker=ticker)` from `src/shared/ticker_utils.py` to extract holdings from natural language (e.g. "My portfolio holds AAPL, MSFT, GOOGL"). Holdings are passed through the full chain: `stream()` → `analyze()` → `graph.run()` → `correlation_node`.
 
 **Correlation only on explicit request**: The orchestrator prompt instructs the LLM to include holdings in the quant agent task only when the user explicitly mentions portfolio holdings or asks for correlation in their current message. Memory context portfolio lines are labelled as background reference so the LLM does not auto-include them for every single-ticker query.
 
@@ -230,7 +230,7 @@ The quant agent's LangGraph state machine required fixes across multiple version
 
 - **Annotated reducers** (`src/quant/state.py`): State keys written by multiple nodes (`metrics`, `reasoning`, `recommendation`, `stress_test_result`, `dcf_error`) use `Annotated[type, reducer]` — `_merge_dict`, `_last_str`, `_last_nonnull`. Without reducers, LangGraph raises `INVALID_CONCURRENT_GRAPH_UPDATE` when two nodes write to the same key in the same checkpoint step.
 
-- **Diamond dependency removed** (`src/quant/graph.py`): The direct `fetch_fundamentals ? format_output` edge was removed. `fetch_fundamentals` already fans into `peer_comparison_node` which fans into `format_output` — the direct edge created a diamond pattern where `format_output` triggered twice in the same step.
+- **Diamond dependency removed** (`src/quant/graph.py`): The direct `fetch_fundamentals → format_output` edge was removed. `fetch_fundamentals` already fans into `peer_comparison_node` which fans into `format_output` — the direct edge created a diamond pattern where `format_output` triggered twice in the same step.
 
 - **Passthrough keys removed** (`src/quant/nodes.py`): `format_output_node` was returning copies of state keys (`positioning`, `dcf_valuation`, `correlation_matrix`, `fundamentals`) that other nodes already wrote. Now only emits `recommendation`, `reasoning`, `metrics`, and `stress_test_result` — only what it actually computes.
 
@@ -435,7 +435,7 @@ def make_cache(ttl_seconds=300, name=""):
     return TTLCache(ttl_seconds=ttl_seconds)
 ```
 
-L1 miss ? read from Redis ? populate L1. Every L1 `set()` propagates to Redis via write-through. Transparent drop-in: when `REDIS_URL` is unset, `make_cache()` returns a bare `TTLCache` with identical behavior.
+L1 miss → read from Redis → populate L1. Every L1 `set()` propagates to Redis via write-through. Transparent drop-in: when `REDIS_URL` is unset, `make_cache()` returns a bare `TTLCache` with identical behavior.
 
 ### LangChain SQLiteCache (Tier 1B)
 
@@ -482,7 +482,7 @@ Sized by `LLM_MAX_CONCURRENT` (default 2). Uses `heapq` with `(priority, seq, as
 
 `src/orchestrator/agent_executor.py`, in `_process_response()`:
 
-1. **Empty/short response guard** — `len(text.strip()) < 50` ? `TASK_STATE_FAILED` with structured error.
+1. **Empty/short response guard** — `len(text.strip()) < 50` → `TASK_STATE_FAILED` with structured error.
 2. **Signal check** — if response lacks BUY/HOLD/SELL and the query was a stock analysis request, emits a Langfuse warning span with `missing_signal: true`.
 
 ## MCP Architecture
@@ -601,7 +601,7 @@ Test job uses `--no-deps -e .` to install only ~15 packages instead of all 293 b
 
 Configuration migrated from `src/shared/config.py` (re-exporting shim, removed in v2.0) to `src/shared/settings.py`:
 
-- **pydantic-settings `BaseSettings`**: Type-safe env var loading with back-compat aliases (`LLM_BASE_URL` ? `OPENAI_BASE_URL` ? `LM_STUDIO_BASE_URL`)
+- **pydantic-settings `BaseSettings`**: Type-safe env var loading with back-compat aliases (`LLM_BASE_URL` → `OPENAI_BASE_URL` → `LM_STUDIO_BASE_URL`)
 - **`get_settings()` singleton**: Lazy-loaded, cached after first call
 - **`validate_runtime()`**: Production-mode enforcement (e.g., refuses `ast` sandbox on Windows)
 
