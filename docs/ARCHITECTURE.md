@@ -40,9 +40,8 @@ Phase 2 introduced three trust boundaries between components. All default to ope
 │  Public: /health (compose healthchecks)                           —
 +------------------------------------------------------------------+
 ```
-When AUTH_ENABLED=false (default): all boundaries are open, X-FinSight-User-Id
-header used as dev convention for user identity (no verification).
-```
+
+When `AUTH_ENABLED=false` (default): all boundaries are open, `X-FinSight-User-Id` header used as dev convention for user identity (no verification).
 
 ## Communication Pattern
 

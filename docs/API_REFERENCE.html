@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>API Reference &mdash; FinSight</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:1.7;color:#2c2c2c;background:#faf8f5;padding:2rem 1rem}
+.container{max-width:740px;margin:0 auto}
+h1,h2,h3,h4,h5,h6{font-family:Georgia,"Times New Roman",serif;color:#1a1a1a;line-height:1.3}
+h1{font-size:2.2rem;margin-bottom:0.25rem;border-bottom:2px solid #e8dcc8;padding-bottom:0.5rem}
+h2{font-size:1.5rem;margin-top:2.5rem;margin-bottom:0.75rem;border-bottom:1px solid #e8dcc8;padding-bottom:0.3rem}
+h3{font-size:1.2rem;margin-top:1.5rem;margin-bottom:0.5rem}
+h4{font-size:1.05rem;margin-top:1.25rem;margin-bottom:0.4rem}
+p{margin-bottom:1rem;color:#444}
+a{color:#8b6f4e;text-decoration:none;font-weight:500}
+a:hover{text-decoration:underline}
+ul,ol{margin-bottom:1rem;padding-left:1.5rem;color:#444}
+li{margin-bottom:0.25rem}
+li>ul,li>ol{margin-bottom:0}
+code{background:#f0ebe3;padding:0.15em 0.4em;border-radius:3px;font-size:0.875em;font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace}
+pre{background:#1a1a1a;color:#e8dcc8;padding:1rem 1.25rem;border-radius:8px;overflow-x:auto;margin-bottom:1rem;line-height:1.5;font-size:0.85rem}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+table{width:100%;border-collapse:collapse;margin-bottom:1rem;font-size:0.9rem}
+th,td{padding:0.5rem 0.75rem;text-align:left;border-bottom:1px solid #e0d8cc}
+th{background:#f0ebe3;font-weight:600}
+blockquote{border-left:3px solid #e8dcc8;margin:0 0 1rem 0;padding:0.5rem 1rem;color:#666;background:#fff}
+hr{border:none;border-top:1px solid #e0d8cc;margin:1.5rem 0}
+img{max-width:100%;height:auto}
+.header-nav{margin-bottom:2rem;padding-bottom:1rem;border-bottom:1px solid #e0d8cc}
+.header-nav a{margin-right:1.2rem;font-size:0.9rem}
+.header-nav a.active{color:#1a1a1a;font-weight:700;border-bottom:2px solid #8b6f4e}
+.diagrams-box{background:#fff;border:1px solid #e0d8cc;border-radius:8px;padding:1.25rem 1.5rem;margin-top:2.5rem}
+.diagrams-box h3{margin-top:0;margin-bottom:0.75rem;font-size:1.1rem}
+.diagram-grid{display:flex;flex-wrap:wrap;gap:0.5rem}
+.diagram-grid a{background:#f0ebe3;border:1px solid #e0d8cc;border-radius:4px;padding:4px 10px;font-size:0.8rem;color:#2c2c2c;transition:background .15s}
+.diagram-grid a:hover{background:#e0d8cc;text-decoration:none}
+.footer{font-size:0.85rem;color:#888;margin-top:2.5rem;border-top:1px solid #e0d8cc;padding-top:1rem}
+</style>
+</head>
+<body>
+<div class="container">
+<div class="header-nav">
+<a href="index.html">Home</a>
+<a href="README.html">Overview</a>
+<a href="ARCHITECTURE.html">Architecture</a>
+<a href="AGENTS.html">Agents</a>
+<a href="MCP_SERVERS.html">MCP Servers</a>
+<a href="DESIGN_DECISIONS.html">Design Decisions</a>
+<a href="API_REFERENCE.html" class="active">API</a>
+<a href="SECURITY.html">Security</a>
+<a href="CHANGELOG.html">Changelog</a>
+<a href="TESTS.html">Tests</a>
+<a href="FRONTEND.html">Frontend</a>
+<a href="diagrams/index.html">Diagrams</a>
+</div>
+<h1 id="api-reference">API Reference<a class="headerlink" href="#api-reference" title="Link">&para;</a></h1>
+<p>Complete reference for all HTTP endpoints exposed by FinSight services.</p>
+<h2 id="orchestrator-port-8001">Orchestrator (port 8001)<a class="headerlink" href="#orchestrator-port-8001" title="Link">&para;</a></h2>
+<p>The orchestrator is the primary entry point. It exposes A2A protocol endpoints, REST API routes for the frontend, AG-UI streaming endpoints, and health checks.</p>
+<h3 id="health">Health<a class="headerlink" href="#health" title="Link">&para;</a></h3>
+<pre><code>GET /health
+</code></pre>
+<p><strong>Response</strong>: <code>200 OK</code></p>
+<pre><code class="language-json">{&quot;status&quot;: &quot;ok&quot;, &quot;agent&quot;: &quot;orchestrator&quot;}
+</code></pre>
+<hr />
+<h3 id="a2a-protocol">A2A Protocol<a class="headerlink" href="#a2a-protocol" title="Link">&para;</a></h3>
+<h4 id="agent-card-discovery">Agent Card Discovery<a class="headerlink" href="#agent-card-discovery" title="Link">&para;</a></h4>
+<pre><code>GET /.well-known/agent-card.json
+</code></pre>
+<p>Returns the orchestrator&rsquo;s A2A agent card (protobuf-encoded JSON). Used by <code>A2ACardResolver</code> for standard agent discovery.</p>
+<p><strong>Response</strong>: <code>200 OK</code> — AgentCard JSON with name, description, version, capabilities, supported interfaces, and skills.</p>
+<h4 id="json-rpc-endpoint">JSON-RPC Endpoint<a class="headerlink" href="#json-rpc-endpoint" title="Link">&para;</a></h4>
+<pre><code>POST /a2a
+Headers: A2A-Version: 1.0
+</code></pre>
+<p>Standard A2A JSON-RPC endpoint for inter-agent communication. Accepts <code>SendMessage</code> method calls from sub-agents or external A2A clients.</p>
+<p><strong>Request body</strong>:</p>
+<pre><code class="language-json">{
+  &quot;jsonrpc&quot;: &quot;2.0&quot;,
+  &quot;method&quot;: &quot;SendMessage&quot;,
+  &quot;id&quot;: &quot;abc123&quot;,
+  &quot;params&quot;: {
+    &quot;message&quot;: {
+      &quot;messageId&quot;: &quot;def456&quot;,
+      &quot;role&quot;: &quot;ROLE_USER&quot;,
+      &quot;parts&quot;: [{&quot;text&quot;: &quot;Should I invest in NVDA?&quot;}]
+    }
+  }
+}
+</code></pre>
+<p><strong>Streaming response</strong>: Yields <code>task</code>, <code>status_update</code>, and <code>artifact_update</code> events. Intermediate <code>SUBMITTED</code>/<code>WORKING</code> events are non-terminal; only <code>artifact_update</code> data and terminal <code>COMPLETED</code>/<code>FAILED</code> states carry results.</p>
+<hr />
+<h3 id="ag-ui-endpoints">AG-UI Endpoints<a class="headerlink" href="#ag-ui-endpoints" title="Link">&para;</a></h3>
+<h4 id="ag-ui-bridge-production">AG-UI Bridge (Production)<a class="headerlink" href="#ag-ui-bridge-production" title="Link">&para;</a></h4>
+<pre><code>POST /a2a-agui
+Content-Type: application/json
+</code></pre>
+<p>Primary endpoint for the Next.js CopilotKit frontend. Streams AG-UI-compatible events through the ADK runner with full guardrails (off-topic filter, today&rsquo;s brief cache, memory context injection, sub-agent tracking).</p>
+<p><strong>Request body</strong> (<code>RunAgentInput</code>):</p>
+<pre><code class="language-json">{
+  &quot;thread_id&quot;: &quot;optional-thread-id&quot;,
+  &quot;run_id&quot;: &quot;optional-run-id&quot;,
+  &quot;messages&quot;: [
+    {&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;Analyze NVDA for long-term hold&quot;}
+  ],
+  &quot;forwarded_props&quot;: {&quot;user_id&quot;: &quot;user-123&quot;}
+}
+</code></pre>
+<p><strong>Headers</strong>:
+- <code>X-FinSight-User-Id</code> (optional) — user identity; falls back to <code>forwarded_props.user_id</code>, then auto-generated <code>anon-{uuid}</code>
+- <code>Content-Type: application/json</code></p>
+<p><strong>Response</strong>: <code>200 OK</code> — <code>text/event-stream</code> (SSE)</p>
+<p>Streams AG-UI events:
+- <code>RunStartedEvent</code> — run begins
+- <code>StateSnapshotEvent</code> — initial state <code>{"active_agents": [], "active_agent": null}</code>
+- <code>StepStartedEvent</code> — orchestrator step begins
+- <code>StateDeltaEvent</code> — updates <code>active_agents</code> array as sub-agents are invoked
+- <code>ToolCallStartEvent</code> / <code>ToolCallArgsEvent</code> / <code>ToolCallEndEvent</code> — sub-agent delegation events
+- <code>ToolCallResultEvent</code> — sub-agent response received
+- <code>TextMessageStartEvent</code> / <code>TextMessageContentEvent</code> / <code>TextMessageEndEvent</code> — streaming synthesis
+- <code>RunFinishedEvent</code> — run completes</p>
+<p><strong>CORS</strong>: Allowed origins <code>http://localhost:3000</code>, <code>http://127.0.0.1:3000</code>.</p>
+<h4 id="ag-ui-eval-endpoint">AG-UI Eval Endpoint<a class="headerlink" href="#ag-ui-eval-endpoint" title="Link">&para;</a></h4>
+<pre><code>POST /agentic_chat
+Content-Type: application/json
+</code></pre>
+<p>Simplified AG-UI endpoint for RAGAS evaluation. Runs the orchestrator without guardrails or memory injection — useful for offline batch evaluation.</p>
+<p><strong>Request body</strong>: Same <code>RunAgentInput</code> format as <code>/a2a-agui</code>.</p>
+<p><strong>Response</strong>: <code>200 OK</code> — <code>text/event-stream</code> (SSE). Same event types as <code>/a2a-agui</code> but without state tracking or auto-save.</p>
+<hr />
+<h3 id="rest-api-routes">REST API Routes<a class="headerlink" href="#rest-api-routes" title="Link">&para;</a></h3>
+<p>All REST routes are read-only JSON endpoints. User identity is read from the <code>X-FinSight-User-Id</code> request header.</p>
+<h4 id="memory-ticker-briefs">Memory — Ticker Briefs<a class="headerlink" href="#memory-ticker-briefs" title="Link">&para;</a></h4>
+<pre><code>GET /api/memory/ticker/{symbol}
+GET /api/memory/ticker/{symbol}/latest
+GET /api/memory/ticker/{symbol}/changed
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Endpoint</th>
+<th>Parameters</th>
+<th>Returns</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/api/memory/ticker/{symbol}</code></td>
+<td><code>?limit=10</code> (query)</td>
+<td>Array of brief objects (history)</td>
+</tr>
+<tr>
+<td><code>/api/memory/ticker/{symbol}/latest</code></td>
+<td>—</td>
+<td>Single brief object or <code>404</code></td>
+</tr>
+<tr>
+<td><code>/api/memory/ticker/{symbol}/changed</code></td>
+<td>—</td>
+<td><code>{"changed": bool, "direction": "upgrade"|"downgrade"|"unchanged"}</code> or <code>{"changed": false, "reason": "insufficient_history"}</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Brief object shape</strong>:</p>
+<pre><code class="language-json">{
+  &quot;id&quot;: 1,
+  &quot;ticker&quot;: &quot;NVDA&quot;,
+  &quot;recommendation&quot;: &quot;BUY&quot;,
+  &quot;confidence&quot;: 0.85,
+  &quot;response_text&quot;: &quot;Full analysis text...&quot;,
+  &quot;analysis_date&quot;: &quot;2026-06-07&quot;,
+  &quot;created_at&quot;: &quot;2026-06-07T14:30:00+05:30&quot;
+}
+</code></pre>
+<h4 id="sessions">Sessions<a class="headerlink" href="#sessions" title="Link">&para;</a></h4>
+<pre><code>GET /api/sessions
+GET /api/sessions/{id}/events
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Endpoint</th>
+<th>Parameters</th>
+<th>Returns</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/api/sessions</code></td>
+<td><code>?user_id=...</code> (query, optional)</td>
+<td>Array of session objects, max 50, sorted by <code>last_update_time</code> DESC</td>
+</tr>
+<tr>
+<td><code>/api/sessions/{id}/events</code></td>
+<td>—</td>
+<td><code>{"session_id": "...", "events": [...]}</code> or <code>404</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Session object shape</strong>:</p>
+<pre><code class="language-json">{
+  &quot;id&quot;: &quot;session-uuid&quot;,
+  &quot;user_id&quot;: &quot;user-123&quot;,
+  &quot;app_name&quot;: &quot;orchestrator&quot;,
+  &quot;last_update_time&quot;: &quot;2026-06-07T14:30:00&quot;,
+  &quot;event_count&quot;: 12
+}
+</code></pre>
+<p><strong>Event object shape</strong>:</p>
+<pre><code class="language-json">{
+  &quot;id&quot;: &quot;event-uuid&quot;,
+  &quot;author&quot;: &quot;orchestrator&quot;,
+  &quot;timestamp&quot;: &quot;2026-06-07T14:30:00&quot;,
+  &quot;content&quot;: [
+    {&quot;type&quot;: &quot;text&quot;, &quot;text&quot;: &quot;BUY recommendation for NVDA...&quot;},
+    {&quot;type&quot;: &quot;function_call&quot;, &quot;name&quot;: &quot;send_message&quot;, &quot;args&quot;: {&quot;agent_name&quot;: &quot;rag&quot;, &quot;task&quot;: &quot;...&quot;}},
+    {&quot;type&quot;: &quot;function_response&quot;, &quot;name&quot;: &quot;send_message&quot;, &quot;response&quot;: &quot;...&quot;}
+  ]
+}
+</code></pre>
+<h4 id="agents">Agents<a class="headerlink" href="#agents" title="Link">&para;</a></h4>
+<pre><code>GET /api/agents
+GET /api/agents/{name}/health
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Endpoint</th>
+<th>Returns</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/api/agents</code></td>
+<td>Array of discovered sub-agent objects with <code>name</code>, <code>description</code>, <code>skills</code>, <code>url</code></td>
+</tr>
+<tr>
+<td><code>/api/agents/{name}/health</code></td>
+<td>Fan-out health check: <code>{"status": "ok"|"degraded"|"unreachable", "detail": {...}}</code></td>
+</tr>
+</tbody>
+</table>
+<h4 id="reports">Reports<a class="headerlink" href="#reports" title="Link">&para;</a></h4>
+<pre><code>GET /api/reports/ticker/{symbol}/latest/{format}
+GET /api/reports/{brief_id}/{format}
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Endpoint</th>
+<th>Parameters</th>
+<th>Returns</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/api/reports/ticker/{symbol}/latest/{format}</code></td>
+<td><code>format</code>: <code>html</code> or <code>pdf</code></td>
+<td>HTML page or PDF file</td>
+</tr>
+<tr>
+<td><code>/api/reports/{brief_id}/{format}</code></td>
+<td><code>format</code>: <code>html</code> or <code>pdf</code></td>
+<td>HTML page or PDF file for specified brief</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Response headers</strong>:</p>
+<pre><code>Content-Type: text/html (HTML)
+              application/pdf (PDF)
+Content-Disposition: attachment; filename=&quot;FinSight_{ticker}_{date}.pdf&quot; (PDF only)
+</code></pre>
+<p><strong>Report format endpoints</strong> are served via <code>generate_html()</code> and <code>generate_pdf_async()</code> in the <code>src/shared/reports/</code> package (split from <code>src/shared/report_generator.py</code> in v1.41; the monolithic shim was removed in v2.0). PPTX and DOCX renderers were removed in v2.5 — the HTML scrollable page replaced the slide deck format. The HTML format uses a Jinja2 template (<code>src/shared/templates/investment_deck.html</code>) as a full scrollable page. PDF uses Playwright to render the same HTML as A4 portrait. All formats share a common <code>_extract_deck_data()</code> extraction pipeline in <code>src/shared/reports/extraction.py</code> with Pydantic agent output models, which can also consume structured agent outputs via <code>_populate_from_agent_outputs()</code>.</p>
+<hr />
+<h3 id="static-files">Static Files<a class="headerlink" href="#static-files" title="Link">&para;</a></h3>
+<pre><code>GET /reports/{filename}
+</code></pre>
+<p>Serves generated report files (HTML/PDF) from <code>db/reports/</code> as static downloads.</p>
+<hr />
+<h2 id="sub-agent-servers">Sub-Agent Servers<a class="headerlink" href="#sub-agent-servers" title="Link">&para;</a></h2>
+<p>Each sub-agent exposes the same endpoint pattern.</p>
+<h3 id="endpoints-ports-80028006">Endpoints (ports 8002–8006)<a class="headerlink" href="#endpoints-ports-80028006" title="Link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Endpoint</th>
+<th>Port 8002 (RAG)</th>
+<th>Port 8003 (Quant)</th>
+<th>Port 8004 (Market Context)</th>
+<th>Port 8005 (Analytics)</th>
+<th>Port 8006 (Reviewer)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET /health</code></td>
+<td><code>{"status":"ok","agent":"rag"}</code></td>
+<td><code>{"status":"ok","agent":"quant"}</code></td>
+<td><code>{"status":"ok","agent":"market_context"}</code></td>
+<td><code>{"status":"ok","agent":"analytics"}</code></td>
+<td><code>{"status":"ok","agent":"reviewer"}</code></td>
+</tr>
+<tr>
+<td><code>POST /a2a</code></td>
+<td>A2A JSON-RPC</td>
+<td>A2A JSON-RPC</td>
+<td>A2A JSON-RPC</td>
+<td>A2A JSON-RPC</td>
+<td>A2A JSON-RPC</td>
+</tr>
+<tr>
+<td><code>GET /.well-known/agent-card.json</code></td>
+<td>Agent card</td>
+<td>Agent card</td>
+<td>Agent card</td>
+<td>Agent card</td>
+<td>Agent card</td>
+</tr>
+<tr>
+<td><code>POST /release-evals</code></td>
+<td><code>{"released": N}</code></td>
+<td><code>{"released": N}</code></td>
+<td><code>{"released": N}</code></td>
+<td><code>{"released": N}</code></td>
+<td><code>{"released": N}</code></td>
+</tr>
+</tbody>
+</table>
+<h4 id="release-evals">Release Evals<a class="headerlink" href="#release-evals" title="Link">&para;</a></h4>
+<pre><code>POST /release-evals
+</code></pre>
+<p>Triggers deferred RAGAS evaluation coroutines. Called by the orchestrator&rsquo;s <code>after_agent_callback</code> after synthesis completes. Includes a 120s safety-net auto-release if the orchestrator crashes.</p>
+<p><strong>Response</strong>: <code>200 OK</code></p>
+<pre><code class="language-json">{&quot;released&quot;: 3}
+</code></pre>
+<hr />
+<h2 id="mcp-server-port-8010">MCP Server (port 8010)<a class="headerlink" href="#mcp-server-port-8010" title="Link">&para;</a></h2>
+<h3 id="health_1">Health<a class="headerlink" href="#health_1" title="Link">&para;</a></h3>
+<pre><code>GET /health
+</code></pre>
+<p><strong>Response</strong>: <code>200 OK</code></p>
+<pre><code class="language-json">{&quot;status&quot;: &quot;ok&quot;, &quot;agent&quot;: &quot;mcp&quot;}
+</code></pre>
+<h3 id="mcp-tools">MCP Tools<a class="headerlink" href="#mcp-tools" title="Link">&para;</a></h3>
+<p>The MCP server exposes tools via SSE transport at <code>/sse</code>. Tools are consumed by agents via the MCP client library, not via direct HTTP calls. See <a href="MCP_SERVERS.html">MCP_SERVERS.md</a> for the full tool catalog.</p>
+<h3 id="agent-registry">Agent Registry<a class="headerlink" href="#agent-registry" title="Link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Endpoint</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>find_agent(query)</code></td>
+<td>Semantic search via embedding dot-product over agent cards</td>
+</tr>
+<tr>
+<td><code>resource://agent_cards/list</code></td>
+<td>Lists all available agent card URIs</td>
+</tr>
+<tr>
+<td><code>resource://agent_cards/{name}</code></td>
+<td>Retrieves specific agent card</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="nextjs-frontend-port-3000">Next.js Frontend (port 3000)<a class="headerlink" href="#nextjs-frontend-port-3000" title="Link">&para;</a></h2>
+<h3 id="api-routes">API Routes<a class="headerlink" href="#api-routes" title="Link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Route</th>
+<th>Method</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/api/copilotkit</code></td>
+<td>POST</td>
+<td>CopilotKit runtime — proxies to orchestrator <code>/a2a-agui</code> via AG-UI protocol</td>
+</tr>
+<tr>
+<td><code>/api/dashboard</code></td>
+<td>GET</td>
+<td>Dashboard metrics — KPIs, agent breakdown, time series (<code>?hours=24</code>)</td>
+</tr>
+<tr>
+<td><code>/api/dashboard/scores</code></td>
+<td>GET</td>
+<td>RAGAS quality scores per agent</td>
+</tr>
+<tr>
+<td><code>/api/health</code></td>
+<td>GET</td>
+<td>Backend health proxy — <code>?svc=orchestrator\|rag\|quant\|market\|analytics\|reviewer\|mcp</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="rewrites">Rewrites<a class="headerlink" href="#rewrites" title="Link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Pattern</th>
+<th>Target</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/api/orch/:path*</code></td>
+<td><code>http://localhost:8001/:path*</code></td>
+<td>Transparent proxy to orchestrator REST API</td>
+</tr>
+<tr>
+<td><code>/reports/:path*</code></td>
+<td><code>http://localhost:8001/reports/:path*</code></td>
+<td>Report file download proxy</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="error-responses">Error Responses<a class="headerlink" href="#error-responses" title="Link">&para;</a></h2>
+<p>All endpoints return errors as JSON:</p>
+<pre><code class="language-json">{&quot;error&quot;: &quot;Description of the error&quot;}
+</code></pre>
+<p>Standard HTTP status codes:</p>
+<table>
+<thead>
+<tr>
+<th>Code</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>200</code></td>
+<td>Success</td>
+</tr>
+<tr>
+<td><code>400</code></td>
+<td>Bad request (invalid parameters, missing body)</td>
+</tr>
+<tr>
+<td><code>404</code></td>
+<td>Resource not found (ticker, session, brief)</td>
+</tr>
+<tr>
+<td><code>500</code></td>
+<td>Internal server error</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="authentication">Authentication<a class="headerlink" href="#authentication" title="Link">&para;</a></h2>
+<p>FinSight implements two authentication modes, controlled by <code>AUTH_ENABLED</code> in <code>.env</code>:</p>
+<h3 id="frontend-auth-bypass-next_public_auth_enabledfalse-v27">Frontend Auth Bypass (<code>NEXT_PUBLIC_AUTH_ENABLED=false</code>, v2.7)<a class="headerlink" href="#frontend-auth-bypass-next_public_auth_enabledfalse-v27" title="Link">&para;</a></h3>
+<p>Independent frontend auth toggle that short-circuits all auth checks in <code>AuthContext.tsx</code> — no token validation, no login redirect, no HTTP calls to auth endpoints. Useful for local development alongside <code>AUTH_ENABLED=false</code> on the backend.</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>NEXT_PUBLIC_AUTH_ENABLED</code></td>
+<td><code>true</code></td>
+<td>Frontend-only toggle. When <code>false</code>, the frontend behaves as if always authenticated. Independent from backend <code>AUTH_ENABLED</code>.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="auth-disabled-auth_enabledfalse-default">Auth Disabled (<code>AUTH_ENABLED=false</code>, default)<a class="headerlink" href="#auth-disabled-auth_enabledfalse-default" title="Link">&para;</a></h3>
+<p>User identity is read from the <code>X-FinSight-User-Id</code> request header — a convention for multi-user differentiation without security. Falls back to <code>forwarded_props.user_id</code> in AG-UI requests, then auto-generated <code>anon-{uuid}</code>. Suitable for local/single-user deployment.</p>
+<h3 id="auth-enabled-auth_enabledtrue">Auth Enabled (<code>AUTH_ENABLED=true</code>)<a class="headerlink" href="#auth-enabled-auth_enabledtrue" title="Link">&para;</a></h3>
+<p>Full bearer JWT authentication with three principal kinds:</p>
+<table>
+<thead>
+<tr>
+<th>Kind</th>
+<th>Token</th>
+<th>Routes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>User</strong></td>
+<td>JWT from <code>/auth/login</code> (Argon2 password)</td>
+<td>Orchestrator <code>/api/*</code>, AG-UI bridge, reports</td>
+</tr>
+<tr>
+<td><strong>Service</strong></td>
+<td>Static <code>SERVICE_AUTH_TOKEN</code> env var</td>
+<td>A2A <code>/a2a</code>, <code>/release-evals</code>, MCP SSE</td>
+</tr>
+<tr>
+<td><strong>Public</strong></td>
+<td>None</td>
+<td><code>/health</code>, <code>/.well-known/*</code>, <code>/auth/login\|refresh\|logout</code>, <code>/api/agents</code>, <code>/api/reports</code></td>
+</tr>
+</tbody>
+</table>
+<h4 id="login">Login<a class="headerlink" href="#login" title="Link">&para;</a></h4>
+<pre><code>POST /auth/login
+Content-Type: application/json
+
+{&quot;username&quot;: &quot;admin&quot;, &quot;password&quot;: &quot;secret123&quot;}
+</code></pre>
+<p><strong>Response</strong>: <code>200 OK</code></p>
+<pre><code class="language-json">{
+  &quot;access_token&quot;: &quot;eyJhbG...&quot;,
+  &quot;expires_in&quot;: 900,
+  &quot;token_type&quot;: &quot;Bearer&quot;
+}
+</code></pre>
+<p>Also sets <code>refresh_token</code> httpOnly cookie (7-day TTL, rotated on use).</p>
+<h4 id="refresh">Refresh<a class="headerlink" href="#refresh" title="Link">&para;</a></h4>
+<pre><code>POST /auth/refresh
+Cookie: refresh_token=&lt;token&gt;
+</code></pre>
+<p><strong>Response</strong>: <code>200 OK</code> — same response shape as login, new access token + rotated refresh cookie.</p>
+<h4 id="logout">Logout<a class="headerlink" href="#logout" title="Link">&para;</a></h4>
+<pre><code>POST /auth/logout
+Cookie: refresh_token=&lt;token&gt;
+</code></pre>
+<p><strong>Response</strong>: <code>200 OK</code> — deletes refresh token from DB.</p>
+<h4 id="rate-limited-lockout">Rate-Limited Lockout<a class="headerlink" href="#rate-limited-lockout" title="Link">&para;</a></h4>
+<ul>
+<li>5 failed login attempts per username+IP → 60s cooldown</li>
+<li>IP from direct socket address unless peer is in <code>TRUSTED_PROXIES</code> (Docker Compose: set to Next.js container IP)</li>
+<li><strong>Known tradeoff</strong>: username-keyed lockout allows DoS of a known username; accepted for single-host deployment</li>
+</ul>
+<h4 id="token-generation">Token Generation<a class="headerlink" href="#token-generation" title="Link">&para;</a></h4>
+<pre><code class="language-bash"># User JWT signing secret (32+ hex characters)
+openssl rand -hex 32
+
+# Service-to-service shared secret (16+ characters)
+openssl rand -hex 16
+</code></pre>
+<hr />
+<h2 id="cors">CORS<a class="headerlink" href="#cors" title="Link">&para;</a></h2>
+<p>The orchestrator allows cross-origin requests from:</p>
+<ul>
+<li><code>http://localhost:3000</code></li>
+<li><code>http://127.0.0.1:3000</code></li>
+</ul>
+<p>Allowed methods: <code>GET</code>, <code>POST</code>, <code>OPTIONS</code>. Exposed headers: <code>X-FinSight-User-Id</code>.</p>
+<hr />
+<h2 id="rate-limiting">Rate Limiting<a class="headerlink" href="#rate-limiting" title="Link">&para;</a></h2>
+<p>The MCP server applies internal rate limits to upstream data sources:</p>
+<p>| Source | Rate | Burst | Applies to |
+|&mdash;|&mdash;|&mdash;|&mdash;|&mdash;|
+| SEC EDGAR | 8 req/s | 10 | Ticker map, submissions, filing content, search |
+| yfinance | 4 req/s | 8 | Prices, financials, options, earnings |
+| yahooquery | 4 req/s | 8 | Batch macro fetch, grading history, valuation measures, earnings trend |
+| RSS feeds | 2 req/s | 4 | News sentiment, Yahoo fallback |</p>
+<p>These limits are applied per-process via <code>TokenBucket</code> in <code>src/shared/rate_limiter.py</code> and are not exposed to API consumers.</p>
+<div class="diagrams-box">
+<h3>Architecture Diagrams</h3>
+<div class="diagram-grid">
+<a href="diagrams/context.html">Context (C4 L1)</a>
+<a href="diagrams/container.html">Container (C4 L2)</a>
+<a href="diagrams/component.html">Component (C4 L3)</a>
+<a href="diagrams/component-orch.html">Orchestrator</a>
+<a href="diagrams/component-agents.html">Agents</a>
+<a href="diagrams/component-infra.html">Infra</a>
+<a href="diagrams/code.html">Code (C4 L4)</a>
+<a href="diagrams/sequence.html">Sequence</a>
+<a href="diagrams/sequence-phase1.html">Phase 1: Input</a>
+<a href="diagrams/sequence-phase2.html">Phase 2: Dispatch</a>
+<a href="diagrams/sequence-phase3.html">Phase 3: Synthesis</a>
+<a href="diagrams/dataflow.html">Data Flow</a>
+<a href="diagrams/dataflow-input.html">Input Pipeline</a>
+<a href="diagrams/dataflow-processing.html">Agent Processing</a>
+<a href="diagrams/er.html">Entity-Relationship</a>
+</div>
+</div>
+<div class="footer">FinSight &mdash; Multi-Agent Investment Research System</div>
+</div>
+</body>
+</html>

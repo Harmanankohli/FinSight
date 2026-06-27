@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Test Coverage &mdash; FinSight</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:1.7;color:#2c2c2c;background:#faf8f5;padding:2rem 1rem}
+.container{max-width:740px;margin:0 auto}
+h1,h2,h3,h4,h5,h6{font-family:Georgia,"Times New Roman",serif;color:#1a1a1a;line-height:1.3}
+h1{font-size:2.2rem;margin-bottom:0.25rem;border-bottom:2px solid #e8dcc8;padding-bottom:0.5rem}
+h2{font-size:1.5rem;margin-top:2.5rem;margin-bottom:0.75rem;border-bottom:1px solid #e8dcc8;padding-bottom:0.3rem}
+h3{font-size:1.2rem;margin-top:1.5rem;margin-bottom:0.5rem}
+h4{font-size:1.05rem;margin-top:1.25rem;margin-bottom:0.4rem}
+p{margin-bottom:1rem;color:#444}
+a{color:#8b6f4e;text-decoration:none;font-weight:500}
+a:hover{text-decoration:underline}
+ul,ol{margin-bottom:1rem;padding-left:1.5rem;color:#444}
+li{margin-bottom:0.25rem}
+li>ul,li>ol{margin-bottom:0}
+code{background:#f0ebe3;padding:0.15em 0.4em;border-radius:3px;font-size:0.875em;font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace}
+pre{background:#1a1a1a;color:#e8dcc8;padding:1rem 1.25rem;border-radius:8px;overflow-x:auto;margin-bottom:1rem;line-height:1.5;font-size:0.85rem}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+table{width:100%;border-collapse:collapse;margin-bottom:1rem;font-size:0.9rem}
+th,td{padding:0.5rem 0.75rem;text-align:left;border-bottom:1px solid #e0d8cc}
+th{background:#f0ebe3;font-weight:600}
+blockquote{border-left:3px solid #e8dcc8;margin:0 0 1rem 0;padding:0.5rem 1rem;color:#666;background:#fff}
+hr{border:none;border-top:1px solid #e0d8cc;margin:1.5rem 0}
+img{max-width:100%;height:auto}
+.header-nav{margin-bottom:2rem;padding-bottom:1rem;border-bottom:1px solid #e0d8cc}
+.header-nav a{margin-right:1.2rem;font-size:0.9rem}
+.header-nav a.active{color:#1a1a1a;font-weight:700;border-bottom:2px solid #8b6f4e}
+.diagrams-box{background:#fff;border:1px solid #e0d8cc;border-radius:8px;padding:1.25rem 1.5rem;margin-top:2.5rem}
+.diagrams-box h3{margin-top:0;margin-bottom:0.75rem;font-size:1.1rem}
+.diagram-grid{display:flex;flex-wrap:wrap;gap:0.5rem}
+.diagram-grid a{background:#f0ebe3;border:1px solid #e0d8cc;border-radius:4px;padding:4px 10px;font-size:0.8rem;color:#2c2c2c;transition:background .15s}
+.diagram-grid a:hover{background:#e0d8cc;text-decoration:none}
+.footer{font-size:0.85rem;color:#888;margin-top:2.5rem;border-top:1px solid #e0d8cc;padding-top:1rem}
+</style>
+</head>
+<body>
+<div class="container">
+<div class="header-nav">
+<a href="index.html">Home</a>
+<a href="README.html">Overview</a>
+<a href="ARCHITECTURE.html">Architecture</a>
+<a href="AGENTS.html">Agents</a>
+<a href="MCP_SERVERS.html">MCP Servers</a>
+<a href="DESIGN_DECISIONS.html">Design Decisions</a>
+<a href="API_REFERENCE.html">API</a>
+<a href="SECURITY.html">Security</a>
+<a href="CHANGELOG.html">Changelog</a>
+<a href="TESTS.html" class="active">Tests</a>
+<a href="FRONTEND.html">Frontend</a>
+<a href="diagrams/index.html">Diagrams</a>
+</div>
+<h1 id="test-coverage">Test Coverage<a class="headerlink" href="#test-coverage" title="Link">&para;</a></h1>
+<p><strong>~370 parametrized test cases across 40+ test files + offline evaluation driver. Phase 0 added 45 characterization tests (4 files). Phase 3 added auth contract tests (3 files). Phase R added corpus regression harness (1 file). v2.2 added agent output extraction tests (1 file). v2.6 added new test files for Analytics Agent, Reviewer Agent, and new agent models. v2.7 added agent_output_store memory test and Windows/locking fixes. v2.12 added 7 new characterization tests for yahooquery tools and expanded MCP tool shapes. v2.13 added <code>conftest.py</code> for unit tests (langfuse.observe stubs). v2.16 added characterization test golden fixtures for structured agent outputs. All tests live under <code>src/tests/</code>.</strong></p>
+<h2 id="running-tests">Running Tests<a class="headerlink" href="#running-tests" title="Link">&para;</a></h2>
+<pre><code class="language-bash">pytest                          # all unit tests
+pytest -v                       # verbose
+pytest src/tests/unit/              # unit tests only
+pytest src/tests/characterization/  # characterization tests only
+pytest -m auth                  # auth-related tests (Phase 3)
+pytest -m openapi               # OpenAPI spec tests
+pytest -m integration           # integration/smoke tests (requires running services)
+pytest -m &quot;not integration&quot;     # unit tests only (default)
+pytest -m &quot;not external&quot;        # exclude tests that need external services
+</code></pre>
+<h2 id="test-layout">Test Layout<a class="headerlink" href="#test-layout" title="Link">&para;</a></h2>
+<pre><code>src/tests/
+    ├── conftest.py                          # env isolation, memory_db fixture, os._exit hook
+    ├── unit/conftest.py                     # v2.13 — stubs langfuse.observe as identity decorator,
+    │                                        #   evicts mcp_tools.tools submodule cache for clean re-imports
+├── evaluation/                          # offline RAGAS eval (standalone, not pytest)
+│   ├── golden_set.jsonl                 #   5 golden examples (NVDA, AAPL)
+│   └── run_offline_eval.py              #   offline evaluation driver
+├── characterization/                    # Phase 0 - 45 tests, 4 files
+│   ├── conftest.py                      #   fixtures, mocks, golden loader
+│   ├── test_api_contracts.py            #   ASGI in-process API route tests
+│   ├── test_deck_extraction_golden.py   #   golden tests (4 fixtures, UPDATE_GOLDENS=1)
+│   ├── test_mcp_tool_shapes.py          #   MCP tool return-shape contracts
+│   └── test_quant_nodes_io.py           #   per-node state-in/state-out
+├── integration/
+│   ├── test_mcp_server_smoke.py         #   4 - MCP + agent card endpoint reachability
+│   ├── test_behavioral_signals_e2e.py   #   5 - options flow, insider, positioning,
+│   │                                        #       peer comparison, Monte Carlo (Phase 4)
+│   ├── test_analytics_smoke.py          #   analytics endpoint reachability
+│   └── test_reviewer_smoke.py           #   reviewer endpoint reachability
+├── security/
+│   └── test_sandbox.py                  #  11 (parametrized ~45+) - AST gate + subprocess
+├── regression/                          # Report generator + corpus tests
+│   ├── test_docx_regression.py          #   5 - DOCX: valid output, empty, unknown,
+│                                        #       unicode, markdown tables
+│   ├── test_html_regression.py          #   8 - HTML: valid, empty, unknown, non-std rec,
+│                                        #       unicode, tables, deck-stage embedded, XSS
+│   ├── test_pptx_regression.py          #   7 - PPTX: valid, empty, unknown, non-std rec,
+│                                        #       unicode, tables, long summary
+│   └── test_corpus_invariants.py        #   7 - Phase R: corpus fixture invariants
+│                                        #       (hostile, one_liner, quant_heavy, etc.)
+└── unit/
+    ├── conftest.py                          # v2.13 — stubs langfuse.observe as identity decorator,
+    │                                        #   evicts mcp_tools.tools submodule cache for clean re-imports
+    ├── test_models.py                   #  10 - Pydantic model construction, round-trip
+    ├── test_new_agent_models.py         #   5 - Analytics/Reviewer/Agent output models
+    ├── test_quant_graph_nodes.py        #  18 - quant metrics, signals, voting
+    ├── test_parallel_dispatch.py        #   3 - concurrent gather, timeout map
+    ├── test_runtime_eval_gates.py       #   9 - circuit breaker, dedup, burst
+    ├── test_ticker_utils.py             #  11 (~15 parametrized) - extraction, parsing
+    ├── test_ttl_cache.py                #   9 - hit/miss/expiry, LRU
+    ├── test_rate_limiter.py             #   4 - burst, refill
+    ├── test_trace_context.py            #   8 - inject/extract
+    ├── test_settings.py                 #  Phase 1: pydantic-settings validation
+    ├── test_deck_data_extraction.py     #  38 - Phase R: extraction pipeline edge cases
+    ├── test_agent_outputs_extraction.py #  16 - v2.2: agent output capture + extraction routing
+    ├── test_analytics_nodes.py          #  10 - analytics pipeline, MetricValue integration
+    ├── test_reviewer_tools.py           #   8 - reviewer tools (contradiction, confidence, validation)
+    ├── test_web_search_tool.py          #   5 - DuckDuckGo search tool
+    ├── test_colored_logging.py          #  18 - v2.17: formatter, decorator markers, NO_COLOR, FORCE_COLOR
+    ├── test_auth_tokens.py              # 132 - Phase 2: JWT gen, validation, rotation
+    ├── test_auth_middleware.py          # 189 - Phase 2: middleware chain, routing
+    ├── test_auth_routes.py              # 145 - Phase 2: login/refresh/logout, lockout
+    ├── test_auth_audit.py               #  41 - Phase 2: structured auth.denied logs
+    ├── test_user_store.py               # 146 - Phase 2: Argon2, user CRUD
+    ├── test_auth_contract.py            # 170 - Phase 3: parametrized auth×route matrix
+    ├── test_a2a_protocol.py             # 167 - Phase 3: A2A lifecycle, failure modes
+    ├── test_openapi_spec.py             #  73 - Phase 3: spec regeneration check
+    └── memory/
+        ├── test_memory_store.py         #   5 - tables, indexes, WAL
+        ├── test_ticker_memory.py        #   7 - store/get_latest, flip detection
+        └── test_save_brief_persists_synthesis.py  # 2 - synthesis wins, rationale fallback
+    └── test_agent_output_store.py   # 10 - v2.7: store/get/prune, cross-agent isolation, TTL expiry
+
+**Total: ~370 parametrized test cases across 40+ test files.**
+</code></pre>
+<h2 id="key-patterns">Key Patterns<a class="headerlink" href="#key-patterns" title="Link">&para;</a></h2>
+<ul>
+<li><strong>Env isolation</strong>: <code>conftest.py</code> monkeypatches <code>LLM_API_KEY</code>, <code>LLM_BASE_URL</code>, <code>LANGFUSE_*</code> so no real services are contacted.</li>
+<li><strong>Isolated SQLite</strong>: <code>memory_db</code> fixture resets the <code>shared.memory.store</code> module-level connection singleton per test, using <code>tmp_path</code> for unique DB files.</li>
+<li><strong>No network calls</strong>: Quant graph tests call LangGraph nodes directly with synthetic <code>numpy</code> price data. <code>mcp_client=None</code> forces beta to <code>1.0</code>.</li>
+<li><strong>Asyncio</strong>: All tests use <code>pytest-asyncio</code> with <code>asyncio_mode = "auto"</code> and <code>asyncio_default_fixture_loop_scope = "function"</code>.</li>
+<li><strong>Windows file locking fix (v2.7)</strong>: <code>test_auth_routes.py</code> uses <code>tmp_path</code> per-test database files to avoid SQLite locking on Windows where <code>NamedTemporaryFile</code> cannot be reopened while open.</li>
+<li><strong>DDG mock pattern (v2.7)</strong>: <code>test_web_search_tool.py</code> mocks DuckDuckGo at the <code>aiohttp.ClientSession</code> level (not <code>DDGS</code>) to avoid real HTTP calls during CI.</li>
+</ul>
+<h2 id="integration-tests">Integration Tests<a class="headerlink" href="#integration-tests" title="Link">&para;</a></h2>
+<p>4 smoke tests marked <code>@pytest.mark.integration</code> + <code>@pytest.mark.external</code> - skipped by default. Run with:</p>
+<pre><code class="language-bash">pytest -m integration
+</code></pre>
+<p>These verify the MCP server (port 8010) and agent card endpoints (ports 8002-8004) are reachable. Requires all services running (<code>run_adk_web.bat</code>).</p>
+<h2 id="report-generation-regression-tests-v139">Report Generation Regression Tests (v1.39)<a class="headerlink" href="#report-generation-regression-tests-v139" title="Link">&para;</a></h2>
+<p>3 new test files validate all three output formats against realistic data patterns. All use <code>unittest.mock.patch("yfinance.Ticker", ...)</code> to avoid real network calls.</p>
+<h3 id="running">Running<a class="headerlink" href="#running" title="Link">&para;</a></h3>
+<pre><code class="language-bash">pytest src/tests/regression/ -v
+</code></pre>
+<h3 id="docx-test_docx_regressionpy">DOCX (<code>test_docx_regression.py</code>)<a class="headerlink" href="#docx-test_docx_regressionpy" title="Link">&para;</a></h3>
+<p>Tests <code>generate_docx()</code> with the shared <code>_extract_deck_data()</code> extraction pipeline. Validates output is valid <code>BytesIO</code>, non-empty, and handles edge cases (empty brief, unknown ticker, unicode, markdown tables).</p>
+<h3 id="html-test_html_regressionpy">HTML (<code>test_html_regression.py</code>)<a class="headerlink" href="#html-test_html_regressionpy" title="Link">&para;</a></h3>
+<p>Tests <code>generate_html()</code> - verifies HTML structure (<code>&lt;section&gt;</code>, <code>&lt;/deck-stage&gt;</code>), company name in title, deck-stage.js embedded inline (no external <code>src=</code>), CSS custom properties present, unicode encoding, and XSS prevention (<code>&lt;script&gt;</code> tags escaped as <code>&amp;lt;script&amp;gt;</code>).</p>
+<h3 id="pptx-test_pptx_regressionpy">PPTX (<code>test_pptx_regression.py</code>)<a class="headerlink" href="#pptx-test_pptx_regressionpy" title="Link">&para;</a></h3>
+<p>Tests <code>generate_pptx()</code> - slide count verification via <code>_count_slides()</code> (parses PPTX zip structure for <code>ppt/slides/slide*.xml</code>). Validates &gt;=6 slides for realistic data, &gt;=3 slides for empty brief, handles long summaries without overflow.</p>
+<h2 id="characterization-tests-phase-0">Characterization Tests (Phase 0)<a class="headerlink" href="#characterization-tests-phase-0" title="Link">&para;</a></h2>
+<p>4 test files (45 tests) providing golden regression and contract verification:</p>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Scope</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>test_api_contracts.py</code></td>
+<td>ASGI in-process API route tests with temp SQLite DB and pre-stubbed ADK/a2a-sdk modules. Covers all REST endpoints with auth on/off states.</td>
+</tr>
+<tr>
+<td><code>test_deck_extraction_golden.py</code></td>
+<td>Golden tests over 4 fixtures (minimal/structured/empty/realistic_quant). Goldens written on first run via <code>UPDATE_GOLDENS=1</code>. Includes P1-regression test documenting current bug.</td>
+</tr>
+<tr>
+<td><code>test_mcp_tool_shapes.py</code></td>
+<td>MCP tool return-shape tests with mocked yfinance/feedparser/yahooquery. No network required. Validates each tool&rsquo;s response schema — includes 7 tests for yahooquery-backed tools (<code>get_analyst_activity</code>, <code>get_valuation_timeseries</code>, enhanced <code>get_earnings_history</code>, <code>get_macro_indicators</code> batch path) added in v2.12.</td>
+</tr>
+<tr>
+<td><code>test_quant_nodes_io.py</code></td>
+<td>Per-node state-in/state-out with stubbed MCP client. Each LangGraph node tested in isolation with synthetic inputs.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="corpus-regression-tests-phase-r">Corpus Regression Tests (Phase R)<a class="headerlink" href="#corpus-regression-tests-phase-r" title="Link">&para;</a></h2>
+<p><code>test_corpus_invariants.py</code> (126 lines) provides invariant testing across 7 corpus fixtures:</p>
+<table>
+<thead>
+<tr>
+<th>Fixture</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>hostile.json</code></td>
+<td>Malformed/malicious LLM output</td>
+</tr>
+<tr>
+<td><code>one_liner.json</code></td>
+<td>Single-line LLM responses</td>
+</tr>
+<tr>
+<td><code>quant_heavy.json</code></td>
+<td>Mostly quantitative data, little prose</td>
+</tr>
+<tr>
+<td><code>sentiment_heavy.json</code></td>
+<td>Mostly narrative, few metrics</td>
+</tr>
+<tr>
+<td><code>table_free_prose.json</code></td>
+<td>No markdown tables, pure prose</td>
+</tr>
+<tr>
+<td><code>table_heavy.json</code></td>
+<td>Many markdown tables</td>
+</tr>
+<tr>
+<td><code>unicode_long.json</code></td>
+<td>Long text with unicode characters</td>
+</tr>
+</tbody>
+</table>
+<p>Fixtures driven: adding a new corpus JSON file automatically creates test cases via parametrization.</p>
+<h2 id="auth-contract-tests-phase-2-3">Auth &amp; Contract Tests (Phase 2 &amp; 3)<a class="headerlink" href="#auth-contract-tests-phase-2-3" title="Link">&para;</a></h2>
+<p>7 test files covering authentication, authorization, and protocol contracts:</p>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Lines</th>
+<th>Scope</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>test_auth_tokens.py</code></td>
+<td>132</td>
+<td>JWT generation, validation, expiry, rotation, signature verification</td>
+</tr>
+<tr>
+<td><code>test_auth_middleware.py</code></td>
+<td>189</td>
+<td>Middleware chain, path exemptions, principal-kind routing, auth-off mode</td>
+</tr>
+<tr>
+<td><code>test_auth_routes.py</code></td>
+<td>145</td>
+<td>Login/refresh/logout cycle, rate-limited lockout, cookie signing</td>
+</tr>
+<tr>
+<td><code>test_auth_audit.py</code></td>
+<td>41</td>
+<td>Structured auth.denied logging patterns</td>
+</tr>
+<tr>
+<td><code>test_user_store.py</code></td>
+<td>146</td>
+<td>Argon2 hashing, user CRUD, refresh token rotation</td>
+</tr>
+<tr>
+<td><code>test_auth_contract.py</code></td>
+<td>170</td>
+<td>Parametrized auth x route matrix: every REST route x {auth on/off} x {none, user, service, admin}</td>
+</tr>
+<tr>
+<td><code>test_a2a_protocol.py</code></td>
+<td>167</td>
+<td>In-process GenericAgentExecutor lifecycle: WORKING-&gt;artifact-&gt;COMPLETED, FAILED, CANCELED, INPUT_REQUIRED, structured data artifacts</td>
+</tr>
+<tr>
+<td><code>test_openapi_spec.py</code></td>
+<td>73</td>
+<td>Spec regeneration check: verifies <code>docs/openapi.json</code> matches generated output</td>
+</tr>
+</tbody>
+</table>
+<h2 id="test-configuration">Test Configuration<a class="headerlink" href="#test-configuration" title="Link">&para;</a></h2>
+<p>Defined in <code>pyproject.toml</code>:
+- <code>asyncio_mode = "auto"</code>
+- <code>asyncio_default_fixture_loop_scope = "function"</code>
+- Custom markers: <code>integration</code>, <code>external</code>, <code>auth</code>, <code>openapi</code></p>
+<div class="diagrams-box">
+<h3>Architecture Diagrams</h3>
+<div class="diagram-grid">
+<a href="diagrams/context.html">Context (C4 L1)</a>
+<a href="diagrams/container.html">Container (C4 L2)</a>
+<a href="diagrams/component.html">Component (C4 L3)</a>
+<a href="diagrams/component-orch.html">Orchestrator</a>
+<a href="diagrams/component-agents.html">Agents</a>
+<a href="diagrams/component-infra.html">Infra</a>
+<a href="diagrams/code.html">Code (C4 L4)</a>
+<a href="diagrams/sequence.html">Sequence</a>
+<a href="diagrams/sequence-phase1.html">Phase 1: Input</a>
+<a href="diagrams/sequence-phase2.html">Phase 2: Dispatch</a>
+<a href="diagrams/sequence-phase3.html">Phase 3: Synthesis</a>
+<a href="diagrams/dataflow.html">Data Flow</a>
+<a href="diagrams/dataflow-input.html">Input Pipeline</a>
+<a href="diagrams/dataflow-processing.html">Agent Processing</a>
+<a href="diagrams/er.html">Entity-Relationship</a>
+</div>
+</div>
+<div class="footer">FinSight &mdash; Multi-Agent Investment Research System</div>
+</div>
+</body>
+</html>

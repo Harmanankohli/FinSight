@@ -1,0 +1,1841 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Architecture &mdash; FinSight</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:1.7;color:#2c2c2c;background:#faf8f5;padding:2rem 1rem}
+.container{max-width:740px;margin:0 auto}
+h1,h2,h3,h4,h5,h6{font-family:Georgia,"Times New Roman",serif;color:#1a1a1a;line-height:1.3}
+h1{font-size:2.2rem;margin-bottom:0.25rem;border-bottom:2px solid #e8dcc8;padding-bottom:0.5rem}
+h2{font-size:1.5rem;margin-top:2.5rem;margin-bottom:0.75rem;border-bottom:1px solid #e8dcc8;padding-bottom:0.3rem}
+h3{font-size:1.2rem;margin-top:1.5rem;margin-bottom:0.5rem}
+h4{font-size:1.05rem;margin-top:1.25rem;margin-bottom:0.4rem}
+p{margin-bottom:1rem;color:#444}
+a{color:#8b6f4e;text-decoration:none;font-weight:500}
+a:hover{text-decoration:underline}
+ul,ol{margin-bottom:1rem;padding-left:1.5rem;color:#444}
+li{margin-bottom:0.25rem}
+li>ul,li>ol{margin-bottom:0}
+code{background:#f0ebe3;padding:0.15em 0.4em;border-radius:3px;font-size:0.875em;font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace}
+pre{background:#1a1a1a;color:#e8dcc8;padding:1rem 1.25rem;border-radius:8px;overflow-x:auto;margin-bottom:1rem;line-height:1.5;font-size:0.85rem}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+table{width:100%;border-collapse:collapse;margin-bottom:1rem;font-size:0.9rem}
+th,td{padding:0.5rem 0.75rem;text-align:left;border-bottom:1px solid #e0d8cc}
+th{background:#f0ebe3;font-weight:600}
+blockquote{border-left:3px solid #e8dcc8;margin:0 0 1rem 0;padding:0.5rem 1rem;color:#666;background:#fff}
+hr{border:none;border-top:1px solid #e0d8cc;margin:1.5rem 0}
+img{max-width:100%;height:auto}
+.header-nav{margin-bottom:2rem;padding-bottom:1rem;border-bottom:1px solid #e0d8cc}
+.header-nav a{margin-right:1.2rem;font-size:0.9rem}
+.header-nav a.active{color:#1a1a1a;font-weight:700;border-bottom:2px solid #8b6f4e}
+.diagrams-box{background:#fff;border:1px solid #e0d8cc;border-radius:8px;padding:1.25rem 1.5rem;margin-top:2.5rem}
+.diagrams-box h3{margin-top:0;margin-bottom:0.75rem;font-size:1.1rem}
+.diagram-grid{display:flex;flex-wrap:wrap;gap:0.5rem}
+.diagram-grid a{background:#f0ebe3;border:1px solid #e0d8cc;border-radius:4px;padding:4px 10px;font-size:0.8rem;color:#2c2c2c;transition:background .15s}
+.diagram-grid a:hover{background:#e0d8cc;text-decoration:none}
+.footer{font-size:0.85rem;color:#888;margin-top:2.5rem;border-top:1px solid #e0d8cc;padding-top:1rem}
+</style>
+</head>
+<body>
+<div class="container">
+<div class="header-nav">
+<a href="index.html">Home</a>
+<a href="README.html">Overview</a>
+<a href="ARCHITECTURE.html" class="active">Architecture</a>
+<a href="AGENTS.html">Agents</a>
+<a href="MCP_SERVERS.html">MCP Servers</a>
+<a href="DESIGN_DECISIONS.html">Design Decisions</a>
+<a href="API_REFERENCE.html">API</a>
+<a href="SECURITY.html">Security</a>
+<a href="CHANGELOG.html">Changelog</a>
+<a href="TESTS.html">Tests</a>
+<a href="FRONTEND.html">Frontend</a>
+<a href="diagrams/index.html">Diagrams</a>
+</div>
+<h1 id="architecture">Architecture<a class="headerlink" href="#architecture" title="Link">&para;</a></h1>
+<h2 id="overview">Overview<a class="headerlink" href="#overview" title="Link">&para;</a></h2>
+<p>FinSight is a multi-agent investment research system where five specialized agents communicate via the <strong>Google A2A Protocol</strong> (Agent-to-Agent). The orchestrator (ADK <code>LlmAgent</code>) discovers sub-agents at startup via <code>A2ACardResolver</code>, delegates tasks via a single <code>send_message</code> tool, and the LLM routes to all agents in parallel (instructed via system prompt to emit all <code>send_message</code> calls in one assistant turn). Each sub-agent processes tasks internally using its own framework and tools.</p>
+<h2 id="trust-boundaries-auth">Trust Boundaries (Auth)<a class="headerlink" href="#trust-boundaries-auth" title="Link">&para;</a></h2>
+<p>Phase 2 introduced three trust boundaries between components. All default to open (<code>AUTH_ENABLED=false</code>); when enabled, each boundary requires specific credential types:</p>
+<pre><code>                           AUTH_ENABLED=true
++------------------------------------------------------------------+
+│                        Boundary A (User↔Frontend↔Orchestrator)   —
+│  Browser --https--&gt; Next proxy --Bearer JWT--&gt; Starlette app      —
+│  /login  → refresh cookie  —  /api/* → access_token in header     —
+│  Public: /health, /.well-known/, /auth/login|refresh|logout       —
+│  AuthMiddleware(accept={&quot;user&quot;,&quot;service&quot;}) on all /api/* paths    —
++------------------------------------------------------------------+
+                         ↓
+                         │ A2A JSON-RPC (Boundary B)
+                         │ Service bearer token in Authorization header
+                         ↓
++------------------------------------------------------------------+
+│                     Boundary B (Orchestrator↔Sub-Agents)         —
+│  Orchestrator --A2A /a2a--&gt; Sub-agent (RAG/Quant/Market)         —
+│  Service token in client default headers                          —
+│  AuthMiddleware(accept={&quot;service&quot;}) on /a2a, /release-evals       —
+│  User context propagated via A2A message metadata (_user envelope)—
++------------------------------------------------------------------+
+                         ↓
+                         │ MCP SSE (Boundary C)
+                         │ Service bearer token in SSE headers
+                         ↓
++------------------------------------------------------------------+
+│                     Boundary C (Agents↔MCP Server)               —
+│  Sub-agents --SSE--&gt; MCP Server (finsight-mcp)                   —
+│  MCPServerConfig.headers injects bearer token                     —
+│  AuthMiddleware(accept={&quot;service&quot;}) on SSE Mount                  —
+│  Public: /health (compose healthchecks)                           —
++------------------------------------------------------------------+
+</code></pre>
+<p>When <code>AUTH_ENABLED=false</code> (default): all boundaries are open, <code>X-FinSight-User-Id</code> header used as dev convention for user identity (no verification).</p>
+<h2 id="communication-pattern">Communication Pattern<a class="headerlink" href="#communication-pattern" title="Link">&para;</a></h2>
+<pre><code>+--------------------------------------------------------------+
+│                    A2A Protocol Layer                         —
+│  +------------------------------------------------------+    —
+│  — Agent Card Discovery                                  │    —
+│  — GET /.well-known/agent-card.json                      │    —
+│  — - name, skills (id + description), interfaces         │    —
+│  +------------------------------------------------------+    —
+│  +------------------------------------------------------+    —
+│  — JSON-RPC over HTTP (streaming)                        │    —
+│  — POST /a2a  events: task, status_update, artifact_upd  —    —
+│  — Headers: A2A-Version: 1.0                             │    —
+│  +------------------------------------------------------+    —
+│  +------------------------------------------------------+    —
+│  — Task Lifecycle                                        │    —
+│  — SUBMITTED → WORKING → (artifacts) → COMPLETED        │    —
+│  +------------------------------------------------------+    —
++--------------------------------------------------------------+
+</code></pre>
+<h2 id="orchestrator-architecture">Orchestrator Architecture<a class="headerlink" href="#orchestrator-architecture" title="Link">&para;</a></h2>
+<p>The orchestrator (<code>src/orchestrator/</code>) uses a single <code>LlmAgent</code> with two tools (<code>send_message</code>, <code>load_memory</code>). The <code>save_brief</code> function is defined but no longer exposed as an LLM tool — briefs are auto-saved via <code>after_agent_callback</code>. Two parallel cache paths can short-circuit the LLM entirely on same-day repeat queries:</p>
+<pre><code>Module load (standalone — src/orchestrator/main.py):
+  → SubAgentClient.discover() in lifespan background task
+    +-- A2ACardResolver(httpx.AsyncClient, url) per seed URL
+    +-- Returns typed AgentCard (protobuf)
+    +-- self.agents populated
+
+ADK Web UI (src/orchestrator/services.py fires memory service registration):
+  → Discovery fires inside _memory_cache_callback on first turn
+    — root_agent.instruction = _instruction_provider (callable, per-turn rebuild)
+
+A2A Request → FinSightAgentExecutor.execute()
+  → _get_today_cached_text(ticker)  — [CACHE: return today brief if exists]
+  → _build_memory_context(query)    │ inject [MEMORY CONTEXT] with [TODAY]/[STALE] tag
+  → RUNNER.run_async(user_query)
+    → LlmAgent (no pre-fetch)
+    → before_agent_callback: _memory_cache_callback  — [CACHE: return types.Content if today brief exists]
+    → LLM emits ALL send_message calls in ONE assistant turn (parallel per system prompt instruction)
+    → SubAgentClient → A2A task to sub-agent (parallel)
+    → SubAgentClient → A2A response (text or data parts)
+    → LLM receives all results together in the next turn
+    → LLM synthesizes BUY/HOLD/SELL
+  → after_agent_callback: _persist_memory_callback
+    → add_events_to_memory()
+    → if EVAL_ENABLED: score_response()
+    → _release_sub_agent_evals() — POST /release-evals to all sub-agents (they defer evals until this signal)
+  → COMPLETED with synthesis
+</code></pre>
+<p><strong>Key design choices:</strong></p>
+<ul>
+<li><strong>A2ACardResolver for discovery</strong> — standard A2A well-known endpoint, proper protobuf AgentCard types, compatibility with legacy formats</li>
+<li><strong>ClientFactory for A2A communication</strong> — matches the official A2A SDK pattern, supports multiple transport protocols</li>
+<li><strong>Single <code>send_message</code> tool</strong> — not one tool per agent. LLM passes agent name as a parameter, matching all A2A sample projects</li>
+<li><strong>Streaming event handling</strong> — correctly skips intermediate SUBMITTED/WORKING events, captures <code>artifact_update</code> (data/text) and terminal <code>status_update</code> events</li>
+<li><strong>Background async discovery</strong> — supports both ADK Web UI (running event loop) and CLI entrypoints</li>
+<li><strong>WindowsSelectorEventLoopPolicy</strong> — prevents ConnectionResetError noise on Windows</li>
+<li><strong>Programmatic AgentCards</strong> — built in code using protobuf <code>AgentCard(...)</code> instead of static JSON files</li>
+</ul>
+<h2 id="agent-server-factory-v141">Agent Server Factory (v1.41)<a class="headerlink" href="#agent-server-factory-v141" title="Link">&para;</a></h2>
+<p>All five sub-agent servers (<code>src/financial_rag/server.py</code>, <code>src/quant/server.py</code>, <code>src/market_context/server.py</code>, <code>src/analytics/server.py</code>, <code>src/reviewer/server.py</code>) use <code>build_agent_app()</code> from <code>src/shared/agent_server.py</code>. This shared factory:
+- Creates Starlette app with A2A routes, health check, agent card, and <code>/release-evals</code> endpoint
+- Wraps with <code>AuthMiddleware</code> when auth is enabled
+- Sets up Langfuse instrumentation, file logging, and startup warm-up hooks
+- Eliminates ~100 lines of duplicate server setup per sub-agent</p>
+<h2 id="genericagentexecutor-pattern">GenericAgentExecutor Pattern<a class="headerlink" href="#genericagentexecutor-pattern" title="Link">&para;</a></h2>
+<p>All sub-agents extend <code>BaseAgent</code> and implement <code>stream()</code>. A shared <code>GenericAgentExecutor</code> handles A2A lifecycle:</p>
+<pre><code>A2A Request → DefaultRequestHandler → GenericAgentExecutor.execute()
+  → BaseAgent.stream(query, context_id, task_id)
+  → Yields: {response_type, content, is_task_complete, require_user_input}
+  → GenericAgentExecutor converts to TaskStatusUpdateEvent / TaskArtifactUpdateEvent
+  → COMPLETED state
+</code></pre>
+<h2 id="agent-architecture">Agent Architecture<a class="headerlink" href="#agent-architecture" title="Link">&para;</a></h2>
+<h3 id="rag-agent-llamaindex">RAG Agent (LlamaIndex)<a class="headerlink" href="#rag-agent-llamaindex" title="Link">&para;</a></h3>
+<pre><code>A2A Request → DefaultRequestHandler → GenericAgentExecutor(RAGAgent)
+  → RAGAgent.stream()
+    → RAGAgent._build_response(query)
+      → Fire-and-forget (asyncio.create_task):
+        +-- self._ensure_ingested(ticker) — runs in background, non-blocking
+        +-- self._ensure_news_ingested(ticker) — runs in background, non-blocking
+      → FinancialIndexManager.query(ticker, query) — returns from indexed data
+        +-- _classify_query_intent() → sec_filings → news → earnings
+        +-- Multi-collection retrieval with score-sorted dedup
+        +-- LlamaIndex response synthesizer (response_mode=&quot;compact&quot;)
+      → No intermediate WORKING yield — follows single-yield pattern (one data response on completion)
+  → Yields data response with summary + sources
+
+RAGAgent._ensure_ingested(ticker) [background]:
+  → MCPClient.connect_all()
+  → MCP: get_company_filings(ticker) → filings with edgar_url + ix_url
+  → Filter: is_filing_ingested(edgar_url) — skip already-indexed URLs
+  → Parallel fetch via asyncio.gather:
+    +-- MCP: get_filing_content(edgar_url, ix_url) for candidate 1
+    +-- MCP: get_filing_content(edgar_url, ix_url) for candidate 2
+    +-- ... (all candidates concurrently, truncated server-side at 25k chars)
+  → DocumentIngestionPipeline.ingest_sec_filings_batch() → ChromaDB
+  → mark_filing_ingested(edgar_url, ticker) for each new filing
+</code></pre>
+<p><strong>Incremental Ingestion</strong>: <code>_ensure_ingested()</code> checks the <code>ingested_filings</code> SQLite table before fetching any filing content. URLs already indexed in a previous run are skipped entirely — restarts and same-day re-queries do not re-ingest immutable historical filings.</p>
+<p><strong>Startup warm-up</strong> (<code>src/financial_rag/server.py</code>, v1.32): <code>_do_prewarm()</code> runs once on Starlette <code>on_startup</code> in a thread executor via <code>asyncio.to_thread</code>. Three stages: HuggingFace embedder pre-load + dummy encode, three ChromaDB collections (<code>sec_filings</code>/<code>news</code>/<code>earnings</code>) via <code>get_or_create_collection</code>, CrossEncoder reranker from <code>HybridSearchPipeline</code>. Each stage logs elapsed seconds. Effect: first RAG query pays ~0s model-load tax (was ~3-5s). Warm-up errors are logged but don&rsquo;t crash the server.</p>
+<p><strong>Content Ingestion</strong>: Fetches actual SEC filing content (10-K, 10-Q, 8-K) via <code>get_filing_content()</code>, which extracts text from raw EDGAR URLs with fallback to IXBRL viewer URLs.</p>
+<h3 id="quant-agent-langgraph">Quant Agent (LangGraph)<a class="headerlink" href="#quant-agent-langgraph" title="Link">&para;</a></h3>
+<pre><code>A2A Request → DefaultRequestHandler → GenericAgentExecutor(QuantAgent)
+  → QuantAgent.stream()
+    → extract_holdings(query) → portfolio_holdings list
+    → analyze(ticker, portfolio_holdings=holdings)
+      [Parallel fan-out from START]
+        +-- fetch_prices [MCP: get_prices → parse Close data]
+        │     → compute_base_metrics (Sharge, vol, VaR, beta)
+        │     → technical_analysis (SMA, MACD, RSI, Bollinger, trend)
+          │     → volatility gate
+          │         +-- high vol (&gt; 35%) → stress_test [sector-aware scenario shocks]
+          │         +-- low vol (= 35%) → dcf_valuation [data-driven WACC + growth]
+          │     → monte_carlo (GBM, 5k paths, 252d horizon) — runs in BOTH paths
+          +-- fetch_fundamentals [MCP: get_financials → 25+ ratios]
+          |     → PE, PB, ROE, margins, D/E, growth, golden cross
+          |     → peer_comparison (dynamic yfinance Industry/Sector peers, ranks on PE,
+          |         EV/EBITDA, growth, margins, ROE, D/E + sector medians for relative scoring)
+          +-- options_flow_node (put/call vol ratio, OI ratio, flow signal, no-data handling)
+          +-- insider_signals_node (get_insider_transactions MCP — structured buy/sell data)
+          +-- analyst_positioning_node (consensus, upside %, short interest, squeeze)
+          [Fan-in]
+            +-- portfolio_correlation [MCP: get_prices per holding + target]
+            +-- format_output (8-group weighted voting: risk 0.15, dcf 0.20, fund_value 0.13,
+                  fund_quality 0.12, tech_trend 0.15, tech_momentum 0.10,
+                  peer 0.10, behavioral 0.05 → sum=1.0)
+            → llm_summary (enriched 3-4 sentence summary)
+            → Live sector-aware shocks via MCP get_scenario_shocks (QQQ/XLP/XLF per sector)
+   → Yields data response
+</code></pre>
+<p><strong>Portfolio Holdings Extraction</strong>: <code>stream()</code> uses <code>extract_holdings(query, exclude_ticker=ticker)</code> from <code>src/shared/ticker_utils.py</code> to extract holdings from natural language (e.g. &ldquo;My portfolio holds AAPL, MSFT, GOOGL&rdquo;). Holdings are passed through the full chain: <code>stream()</code> → <code>analyze()</code> → <code>graph.run()</code> → <code>correlation_node</code>.</p>
+<p><strong>Correlation only on explicit request</strong>: The orchestrator prompt instructs the LLM to include holdings in the quant agent task only when the user explicitly mentions portfolio holdings or asks for correlation in their current message. Memory context portfolio lines are labelled as background reference so the LLM does not auto-include them for every single-ticker query.</p>
+<p><strong>Correlation Matrix Notes</strong>: When no holdings are provided, returns <code>{"note": "No portfolio holdings provided..."}</code> instead of <code>{}</code>. When price data is insufficient or computation fails, returns a descriptive error.</p>
+<p><strong>DCF Fix</strong>: The DCF valuation now correctly reads free cash flow data from the <code>cash_flow</code> financial statement (not <code>income_statement</code>). This fixes the issue where DCF valuations were returning null.</p>
+<p><strong>DCF Skip Messaging</strong>: When annual volatility exceeds the 35% threshold, <code>compute_metrics_node</code> sets a descriptive <code>dcf_error</code> field (e.g. &ldquo;DCF skipped: annual volatility (41.0%) exceeds 35% threshold — routed to stress test instead&rdquo;). This error is propagated through the graph into the final output and LLM reasoning, providing visibility into why DCF was not computed.</p>
+<p><strong>Sector-Relative Scoring</strong>: <code>format_output_node</code> now passes <code>peer_comparison.medians</code> (sector medians for PE, EV/EBITDA, ROE, margins, D/E) into <code>_score_fundamental_value</code> and <code>_score_fundamental_quality</code>. When available, these use <code>_relative_score()</code> to score metrics relative to the sector median instead of absolute universal thresholds — making fundamental scoring sector-aware.</p>
+<p><strong>Live Scenario Shocks</strong>: <code>stress_test_node</code> fetches <code>get_scenario_shocks(sector)</code> via MCP for live historical crash returns per sector ETF (QQQ for tech, XLF for financials, etc.), replacing hardcoded S&amp;P-only fallbacks.</p>
+<h3 id="quant-agent-langgraph-module-split-v141">Quant Agent — LangGraph Module Split (v1.41)<a class="headerlink" href="#quant-agent-langgraph-module-split-v141" title="Link">&para;</a></h3>
+<p><code>src/quant/nodes.py</code> (1286 lines) was split into <code>src/quant/nodes/</code> package:
+- <code>calculations.py</code> — <code>_run_monte_carlo()</code>, <code>_score_fundamental_*()</code>, <code>_weighted_vote()</code>
+- <code>data_fetch.py</code> — <code>fetch_prices_node</code>, <code>fetch_fundamentals_node</code>
+- <code>technical.py</code> — <code>technical_analysis_node</code>, <code>compute_metrics_node</code>
+- <code>dcf.py</code> — <code>dcf_valuation_node</code>
+- <code>monte_carlo.py</code> — stress analysis, scenario shocks
+- <code>portfolio.py</code> — <code>correlation_node</code>, <code>portfolio_correlation</code>
+- <code>summary.py</code> — <code>format_output_node</code>, <code>llm_summary_node</code></p>
+<p>Each file is &lt; 400 lines. The <code>__init__.py</code> re-exports all node functions through a clean public API.</p>
+<h3 id="quant-agent-langgraph-fan-in-topology">Quant Agent — LangGraph Fan-In Topology<a class="headerlink" href="#quant-agent-langgraph-fan-in-topology" title="Link">&para;</a></h3>
+<p>The quant agent&rsquo;s LangGraph state machine required fixes across multiple versions to handle concurrent fan-in writes:</p>
+<ul>
+<li>
+<p><strong>Annotated reducers</strong> (<code>src/quant/state.py</code>): State keys written by multiple nodes (<code>metrics</code>, <code>reasoning</code>, <code>recommendation</code>, <code>stress_test_result</code>, <code>dcf_error</code>) use <code>Annotated[type, reducer]</code> — <code>_merge_dict</code>, <code>_last_str</code>, <code>_last_nonnull</code>. Without reducers, LangGraph raises <code>INVALID_CONCURRENT_GRAPH_UPDATE</code> when two nodes write to the same key in the same checkpoint step.</p>
+</li>
+<li>
+<p><strong>Diamond dependency removed</strong> (<code>src/quant/graph.py</code>): The direct <code>fetch_fundamentals → format_output</code> edge was removed. <code>fetch_fundamentals</code> already fans into <code>peer_comparison_node</code> which fans into <code>format_output</code> — the direct edge created a diamond pattern where <code>format_output</code> triggered twice in the same step.</p>
+</li>
+<li>
+<p><strong>Passthrough keys removed</strong> (<code>src/quant/nodes.py</code>): <code>format_output_node</code> was returning copies of state keys (<code>positioning</code>, <code>dcf_valuation</code>, <code>correlation_matrix</code>, <code>fundamentals</code>) that other nodes already wrote. Now only emits <code>recommendation</code>, <code>reasoning</code>, <code>metrics</code>, and <code>stress_test_result</code> — only what it actually computes.</p>
+</li>
+<li>
+<p><strong>Data-readiness guard on <code>llm_summary_node</code></strong> (<code>src/quant/nodes/summary.py</code>, v2.5): The 5-way fan-in at <code>format_output</code> causes LangGraph to fire <code>format_output</code> (and consequently <code>llm_summary</code>) multiple times as predecessors complete in different supersteps — resulting in 4 sequential LLM calls (~78s) instead of 1. <code>llm_summary_node</code> now checks that all predecessor branches (<code>metrics</code>, <code>reasoning</code>, <code>recommendation</code>, <code>fundamentals</code>) have written their data before firing the LLM call. Skipped invocations return <code>{}</code> silently.</p>
+</li>
+</ul>
+<h3 id="market-context-agent-crewai">Market Context Agent (CrewAI)<a class="headerlink" href="#market-context-agent-crewai" title="Link">&para;</a></h3>
+<pre><code>A2A Request → DefaultRequestHandler → GenericAgentExecutor(MarketContextAgent)
+  → MarketContextAgent.stream()
+    → 3-step parallel data collection (Phase 3):
+      +-- Step 1: get_macro_indicators() → get_financials(ticker)
+      │     → macro regime (yields, VIX, DXY, sector ETFs, yield curve)
+      │     → primary financials (sector/industry for peer resolution)
+      +-- Step 2: resolve peers via MCP get_peers (dynamic yfinance Industry/Sector)
+      +-- Step 3: asyncio.gather(peer financials, peer prices)
+    → 1-agent CrewAI (&quot;Market Context Analyst&quot;):
+      → Outputs JSON: narrative, macro_regime, relative_peer_positioning,
+        overall_signal, confidence_score (0-1), key_tailwinds, key_headwinds
+  → Yields data response
+</code></pre>
+<p><strong>Note</strong>: The old Sentiment agent fetched <code>get_news_sentiment</code> and <code>get_company_filings</code>. Both were redundant with the RAG agent after Phase 1 and are no longer called. Market Context exclusively owns macro regime analysis and peer landscape positioning.</p>
+<h3 id="analytics-agent-pydanticai">Analytics Agent (PydanticAI)<a class="headerlink" href="#analytics-agent-pydanticai" title="Link">&para;</a></h3>
+<pre><code>A2A Request → DefaultRequestHandler → GenericAgentExecutor(AnalyticsAgent)
+  → AnalyticsAgent.stream()
+    → resolve_and_validate_ticker(query) → ticker, company
+    → AnalyticsAgent.analyze(ticker, period=&quot;1y&quot;)
+      → AnalyticsPipeline.run(ticker, period, mcp_client)
+        [PydanticAI DAG — 4 nodes in sequence]
+
+        1. FetchDataNode (parallel):
+             ├── _fetch_prices(mcp, ticker, &quot;1y&quot;) → close_data, ohlcv_data
+             └── _fetch_fundamentals(mcp, ticker) → fundamentals_data
+
+        2. AnalyzeNode (5 parallel analyses):
+             ├── _detect_trends(price_data)
+             │     → SMA20/50/200, MACD, momentum (ROC), RSI
+             │     → composite scoring → bull/neutral/bear trend
+             ├── _run_forecast(price_data)
+             │     → Holt-Winters exponential smoothing (30-day horizon)
+             │     → confidence bands (linearly widening)
+             ├── _compute_statistics(price_data, mcp_client)
+             │     → skewness, kurtosis, Jarque-Bera normality test
+             │     → distribution class (lepto/platykurtic/normal)
+             │     → SPY correlation (beta, R²) via MCP get_prices(&quot;SPY&quot;)
+             ├── _detect_anomalies(price_data, ohlcv_data, fundamentals_data)
+             │     → price spikes (|z| &gt; 2.5 on log-returns)
+             │     → volume spikes (|z| &gt; 3.0)
+             │     → fundamental outliers (PE &lt;5 or &gt;100, D/E &gt;5)
+             │     → severity: none/low/medium/high
+             │     → [if severity ≥ medium] web_search catalyst context
+             └── _generate_charts(ohlcv_data, price_data)
+                   → ChartPayload list for frontend rendering
+
+        3. FormatOutputNode:
+             → aggregates 5 signal dimensions (-1, 0, +1 each):
+               trend direction, forecast change &gt;5%, anomaly severity,
+               leptokurtic distribution
+             → avg_signal &gt; 0.3 → bullish; &lt; -0.3 → bearish; else neutral
+             → confidence = |avg_signal| clamped to [0, 1]
+
+        4. LLMSummaryNode (terminal):
+             → PydanticAI Agent + OpenAI-compatible LLM
+             → generates 3-4 sentence prose summary
+             → priority: CRITICAL (never starved by eval)
+             → output: AnalyticsAgentOutput schema
+
+    → score_analytics_deterministic(result) → schema_validation
+    → [if EVAL_ENABLED] defer_eval(score_analytics_response)
+    → Yields data response
+</code></pre>
+<p><strong>Analytics Agent — PydanticAI DAG Pipeline</strong>: The agent uses <code>pydantic-graph</code> (not LangGraph) for a 4-node sequential pipeline. Each node is a <code>BaseNode[AnalyticsState, AnalyticsDeps]</code> that mutates a shared <code>AnalyticsState</code> dataclass and transitions to the next node via its return type annotation. The <code>AnalyticsDeps</code> dataclass carries <code>ticker</code>, <code>period</code>, and <code>mcp_client</code> through the graph.</p>
+<p><strong>Statistical Analysis</strong>: Uses scipy for normality testing (Jarque-Bera), numpy for moving averages and MACD. SPY correlation is fetched via MCP — failure is non-fatal (returns empty correlations). All <code>MetricValue</code> results carry <code>.status</code>, <code>.warning</code>, <code>.methodology</code> metadata.</p>
+<p><strong>Anomaly Catalyst Search</strong>: When anomalies reach medium/high severity, the agent performs a DuckDuckGo web search for &ldquo;{ticker} stock price spike catalyst news&rdquo; and filters boilerplate results to provide context for the LLM summary.</p>
+<p><strong>Output Schema</strong> (<code>AnalyticsAgentOutput</code>): <code>ticker</code>, <code>trend_analysis</code> (TrendAnalysis), <code>forecast</code> (ForecastResult), <code>charts</code> (list[ChartPayload]), <code>statistical_summary</code> (StatisticalSummary), <code>anomalies</code> (AnomalyReport), <code>analytics_signal</code> (bullish/bearish/neutral), <code>analytics_confidence</code> (float [0,1]), <code>reasoning</code> (LLM prose).</p>
+<h3 id="reviewer-agent-openai-agents-sdk">Reviewer Agent (OpenAI Agents SDK)<a class="headerlink" href="#reviewer-agent-openai-agents-sdk" title="Link">&para;</a></h3>
+<pre><code>[Called by orchestrator AFTER all Phase-1 agents complete]
+
+Orchestrator builds SendMessageInput(&quot;reviewer&quot;, ticker, session_id)
+  → sends condensed per-agent summaries + metrics to Reviewer
+
+A2A Request → DefaultRequestHandler → GenericAgentExecutor(ReviewerAgent)
+  → ReviewerAgent.stream()
+    → extract_trace_context(query) → clean_query
+    → Parse JSON payload: {ticker, session_id, agent_outputs}
+         ├── Inline agent_outputs (preferred — injected by orchestrator)
+         └── Fallback: get_agent_outputs(session_id) from SQLite store
+    → [guardrail] payload_structure_guardrail:
+         → tripwire if: invalid JSON, missing ticker, missing session_id+agent_outputs
+
+    → Pre-reviewer integrity gate:
+         → validate_metric_integrity(agent_outputs)
+           → checks: DCF upside % consistency, Sharpe/VaR range, PE/ROE plausibility
+           → returns alerts: critical / warning / info severity
+
+    → 6 deterministic tools (no LLM round-trips — pure Python):
+         ├── check_contradictions(agent_outputs) → list[ContradictionFlag]
+         │     → cross-agent signal conflicts:
+         │       quant BUY vs bearish analytics trend (HIGH)
+         │       quant BUY vs negative RAG sentiment (MEDIUM)
+         │       market bearish vs quant bullish signal (MEDIUM)
+         │       DCF vs Monte Carlo divergence &gt;40% (MEDIUM)
+         │       quant BUY but RSI &gt;75 overbought (MEDIUM)
+         │       quant BUY but Monte Carlo prob_profit &lt;50% (MEDIUM)
+         │       anomaly severity vs high confidence (LOW)
+         │     → deduplicated by (field, description) pair
+         ├── verify_sources(agent_outputs) → list[SourceVerification]
+         │     → DCF upside % recalculated vs reported (tolerance 1%)
+         │     → RAG summary present but no sources listed
+         │     → market signal enum validation (bullish/bearish/neutral)
+         │     → analytics forecast dates not in past, chart datasets non-empty
+         ├── score_confidence(agent_outputs) → ConfidenceBreakdown
+         │     → per-agent confidence derivation:
+         │       quant: 30% data freshness + 25% signal agreement + 25% source quality + 20% base
+         │       rag: 0.3 base + 0.2 length + 0.3 sources (max 1.0)
+         │       market: 0.3 base + 0.2 narrative + 0.1 signal + 0.1 tailwinds + 0.1 headwinds + 0.1 macro
+         │       analytics: 0.3 base + 0.2 trend + 0.2 forecast + 0.1 stats + 0.1 charts
+         │     → agreement_score: max(bullish,bearish,neutral) / total directional signals
+         │     → data_quality: 35% completeness + 35% consistency + 20% freshness + 10% verification
+         │     → meta_confidence: 35% avg_agent + 25% agreement + 25% consistency + 15% verification
+         ├── validate_recommendation(agent_outputs) → RecommendationValidation
+         │     → evaluates quant recommendation against DCF, technicals, macro, fundamentals, MC, RAG
+         │     → returns: supporting_evidence[], contradicting_evidence[], evidence_supports, evidence_strength
+         ├── check_consistency(agent_outputs) → ConsistencyResult
+         │     → RSI extreme warnings (&lt;30 or &gt;70)
+         │     → DCF vs Monte Carlo divergence check
+         │     → returns: consistency_score (0-1), warnings[], contradiction_summary
+         └── validate_dcf(quant) → DCFValidation
+               → intrinsic/market ratio sanity: &lt;0.30 (warning: undervalued), &gt;3.0 (warning: overvalued)
+               → negative WACC check, zero growth sanity, upside % sign consistency
+
+    → Build synthesis prompt (JSON):
+         {ticker, agent_summaries (condensed per-agent),
+          contradictions, verifications, confidence (as percentages),
+          validation, consistency, dcf_validation, integrity_alerts}
+
+    → Runner.run(reviewer_agent, input=synthesis_prompt)
+         → OpenAI Agents SDK agent with Langfuse-instrumented LLM
+         → priority: CRITICAL
+         → output_type: ReviewerAgentOutput (structured)
+         → generates: review_summary, contradictions, source_verifications,
+           confidence_breakdown, recommendation_validation, verdict, review_confidence, flags
+
+    → Attach _tool_results for extraction pipeline
+    → score_reviewer_deterministic(output) → schema_validation
+    → [if EVAL_ENABLED] defer_eval(score_reviewer_response)
+    → Yields data response
+</code></pre>
+<p><strong>Reviewer Agent — Design Principles</strong>:</p>
+<ul>
+<li><strong>Deterministic tools first, LLM once</strong>: All 6 validation tools run in pure Python (no LLM calls). The LLM receives pre-computed results and synthesizes them into a structured report. This keeps the reviewer to exactly 1 LLM call per query.</li>
+<li><strong>Guardrail on input</strong>: An <code>InputGuardrail</code> trips on invalid JSON, missing ticker, or missing agent outputs — prevents the LLM from hallucinating review data on bad input.</li>
+<li><strong>Pre-reviewer integrity gate</strong>: <code>validate_metric_integrity()</code> runs before the LLM and flags critical mathematical impossibilities (e.g., DCF upside that doesn&rsquo;t match intrinsic/current ratio). Critical alerts are attached to the output for downstream visibility.</li>
+<li><strong>Meta-confidence scoring</strong>: The confidence breakdown distinguishes individual agent confidence from the overall meta-confidence (weighted aggregate). The LLM is explicitly instructed never to conflate them.</li>
+<li><strong>Structured output</strong>: <code>ReviewerAgentOutput</code> enforces <code>verdict</code> (BUY/HOLD/SELL), <code>review_confidence</code> (meta_confidence), <code>contradictions</code>, <code>source_verifications</code>, <code>confidence_breakdown</code>, <code>recommendation_validation</code>, and <code>flags</code>.</li>
+</ul>
+<p><strong>Output Schema</strong> (<code>ReviewerAgentOutput</code>): <code>review_summary</code> (3-5 sentences citing specific numbers), <code>contradictions</code> (list[ContradictionFlag]), <code>source_verifications</code> (list[SourceVerification]), <code>confidence_breakdown</code> (ConfidenceBreakdown with agent_scores, agreement_score, data_quality_score, meta_confidence), <code>recommendation_validation</code> (RecommendationValidation), <code>verdict</code> (BUY/HOLD/SELL), <code>review_confidence</code> (float [0,1]), <code>flags</code> (list[str] for data quality concerns).</p>
+<h2 id="caching-layer">Caching Layer<a class="headerlink" href="#caching-layer" title="Link">&para;</a></h2>
+<p>Four independent caching tiers reduce latency and external API load:</p>
+<h3 id="mcp-tool-result-cache-tier-1a">MCP Tool-Result Cache (Tier 1A)<a class="headerlink" href="#mcp-tool-result-cache-tier-1a" title="Link">&para;</a></h3>
+<p><code>TTLCache</code> (or <code>RedisCache</code> when <code>REDIS_URL</code> is configured) in <code>src/mcp_tools/finsight_server.py</code> — created via <code>make_cache()</code> factory in <code>src/shared/redis_cache.py</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Cache</th>
+<th>TTL</th>
+<th>Key</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>_cache_prices</code></td>
+<td>1 min</td>
+<td><code>(ticker, period, interval)</code></td>
+<td>yfinance OHLCV</td>
+</tr>
+<tr>
+<td><code>_cache_benchmark</code></td>
+<td>1 h</td>
+<td>ticker</td>
+<td>Index benchmarks (^GSPC, ^VIX, etc.)</td>
+</tr>
+<tr>
+<td><code>_cache_financials</code></td>
+<td>1 h</td>
+<td><code>(ticker,)</code></td>
+<td>income/balance/cashflow</td>
+</tr>
+<tr>
+<td><code>_cache_news</code></td>
+<td>5 min</td>
+<td><code>(ticker, limit)</code></td>
+<td>only cached when articles found</td>
+</tr>
+<tr>
+<td><code>_cache_macro</code></td>
+<td>15 min</td>
+<td><code>"macro"</code></td>
+<td>Treasury yields, VIX, DXY, sector ETFs</td>
+</tr>
+<tr>
+<td><code>_cache_filing</code></td>
+<td>permanent (LRU-200)</td>
+<td><code>edgar_url</code></td>
+<td>filings are immutable</td>
+</tr>
+<tr>
+<td><code>_cache_submissions</code></td>
+<td>6 h</td>
+<td><code>cik</code></td>
+<td>EDGAR CIK submissions</td>
+</tr>
+<tr>
+<td><code>_cache_peers</code></td>
+<td>24 h</td>
+<td>ticker</td>
+<td>yfinance Industry/Sector peer lists</td>
+</tr>
+<tr>
+<td><code>_cache_shocks</code></td>
+<td>7 days</td>
+<td>sector</td>
+<td>Historical crash returns per sector ETF</td>
+</tr>
+<tr>
+<td><code>_cache_analyst_activity</code></td>
+<td>1 h</td>
+<td><code>(ticker,)</code></td>
+<td>Analyst grading history via yahooquery</td>
+</tr>
+<tr>
+<td><code>_cache_valuation_ts</code></td>
+<td>24 h</td>
+<td><code>(ticker,)</code></td>
+<td>Quarterly valuation multiples via yahooquery</td>
+</tr>
+<tr>
+<td><code>_cache_earnings_trend</code></td>
+<td>1 h</td>
+<td><code>(ticker,)</code></td>
+<td>Forward EPS estimates &amp; revisions via yahooquery</td>
+</tr>
+</tbody>
+</table>
+<h3 id="redis-two-level-cache-tier-1c-v131">Redis Two-Level Cache (Tier 1C, v1.31)<a class="headerlink" href="#redis-two-level-cache-tier-1c-v131" title="Link">&para;</a></h3>
+<p><code>src/shared/redis_cache.py</code> — L1 (in-process <code>TTLCache</code>) + L2 (Redis write-through). Created via <code>make_cache()</code>:</p>
+<pre><code class="language-python">def make_cache(ttl_seconds=300, name=&quot;&quot;):
+    if REDIS_URL:
+        return RedisCache(ttl_seconds=ttl_seconds, name=name)
+    return TTLCache(ttl_seconds=ttl_seconds)
+</code></pre>
+<p>L1 miss → read from Redis → populate L1. Every L1 <code>set()</code> propagates to Redis via write-through. Transparent drop-in: when <code>REDIS_URL</code> is unset, <code>make_cache()</code> returns a bare <code>TTLCache</code> with identical behavior.</p>
+<h3 id="langchain-sqlitecache-tier-1b">LangChain SQLiteCache (Tier 1B)<a class="headerlink" href="#langchain-sqlitecache-tier-1b" title="Link">&para;</a></h3>
+<p><code>src/quant/nodes.py</code> sets <code>SQLiteCache(database_path="db/.langchain_cache.db")</code> before the <code>ChatOpenAI</code> instance is used in <code>llm_summary_node</code>. Identical ticker+metrics inputs reuse cached LLM output without an LM Studio round-trip.</p>
+<h3 id="semantic-cache-tier-1d">Semantic Cache (Tier 1D)<a class="headerlink" href="#semantic-cache-tier-1d" title="Link">&para;</a></h3>
+<p><code>src/shared/semantic_cache.py</code> — ChromaDB collection <code>finsight_semantic_cache</code> + <code>all-MiniLM-L6-v2</code> embedder (already in-use). Cosine similarity threshold: 0.95; response stored up to 4000 chars in Chroma metadata.</p>
+<p><strong>Date-scoped</strong> (v1.32): <code>SemanticCache.set()</code> tags entries with <code>YYYY-MM-DD</code> in Chroma metadata. <code>SemanticCache.get()</code> uses a <code>where</code> filter on <code>date</code> — same query on a different day misses cache. Prevents stale cross-day results without a TTL.</p>
+<p>Wired into <code>src/orchestrator/agent_executor.py</code>:
+- <strong>Before</strong> <code>runner.run_async</code>: <code>SemanticCache.get(query)</code> — on hit, return immediately
+- <strong>After</strong> successful response: <code>SemanticCache.set(query, text)</code>
+- Controlled by <code>SEMANTIC_CACHE_ENABLED=true</code> env var (off by default)</p>
+<h3 id="kv-cache-prefix-tier-1c">KV Cache Prefix (Tier 1C)<a class="headerlink" href="#kv-cache-prefix-tier-1c" title="Link">&para;</a></h3>
+<p><code>src/orchestrator/agent.py</code> splits <code>_build_instruction()</code> into a module-level <code>_STATIC_PREAMBLE</code> constant and a dynamic tail (today&rsquo;s date + agent list). LM Studio reuses the KV-cached static prefix across requests. Same pattern applied to CrewAI backstory strings in <code>src/market_context/crew.py</code>.</p>
+<h3 id="llm-priority-queue-tier-1e">LLM Priority Queue (Tier 1E)<a class="headerlink" href="#llm-priority-queue-tier-1e" title="Link">&para;</a></h3>
+<p><code>src/shared/llm_queue.py</code> provides a process-local async priority semaphore (<code>LLMPriorityQueue</code>) that throttles LLM calls when the single LM Studio instance is saturated. Three priority tiers:</p>
+<table>
+<thead>
+<tr>
+<th>Priority</th>
+<th>Usage</th>
+<th>Behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>CRITICAL</code> (0)</td>
+<td>Quant <code>llm_summary_node</code>, CrewAI <code>crew.kickoff()</code></td>
+<td>Never starved — production inference served before eval</td>
+</tr>
+<tr>
+<td><code>NORMAL</code> (1)</td>
+<td>Quant server pre-warmup ping</td>
+<td>Served after CRITICAL, before LOW</td>
+</tr>
+<tr>
+<td><code>LOW</code> (2)</td>
+<td>RAGAS eval <code>metric.ascore()</code></td>
+<td>Yields when production is queued — waits if all slots occupied</td>
+</tr>
+</tbody>
+</table>
+<p>Sized by <code>LLM_MAX_CONCURRENT</code> (default 2). Uses <code>heapq</code> with <code>(priority, seq, asyncio.Future)</code> for O(log n) scheduling. Slots are handed directly to the next waiter on release, preserving priority ordering without race windows. Singleton instance imported where needed.</p>
+<h2 id="guardrails">Guardrails<a class="headerlink" href="#guardrails" title="Link">&para;</a></h2>
+<h3 id="input-guardrails">Input Guardrails<a class="headerlink" href="#input-guardrails" title="Link">&para;</a></h3>
+<p><code>src/orchestrator/agent_executor.py</code>, top of <code>execute()</code>:</p>
+<ol>
+<li><strong>Off-topic filter</strong> — <code>_NON_INVESTMENT_RE</code> regex matches weather/recipes/entertainment/horoscopes. Returns canned message in &lt; 100 ms, no sub-agents invoked.</li>
+<li><strong>Ticker pre-check</strong> — when a ticker is extracted, calls MCP <code>validate_ticker</code> before spawning sub-agents. Returns clean error in &lt; 2 s if ticker is invalid.</li>
+<li><strong>Semantic cache check</strong> — if <code>SEMANTIC_CACHE_ENABLED</code>, checks cache before the orchestrator runs.</li>
+</ol>
+<h3 id="output-guardrails">Output Guardrails<a class="headerlink" href="#output-guardrails" title="Link">&para;</a></h3>
+<p><code>src/orchestrator/agent_executor.py</code>, in <code>_process_response()</code>:</p>
+<ol>
+<li><strong>Empty/short response guard</strong> — <code>len(text.strip()) &lt; 50</code> → <code>TASK_STATE_FAILED</code> with structured error.</li>
+<li><strong>Signal check</strong> — if response lacks BUY/HOLD/SELL and the query was a stock analysis request, emits a Langfuse warning span with <code>missing_signal: true</code>.</li>
+</ol>
+<h2 id="mcp-architecture">MCP Architecture<a class="headerlink" href="#mcp-architecture" title="Link">&para;</a></h2>
+<p>MCP server split from a single monolithic file (<code>src/mcp_tools/finsight_server.py</code>, 2095 lines) into a package with per-tool modules (v1.41):</p>
+<pre><code>mcp_tools/
+  +-- _app.py              # 78-line composition root with get_app() factory
+  +-- finsight_server.py   # re-exports get_app() for backward compat
+  +-- tools/
+  │   +-- agent_registry.py   # find_agent(), resource endpoints
+  │   +-- market_data.py      # get_prices(), get_financials(), get_options_chain(),
+  │                           #   get_valuation_timeseries() (yahooquery),
+  │                           #   get_macro_indicators() (yahooquery batch fetch, fallback to yfinance)
+  │   +-- edgar.py            # SEC EDGAR tools (filings, content, search)
+  │   +-- ticker.py           # validate_ticker(), resolve_company_ticker()
+  │   +-- sentiment.py        # news, sentiment indicators, earnings history (with forward
+  │                           #   estimates via yahooquery earnings_trend),
+  │                           #   get_analyst_activity() (yahooquery grading_history)
+  │   +-- sandbox.py          # execute_python() with AST gate
+  +-- infra/
+      +-- rate_limiters.py    # TokenBucket rate limiter (_YF_LIMITER, _YQ_LIMITER for yahooquery)
+      +-- embed.py            # sentence-transformers lazy loader
+      +-- news_fetch.py       # RSS feed fetchers
+</code></pre>
+<p>Agent cards loaded from <code>agent_cards/*.json</code>, embedded via <code>sentence-transformers</code>, queried via <code>find_agent</code> tool using dot-product similarity.</p>
+<h2 id="timeout-architecture">Timeout Architecture<a class="headerlink" href="#timeout-architecture" title="Link">&para;</a></h2>
+<p>Timeouts configured via <code>.env</code> with <code>A2A_TIMEOUT=680.0</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Layer</th>
+<th>Timeout</th>
+<th>Mechanism</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A2A discovery</td>
+<td>10s per URL</td>
+<td>httpx.AsyncClient within A2ACardResolver</td>
+</tr>
+<tr>
+<td>A2A messaging (global)</td>
+<td>680s</td>
+<td>ClientConfig + httpx.AsyncClient</td>
+</tr>
+<tr>
+<td>A2A — RAG agent</td>
+<td>600s</td>
+<td><code>asyncio.wait_for</code> in <code>send_message</code></td>
+</tr>
+<tr>
+<td>A2A — Quant agent</td>
+<td>600s</td>
+<td><code>asyncio.wait_for</code> in <code>send_message</code></td>
+</tr>
+<tr>
+<td>A2A — Market Context agent</td>
+<td>600s</td>
+<td><code>asyncio.wait_for</code> in <code>send_message</code></td>
+</tr>
+<tr>
+<td>A2A — Analytics agent</td>
+<td>600s</td>
+<td><code>asyncio.wait_for</code> in <code>send_message</code></td>
+</tr>
+<tr>
+<td>A2A — Reviewer agent</td>
+<td>300s</td>
+<td><code>asyncio.wait_for</code> in <code>send_message</code></td>
+</tr>
+<tr>
+<td>MCP tool calls</td>
+<td>30s</td>
+<td>MCPClient default</td>
+</tr>
+</tbody>
+</table>
+<h2 id="error-handling">Error Handling<a class="headerlink" href="#error-handling" title="Link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Failure Mode</th>
+<th>Strategy</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Agent discovery failure</td>
+<td>Retries 3x with 5s delay</td>
+</tr>
+<tr>
+<td>A2A timeout</td>
+<td>Caught, returns error JSON to LLM</td>
+</tr>
+<tr>
+<td>MCP connection failure</td>
+<td>Exponential backoff (2^attempt), max 3 retries</td>
+</tr>
+<tr>
+<td>Agent unavailable</td>
+<td>Skipped, LLM works with what it has</td>
+</tr>
+<tr>
+<td>Response parse failure</td>
+<td><code>json.JSONDecodeError</code> caught, text used as-is</td>
+</tr>
+</tbody>
+</table>
+<h2 id="shared-agent-output-store-v27">Shared Agent Output Store (v2.7)<a class="headerlink" href="#shared-agent-output-store-v27" title="Link">&para;</a></h2>
+<p><code>src/shared/memory/agent_output_store.py</code> provides a cross-process SQLite store for full agent output persistence. The orchestrator&rsquo;s <code>send_message</code> callback calls <code>await store_agent_output(session_id, agent_name, output)</code> before returning, ensuring the reviewer always has data. The reviewer fetches outputs via <code>get_agent_outputs(session_id)</code> which normalizes agent names through <code>_AGENT_KEY_MAP</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Function</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>store_agent_output(session_id, agent_name, output)</code></td>
+<td>INSERT OR REPLACE into <code>agent_output_store</code> table. Called by orchestrator after each sub-agent response.</td>
+</tr>
+<tr>
+<td><code>get_agent_outputs(session_id)</code></td>
+<td>Fetch all outputs for a session, keyed by normalized short name (rag, quant, etc.). Called by reviewer executor.</td>
+</tr>
+<tr>
+<td><code>prune_stale_outputs(max_age_seconds=600)</code></td>
+<td>DELETE entries older than TTL. Called at orchestrator startup.</td>
+</tr>
+</tbody>
+</table>
+<p>The <code>agent_output_store</code> table (<code>session_id TEXT, agent_name TEXT, output_json TEXT, created_at TIMESTAMP, PRIMARY KEY (session_id, agent_name)</code>) was added in schema migration v5→v6.</p>
+<h2 id="centralized-metrics-metricvalue">Centralized Metrics (MetricValue)<a class="headerlink" href="#centralized-metrics-metricvalue" title="Link">&para;</a></h2>
+<p><code>src/shared/metrics.py</code> (v2.9) provides a validated <code>MetricValue</code> class — a <code>float</code> subclass that carries <code>.status</code>, <code>.warning</code>, <code>.methodology</code>, and <code>.to_dict()</code> metadata. Used by both Quant and Analytics agents for all metric computations. Replaces 5 near-duplicate metric-formatting code paths.</p>
+<table>
+<thead>
+<tr>
+<th>Function</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>MetricValue(value, methodology, min_valid, max_valid)</code></td>
+<td>Float subclass with auto-validation (finite check, range check)</td>
+</tr>
+<tr>
+<td><code>metric_result(value, methodology, ...)</code></td>
+<td>Factory wrapping raw float into validated MetricValue</td>
+</tr>
+<tr>
+<td><code>compute_rsi_wilder(prices, period)</code></td>
+<td>RSI via Wilder&rsquo;s smoothed EMA (returns float)</td>
+</tr>
+<tr>
+<td><code>compute_sharpe_ratio(returns, risk_free_rate, periods)</code></td>
+<td>Annualised Sharpe ratio (returns float)</td>
+</tr>
+<tr>
+<td><code>compute_beta(asset_returns, benchmark_returns)</code></td>
+<td>CAPM beta (returns float)</td>
+</tr>
+<tr>
+<td><code>compute_sortino_ratio(returns, ...)</code></td>
+<td>Downside-volatility Sharpe variant (returns float)</td>
+</tr>
+<tr>
+<td><code>compute_calmar_ratio(cagr, max_drawdown)</code></td>
+<td>CAGR / max drawdown (returns float)</td>
+</tr>
+<tr>
+<td><code>compute_alpha(returns, benchmark, ...)</code></td>
+<td>Jensen&rsquo;s alpha (returns float)</td>
+</tr>
+<tr>
+<td><code>compute_information_ratio(returns, benchmark, ...)</code></td>
+<td>Active return / tracking error (returns float)</td>
+</tr>
+<tr>
+<td><code>compute_cagr(values)</code></td>
+<td>Compound annual growth rate (returns float|None)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="per-agent-dependency-groups-v216">Per-Agent Dependency Groups (v2.16)<a class="headerlink" href="#per-agent-dependency-groups-v216" title="Link">&para;</a></h2>
+<p><code>pyproject.toml</code> defines per-agent optional dependency groups so each Docker image installs only its own framework:</p>
+<table>
+<thead>
+<tr>
+<th>Group</th>
+<th>Framework</th>
+<th>Used By</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>orchestrator</code></td>
+<td>google-adk, a2a-sdk, starlette</td>
+<td>Orchestrator</td>
+</tr>
+<tr>
+<td><code>rag</code></td>
+<td>llama-index, sentence-transformers</td>
+<td>RAG Agent</td>
+</tr>
+<tr>
+<td><code>quant</code></td>
+<td>langchain, langchain-openai</td>
+<td>Quant Agent</td>
+</tr>
+<tr>
+<td><code>market</code></td>
+<td>crewai</td>
+<td>Market Context Agent</td>
+</tr>
+<tr>
+<td><code>analytics</code></td>
+<td>pydantic-ai</td>
+<td>Analytics Agent</td>
+</tr>
+<tr>
+<td><code>reviewer</code></td>
+<td>openai-agents</td>
+<td>Reviewer Agent</td>
+</tr>
+<tr>
+<td><code>mcp_server</code></td>
+<td>fastmcp</td>
+<td>MCP Server</td>
+</tr>
+</tbody>
+</table>
+<p>Core <code>[project.dependencies]</code> contains only the shared base (~30 packages: a2a-sdk, starlette, pydantic, observability, auth). Each Dockerfile installs <code>".[svc]"</code> via <code>uv pip install --system</code>. Package counts per image dropped from 315 to 99-184.</p>
+<h2 id="ci-pipeline">CI Pipeline<a class="headerlink" href="#ci-pipeline" title="Link">&para;</a></h2>
+<p>A GitHub Actions CI pipeline runs on every push (v1.41, Phase 0):</p>
+<table>
+<thead>
+<tr>
+<th>Job</th>
+<th>Command</th>
+<th>Scope</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>lint</strong></td>
+<td><code>ruff check .</code> + <code>ruff format --check</code></td>
+<td>All Python files</td>
+</tr>
+<tr>
+<td><strong>type</strong></td>
+<td><code>mypy shared orchestrator</code></td>
+<td>shared/ + orchestrator only (other modules escape-hatched)</td>
+</tr>
+<tr>
+<td><strong>test</strong></td>
+<td><code>pytest tests/unit/ -v</code></td>
+<td>Unit tests with slim deps (no PyTorch/CUDA)</td>
+</tr>
+<tr>
+<td><strong>frontend</strong></td>
+<td><code>npx next lint</code> + <code>npx tsc --noEmit</code></td>
+<td>web/nextjs-app/</td>
+</tr>
+<tr>
+<td><strong>openapi</strong></td>
+<td><code>python scripts/generate_openapi.py --check</code></td>
+<td>docs/openapi.json freshness</td>
+</tr>
+<tr>
+<td><strong>docker</strong></td>
+<td>Docker build for all 8 services (continue-on-error)</td>
+<td>7 Python Dockerfiles + 1 Next.js Dockerfile</td>
+</tr>
+</tbody>
+</table>
+<p>Test job uses <code>--no-deps -e .</code> to install only ~15 packages instead of all 293 base deps (avoids PyTorch, CUDA, all agent frameworks). A <code>AUTH_ENABLED={false,true}</code> matrix runs auth contract tests twice. The Docker build matrix includes <code>web-frontend</code> (Next.js standalone image) alongside the 7 Python agent images.</p>
+<h2 id="centralized-settings-bootstrap">Centralized Settings &amp; Bootstrap<a class="headerlink" href="#centralized-settings-bootstrap" title="Link">&para;</a></h2>
+<p>Configuration migrated from <code>src/shared/config.py</code> (re-exporting shim, removed in v2.0) to <code>src/shared/settings.py</code>:</p>
+<ul>
+<li><strong>pydantic-settings <code>BaseSettings</code></strong>: Type-safe env var loading with back-compat aliases (<code>LLM_BASE_URL</code> → <code>OPENAI_BASE_URL</code> → <code>LM_STUDIO_BASE_URL</code>)</li>
+<li><strong><code>get_settings()</code> singleton</strong>: Lazy-loaded, cached after first call</li>
+<li><strong><code>validate_runtime()</code></strong>: Production-mode enforcement (e.g., refuses <code>ast</code> sandbox on Windows)</li>
+</ul>
+<p>Process-level side-effects centralized in <code>src/shared/bootstrap.py</code>:
+- Event loop policy (<code>WindowsSelectorEventLoopPolicy</code> on Windows)
+- <code>HF_HUB_OFFLINE=1</code>
+- <code>sys.stdout.reconfigure(encoding='utf-8')</code>
+- <code>LANGFUSE_SECONDARY_KEY</code> patching</p>
+<h2 id="llm-configuration">LLM Configuration<a class="headerlink" href="#llm-configuration" title="Link">&para;</a></h2>
+<p>All agents use LM Studio (OpenAI-compatible local API). The <code>src/shared/settings.py</code> default is <code>mistralai/ministral-3-14b-reasoning</code>; the active <code>.env</code> overrides to <code>liquid/lfm2.5-1.2b</code> for sub-agents and <code>openai/qwen/qwen3-4b-2507</code> for the ADK orchestrator. All LLM calls are throttled by <code>LLMPriorityQueue</code> (3 priority tiers) to prevent eval scoring from starving production inference; concurrency controlled by <code>LLM_MAX_CONCURRENT</code> env var (default 2).</p>
+<h3 id="cross-process-eval-coordination">Cross-Process Eval Coordination<a class="headerlink" href="#cross-process-eval-coordination" title="Link">&para;</a></h3>
+<p>Sub-agent evals are deferred via <code>src/shared/eval_gate.py</code> to prevent five sub-agent eval processes from competing with orchestrator synthesis on the shared LM Studio instance. Each sub-agent calls <code>defer_eval()</code> instead of <code>asyncio.create_task()</code>. The orchestrator&rsquo;s <code>after_agent_callback</code> fires <code>_release_sub_agent_evals()</code> which POSTs to each sub-agent&rsquo;s <code>/release-evals</code> endpoint after synthesis completes. A 120s safety-net auto-release prevents evals from being silently dropped if the orchestrator crashes.</p>
+<table>
+<thead>
+<tr>
+<th>Agent</th>
+<th>Model (default / .env override)</th>
+<th>Provider</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Orchestrator (ADK)</td>
+<td><code>mistralai/ministral-3-14b-reasoning</code> (default) / <code>openai/qwen/qwen3-4b-2507</code> (.env)</td>
+<td><code>openai/</code> prefix (LM Studio endpoint)</td>
+</tr>
+<tr>
+<td>RAG (LlamaIndex)</td>
+<td><code>mistralai/ministral-3-14b-reasoning</code> (default) / <code>liquid/lfm2.5-1.2b</code> (.env)</td>
+<td><code>llama-index-llms-openai-like</code></td>
+</tr>
+<tr>
+<td>Quant (LangGraph)</td>
+<td><code>mistralai/ministral-3-14b-reasoning</code> (default) / <code>liquid/lfm2.5-1.2b</code> (.env)</td>
+<td><code>langchain-openai</code></td>
+</tr>
+<tr>
+<td>Market Context (CrewAI)</td>
+<td><code>mistralai/ministral-3-14b-reasoning</code> (default) / <code>liquid/lfm2.5-1.2b</code> (.env)</td>
+<td>CrewLLM (OpenAI-compatible)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="observability-tracing">Observability &amp; Tracing<a class="headerlink" href="#observability-tracing" title="Link">&para;</a></h2>
+<p>Langfuse provides distributed tracing across all six agent processes. Trace context is propagated through the A2A protocol via text-based injection.</p>
+<h3 id="trace-propagation-flow">Trace Propagation Flow<a class="headerlink" href="#trace-propagation-flow" title="Link">&para;</a></h3>
+<pre><code>Orchestrator (orchestrator)
+  +-- agent_executor.py: langfuse.trace(name=&quot;finsight-query&quot;)
+  +-- start_as_current_observation(name=&quot;orchestrator-execute&quot;)
+  +-- send_message() tool: get_current_trace_id() + get_current_observation_id()
+  +-- inject_trace_context(task, trace_id, parent_span_id) → A2A text prefix
+
+A2A Protocol (JSON-RPC over HTTP)
+  +-- Task text prefixed with {&quot;_trace&quot;: {&quot;trace_id&quot;: &quot;...&quot;, &quot;parent_span_id&quot;: &quot;...&quot;}}
+
+Sub-agents (agent_2, agent_3, agent_4)
+  +-- extract_trace_ids(query) → (trace_id, parent_span_id, clean_query)
+  +-- start_observation(trace_context={&quot;trace_id&quot;: ..., &quot;parent_span_id&quot;: ...})
+  +-- Langfuse joins the span to the orchestrator's trace tree
+</code></pre>
+<h3 id="trace-context-utility">Trace Context Utility<a class="headerlink" href="#trace-context-utility" title="Link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Function</th>
+<th>File</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>inject_trace_context(task, trace_id, parent_span_id)</code></td>
+<td><code>src/shared/trace_context.py</code></td>
+<td>Serializes trace IDs as JSON prefix in task text</td>
+</tr>
+<tr>
+<td><code>extract_trace_context(task)</code></td>
+<td><code>src/shared/trace_context.py</code></td>
+<td>Returns <code>(trace_ctx_dict, clean_query)</code></td>
+</tr>
+<tr>
+<td><code>extract_trace_ids(task)</code></td>
+<td><code>src/shared/trace_context.py</code></td>
+<td>Returns <code>(trace_id, parent_span_id, clean_query)</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="span-noise-filtering">Span Noise Filtering<a class="headerlink" href="#span-noise-filtering" title="Link">&para;</a></h3>
+<p>The Langfuse client uses <code>is_default_export_span</code> to filter out noisy A2A internal spans (<code>a2a-python-sdk</code> scope) and HTTPX transport spans. Only high-level workflow spans (<code>langfuse-sdk</code> scope) and LLM spans are exported, keeping traces clean and focused.</p>
+<h3 id="per-agent-instrumentation">Per-Agent Instrumentation<a class="headerlink" href="#per-agent-instrumentation" title="Link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Agent</th>
+<th>Service Name</th>
+<th>Instrumentors</th>
+<th>Manual Spans</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Orchestrator</td>
+<td><code>orchestrator</code></td>
+<td>GoogleADKInstrumentor, HTTPXClientInstrumentor</td>
+<td><code>orchestrator-execute</code> span, per-sub-agent latency spans</td>
+</tr>
+<tr>
+<td>RAG Agent</td>
+<td><code>rag_agent</code></td>
+<td>LlamaIndexInstrumentor</td>
+<td><code>rag-agent-stream</code> span</td>
+</tr>
+<tr>
+<td>Quant Agent</td>
+<td><code>quant_agent</code></td>
+<td>StarletteInstrumentor</td>
+<td><code>quant-agent-stream</code> span + CallbackHandler for LangGraph nodes</td>
+</tr>
+<tr>
+<td>Market Context Agent</td>
+<td><code>market_context_agent</code></td>
+<td>CrewAIInstrumentor, StarletteInstrumentor, <code>@observe()</code> on <code>analyze()</code></td>
+<td><code>market-context-agent-stream</code> span + <code>crewai-market-analysis</code> observation</td>
+</tr>
+<tr>
+<td>Analytics Agent</td>
+<td><code>analytics_agent</code></td>
+<td>PydanticAI <code>Agent.instrument_all()</code>, StarletteInstrumentor</td>
+<td><code>analytics-agent-stream</code> span + <code>gen_ai.*</code> OTEL spans</td>
+</tr>
+<tr>
+<td>Reviewer Agent</td>
+<td><code>reviewer_agent</code></td>
+<td>StarletteInstrumentor, <code>langfuse.openai.AsyncOpenAI</code></td>
+<td><code>reviewer-agent-stream</code> span + auto-instrumented LLM generations</td>
+</tr>
+<tr>
+<td>MCP Server</td>
+<td><code>mcp_server</code></td>
+<td>—</td>
+<td><code>@observe()</code> on individual tools</td>
+</tr>
+</tbody>
+</table>
+<h3 id="colored-console-logging-v217">Colored Console Logging (v2.17)<a class="headerlink" href="#colored-console-logging-v217" title="Link">&para;</a></h3>
+<p><code>src/shared/logging_config.py</code> provides a <code>ColoredFormatter</code> for console output:
+- Per-level ANSI colors (DEBUG=cyan, INFO=green, WARNING=yellow, ERROR=red, CRITICAL=bold white on red)
+- Service badge colors aligned with the frontend CSS palette
+- Decorator lifecycle markers: <code>→ Enter</code>, <code>← Exit ⏱</code>, <code>✗ Fail ⏱</code>
+- <code>NO_COLOR=1</code> disables all ANSI codes; <code>FORCE_COLOR=1</code> forces them on non-TTY
+- JSON file logs remain plain (zero ANSI codes)
+- Frontend counterpart: <code>src/web/nextjs-app/lib/logger.ts</code> with ANSI (server) and CSS <code>%c</code> (browser)</p>
+<h3 id="sub-agent-latency-spans">Sub-Agent Latency Spans<a class="headerlink" href="#sub-agent-latency-spans" title="Link">&para;</a></h3>
+<p><code>src/orchestrator/sub_agent_client.py</code> wraps each <code>send_message()</code> call with a <code>time.monotonic()</code> stopwatch and emits a Langfuse span:</p>
+<pre><code class="language-python">lf.observation(
+    as_type=&quot;span&quot;,
+    name=f&quot;sub-agent-{agent_name}&quot;,
+    input={&quot;task&quot;: task_str[:200]},
+    output={&quot;response&quot;: result_text[:200]},
+    metadata={&quot;latency_ms&quot;: round((t1 - t0) * 1000), &quot;agent&quot;: agent_name},
+)
+</code></pre>
+<p>When <code>EVAL_TRACE_ENABLED=true</code>, the same call also writes a JSON file to <code>src/tests/evaluation/eval_results/orchestrator_traces/</code> for use by the RAGAS orchestrator evaluation runner.</p>
+<h3 id="ttft-tracking-v218">TTFT Tracking (v2.18)<a class="headerlink" href="#ttft-tracking-v218" title="Link">&para;</a></h3>
+<p>Time to First Token (TTFT) is tracked in two locations via Langfuse <code>generation.update(completion_start_time)</code>:</p>
+<ol>
+<li>
+<p><strong><code>sub_agent_client.py</code></strong>: Each A2A <code>send_message()</code> call wraps the streaming response. On the first event received, <code>generation.update(completion_start_time=now)</code> marks when the sub-agent started producing output. This gives per-sub-agent TTFT in the Langfuse trace tree.</p>
+</li>
+<li>
+<p><strong><code>agent_executor.py</code></strong>: The ADK runner&rsquo;s <code>run_async()</code> stream similarly records the first event as <code>completion_start_time</code>, measuring the orchestrator LLM&rsquo;s TTFT.</p>
+</li>
+</ol>
+<p>Both locations use a local <code>ttft_recorded</code> flag to ensure <code>completion_start_time</code> is set only once per generation. Langfuse computes the TTFT as <code>completion_start_time - start_time</code> automatically.</p>
+<h2 id="memory-layer-architecture">Memory Layer Architecture<a class="headerlink" href="#memory-layer-architecture" title="Link">&para;</a></h2>
+<p>The memory layer provides persistent session storage and cross-session memory retrieval using SQLite. All memory components are in <code>src/shared/memory/</code>.</p>
+<h3 id="overview_1">Overview<a class="headerlink" href="#overview_1" title="Link">&para;</a></h3>
+<pre><code>+--------------------------------------------------------------+
+│                    Memory Layer (SQLite)                       —
+│                                                               —
+│  +-----------------+  +-----------------+  +---------------+ —
+│  — Session Store   │  — Ticker Memory   │  — Portfolio     │ —
+│  — (ADK native)    │  — (briefs/recs)   │  — Store         │ —
+│  — DatabaseSession —  — format_context()—  — holdings/risk — —
+│  +-----------------+  +-----------------+  +---------------+ —
+│                                                               —
+│  +-----------------+  +-----------------+                    —
+│  — Performance     │  — Memory Service  —                    —
+│  — Tracker         │  — (load_memory)   │                    —
+│  — accuracy stats  —  — cross-session   │                    —
+│  +-----------------+  +-----------------+                    —
++--------------------------------------------------------------+
+</code></pre>
+<h3 id="session-persistence">Session Persistence<a class="headerlink" href="#session-persistence" title="Link">&para;</a></h3>
+<p><code>DatabaseSessionService</code> (ADK native) replaces <code>InMemorySessionService</code>:</p>
+<pre><code class="language-python">DatabaseSessionService(db_url=&quot;sqlite+aiosqlite:///./db/finsight_memory.db&quot;)
+</code></pre>
+<p>All conversation events (user messages, agent responses, tool calls) are persisted to SQLite tables (<code>sessions</code>, <code>events</code>). Conversations survive server restarts.</p>
+<h3 id="timezone">Timezone<a class="headerlink" href="#timezone" title="Link">&para;</a></h3>
+<p>All datetime operations use <strong>IST (UTC+5:30)</strong>, defined as <code>IST = timezone(timedelta(hours=5, minutes=30), name="IST")</code> in <code>src/shared/settings.py</code>. This applies to agent timestamps, memory created_at fields, analysis_date comparisons, and performance evaluation timestamps. Previously mixed UTC/local timestamps caused same-day cache mismatches on non-IST machines.</p>
+<h3 id="memory-cache-callback-before_agent_callback">Memory Cache Callback (before_agent_callback)<a class="headerlink" href="#memory-cache-callback-before_agent_callback" title="Link">&para;</a></h3>
+<p>The fastest same-day cache path is the <code>before_agent_callback</code> registered as <code>root_agent.before_agent_callback = _memory_cache_callback</code>. It fires before the LLM runs, extracts the user&rsquo;s ticker from session events, and if today&rsquo;s brief has a valid <code>response_text</code>, returns <code>types.Content(role="model", parts=[...])</code> — the ADK runner accepts this as the agent response and skips the LLM entirely. This completes in ~200ms vs 30-60s for a full agent run.</p>
+<p><strong>Ticker-resolution fallback</strong>: When the regex-extracted token misses in DB (e.g. user typed &ldquo;VISA&rdquo; but the brief is stored under canonical &ldquo;V&rdquo;), the callback falls back to MCP <code>resolve_company_ticker</code> and retries the cache lookup. Closes the asymmetry where <code>save_brief</code> dedup hit but the cache lookup missed.</p>
+<p>The executor-level path (<code>src/orchestrator/agent_executor.py</code>) has a parallel check via <code>_get_today_cached_text()</code> for A2A requests.</p>
+<h3 id="full-synthesis-in-save_brief">Full Synthesis in save_brief<a class="headerlink" href="#full-synthesis-in-save_brief" title="Link">&para;</a></h3>
+<p><code>save_brief</code> now reads the longest LLM-generated text from <code>session.events</code> on the first write (via <code>_synthesis_text_from_context</code>). This means both the ADK-web and A2A paths store the full BUY/HOLD/SELL analysis instead of the short rationale. Only falls back to rationale when no model output exists in the turn. The post-turn <code>update_response_text</code> overwrite was removed — it was unreliable and blind to the A2A path. The same-day cache callback reads this rich <code>response_text</code> directly, so subsequent same-day queries return the full analysis.</p>
+<h3 id="memory-context-injection">Memory Context Injection<a class="headerlink" href="#memory-context-injection" title="Link">&para;</a></h3>
+<p>When the cache callback misses (no today brief), the executor injects memory context into the user message:</p>
+<pre><code>User Query → Executor._build_memory_context(query)
+  +-- extract_ticker(query) → &quot;NVDA&quot;
+  +-- TickerMemory.get_latest(&quot;NVDA&quot;) → last brief (with analysis_date)
+  +-- Compare analysis_date with today
+  │     [TODAY]  → tag as current; LLM MUST return directly (strict directive)
+  │     [STALE]  → tag as outdated; LLM MUST call all agents fresh
+  +-- PortfolioStore.get() → current holdings
+  +-- Prepend: [MEMORY CONTEXT] ... [/MEMORY CONTEXT]
+       → Runner receives augmented query
+</code></pre>
+<p>The memory context is compact (~300 tokens) and includes:
+- Latest recommendation for the queried ticker tagged <code>[TODAY]</code> or <code>[STALE]</code> based on <code>analysis_date</code>
+- Current portfolio holdings (labelled as background reference — not forwarded to sub-agents unless user explicitly requests portfolio analysis)
+- When serving from today&rsquo;s cache (<code>[TODAY]</code>), the response is <strong>not</strong> re-saved to memory to prevent duplicate records</p>
+<h3 id="component-architecture">Component Architecture<a class="headerlink" href="#component-architecture" title="Link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>File</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>SQLiteStore</code></td>
+<td><code>src/shared/memory/store.py</code></td>
+<td>SQLite connection, auto-migration, table creation</td>
+</tr>
+<tr>
+<td><code>TickerMemory</code></td>
+<td><code>src/shared/memory/ticker_memory.py</code></td>
+<td>Per-ticker brief storage, <code>format_context()</code> for prompt injection</td>
+</tr>
+<tr>
+<td><code>PortfolioStore</code></td>
+<td><code>src/shared/memory/portfolio_store.py</code></td>
+<td>User profile, holdings persistence, risk profile</td>
+</tr>
+<tr>
+<td><code>PerformanceTracker</code></td>
+<td><code>src/shared/memory/performance_tracker.py</code></td>
+<td>Recommendation outcome tracking, accuracy evaluation</td>
+</tr>
+<tr>
+<td><code>SQLiteMemoryService</code></td>
+<td><code>src/shared/memory/memory_service.py</code></td>
+<td>ADK <code>BaseMemoryService</code> implementation for <code>load_memory</code> tool</td>
+</tr>
+</tbody>
+</table>
+<h2 id="web-frontend-nextjs">Web Frontend (Next.js)<a class="headerlink" href="#web-frontend-nextjs" title="Link">&para;</a></h2>
+<p>The web frontend (<code>src/web/nextjs-app/</code>) is a Next.js 16 application running on port 3000, served either via <code>next start</code> (standalone Docker image) or <code>next dev</code> (local development). It provides the user-facing UI: overview page, research chat (CopilotKit), dashboard metrics, and operator controls.</p>
+<h3 id="service-architecture">Service Architecture<a class="headerlink" href="#service-architecture" title="Link">&para;</a></h3>
+<pre><code>Next.js (port 3000)
+  +-- /app/overview          — landing page with system overview
+  +-- /app/research          — CopilotKit chat interface (proxied to orchestrator /a2a-agui)
+  +-- /app/dashboard         — Langfuse metrics dashboard (KPIs, agent breakdown, latency charts)
+  +-- /app/operator          — service health dashboard
+  +-- /api/copilotkit         — POST proxy to orchestrator /a2a-agui
+  +-- /api/dashboard         — GET aggregated dashboard metrics
+  +-- /api/dashboard/scores  — GET RAGAS score timeseries
+  +-- /api/reports/*         — GET report downloads (proxied to backend)
+  +-- /api/auth/*            — login/logout endpoints
+</code></pre>
+<h3 id="docker-build">Docker Build<a class="headerlink" href="#docker-build" title="Link">&para;</a></h3>
+<p>Multi-stage Dockerfile (<code>src/web/nextjs-app/Dockerfile</code>):
+1. <strong>deps</strong>: <code>node:20-alpine</code> + <code>npm ci</code>
+2. <strong>build</strong>: <code>npm run build</code> (standalone output via <code>output: 'standalone'</code> in <code>next.config.ts</code>)
+3. <strong>runner</strong>: <code>node:20-alpine</code> + standalone build output — no <code>node_modules</code>, ~120MB final image</p>
+<h3 id="langfuse-api-integration">Langfuse API Integration<a class="headerlink" href="#langfuse-api-integration" title="Link">&para;</a></h3>
+<p>The dashboard queries Langfuse via its REST API. API limits are capped at 100 (Langfuse cloud tier limit) to prevent 400 errors. The dashboard and overview pages display actual API error messages rather than generic fallbacks.</p>
+<h2 id="health-endpoints">Health Endpoints<a class="headerlink" href="#health-endpoints" title="Link">&para;</a></h2>
+<p>All eight services expose <code>GET /health</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Service</th>
+<th>URL</th>
+<th>Response</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Web Frontend</td>
+<td><code>http://localhost:3000/api/health</code></td>
+<td><code>{"status":"ok","agent":"web"}</code></td>
+</tr>
+<tr>
+<td>Orchestrator</td>
+<td><code>http://localhost:8001/health</code></td>
+<td><code>{"status":"ok","agent":"orchestrator"}</code></td>
+</tr>
+<tr>
+<td>RAG Agent</td>
+<td><code>http://localhost:8002/health</code></td>
+<td><code>{"status":"ok","agent":"rag"}</code></td>
+</tr>
+<tr>
+<td>Quant Agent</td>
+<td><code>http://localhost:8003/health</code></td>
+<td><code>{"status":"ok","agent":"quant"}</code></td>
+</tr>
+<tr>
+<td>Market Context Agent</td>
+<td><code>http://localhost:8004/health</code></td>
+<td><code>{"status":"ok","agent":"market_context"}</code></td>
+</tr>
+<tr>
+<td>Analytics Agent</td>
+<td><code>http://localhost:8005/health</code></td>
+<td><code>{"status":"ok","agent":"analytics"}</code></td>
+</tr>
+<tr>
+<td>Reviewer Agent</td>
+<td><code>http://localhost:8006/health</code></td>
+<td><code>{"status":"ok","agent":"reviewer"}</code></td>
+</tr>
+<tr>
+<td>MCP Server</td>
+<td><code>http://localhost:8010/health</code></td>
+<td><code>{"status":"ok","agent":"mcp"}</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="eval-release-endpoints">Eval Release Endpoints<a class="headerlink" href="#eval-release-endpoints" title="Link">&para;</a></h3>
+<p>All five sub-agent servers expose <code>POST /release-evals</code> to trigger deferred eval coroutines:</p>
+<table>
+<thead>
+<tr>
+<th>Service</th>
+<th>Endpoint</th>
+<th>Response</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RAG Agent</td>
+<td><code>POST http://localhost:8002/release-evals</code></td>
+<td><code>{"released": N}</code></td>
+</tr>
+<tr>
+<td>Quant Agent</td>
+<td><code>POST http://localhost:8003/release-evals</code></td>
+<td><code>{"released": N}</code></td>
+</tr>
+<tr>
+<td>Market Context Agent</td>
+<td><code>POST http://localhost:8004/release-evals</code></td>
+<td><code>{"released": N}</code></td>
+</tr>
+<tr>
+<td>Analytics Agent</td>
+<td><code>POST http://localhost:8005/release-evals</code></td>
+<td><code>{"released": N}</code></td>
+</tr>
+<tr>
+<td>Reviewer Agent</td>
+<td><code>POST http://localhost:8006/release-evals</code></td>
+<td><code>{"released": N}</code></td>
+</tr>
+</tbody>
+</table>
+<p>The orchestrator calls these endpoints via <code>_release_sub_agent_evals()</code> as a fire-and-forget background task after synthesis completes (5s HTTP timeout, non-fatal on failure).</p>
+<p>The MCP server mounts its health route alongside the FastMCP SSE app via a Starlette wrapper in <code>get_app()</code>. Docker-compose <code>healthcheck</code> blocks use these endpoints with <code>curl -f</code>, and <code>depends_on</code> is set to <code>condition: service_healthy</code>.</p>
+<h2 id="file-logging">File Logging<a class="headerlink" href="#file-logging" title="Link">&para;</a></h2>
+<p>All services write structured logs to the <code>logs/</code> directory via <code>src/shared/logging_config.py</code>:</p>
+<pre><code class="language-python">from shared.logging_config import setup_file_logging
+setup_file_logging(&quot;orchestrator&quot;)  # → logs/orchestrator.log
+</code></pre>
+<p><code>setup_file_logging(service_name)</code> attaches a <code>RotatingFileHandler</code> (10 MB max, 5 backups) and a <code>StreamHandler</code> to the root logger. Called at module level in each server entry point. Duplicate handler registration is guarded.</p>
+<table>
+<thead>
+<tr>
+<th>Service</th>
+<th>Log file</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Orchestrator</td>
+<td><code>logs/orchestrator.log</code></td>
+</tr>
+<tr>
+<td>RAG Agent</td>
+<td><code>logs/rag_agent.log</code></td>
+</tr>
+<tr>
+<td>Quant Agent</td>
+<td><code>logs/quant.log</code></td>
+</tr>
+<tr>
+<td>Market Context Agent</td>
+<td><code>logs/market_context.log</code></td>
+</tr>
+<tr>
+<td>Analytics Agent</td>
+<td><code>logs/analytics.log</code></td>
+</tr>
+<tr>
+<td>Reviewer Agent</td>
+<td><code>logs/reviewer.log</code></td>
+</tr>
+<tr>
+<td>MCP Server</td>
+<td><code>logs/mcp.log</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="decorators">Decorators<a class="headerlink" href="#decorators" title="Link">&para;</a></h3>
+<p><code>src/shared/logging_config.py</code> exports two timing decorators:</p>
+<ul>
+<li><strong><code>@logged</code></strong>: For async functions. Emits <code>Enter</code>/<code>Exit</code>/<code>Fail</code> structured log lines with <code>latency_ms</code> using <code>time.monotonic()</code> and <code>fn.__qualname__</code>. Applied to <code>GenericAgentExecutor.execute()</code>.</li>
+<li><strong><code>@logged_sync</code></strong>: Same behaviour for synchronous functions.</li>
+</ul>
+<h3 id="third-party-logger-suppression">Third-party Logger Suppression<a class="headerlink" href="#third-party-logger-suppression" title="Link">&para;</a></h3>
+<p><code>setup_file_logging()</code> sets <code>httpx</code>, <code>chromadb</code>, <code>langfuse</code>, <code>hpack</code>, <code>urllib3</code>, and <code>asyncio</code> to <code>WARNING</code> by default. Each is overridable via a <code>LOG_LEVEL_&lt;LIB&gt;</code> env var:</p>
+<pre><code>LOG_LEVEL_HTTPX=DEBUG    # verbose HTTP traces
+LOG_LEVEL_CHROMADB=INFO  # ChromaDB query details
+</code></pre>
+<h3 id="operational-coverage">Operational Coverage<a class="headerlink" href="#operational-coverage" title="Link">&para;</a></h3>
+<p>Key events emit structured log lines (visible in service log files):</p>
+<ul>
+<li><strong>Cache</strong>: hit/miss/eviction in <code>src/shared/ttl_cache.py</code></li>
+<li><strong>Sandbox</strong>: entry/exit in <code>src/shared/code_sandbox.py</code></li>
+<li><strong>Database</strong>: open/close/migrate/prune in <code>src/shared/memory/store.py</code></li>
+<li><strong>Memory</strong>: brief store/update in <code>ticker_memory.py</code>; portfolio upsert in <code>portfolio_store.py</code>; recommendation record in <code>performance_tracker.py</code></li>
+<li><strong>Reports</strong>: format + byte count for each generated report in <code>api_routes.py</code></li>
+</ul>
+<h3 id="entity-relationship-diagram">Entity-Relationship Diagram<a class="headerlink" href="#entity-relationship-diagram" title="Link">&para;</a></h3>
+<p>FinSight uses two separate SQLite databases (since v2.6 — <code>db/finsight_memory.db</code> for business data, <code>db/adk_sessions.db</code> for conversation state). All tables live in the <code>db/</code> folder at the project root.</p>
+<pre><code>┌─────────────────────────────────────────────────────────────────────────┐
+│                        finsight_memory.db                                │
+│                                                                         │
+│  ┌──────────────┐       ┌──────────────────┐       ┌────────────────┐  │
+│  │ sessions      │──1:N──│ events            │       │ memory_entries │  │
+│  │              │       │                   │       │                │  │
+│  │ id (PK)      │       │ id (PK)           │──N:1─│ id (PK)        │  │
+│  │ user_id      │       │ session_id (FK)   │       │ session_id (FK)│  │
+│  │ created_at   │       │ event_type        │       │ content_hash   │  │
+│  │ updated_at   │       │ data (JSON)       │       │ content        │  │
+│  └──────────────┘       │ created_at        │       │ search_text    │  │
+│                         └──────────────────┘       │ created_at     │  │
+│                                                    └────────────────┘  │
+│  ┌──────────────┐       ┌──────────────────┐                          │
+│  │ ticker_briefs │       │ recommendation_  │                          │
+│  │              │       │ records           │                          │
+│  │ id (PK)      │       │ id (PK)           │                          │
+│  │ ticker       │       │ ticker            │                          │
+│  │ recommendation│       │ recommendation    │                          │
+│  │ confidence   │       │ confidence        │                          │
+│  │ response_text│       │ price_at_rec      │                          │
+│  │ analysis_date│       │ created_at        │                          │
+│  │ created_at   │       │ evaluated_at      │                          │
+│  └──────────────┘       │ realized_return   │                          │
+│                         └──────────────────┘                          │
+│  ┌──────────────┐       ┌──────────────────┐       ┌────────────────┐  │
+│  │ user_profiles │       │ ingested_filings  │       │ agent_output_  │  │
+│  │              │       │                   │       │ store          │  │
+│  │ id (PK)      │       │ edgar_url (PK)    │       │                │  │
+│  │ user_id      │       │ ticker            │       │ session_id     │  │
+│  │ holdings_json│       │ ingested_at       │       │ agent_name     │  │
+│  │ risk_profile │       └──────────────────┘       │ output_json    │  │
+│  │ investment_  │                                  │ created_at     │  │
+│  │ horizon      │                                  └────────────────┘  │
+│  │ updated_at   │                                                     │
+│  └──────────────┘                                                     │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                          adk_sessions.db                                │
+│                                                                         │
+│  ┌──────────────┐       ┌──────────────────┐                          │
+│  │ sessions      │──1:N──│ events            │                          │
+│  │              │       │                   │                          │
+│  │ id (PK)      │       │ id (PK)           │                          │
+│  │ user_id      │       │ session_id (FK)   │                          │
+│  │ app_name     │       │ author            │                          │
+│  │ created_at   │       │ timestamp         │                          │
+│  └──────────────┘       │ content (JSON)    │                          │
+│                         └──────────────────┘                          │
+└─────────────────────────────────────────────────────────────────────────┘
+</code></pre>
+<h3 id="table-relationships">Table Relationships<a class="headerlink" href="#table-relationships" title="Link">&para;</a></h3>
+<p><strong>Core conversation flow</strong> (<code>adk_sessions.db</code>):
+- <code>sessions</code> → <code>events</code>: One session has many events. Each event is a single turn (user message, agent response, tool call). The <code>data</code> JSON column stores the full event payload including LLM content parts and tool call/response metadata.</p>
+<p><strong>Memory and persistence</strong> (<code>finsight_memory.db</code>):
+- <code>sessions</code> → <code>events</code>: Mirrors the ADK schema but used by the memory layer for cross-session search via <code>memory_entries</code>.
+- <code>sessions</code> → <code>memory_entries</code>: One session has many memory entries. <code>content_hash</code> enables deduplication. <code>search_text</code> is the FTS5-indexed column queried by <code>load_memory</code>.
+- <code>ticker_briefs</code>: Independent table keyed by ticker + analysis_date. Each row is a complete BUY/HOLD/SELL analysis. Linked to the orchestrator&rsquo;s <code>save_brief</code> flow — not directly to sessions.
+- <code>recommendation_records</code>: Tracks the same recommendation with a <code>price_at_rec</code> snapshot. Updated asynchronously by <code>PerformanceTracker</code> when evaluation completes, populating <code>evaluated_at</code> and <code>realized_return</code>.
+- <code>user_profiles</code>: One row per <code>user_id</code>. Stores portfolio holdings as JSON (<code>holdings_json</code>), risk tolerance, and investment horizon. Updated by <code>PortfolioStore.update_holdings()</code>.
+- <code>ingested_filings</code>: Deduplication table for RAG ingestion. <code>edgar_url</code> is the primary key (SEC URLs are immutable and canonical).
+- <code>agent_output_store</code>: Cross-process data bridge. Keyed by <code>(session_id, agent_name)</code>. The orchestrator writes sub-agent outputs here via <code>store_agent_output()</code>; the reviewer reads them via <code>get_agent_outputs()</code>.</p>
+<h3 id="data-lifecycle">Data Lifecycle<a class="headerlink" href="#data-lifecycle" title="Link">&para;</a></h3>
+<pre><code>User Query (e.g. &quot;Should I invest in NVDA?&quot;)
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────┐
+│ 1. INGESTION &amp; ROUTING (Orchestrator)                        │
+│    • Extract ticker via regex + MCP validate_ticker          │
+│    • Check same-day cache (ticker_briefs.analysis_date)      │
+│    • Check semantic cache (ChromaDB cosine similarity)        │
+│    • Inject memory context (ticker_briefs + user_profiles)   │
+│    • LLM routes to sub-agents via send_message               │
+└─────────────────────────────────────────────────────────────┘
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────┐
+│ 2. ANALYSIS (Sub-agents, parallel)                          │
+│    • RAG: fetch SEC filings → ChromaDB → LlamaIndex query    │
+│    • Quant: MCP prices/financials → LangGraph computation    │
+│    • Market: MCP macro/peers → CrewAI narrative              │
+│    • Analytics: MCP prices → PydanticAI DAG (trend/forecast/ │
+│      anomaly/stats/charts)                                   │
+│    • Each agent writes its own output to agent_output_store   │
+└─────────────────────────────────────────────────────────────┘
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────┐
+│ 3. REVIEW (Reviewer Agent, sequential)                       │
+│    • Fetch agent outputs from agent_output_store             │
+│    • Run 6 deterministic validation tools (Python)           │
+│    • LLM synthesizes structured review + meta-confidence     │
+│    • Output: verdict, contradictions, confidence_breakdown   │
+└─────────────────────────────────────────────────────────────┘
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────┐
+│ 4. PERSISTENCE (Orchestrator after_agent_callback)           │
+│    • save_brief() → ticker_briefs (full synthesis text)      │
+│    • PortfolioStore.update_holdings() → user_profiles        │
+│    • PerformanceTracker.record_recommendation() →            │
+│      recommendation_records (with price_at_rec snapshot)     │
+│    • add_events_to_memory() → memory_entries (FTS5 indexed)  │
+│    • _release_sub_agent_evals() → POST /release-evals        │
+└─────────────────────────────────────────────────────────────┘
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────┐
+│ 5. EVALUATION (Background, fire-and-forget)                  │
+│    • Each agent's score_*_response() runs RAGAS metrics      │
+│    • Scores pushed to Langfuse under rags/{agent}/{metric}   │
+│    • PerformanceTracker evaluates past recommendations       │
+│      against current prices → recommendation_records          │
+│      (realized_return, evaluated_at)                         │
+└─────────────────────────────────────────────────────────────┘
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────┐
+│ 6. PRUNING (Startup + background)                            │
+│    • prune_old_records(): delete ticker_briefs,               │
+│      recommendation_records, memory_entries older than        │
+│      MEMORY_RETENTION_DAYS=90                                │
+│    • prune_stale_outputs(): delete agent_output_store        │
+│      entries older than 600s                                 │
+│    • ChromaDB semantic cache: entries never expire (date-     │
+│      scoped queries prevent stale reads)                     │
+└─────────────────────────────────────────────────────────────┘
+</code></pre>
+<h3 id="schema-ddl">Schema DDL<a class="headerlink" href="#schema-ddl" title="Link">&para;</a></h3>
+<pre><code class="language-sql">-- Conversation state (adk_sessions.db)
+CREATE TABLE sessions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    app_name TEXT DEFAULT 'orchestrator',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE events (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES sessions(id),
+    author TEXT NOT NULL DEFAULT 'orchestrator',
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    content JSON NOT NULL,          -- Array of {type, text, name, args, ...}
+    FOREIGN KEY (session_id) REFERENCES sessions(id)
+);
+
+-- Memory and persistence (finsight_memory.db)
+CREATE TABLE ticker_briefs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker TEXT NOT NULL,
+    recommendation TEXT NOT NULL,   -- BUY/HOLD/SELL
+    confidence REAL,                -- 0.0-1.0
+    response_text TEXT,             -- Full LLM synthesis (up to 4000 chars)
+    analysis_date TEXT,             -- YYYY-MM-DD (IST timezone)
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE recommendation_records (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker TEXT NOT NULL,
+    recommendation TEXT NOT NULL,
+    confidence REAL,
+    price_at_rec REAL,              -- yfinance snapshot at recommendation time
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    evaluated_at TIMESTAMP,         -- NULL until performance eval runs
+    realized_return REAL            -- NULL until evaluated
+);
+
+CREATE TABLE user_profiles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL UNIQUE,
+    holdings_json TEXT,             -- {&quot;AAPL&quot;: 10, &quot;MSFT&quot;: 5, ...}
+    risk_profile TEXT,              -- conservative/moderate/aggressive
+    investment_horizon TEXT,        -- short/medium/long
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE memory_entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    content_hash TEXT NOT NULL,     -- SHA-256 for dedup
+    content TEXT NOT NULL,          -- Original event content
+    search_text TEXT NOT NULL,      -- FTS5-indexed plain text
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE ingested_filings (
+    edgar_url TEXT PRIMARY KEY,     -- Canonical SEC URL (immutable)
+    ticker TEXT NOT NULL,
+    ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE agent_output_store (
+    session_id TEXT NOT NULL,
+    agent_name TEXT NOT NULL,       -- rag, quant, market_context, analytics, reviewer
+    output_json TEXT NOT NULL,      -- Full agent output as JSON
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (session_id, agent_name)
+);
+
+-- Indexes
+CREATE INDEX idx_ticker_briefs_ticker ON ticker_briefs(ticker);
+CREATE INDEX idx_ticker_briefs_date ON ticker_briefs(analysis_date);
+CREATE INDEX idx_events_session ON events(session_id);
+CREATE INDEX idx_memory_session ON memory_entries(session_id);
+CREATE INDEX idx_memory_hash ON memory_entries(content_hash);
+CREATE INDEX idx_recommendation_ticker ON recommendation_records(ticker);
+CREATE INDEX idx_ingested_ticker ON ingested_filings(ticker);
+</code></pre>
+<h3 id="key-design-decisions">Key Design Decisions<a class="headerlink" href="#key-design-decisions" title="Link">&para;</a></h3>
+<ul>
+<li><strong>Two databases</strong>: <code>adk_sessions.db</code> is owned by the ADK framework (conversation state); <code>finsight_memory.db</code> is owned by FinSight&rsquo;s memory layer (business data). Separating them prevents schema conflicts (v2.6).</li>
+<li><strong><code>analysis_date</code> vs <code>created_at</code></strong>: <code>ticker_briefs</code> uses a separate <code>analysis_date</code> (YYYY-MM-DD) for same-day cache comparisons. This avoids timezone ambiguity — <code>created_at</code> is a full ISO-8601 timestamp that requires parsing to determine the day boundary.</li>
+<li><strong><code>agent_output_store</code> as cross-process bridge</strong>: Rather than passing full agent outputs through A2A message payloads (size limits, serialization overhead), the orchestrator writes them to SQLite and the reviewer reads by <code>session_id</code>. The 600s TTL keeps the table small.</li>
+<li><strong><code>content_hash</code> dedup in memory_entries</strong>: SHA-256 hash of the content prevents duplicate entries when the same session is processed multiple times (e.g., retry after failure). FTS5 indexing on <code>search_text</code> enables fast full-text search for <code>load_memory</code>.</li>
+<li><strong><code>ingested_filings</code> dedup</strong>: SEC EDGAR URLs are canonical and immutable — using <code>edgar_url</code> as primary key makes re-ingestion checks a simple indexed lookup.</li>
+</ul>
+<h3 id="hf_hub_offline">HF_HUB_OFFLINE<a class="headerlink" href="#hf_hub_offline" title="Link">&para;</a></h3>
+<p><code>src/shared/bootstrap.py</code> sets <code>HF_HUB_OFFLINE=1</code> before any HuggingFace code runs (moved from <code>src/shared/config.py</code> in v1.41). This prevents network calls to <code>huggingface.co</code> when loading <code>sentence-transformers</code> or embedding models — models must be cached locally from a prior online run. Set <code>HF_HUB_OFFLINE=0</code> in <code>.env</code> to re-enable download checks.</p>
+<h2 id="runtime-ragas-evaluation">Runtime RAGAS Evaluation<a class="headerlink" href="#runtime-ragas-evaluation" title="Link">&para;</a></h2>
+<p>After each agent produces a response, a fire-and-forget background task scores it using RAGAS metrics that require no ground-truth reference. Scores are pushed to Langfuse per-trace (linked by <code>trace_id</code>).</p>
+<h3 id="feature-flag">Feature flag<a class="headerlink" href="#feature-flag" title="Link">&para;</a></h3>
+<p>All sidecar evals are gated by <code>EVAL_TRACE_ENABLED</code> in <code>.env</code> (default <code>True</code>). The flag is exposed as <code>EVAL_ENABLED</code> in <code>shared.settings</code>; every agent&rsquo;s <code>asyncio.create_task(_eval_*)</code> call site checks it. Set <code>EVAL_TRACE_ENABLED=False</code> to disable all per-agent runtime scoring with no code changes — useful for fast iteration when LM Studio judge calls add 5—180s of background work per query.</p>
+<h3 id="orchestrator-eval-hook-lives-in-after_agent_callback">Orchestrator eval hook lives in <code>after_agent_callback</code><a class="headerlink" href="#orchestrator-eval-hook-lives-in-after_agent_callback" title="Link">&para;</a></h3>
+<p>When the orchestrator runs through <code>adk web</code> (the path <code>run_adk_web.bat</code> uses), the ADK Web runner is responsible — <code>FinSightAgentExecutor</code> is never invoked. The orchestrator&rsquo;s eval is therefore scheduled from <code>src/orchestrator/web/agent.py</code>&rsquo;s <code>_persist_memory_callback</code>, not from <code>agent_executor.py</code>. The callback first runs <code>_is_analysis_turn(session.events)</code>: if <code>save_brief</code> was not called in this turn (e.g. the user only asked &ldquo;what were my last recommendations?&rdquo;), both memory persist and eval are skipped to avoid polluting long-term memory with conversational queries.</p>
+<p><code>FinSightAgentExecutor</code> still keeps its eval call for completeness — it fires when an A2A client hits <code>src/orchestrator/main.py</code> directly. The A2A server is not started by <code>run_adk_web.bat</code> by default; start it manually with <code>uv run python -m orchestrator.main</code> if needed.</p>
+<table>
+<thead>
+<tr>
+<th>Agent</th>
+<th>Background Task</th>
+<th>Metrics</th>
+<th>Why Each Metric</th>
+<th>Data Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Orchestrator</td>
+<td><code>score_response()</code></td>
+<td>AnswerRelevancy, citation_quality, risk_disclosure, recommendation_clarity, response_completeness, no_forward_guarantees</td>
+<td>AnswerRelevancy: generic catch-all for response quality. citation_quality: unsubstantiated financial claims are worthless — must cite filing dates/amounts. risk_disclosure: an investment thesis without risk discussion is incomplete. recommendation_clarity: the core output is a BUY/HOLD/SELL signal — ambiguous synthesis fails. response_completeness: must synthesize all analysis types, not just one. no_forward_guarantees: flags any language suggesting guaranteed future performance.</td>
+<td><code>user_input</code>, <code>response</code></td>
+</tr>
+<tr>
+<td>RAG</td>
+<td><code>score_rag_response()</code></td>
+<td>Faithfulness, ContextPrecisionWithoutReference, cross_collection_synthesis</td>
+<td>Faithfulness: prevents hallucinated dates/numbers by verifying claims against retrieved SEC text. ContextPrecisionWithoutReference: flags retrieval drift — when RAG returns irrelevant filings, this drops even if Faithfulness passes. cross_collection_synthesis: checks whether the response cites sources from ≥2 collections (sec_filings, news, earnings).</td>
+<td><code>user_input</code>, <code>response</code>, <code>context_texts</code> (ChromaDB nodes)</td>
+</tr>
+<tr>
+<td>Quant</td>
+<td><code>score_quant_response()</code></td>
+<td>FactualCorrectness, signal_explanation_quality, deterministic (schema validator)</td>
+<td>FactualCorrectness: compares LLM summary numbers (Sharpe, VaR, DCF) against actual computed values — primary failure mode is hallucinated numbers. signal_explanation_quality: scores whether the response explains three or more signal groups with specific numeric values. deterministic: zero-LLM schema validation — checks all 8 signal groups, weight sum, MC percentiles, peer fields, recommendation invariants.</td>
+<td><code>user_input</code>, <code>response</code>, <code>quant_result</code> (computed metrics dict)</td>
+</tr>
+<tr>
+<td>Market Context</td>
+<td><code>score_market_context_response()</code></td>
+<td>Faithfulness, macro_regime_analysis, peer_landscape_quality</td>
+<td>Faithfulness: verifies narrative is grounded in collected macro and peer data. macro_regime_analysis: evaluates if narrative discusses yield curve, VIX, DXY, sector ETF performance with actual values. peer_landscape_quality: evaluates depth of peer comparison across multiple metrics.</td>
+<td><code>user_input</code>, <code>response</code>, <code>_retrieved_contexts</code> (macro + peer data)</td>
+</tr>
+<tr>
+<td>Analytics</td>
+<td><code>score_analytics_response()</code></td>
+<td>Runtime RAGAS eval + deterministic schema checks</td>
+<td>Validates analytics output schema and defers LLM-based eval for trend, forecast, and anomaly quality.</td>
+<td><code>user_input</code>, <code>response</code>, analytics result</td>
+</tr>
+<tr>
+<td>Reviewer</td>
+<td><code>score_reviewer_response()</code></td>
+<td>Runtime RAGAS eval + deterministic schema checks</td>
+<td>Validates reviewer output schema and defers LLM-based eval for review quality.</td>
+<td><code>user_input</code>, <code>response</code>, reviewer result</td>
+</tr>
+</tbody>
+</table>
+<h3 id="per-metric-streaming">Per-Metric Streaming<a class="headerlink" href="#per-metric-streaming" title="Link">&para;</a></h3>
+<p>Metrics within an agent are run concurrently via <code>asyncio.wait(FIRST_COMPLETED)</code> instead of <code>asyncio.gather</code>. Each metric score is logged and pushed to Langfuse the moment its <code>ascore()</code> finishes — fast metrics (AnswerRelevancy, DomainSpecificRubrics ~3-5s) appear immediately without waiting for slow metrics (e.g., Faithfulness which runs multiple sequential LLM calls and can take ~180s).</p>
+<h3 id="client-caching">Client Caching<a class="headerlink" href="#client-caching" title="Link">&para;</a></h3>
+<p><code>_setup_ragas_clients()</code> caches the <code>(InstructorLLM, _STEmbeddings)</code> tuple at module level after the first call. All six agents reuse the cached <code>SentenceTransformer</code> model — the previous approach loaded a fresh model (~1-2s, ~80MB) on every agent response, multiplying latency by 6 per query.</p>
+<h3 id="error-handling_1">Error Handling<a class="headerlink" href="#error-handling_1" title="Link">&para;</a></h3>
+<ul>
+<li><strong><code>_score_metric</code></strong>: Wraps <code>metric.ascore()</code> in try/except with <code>exc_info=True</code> logging and re-raises.</li>
+<li><strong><code>_run_metrics</code></strong>: Catches <code>BaseException</code> (including <code>CancelledError</code> which inherits from <code>BaseException</code>, not <code>Exception</code>) per-metric. Float conversion is guarded with try/except.</li>
+<li><strong>Scoring functions</strong>: Each function body is wrapped in try/except that logs any unexpected crash with full traceback — prevents fire-and-forget tasks from silently dying.</li>
+</ul>
+<h3 id="debuggability">Debuggability<a class="headerlink" href="#debuggability" title="Link">&para;</a></h3>
+<p>Each scoring function logs <code>[agent] Eval entered</code> at INFO on entry. Early-return conditions (short response, import failure, no RAGAS clients) log a warning with the reason. The fallback <code>[agent] No RAGAS scores computed</code> is at INFO level.</p>
+<h3 id="timeout-encoding">Timeout &amp; Encoding<a class="headerlink" href="#timeout-encoding" title="Link">&para;</a></h3>
+<p>The <code>AsyncOpenAI</code> client uses a 180-second timeout (up from 60s) — Faithfulness makes multiple sequential LLM calls within a single <code>ascore()</code>, and each call can take ~20-30s on a 20B model. <code>sys.stdout.reconfigure(encoding='utf-8')</code> at import time prevents <code>UnicodeEncodeError</code> from RAGAS log messages with Unicode characters (curly quotes, em-dashes) on Windows cp1252 consoles and file handlers.</p>
+<h3 id="langfuse-integration">Langfuse Integration<a class="headerlink" href="#langfuse-integration" title="Link">&para;</a></h3>
+<p><code>_push_scores()</code> pushes each metric to <code>langfuse.create_score()</code> linked by <code>trace_id</code>. When <code>trace_id</code> is None (no active Langfuse trace), the push is skipped entirely to avoid &ldquo;Bad request&rdquo; errors from the cloud API with placeholder keys.</p>
+<p><strong>Score namespacing by agent</strong> — each score is pushed as <code>ragas/{agent}/{metric}</code> (e.g. <code>ragas/orchestrator/AnswerRelevancy</code>, <code>ragas/rag/Faithfulness</code>, <code>ragas/quant/FactualCorrectness</code>, <code>ragas/sentiment/catalyst_identification</code>). The previous flat <code>ragas/{metric}</code> naming made it impossible to distinguish the same metric across agents in Langfuse. Each <code>lf.create_score()</code> call also carries <code>comment="agent=&lt;name&gt;"</code> for additional structured filtering.</p>
+<h3 id="lm-studio-compatibility">LM Studio Compatibility<a class="headerlink" href="#lm-studio-compatibility" title="Link">&para;</a></h3>
+<p>RAGAS defaults to <code>instructor.Mode.JSON</code> which sends <code>response_format.type="json_object"</code> — LM Studio only supports <code>"json_schema"</code> or <code>"text"</code>. <code>_setup_ragas_clients()</code> patches with <code>instructor.Mode.JSON_SCHEMA</code>. HuggingFace embeddings are wrapped via a custom <code>_STEmbeddings</code> class (RAGAS 0.4.x <code>BaseRagasEmbedding</code>) to avoid a broken pydantic integration path.</p>
+<h3 id="offline-mode-metrics-ground-truth-required">Offline-Mode Metrics (Ground-Truth Required)<a class="headerlink" href="#offline-mode-metrics-ground-truth-required" title="Link">&para;</a></h3>
+<p>These metrics require a human-curated reference dataset and live in <code>src/tests/evaluation/</code> as offline scripts:
+- <code>run_rag_eval.py</code> — Faithfulness, ResponseRelevancy, ContextPrecision, ContextRecall, NoiseSensitivity
+- <code>run_orchestrator_eval.py</code> — ToolCallAccuracy, AgentGoalAccuracy</p>
+<h3 id="auto-save-flow">Auto-Save Flow<a class="headerlink" href="#auto-save-flow" title="Link">&para;</a></h3>
+<p>After each successful response, the executor automatically persists:</p>
+<pre><code>Response Complete → Executor._auto_save_memory(query, response)
+  +-- extract_ticker(query) → &quot;NVDA&quot;
+  +-- TickerMemory.store_brief(ticker, recommendation, response)
+  +-- PortfolioStore.update_holdings(extracted_holdings)
+  +-- PerformanceTracker.record_recommendation(ticker, rec, confidence)
+</code></pre>
+<p>The LLM does not need to call any tool to persist memory — auto-save happens on every response.</p>
+<h3 id="memory-search">Memory Search<a class="headerlink" href="#memory-search" title="Link">&para;</a></h3>
+<p>The <code>load_memory</code> tool is available to the orchestrator LLM for searching past conversations:</p>
+<pre><code class="language-python"># ADK tool injection
+memory_service = SQLiteMemoryService(store)
+runner = Runner(
+    agent=agent,
+    session_service=session_service,
+    memory_service=memory_service,  # Enables load_memory tool
+)
+</code></pre>
+<p>The LLM can call <code>load_memory(query="What did I ask about NVDA last week?")</code> to search across all past sessions.</p>
+<h3 id="integration-points">Integration Points<a class="headerlink" href="#integration-points" title="Link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Integration</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src/orchestrator/main.py</code></td>
+<td>Initializes <code>DatabaseSessionService</code> and <code>SQLiteMemoryService</code></td>
+</tr>
+<tr>
+<td><code>src/orchestrator/agent_executor.py</code></td>
+<td>Memory context injection, auto-save, <code>_add_to_memory</code></td>
+</tr>
+<tr>
+<td><code>src/orchestrator/agent.py</code></td>
+<td>System prompt includes memory usage instructions</td>
+</tr>
+</tbody>
+</table>
+<h3 id="database-files">Database Files<a class="headerlink" href="#database-files" title="Link">&para;</a></h3>
+<p>All databases are stored under the <code>db/</code> folder at the project root — the entire folder is excluded from git via <code>.gitignore</code>.</p>
+<ul>
+<li><code>db/finsight_memory.db</code> — ticker briefs, portfolios, performance records, ingested filings</li>
+<li><code>db/adk_sessions.db</code> — ADK conversation sessions and events (separated from memory data in v1.24 to prevent schema conflicts)</li>
+<li><code>db/chroma_db/</code> — ChromaDB vector store for SEC filing RAG and semantic cache</li>
+<li><code>db/.langchain_cache.db</code> — LangChain SQLiteCache for quant agent LLM responses</li>
+<li>All files auto-created on first run; <code>db/</code> directory created by <code>get_db()</code> via <code>path.parent.mkdir(parents=True, exist_ok=True)</code></li>
+</ul>
+<h2 id="report-generation">Report Generation<a class="headerlink" href="#report-generation" title="Link">&para;</a></h2>
+<p>Report generation is a separate subsystem in <code>src/shared/reports/</code> package (split from the monolithic <code>src/shared/report_generator.py</code> in v1.41) that produces two output formats (HTML, PDF) from the same shared data extraction pipeline. It is invoked via HTTP API routes in <code>src/orchestrator/api_routes.py</code>.</p>
+<pre><code>shared/reports/
+  ├── __init__.py        # public API re-exports generate_html/pdf
+  ├── deck_model.py      # DeckData dataclass with 16+ typed fields
+  ├── extraction.py      # _extract_deck_data() pipeline with robust regex + Pydantic models
+  ├── playwright_export.py # Playwright-based PDF export (A4 portrait)
+  └── html_renderer.py   # Jinja2 template rendering (scrollable page)
+</code></pre>
+<p>Back-compat shim <code>src/shared/report_generator.py</code> was removed in v2.0 (Phase 3.5).</p>
+<h3 id="api-routes-backend-starlette-app">API Routes — Backend (Starlette App)<a class="headerlink" href="#api-routes-backend-starlette-app" title="Link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Route</th>
+<th>Method</th>
+<th>Format</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/api/reports/ticker/{symbol}/latest/{format}</code></td>
+<td>GET</td>
+<td>html, pdf</td>
+<td>Generate report for ticker&rsquo;s latest brief</td>
+</tr>
+<tr>
+<td><code>/api/reports/{brief_id}/{format}</code></td>
+<td>GET</td>
+<td>html, pdf</td>
+<td>Generate report from a specific brief by ID</td>
+</tr>
+</tbody>
+</table>
+<p>Route ordering is significant: <code>/ticker/{symbol}/latest/{format}</code> must be declared before <code>/{brief_id}/{format}</code> in the Starlette route list. Otherwise <code>/{brief_id}</code> captures <code>"ticker"</code> and <code>{format}</code> captures <code>"{symbol}"</code>.</p>
+<h3 id="api-routes-frontend-nextjs">API Routes — Frontend (Next.js)<a class="headerlink" href="#api-routes-frontend-nextjs" title="Link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Route</th>
+<th>Method</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/api/copilotkit</code></td>
+<td>POST</td>
+<td>Main chat interface — proxies to orchestrator&rsquo;s AG-UI bridge at <code>/a2a-agui</code></td>
+</tr>
+<tr>
+<td><code>/api/dashboard</code></td>
+<td>GET</td>
+<td>Dashboard metrics — KPIs, agent breakdown, latency timeseries (<code>?hours=24</code>)</td>
+</tr>
+<tr>
+<td><code>/api/dashboard/scores</code></td>
+<td>GET</td>
+<td>RAGAS quality scores per agent (timeseries for chart rendering)</td>
+</tr>
+<tr>
+<td><code>/api/reports/ticker/{symbol}/latest/{format}</code></td>
+<td>GET</td>
+<td>Generate report for ticker&rsquo;s latest brief (proxied to backend)</td>
+</tr>
+<tr>
+<td><code>/api/auth/login</code></td>
+<td>POST</td>
+<td>User login — JWT returned as <code>finsight_session</code> cookie</td>
+</tr>
+<tr>
+<td><code>/api/auth/logout</code></td>
+<td>POST</td>
+<td>Clear session cookie</td>
+</tr>
+<tr>
+<td><code>/api/health</code></td>
+<td>GET</td>
+<td>Health proxy — <code>?svc=orchestrator\|rag\|quant\|market\|analytics\|reviewer\|mcp</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="data-flow">Data Flow<a class="headerlink" href="#data-flow" title="Link">&para;</a></h3>
+<pre><code>HTTP Request → api_routes.py handler
+  → _load_brief_data(brief_id_or_symbol)  — loads from TickerMemory
+  → generate_html / generate_pdf_async
+    → _extract_deck_data(brief)  — shared pipeline (Pydantic models)
+      +-- _extract_metric(deck, &quot;sharpe_ratio&quot;)   → 1.45
+      +-- _extract_recommendation(brief)           → &quot;BUY&quot;
+      +-- _extract_scorecards(metrics)             → Momentum, RSI scorecards
+      +-- _extract_advanced_scorecard(metrics)     → VaR, beta, volatility
+      +-- _extract_fundamentals(metrics)           → PE, ROE, margins
+      +-- _extract_executive_sections(brief)       → [Price Target, Thesis, Recommendation]
+      +-- _populate_from_agent_outputs(brief)      → Pydantic model parsing
+      +-- _extract_holdings(metrics)               → portfolio table
+    → format-specific generator (HTML scrollable page or A4 PDF)
+</code></pre>
+<h3 id="format-specific-generators">Format-Specific Generators<a class="headerlink" href="#format-specific-generators" title="Link">&para;</a></h3>
+<p><strong>HTML</strong> (<code>generate_html</code>):
+- Uses <code>_get_jinja_env()</code> — lazy-loaded <code>Jinja2</code> <code>Environment</code> with <code>FileSystemLoader("shared/templates/")</code>
+- Renders <code>investment_deck.html</code> template as a full scrollable page (v2.5 replaced the slide deck format):
+  - Sticky PDF download bar at top, responsive layout
+  - Section-based layout with <code>break-inside-avoid</code> for PDF print CSS
+  - All sections rendered conditionally; empty-data sections are omitted
+- Full HTML includes CSS styles and is self-contained with zero external dependencies
+- Returns <code>text/html</code> with <code>Content-Type: text/html</code></p>
+<p><strong>PDF</strong> (<code>generate_pdf_async</code>):
+- Uses Playwright in print-mode (<code>page.pdf()</code>) to render the scrollable HTML as A4 portrait
+- Print CSS: cover page, section breaks, conclusion back page
+- Margins: 18mm top, 16mm right, 20mm bottom, 16mm left
+- Falls back to HTML download when Playwright is unavailable
+- Returns <code>Content-Type: application/pdf</code></p>
+<h3 id="playwright-export-srcsharedreportsplaywright_exportpy">Playwright Export (<code>src/shared/reports/playwright_export.py</code>)<a class="headerlink" href="#playwright-export-srcsharedreportsplaywright_exportpy" title="Link">&para;</a></h3>
+<ul>
+<li><code>html_to_pdf(html_content, output_path)</code>: Launches headless Chromium, renders scrollable HTML, calls <code>page.pdf()</code> with A4 portrait dimensions and print media type. Margins: 18/16/20/16mm.</li>
+<li>Uses <code>asyncio.new_event_loop()</code> on Windows to avoid ProactorEventLoop incompatibility with Playwright&rsquo;s subprocess management</li>
+<li>Graceful fallback: when Playwright is not installed or Chromium is unavailable, functions log a warning and return raw HTML bytes, allowing the caller to serve HTML directly</li>
+</ul>
+<h3 id="agent-output-capture">Agent Output Capture<a class="headerlink" href="#agent-output-capture" title="Link">&para;</a></h3>
+<p>The orchestrator captures parsed sub-agent responses at the <code>send_message</code> tool level and stores them in brief metadata for structured report generation. Both A2A and ADK Web UI paths now capture agent responses consistently:</p>
+<pre><code>A2A path (agent_executor.py):
+  send_message tool callback
+    → Extract response text from A2A artifact
+    → Parse into structured fields (quant metrics, RAG summary, sentiment narrative)
+    → Store in session event metadata via extra_data parameter
+    → store_minimal() persists extra_data as JSON in brief record
+
+ADK Web UI path (web/agent.py):
+  after_agent_callback
+    → _collect_agent_extra() — pop agent responses from send_message events
+    → Map into brief_json keys via update_brief_json()
+    → Recommendation/confidence columns updated on same-day re-analysis
+    → Previously, structured agent data was silently lost on every ADK web query
+</code></pre>
+<p>This enables <code>_populate_from_agent_outputs()</code> in the extraction pipeline to build report sections from structured data instead of parsing prose, improving extraction accuracy for metrics, scorecards, and peer comparisons.</p>
+<h3 id="shared-components">Shared Components<a class="headerlink" href="#shared-components" title="Link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>File</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>_extract_deck_data()</code></td>
+<td><code>src/shared/reports/extraction.py</code></td>
+<td>Shared extraction pipeline — returns <code>DeckData</code> dataclass</td>
+</tr>
+<tr>
+<td><code>_populate_from_agent_outputs()</code></td>
+<td><code>src/shared/reports/extraction.py</code></td>
+<td>Extracts report data from structured agent responses (Pydantic models)</td>
+</tr>
+<tr>
+<td><code>_truncate_at_sentence()</code></td>
+<td><code>src/shared/reports/extraction.py</code></td>
+<td>Sentence-aware truncation for executive summary and market narrative</td>
+</tr>
+<tr>
+<td><code>_rsi_status()</code></td>
+<td><code>src/shared/reports/extraction.py</code></td>
+<td>Classifies RSI (Overbought/Bullish/Neutral/Oversold)</td>
+</tr>
+<tr>
+<td><code>_get_jinja_env()</code></td>
+<td><code>src/shared/reports/html_renderer.py</code></td>
+<td>Lazy-loaded Jinja2 environment for HTML templates</td>
+</tr>
+<tr>
+<td><code>html_to_pdf()</code></td>
+<td><code>src/shared/reports/playwright_export.py</code></td>
+<td>Playwright print-mode HTML → A4 PDF export</td>
+</tr>
+<tr>
+<td><code>investment_deck.html</code></td>
+<td><code>src/shared/templates/</code></td>
+<td>Scrollable HTML page template (replaced slide deck in v2.5)</td>
+</tr>
+</tbody>
+</table>
+<div class="diagrams-box">
+<h3>Architecture Diagrams</h3>
+<div class="diagram-grid">
+<a href="diagrams/context.html">Context (C4 L1)</a>
+<a href="diagrams/container.html">Container (C4 L2)</a>
+<a href="diagrams/component.html">Component (C4 L3)</a>
+<a href="diagrams/component-orch.html">Orchestrator</a>
+<a href="diagrams/component-agents.html">Agents</a>
+<a href="diagrams/component-infra.html">Infra</a>
+<a href="diagrams/code.html">Code (C4 L4)</a>
+<a href="diagrams/sequence.html">Sequence</a>
+<a href="diagrams/sequence-phase1.html">Phase 1: Input</a>
+<a href="diagrams/sequence-phase2.html">Phase 2: Dispatch</a>
+<a href="diagrams/sequence-phase3.html">Phase 3: Synthesis</a>
+<a href="diagrams/dataflow.html">Data Flow</a>
+<a href="diagrams/dataflow-input.html">Input Pipeline</a>
+<a href="diagrams/dataflow-processing.html">Agent Processing</a>
+<a href="diagrams/er.html">Entity-Relationship</a>
+</div>
+</div>
+<div class="footer">FinSight &mdash; Multi-Agent Investment Research System</div>
+</div>
+</body>
+</html>

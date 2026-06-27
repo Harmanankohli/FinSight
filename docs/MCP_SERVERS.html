@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MCP Server &mdash; FinSight</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:1.7;color:#2c2c2c;background:#faf8f5;padding:2rem 1rem}
+.container{max-width:740px;margin:0 auto}
+h1,h2,h3,h4,h5,h6{font-family:Georgia,"Times New Roman",serif;color:#1a1a1a;line-height:1.3}
+h1{font-size:2.2rem;margin-bottom:0.25rem;border-bottom:2px solid #e8dcc8;padding-bottom:0.5rem}
+h2{font-size:1.5rem;margin-top:2.5rem;margin-bottom:0.75rem;border-bottom:1px solid #e8dcc8;padding-bottom:0.3rem}
+h3{font-size:1.2rem;margin-top:1.5rem;margin-bottom:0.5rem}
+h4{font-size:1.05rem;margin-top:1.25rem;margin-bottom:0.4rem}
+p{margin-bottom:1rem;color:#444}
+a{color:#8b6f4e;text-decoration:none;font-weight:500}
+a:hover{text-decoration:underline}
+ul,ol{margin-bottom:1rem;padding-left:1.5rem;color:#444}
+li{margin-bottom:0.25rem}
+li>ul,li>ol{margin-bottom:0}
+code{background:#f0ebe3;padding:0.15em 0.4em;border-radius:3px;font-size:0.875em;font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace}
+pre{background:#1a1a1a;color:#e8dcc8;padding:1rem 1.25rem;border-radius:8px;overflow-x:auto;margin-bottom:1rem;line-height:1.5;font-size:0.85rem}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+table{width:100%;border-collapse:collapse;margin-bottom:1rem;font-size:0.9rem}
+th,td{padding:0.5rem 0.75rem;text-align:left;border-bottom:1px solid #e0d8cc}
+th{background:#f0ebe3;font-weight:600}
+blockquote{border-left:3px solid #e8dcc8;margin:0 0 1rem 0;padding:0.5rem 1rem;color:#666;background:#fff}
+hr{border:none;border-top:1px solid #e0d8cc;margin:1.5rem 0}
+img{max-width:100%;height:auto}
+.header-nav{margin-bottom:2rem;padding-bottom:1rem;border-bottom:1px solid #e0d8cc}
+.header-nav a{margin-right:1.2rem;font-size:0.9rem}
+.header-nav a.active{color:#1a1a1a;font-weight:700;border-bottom:2px solid #8b6f4e}
+.diagrams-box{background:#fff;border:1px solid #e0d8cc;border-radius:8px;padding:1.25rem 1.5rem;margin-top:2.5rem}
+.diagrams-box h3{margin-top:0;margin-bottom:0.75rem;font-size:1.1rem}
+.diagram-grid{display:flex;flex-wrap:wrap;gap:0.5rem}
+.diagram-grid a{background:#f0ebe3;border:1px solid #e0d8cc;border-radius:4px;padding:4px 10px;font-size:0.8rem;color:#2c2c2c;transition:background .15s}
+.diagram-grid a:hover{background:#e0d8cc;text-decoration:none}
+.footer{font-size:0.85rem;color:#888;margin-top:2.5rem;border-top:1px solid #e0d8cc;padding-top:1rem}
+</style>
+</head>
+<body>
+<div class="container">
+<div class="header-nav">
+<a href="index.html">Home</a>
+<a href="README.html">Overview</a>
+<a href="ARCHITECTURE.html">Architecture</a>
+<a href="AGENTS.html">Agents</a>
+<a href="MCP_SERVERS.html" class="active">MCP Servers</a>
+<a href="DESIGN_DECISIONS.html">Design Decisions</a>
+<a href="API_REFERENCE.html">API</a>
+<a href="SECURITY.html">Security</a>
+<a href="CHANGELOG.html">Changelog</a>
+<a href="TESTS.html">Tests</a>
+<a href="FRONTEND.html">Frontend</a>
+<a href="diagrams/index.html">Diagrams</a>
+</div>
+<h1 id="mcp-server">MCP Server<a class="headerlink" href="#mcp-server" title="Link">&para;</a></h1>
+<p>MCP server hosting both agent registry and data tools. Split from a single monolithic file (2095 lines) into per-tool modules (v1.41):</p>
+<pre><code>src/mcp_tools/
+  ├── _app.py                # 78-line composition root with get_app() factory
+  ├── finsight_server.py     # re-exports get_app() for backward compat
+  ├── tools/
+  │   ├── agent_registry.py  # find_agent(), resource://agent_cards/*
+  │   ├── market_data.py     # get_prices(), get_financials(), get_options_chain()
+  │   ├── edgar.py           # SEC EDGAR tools (filings, content, search)
+  │   ├── ticker.py          # validate_ticker(), resolve_company_ticker()
+  │   ├── sentiment.py       # news, sentiment indicators, earnings history
+  │   └── sandbox.py         # execute_python() with AST gate + container mode
+  └── infra/
+      ├── rate_limiters.py   # TokenBucket rate limiter
+      ├── embed.py           # sentence-transformers lazy loader
+      └── news_fetch.py      # RSS feed fetchers (Yahoo, CNBC, MarketWatch, DDG fallback)
+</code></pre>
+<h2 id="overview">Overview<a class="headerlink" href="#overview" title="Link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Port</th>
+<th>Tools</th>
+<th>Registry</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>8010</td>
+<td><code>get_prices</code>, <code>get_financials</code>, <code>get_options_chain</code>, <code>get_company_filings</code>, <code>get_financial_filings</code>, <code>get_filing_content</code>, <code>validate_ticker</code>, <code>resolve_company_ticker</code>, <code>full_text_search</code>, <code>get_news_sentiment</code>, <code>get_earnings_calendar</code>, <code>get_insider_transactions</code>, <code>get_peers</code>, <code>get_macro_indicators</code>, <code>get_scenario_shocks</code>, <code>get_sentiment_indicators</code>, <code>get_earnings_history</code>, <code>get_analyst_activity</code>, <code>get_valuation_timeseries</code>, <code>execute_python</code></td>
+<td><code>find_agent</code>, <code>resource://agent_cards/list</code>, <code>resource://agent_cards/{name}</code></td>
+</tr>
+</tbody>
+</table>
+<p>No API keys required (SEC uses public API, news uses RSS feeds). Windows-compatible — <code>import resource</code> guarded by platform check.</p>
+<h2 id="running">Running<a class="headerlink" href="#running" title="Link">&para;</a></h2>
+<pre><code class="language-bash">uv run python -m uvicorn mcp_tools.finsight_server:get_app --host 0.0.0.0 --port 8010
+</code></pre>
+<p>Health check: <code>GET http://localhost:8010/health</code> → <code>{"status":"ok","agent":"mcp"}</code></p>
+<h2 id="ttl-caching">TTL Caching<a class="headerlink" href="#ttl-caching" title="Link">&para;</a></h2>
+<p><code>_TTLCache</code> class (OrderedDict + <code>time.monotonic()</code>) wraps each tool with zero new dependencies:</p>
+<table>
+<thead>
+<tr>
+<th>Cache</th>
+<th>TTL</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>get_prices</code></td>
+<td>1 min</td>
+<td>Key: <code>(ticker, period, interval)</code></td>
+</tr>
+<tr>
+<td><code>get_benchmark</code></td>
+<td>1 h</td>
+<td>Key: ticker — index benchmarks (^GSPC, ^VIX, etc.)</td>
+</tr>
+<tr>
+<td><code>get_financials</code></td>
+<td>1 h</td>
+<td>Key: <code>(ticker,)</code></td>
+</tr>
+<tr>
+<td><code>get_news_sentiment</code></td>
+<td>5 min</td>
+<td>Only cached when articles found</td>
+</tr>
+<tr>
+<td><code>get_macro_indicators</code></td>
+<td>15 min</td>
+<td>Key: <code>"macro"</code> — Treasury yields, VIX, DXY, sector ETFs</td>
+</tr>
+<tr>
+<td><code>get_filing_content</code></td>
+<td>Permanent (LRU-200)</td>
+<td>Filings are immutable</td>
+</tr>
+<tr>
+<td><code>_fetch_submissions</code></td>
+<td>6 h</td>
+<td>Shared by <code>get_company_filings</code> + <code>get_financial_filings</code></td>
+</tr>
+<tr>
+<td><code>get_peers</code></td>
+<td>24 h</td>
+<td>yfinance Industry/Sector peer lists</td>
+</tr>
+<tr>
+<td><code>get_scenario_shocks</code></td>
+<td>7 days</td>
+<td>Historical crash returns per sector ETF</td>
+</tr>
+<tr>
+<td><code>get_insider_transactions</code></td>
+<td>Not cached</td>
+<td>Insider data is queried on demand</td>
+</tr>
+<tr>
+<td><code>get_analyst_activity</code></td>
+<td>1 h</td>
+<td>Yahooquery grading_history</td>
+</tr>
+<tr>
+<td><code>get_valuation_timeseries</code></td>
+<td>24 h</td>
+<td>Yahooquery valuation_measures</td>
+</tr>
+<tr>
+<td><code>get_earnings_trend</code></td>
+<td>1 h</td>
+<td>Yahooquery earnings_trend forward estimates</td>
+</tr>
+</tbody>
+</table>
+<p>Cache hits log <code>"Cache hit for &lt;tool&gt;"</code> at DEBUG level. Cache misses fetch fresh data and store the result.</p>
+<h2 id="agent-registry">Agent Registry<a class="headerlink" href="#agent-registry" title="Link">&para;</a></h2>
+<p>Agent cards loaded lazily from <code>agent_cards/*.json</code> on first tool call (no model download at import time), embedded via <code>sentence-transformers</code>, exposed as:</p>
+<table>
+<thead>
+<tr>
+<th>Tool / Resource</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>find_agent(query)</code></td>
+<td>Semantic search via embedding dot-product</td>
+</tr>
+<tr>
+<td><code>resource://agent_cards/list</code></td>
+<td>Lists all available card URIs</td>
+</tr>
+<tr>
+<td><code>resource://agent_cards/{name}</code></td>
+<td>Retrieves specific agent card</td>
+</tr>
+</tbody>
+</table>
+<h2 id="tools">Tools<a class="headerlink" href="#tools" title="Link">&para;</a></h2>
+<h3 id="yfinance-tools">yfinance Tools<a class="headerlink" href="#yfinance-tools" title="Link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>Parameters</th>
+<th>Returns</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>get_prices</code></td>
+<td><code>ticker</code>, <code>period</code> (1y), <code>interval</code> (1d)</td>
+<td>OHLCV data array</td>
+</tr>
+<tr>
+<td><code>get_financials</code></td>
+<td><code>ticker</code></td>
+<td>income_statement, balance_sheet, cash_flow, info</td>
+</tr>
+<tr>
+<td><code>get_options_chain</code></td>
+<td><code>ticker</code>, <code>expiration</code> (optional)</td>
+<td>Expiration dates or calls/puts</td>
+</tr>
+</tbody>
+</table>
+<h3 id="sec-edgar-tools">SEC EDGAR Tools<a class="headerlink" href="#sec-edgar-tools" title="Link">&para;</a></h3>
+<p>Public API — no key required.</p>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>Parameters</th>
+<th>Returns</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>get_company_filings</code></td>
+<td><code>ticker</code>, <code>form_types</code> (optional), <code>limit</code> (10)</td>
+<td>Filing list with form, date, <code>edgar_url</code> (raw document), <code>ix_url</code> (viewer fallback)</td>
+</tr>
+<tr>
+<td><code>get_financial_filings</code></td>
+<td><code>ticker</code>, <code>annual_limit</code> (5), <code>quarterly_limit</code> (8)</td>
+<td>10-K and 10-Q only, separated with pagination for sufficient coverage</td>
+</tr>
+<tr>
+<td><code>get_filing_content</code></td>
+<td><code>edgar_url</code>, <code>ix_url</code> (optional)</td>
+<td>Extracted text content from raw SEC filing URL, with fallback to IXBRL viewer</td>
+</tr>
+<tr>
+<td><code>full_text_search</code></td>
+<td><code>query</code>, <code>ticker</code> (optional)</td>
+<td>Relevance-scored SEC EDGAR search results</td>
+</tr>
+<tr>
+<td><code>validate_ticker</code></td>
+<td><code>ticker</code></td>
+<td>Validates ticker against SEC database (cached CIK map)</td>
+</tr>
+<tr>
+<td><code>resolve_company_ticker</code></td>
+<td><code>text</code></td>
+<td>Natural language company name to ticker (SEC reverse index + Yahoo fallback)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Note</strong>: Requires valid <code>User-Agent</code> header. Set via <code>SEC_USER_AGENT</code> env var in <code>.env</code> (format: <code>Your Name (your-email@example.com)</code>) — see <code>src/shared/settings.py</code>. The RAG agent uses <code>get_filing_content</code> to fetch and index actual SEC filing content.</p>
+<h3 id="financial-news-tools">Financial News Tools<a class="headerlink" href="#financial-news-tools" title="Link">&para;</a></h3>
+<p>RSS feeds: Yahoo Finance, CNBC, MarketWatch, Seeking Alpha. VADER sentiment scoring.</p>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>Parameters</th>
+<th>Returns</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>get_news_sentiment</code></td>
+<td><code>ticker</code>, <code>limit</code> (10)</td>
+<td>Articles with sentiment scores, aggregates</td>
+</tr>
+<tr>
+<td><code>get_earnings_calendar</code></td>
+<td><code>ticker</code></td>
+<td>Earnings date status</td>
+</tr>
+</tbody>
+</table>
+<h3 id="market-data-tools">Market Data Tools<a class="headerlink" href="#market-data-tools" title="Link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>Parameters</th>
+<th>Returns</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>get_peers</code></td>
+<td><code>ticker</code></td>
+<td>List of up to 8 peer tickers via yfinance Industry/Sector <code>top_companies</code>. Dynamic discovery — no static mapping needed. Cached 24h.</td>
+</tr>
+<tr>
+<td><code>get_macro_indicators</code></td>
+<td>—</td>
+<td>Treasury yields (10Y, 2Y), VIX, DXY, yield-curve regime, sector ETF 1mo performance. Cached 15 min.</td>
+</tr>
+<tr>
+<td><code>get_scenario_shocks</code></td>
+<td><code>sector</code> (optional)</td>
+<td>Historical crash returns for 4 scenarios (2008, 2020, dot-com, 2022 mild recession) using sector-specific ETFs (QQQ/XLP/XLF/etc). Cached 7 days.</td>
+</tr>
+<tr>
+<td><code>get_insider_transactions</code></td>
+<td><code>ticker</code>, <code>days</code> (90)</td>
+<td>Structured insider buy/sell data from yfinance <code>Ticker.insider_transactions</code>. Returns <code>transactions</code> array + <code>summary</code> dict with total, buys, sells, direction, net_shares, net_value.</td>
+</tr>
+<tr>
+<td><code>get_sentiment_indicators</code></td>
+<td><code>ticker</code></td>
+<td>Short interest %, analyst consensus breakdown (buy/hold/sell), institutional ownership %.</td>
+</tr>
+<tr>
+<td><code>get_earnings_history</code></td>
+<td><code>ticker</code>, <code>limit</code> (8)</td>
+<td>Last N quarters EPS estimates vs actuals, beat rate, average surprise %. Also returns <code>forward_estimates</code> (list of <code>{period, end_date, growth, eps_avg, ...}</code>) and <code>eps_revisions</code> (list of <code>{period, up_last_7d, up_last_30d, down_last_7d, down_last_30d}</code>) from yahooquery <code>earnings_trend</code>. yfinance/yahooquery failures handled independently.</td>
+</tr>
+<tr>
+<td><code>get_analyst_activity</code></td>
+<td><code>ticker</code>, <code>limit</code> (20)</td>
+<td>Recent analyst upgrade/downgrade/initiation history via yahooquery <code>grading_history</code>. Returns <code>activities[]</code> with firm, action, from/to grades, price target changes. Summary: upgrades/downgrades/initiations counts. Cached 1h.</td>
+</tr>
+<tr>
+<td><code>get_valuation_timeseries</code></td>
+<td><code>ticker</code></td>
+<td>Quarterly valuation multiples history via yahooquery <code>valuation_measures</code>. Returns <code>periods[]</code> with pe_ratio, ps_ratio, pb_ratio, peg_ratio, ev_to_ebitda, ev_to_revenue, market_cap. Summary: pe_avg_2y, pe_current, pe_percentile. Cached 24h.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="python-runner-tool">Python Runner Tool<a class="headerlink" href="#python-runner-tool" title="Link">&para;</a></h3>
+<p>Sandboxed execution with AST-based import restrictions. Runs in a separate subprocess (<code>-I -S</code> isolation mode) with optional <code>RLIMIT_CPU</code>/<code>RLIMIT_AS</code>/<code>RLIMIT_NOFILE</code> on non-Windows platforms.</p>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>Parameters</th>
+<th>Returns</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>execute_python</code></td>
+<td><code>code</code>, <code>timeout</code> (30)</td>
+<td>success, stdout, stderr, result</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Restricted imports</strong>: <code>os</code>, <code>subprocess</code>, <code>shutil</code>, <code>socket</code>, <code>ctypes</code>, <code>importlib</code>, <code>pickle</code>, <code>inspect</code>, <code>sys</code>, <code>builtins</code>, <code>gc</code>, <code>threading</code>, <code>multiprocessing</code>, <code>signal</code>, <code>mmap</code>, <code>resource</code>, <code>pwd</code>, <code>grp</code>, <code>crypt</code></p>
+<p><strong>Available</strong>: pandas, numpy, math, json, datetime, random, statistics, itertools, collections, functools, typing</p>
+<h2 id="adding-a-new-tool">Adding a New Tool<a class="headerlink" href="#adding-a-new-tool" title="Link">&para;</a></h2>
+<pre><code class="language-python">@app.tool()
+async def my_tool(param: str) -&gt; dict:
+    &quot;&quot;&quot;Tool description.&quot;&quot;&quot;
+    return {&quot;result&quot;: param}
+</code></pre>
+<p>Auto-discovered by any agent that connects and calls <code>list_tools()</code>.</p>
+<h2 id="mcp-client-usage">MCP Client Usage<a class="headerlink" href="#mcp-client-usage" title="Link">&para;</a></h2>
+<pre><code class="language-python">from src.shared.mcp_client import MCPClient, MCPServerConfig
+
+mcp = MCPClient(configs=[MCPServerConfig(name=&quot;finsight&quot;, url=&quot;http://localhost:8010/sse&quot;)])
+await mcp.connect_all()
+result = await mcp.call_tool_by_name(&quot;get_prices&quot;, {&quot;ticker&quot;: &quot;NVDA&quot;})
+</code></pre>
+<h3 id="service-auth-v143">Service Auth (v1.43)<a class="headerlink" href="#service-auth-v143" title="Link">&para;</a></h3>
+<p>When <code>AUTH_ENABLED=true</code>, pass the service token via <code>MCPServerConfig</code>:</p>
+<pre><code class="language-python">config = MCPServerConfig(
+    name=&quot;finsight&quot;,
+    url=&quot;http://localhost:8010/sse&quot;,
+    token=SERVICE_AUTH_TOKEN  # injected as Authorization: Bearer &lt;token&gt;
+)
+</code></pre>
+<p>The MCP server wraps its SSE mount with <code>AuthMiddleware(accept={"service"})</code> — only valid service tokens can establish SSE connections.</p>
+<h3 id="parsing-tool-results">Parsing Tool Results<a class="headerlink" href="#parsing-tool-results" title="Link">&para;</a></h3>
+<p>Use the <code>parse_mcp_result()</code> utility for consistent response handling:</p>
+<pre><code class="language-python">from src.shared.mcp_client import parse_mcp_result
+
+result = await mcp.call_tool_by_name(&quot;get_company_filings&quot;, {&quot;ticker&quot;: &quot;NVDA&quot;})
+data = parse_mcp_result(result)  # Returns dict, list, str, or {&quot;error&quot;: &quot;...&quot;}
+</code></pre>
+<p>Handles various MCP response formats including <code>.content</code> attributes with text parts, direct dicts, and JSON strings.</p>
+<div class="diagrams-box">
+<h3>Architecture Diagrams</h3>
+<div class="diagram-grid">
+<a href="diagrams/context.html">Context (C4 L1)</a>
+<a href="diagrams/container.html">Container (C4 L2)</a>
+<a href="diagrams/component.html">Component (C4 L3)</a>
+<a href="diagrams/component-orch.html">Orchestrator</a>
+<a href="diagrams/component-agents.html">Agents</a>
+<a href="diagrams/component-infra.html">Infra</a>
+<a href="diagrams/code.html">Code (C4 L4)</a>
+<a href="diagrams/sequence.html">Sequence</a>
+<a href="diagrams/sequence-phase1.html">Phase 1: Input</a>
+<a href="diagrams/sequence-phase2.html">Phase 2: Dispatch</a>
+<a href="diagrams/sequence-phase3.html">Phase 3: Synthesis</a>
+<a href="diagrams/dataflow.html">Data Flow</a>
+<a href="diagrams/dataflow-input.html">Input Pipeline</a>
+<a href="diagrams/dataflow-processing.html">Agent Processing</a>
+<a href="diagrams/er.html">Entity-Relationship</a>
+</div>
+</div>
+<div class="footer">FinSight &mdash; Multi-Agent Investment Research System</div>
+</div>
+</body>
+</html>
