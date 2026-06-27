@@ -50,3 +50,4 @@ graphify-out
 
 # Evaluation artifacts
 tests/evaluation/eval_results/
+src/tests/evaluation/eval_results/
