@@ -249,6 +249,15 @@ async def _run_metrics(
     pairs: list[tuple[Any, dict[str, Any]]], agent: str = "", trace_id: str | None = None
 ) -> dict[str, float]:
     """Run metrics concurrently; push each score to Langfuse as it completes."""
+    from opentelemetry.context import attach, detach
+    from opentelemetry.context import get_current as _get_ctx
+
+    # Detach from the inherited OTel parent so RAGAS LLM calls (which go
+    # through the langfuse.openai monkey-patch) produce parentless spans.
+    # The should_export_span filter in observability.py drops those.
+    _root = _get_ctx().__class__()  # empty Context
+    _token = attach(_root)
+
     scores: dict[str, float] = {}
     task_map: dict[asyncio.Task[float], str] = {}
 
@@ -285,6 +294,8 @@ async def _run_metrics(
                 msg = str(exc) if str(exc) else type(exc).__name__
                 logger.warning("[%s] RAGAS metric '%s' error: %s", agent, metric_name, msg)
                 _record_eval_failure()
+
+    detach(_token)
     return scores
 
 
