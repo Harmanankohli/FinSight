@@ -446,9 +446,12 @@ async def _persist_memory_callback(callback_context: Any) -> None:
     if EVAL_ENABLED and user_query and response_text:
         trace_id = None
         try:
+            from opentelemetry import trace as otel_trace
+
             from shared.observability import get_langfuse_client
 
-            trace_id = get_langfuse_client().get_current_trace_id()
+            if otel_trace.get_current_span() is not otel_trace.INVALID_SPAN:
+                trace_id = get_langfuse_client().get_current_trace_id()
         except Exception:
             logger.debug("Could not get Langfuse trace_id", exc_info=True)
         asyncio.create_task(_eval_score_response(user_query, response_text, trace_id))

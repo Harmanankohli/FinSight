@@ -607,9 +607,12 @@ async def _stream(
 
                 trace_id = None
                 try:
+                    from opentelemetry import trace as otel_trace
+
                     from shared.observability import get_langfuse_client
 
-                    trace_id = get_langfuse_client().get_current_trace_id()
+                    if otel_trace.get_current_span() is not otel_trace.INVALID_SPAN:
+                        trace_id = get_langfuse_client().get_current_trace_id()
                 except Exception:
                     logger.debug("Failed to get Langfuse trace ID for eval")
                 asyncio.create_task(_eval_score(user_text, response_text, trace_id))
