@@ -1,5 +1,25 @@
 ﻿# Changelog
 
+## Unreleased (ecb2f63–26de456)
+
+### Memory Page Hardening (ecb2f63)
+
+- **`src/web/nextjs-app/app/memory/page.tsx`**: Removed `COMMON_TICKERS` constant and `fetchAll()` function that auto-fetched 8 hardcoded tickers on page load and on "Show all" button click. The Memory page now only fetches briefs for the specific ticker entered in the search box — eliminating spurious API calls. The "Show all" button is removed. Empty-state message updated to "Search for a ticker to view stored briefs."
+- **`src/web/nextjs-app/app/memory/page.tsx`**: Loading state now initializes from `urlTicker` presence instead of being set inside the `useEffect` body, avoiding the React setState-in-effect pattern.
+
+### Reviewer Agent Name Matching (ecb2f63)
+
+- **`src/shared/runtime_eval.py`**: Replaced exact-set matching for `contradiction_agents_known` check with root-token matching. The known agents set now uses root tokens (`quant`, `rag`, `market`, `analytics`, `sentiment`, `financial`, `context`, `technical`, `reviewer`) instead of full display names. A new `_agent_name_known()` helper checks if a contradiction's agent name contains any recognised root token, handling LLM name variations (e.g., "Quant Analysis Agent", "Quant Agent", "quant").
+
+### DuckDuckGo Search Backend Update (ecb2f63)
+
+- **`src/mcp_tools/tools/web_search.py`**: Changed ddgs backend from deprecated `'html'` to `'auto'` to prevent search failures as the HTML endpoint is phased out.
+
+### CI Lint Fixes (26de456)
+
+- **`scripts/md_to_html.py`**: Broke long CSS string lines to stay under the 100-character line length limit.
+- **`src/web/nextjs-app/lib/logger.ts`**: Removed unused `eslint-disable` directives.
+
 ## v2.18 — TTFT Tracking in Langfuse (7197b85–a568ba6)
 
 ### TTFT (Time to First Token) Tracking (7197b85)
