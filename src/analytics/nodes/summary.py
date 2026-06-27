@@ -12,7 +12,7 @@ from analytics.deps import AnalyticsDeps
 from analytics.state import AnalyticsState
 from shared.agent_models import AnalyticsAgentOutput
 from shared.llm_queue import Priority, llm_queue
-from shared.settings import LLM_BASE_URL, LLM_SUMMARY_MODEL
+from shared.settings import LLM_API_KEY, LLM_BASE_URL, LLM_SUMMARY_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +87,7 @@ class LLMSummaryNode(BaseNode[AnalyticsState, AnalyticsDeps]):
     async def run(self, ctx: GraphRunContext[AnalyticsState, AnalyticsDeps]) -> End[dict]:
         model = OpenAIModel(
             LLM_SUMMARY_MODEL,
-            provider=OpenAIProvider(base_url=LLM_BASE_URL),
+            provider=OpenAIProvider(base_url=LLM_BASE_URL, api_key=LLM_API_KEY),
         )
         summary_agent = Agent(
             model=model,

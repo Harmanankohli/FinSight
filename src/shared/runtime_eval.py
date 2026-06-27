@@ -56,6 +56,16 @@ logger = logging.getLogger(__name__)
 
 _MIN_RESPONSE_LEN = 80
 _ragas_clients: tuple[Any, ...] | None = None
+_ragas_setup_failures: int = 0
+_RAGAS_SETUP_MAX_FAILURES = 3
+_ragas_setup_lock: asyncio.Lock | None = None
+
+
+def _get_setup_lock() -> asyncio.Lock:
+    global _ragas_setup_lock
+    if _ragas_setup_lock is None:
+        _ragas_setup_lock = asyncio.Lock()
+    return _ragas_setup_lock
 
 # ---------------------------------------------------------------------------
 # Circuit breaker
@@ -150,51 +160,67 @@ def _record_eval_success() -> None:
 
 async def _setup_ragas_clients() -> tuple[Any, Any] | None:
     """Return (ragas_llm, ragas_embedder) or None if dependencies are missing."""
-    global _ragas_clients
+    global _ragas_clients, _ragas_setup_failures
     if _ragas_clients is not None:
         return _ragas_clients
-    try:
-        import instructor
-        from openai import AsyncOpenAI
-        from ragas.embeddings.base import BaseRagasEmbedding
-        from ragas.llms.base import InstructorLLM, InstructorModelArgs
-    except ImportError:
-        logger.debug("ragas / instructor / openai not installed — runtime eval skipped")
+    if _ragas_setup_failures >= _RAGAS_SETUP_MAX_FAILURES:
         return None
+    async with _get_setup_lock():
+        if _ragas_clients is not None:
+            return _ragas_clients
+        if _ragas_setup_failures >= _RAGAS_SETUP_MAX_FAILURES:
+            return None
+        try:
+            import instructor
+            from openai import AsyncOpenAI
+            from ragas.embeddings.base import BaseRagasEmbedding
+            from ragas.llms.base import InstructorLLM, InstructorModelArgs
+        except ImportError:
+            logger.debug("ragas / instructor / openai not installed — runtime eval skipped")
+            _ragas_setup_failures = _RAGAS_SETUP_MAX_FAILURES
+            return None
 
-    from shared.settings import EMBED_MODEL, LLM_BASE_URL, LLM_EVAL_MODEL
+        from shared.settings import EMBED_MODEL, LLM_BASE_URL, LLM_EVAL_MODEL
 
-    class _STEmbeddings(BaseRagasEmbedding):
-        def __init__(self, model_name: str) -> None:
-            import sentence_transformers
+        class _STEmbeddings(BaseRagasEmbedding):
+            def __init__(self, model_name: str) -> None:
+                import sentence_transformers
 
-            self._model = sentence_transformers.SentenceTransformer(model_name)
+                self._model = sentence_transformers.SentenceTransformer(model_name)
 
-        def embed_text(self, text: str, **kwargs: Any) -> list[float]:
-            return self._model.encode(  # type: ignore[no-any-return]
-                text, normalize_embeddings=True, convert_to_tensor=False
-            ).tolist()
+            def embed_text(self, text: str, **kwargs: Any) -> list[float]:
+                return self._model.encode(  # type: ignore[no-any-return]
+                    text, normalize_embeddings=True, convert_to_tensor=False
+                ).tolist()
 
-        async def aembed_text(self, text: str, **kwargs: Any) -> list[float]:
-            loop = asyncio.get_event_loop()
-            return await loop.run_in_executor(None, self.embed_text, text)
+            async def aembed_text(self, text: str, **kwargs: Any) -> list[float]:
+                loop = asyncio.get_event_loop()
+                return await loop.run_in_executor(None, self.embed_text, text)
 
-    try:
-        client = AsyncOpenAI(base_url=LLM_BASE_URL, api_key=LLM_API_KEY, timeout=180, max_retries=5)
-        patched = instructor.from_openai(client, mode=instructor.Mode.JSON_SCHEMA)
-        ragas_llm = InstructorLLM(
-            client=patched,
-            model=LLM_EVAL_MODEL,
-            provider="openai",
-            model_args=InstructorModelArgs(max_tokens=8192),
-        )
-        ragas_embedder = _STEmbeddings(model_name=EMBED_MODEL)
-        _ragas_clients = (ragas_llm, ragas_embedder)
-        return ragas_llm, ragas_embedder
-    except Exception as exc:
-        logger.warning("Runtime eval client setup failed: %s", exc)
-        _ragas_clients = None
-        return None
+        try:
+            client = AsyncOpenAI(base_url=LLM_BASE_URL, api_key=LLM_API_KEY, timeout=180, max_retries=5)
+            patched = instructor.from_openai(client, mode=instructor.Mode.JSON)
+            ragas_llm = InstructorLLM(
+                client=patched,
+                model=LLM_EVAL_MODEL,
+                provider="openai",
+                model_args=InstructorModelArgs(max_tokens=8192),
+            )
+            ragas_embedder = _STEmbeddings(model_name=EMBED_MODEL)
+            _ragas_clients = (ragas_llm, ragas_embedder)
+            _ragas_setup_failures = 0
+            return ragas_llm, ragas_embedder
+        except Exception as exc:
+            _ragas_setup_failures += 1
+            logger.warning(
+                "Runtime eval client setup failed (%d/%d): %s",
+                _ragas_setup_failures,
+                _RAGAS_SETUP_MAX_FAILURES,
+                exc,
+                exc_info=True,
+            )
+            _ragas_clients = None
+            return None
 
 
 async def _score_metric(metric: Any, **kwargs: Any) -> float:

@@ -7,13 +7,13 @@ from agents.models.openai_chatcompletions import OpenAIChatCompletionsModel
 from langfuse.openai import AsyncOpenAI
 
 from shared.agent_models import ReviewerAgentOutput
-from shared.settings import LLM_BASE_URL, LLM_SUMMARY_MODEL
+from shared.settings import LLM_API_KEY, LLM_BASE_URL, LLM_SUMMARY_MODEL
 
 logger = logging.getLogger(__name__)
 
 set_tracing_disabled(True)
 
-_client = AsyncOpenAI(base_url=LLM_BASE_URL, api_key="lm-studio")
+_client = AsyncOpenAI(base_url=LLM_BASE_URL, api_key=LLM_API_KEY)
 _model = OpenAIChatCompletionsModel(model=LLM_SUMMARY_MODEL, openai_client=_client)
 
 logger.info("Reviewer agent initialized with model=%s", LLM_SUMMARY_MODEL)
