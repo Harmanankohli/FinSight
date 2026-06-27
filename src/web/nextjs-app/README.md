@@ -55,6 +55,7 @@ CopilotKit connects via `HttpAgent` pointing at the orchestrator's AG-UI streami
 | Pattern | Target |
 |---|---|
 | `/api/orch/:path*` | `http://localhost:8001/:path*` (orchestrator REST) |
+| `/auth/:path*` | `http://localhost:8001/auth/:path*` (login/refresh/logout) |
 | `/reports/:path*` | `http://localhost:8001/reports/:path*` (report downloads) |
 
 ## Design System
@@ -92,7 +93,6 @@ Warm ivory/clay palette. All CSS in `app/globals.css` — no Tailwind utility cl
 
 | File | Purpose |
 |---|---|
-| `lib/stores/useAppStore.ts` | Zustand store — `sidebarOpen`, `userId` |
 | `lib/recentQueries.ts` | localStorage-backed recent query history (max 12) |
 
 ## Environment Variables
@@ -103,7 +103,7 @@ Warm ivory/clay palette. All CSS in `app/globals.css` — no Tailwind utility cl
 | `NEXT_PUBLIC_COPILOTKIT_API_KEY` | Yes | CopilotKit public API key |
 | `LANGFUSE_PUBLIC_KEY` | For `/api/dashboard` | Langfuse public key |
 | `LANGFUSE_SECRET_KEY` | For `/api/dashboard` | Langfuse secret key |
-| `LANGFUSE_BASE_URL` | For `/api/dashboard` | Langfuse base URL (default `https://cloud.langfuse.com`) |
+| `LANGFUSE_BASE_URL` | For `/api/dashboard` | Langfuse base URL (default `https://jp.cloud.langfuse.com`) |
 
 ## Scripts
 

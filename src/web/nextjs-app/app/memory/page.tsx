@@ -79,29 +79,35 @@ function MemoryContent() {
   };
 
   useEffect(() => {
+    const controller = new AbortController();
+    const { signal } = controller;
+    setLoading(true);
     const ticker = urlTicker;
     if (ticker) {
-      fetch(`/api/orch/api/memory/ticker/${ticker.toUpperCase()}`)
+      fetch(`/api/orch/api/memory/ticker/${ticker.toUpperCase()}`, { signal })
         .then((r) => r.ok ? r.json() : [])
-        .then((data) => { setSearchedTicker(ticker.toUpperCase()); setBriefs(data); })
-        .catch(() => { setBriefs([]); })
-        .finally(() => setLoading(false));
+        .then((data) => { if (!signal.aborted) { setSearchedTicker(ticker.toUpperCase()); setBriefs(data); } })
+        .catch(() => { if (!signal.aborted) setBriefs([]); })
+        .finally(() => { if (!signal.aborted) setLoading(false); });
     } else {
       const all: Brief[] = [];
       const seen = new Set<string>();
       Promise.all(COMMON_TICKERS.map((t) =>
-        fetch(`/api/orch/api/memory/ticker/${t}`)
+        fetch(`/api/orch/api/memory/ticker/${t}`, { signal })
           .then((r) => r.ok ? r.json() : [])
           .then((items: Brief[]) => { for (const b of items) if (!seen.has(b.id)) { seen.add(b.id); all.push(b); } })
           .catch(() => {})
       ))
         .then(() => {
-          all.sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
-          setSearchedTicker("all");
-          setBriefs(all);
+          if (!signal.aborted) {
+            all.sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
+            setSearchedTicker("all");
+            setBriefs(all);
+          }
         })
-        .finally(() => setLoading(false));
+        .finally(() => { if (!signal.aborted) setLoading(false); });
     }
+    return () => controller.abort();
   }, [urlTicker]);
 
   const handleSubmit = (e: FormEvent) => {

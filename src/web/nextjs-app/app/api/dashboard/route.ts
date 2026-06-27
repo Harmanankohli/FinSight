@@ -126,7 +126,7 @@ export async function GET(req: NextRequest) {
     }
 
     const allTraces = tracePages.flat().filter(isMeaningfulTrace);
-    const truncated = totalPages > 5;
+    const truncated = totalPages > maxPages;
 
     const traceMap = new Map<string, AgentKey>();
     for (const t of allTraces) traceMap.set(t.id, classifyAgent(t.name || ""));

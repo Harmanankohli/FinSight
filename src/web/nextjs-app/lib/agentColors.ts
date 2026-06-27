@@ -42,5 +42,5 @@ export const SCORE_AGENT_TO_KEY: Record<string, AgentKey> = {
 
 /** Normalizes Langfuse score agent names (e.g. "market_context") to the canonical {@link AgentKey}. */
 export function normalizeScoreAgent(scoreAgent: string): AgentKey {
-  return SCORE_AGENT_TO_KEY[scoreAgent] ?? (scoreAgent as AgentKey);
+  return SCORE_AGENT_TO_KEY[scoreAgent] ?? classifyAgent(scoreAgent);
 }
