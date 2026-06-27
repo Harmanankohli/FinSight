@@ -584,7 +584,7 @@ hr{border:none;border-top:1px solid #e0d8cc;margin:2rem 0}
 <p>Configuration was scattered across <code>src/shared/config.py</code> with module-level <code>os.environ.get()</code> calls and <code>try/except ImportError</code> fallbacks. No type validation — a typo in <code>.env</code> silently defaulted. <code>os.environ["HF_HUB_OFFLINE"] = "1"</code> at <code>src/shared/config.py</code> import time produced side effects just by importing the config module.</p>
 <h3>Solution</h3>
 <p><code>src/shared/settings.py</code> uses pydantic-settings <code>BaseSettings</code>:</p>
-<div class="codehilite"><pre><span></span><code><span class="k">class</span> <span class="nc">Settings</span><span class="p">(</span><span class="n">BaseSettings</span><span class="p">):</span>
+<div class="codehilite"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">Settings</span><span class="p">(</span><span class="n">BaseSettings</span><span class="p">):</span>
     <span class="n">llm_base_url</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="s2">&quot;http://localhost:1234/v1&quot;</span><span class="p">,</span> <span class="n">alias</span><span class="o">=</span><span class="s2">&quot;LLM_BASE_URL&quot;</span><span class="p">)</span>
     <span class="n">llm_api_key</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="s2">&quot;lmstudio&quot;</span><span class="p">,</span> <span class="n">alias</span><span class="o">=</span><span class="s2">&quot;LLM_API_KEY&quot;</span><span class="p">)</span>
     <span class="o">...</span>
@@ -2072,7 +2072,7 @@ Trace D: sentiment-agent-stream  [pid: 8004]   ← orphan
 <li><strong>L1</strong>: In-process <code>TTLCache</code> (fast, no network). Hit → return immediately.</li>
 <li><strong>L2</strong>: Redis write-through. L1 miss → read from Redis → populate L1. Every L1 <code>set()</code> propagates to Redis.</li>
 </ul>
-<div class="codehilite"><pre><span></span><code><span class="k">def</span> <span class="nf">make_cache</span><span class="p">(</span><span class="n">ttl_seconds</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">300</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">TTLCache</span> <span class="o">|</span> <span class="n">RedisCache</span><span class="p">:</span>
+<div class="codehilite"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">make_cache</span><span class="p">(</span><span class="n">ttl_seconds</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">300</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">TTLCache</span> <span class="o">|</span> <span class="n">RedisCache</span><span class="p">:</span>
     <span class="k">if</span> <span class="n">REDIS_URL</span><span class="p">:</span>
         <span class="k">return</span> <span class="n">RedisCache</span><span class="p">(</span><span class="n">ttl_seconds</span><span class="o">=</span><span class="n">ttl_seconds</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="n">name</span><span class="p">)</span>
     <span class="k">return</span> <span class="n">TTLCache</span><span class="p">(</span><span class="n">ttl_seconds</span><span class="o">=</span><span class="n">ttl_seconds</span><span class="p">)</span>
@@ -2162,7 +2162,7 @@ Trace D: sentiment-agent-stream  [pid: 8004]   ← orphan
 <p>The first RAG query after server start paid a ~3-5s cold-start tax: loading the HuggingFace <code>all-MiniLM-L6-v2</code> embedder, connecting to ChromaDB, and loading the CrossEncoder reranker all happened on first use. This made the first query of a session or after a restart noticeably slower than subsequent ones.</p>
 <h3>Solution</h3>
 <p><code>_do_prewarm()</code> at <code>src/financial_rag/server.py</code> runs once on Starlette startup via <code>asyncio.to_thread</code>:</p>
-<div class="codehilite"><pre><span></span><code><span class="k">async</span> <span class="k">def</span> <span class="nf">_do_prewarm</span><span class="p">():</span>
+<div class="codehilite"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_do_prewarm</span><span class="p">():</span>
     <span class="n">t0</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">monotonic</span><span class="p">()</span>
     <span class="c1"># 1. Embedder</span>
     <span class="n">embedder</span> <span class="o">=</span> <span class="n">HuggingFaceEmbedding</span><span class="p">(</span><span class="n">model_name</span><span class="o">=</span><span class="n">EMBED_MODEL</span><span class="p">)</span>
@@ -2176,7 +2176,7 @@ Trace D: sentiment-agent-stream  [pid: 8004]   ← orphan
     <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;ChromaDB collections ready in </span><span class="si">%.2f</span><span class="s2">s&quot;</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
 
     <span class="c1"># 3. CrossEncoder (lazy-loaded in HybridSearchPipeline)</span>
-    <span class="kn">from</span> <span class="nn">.hybrid_search</span> <span class="kn">import</span> <span class="n">HybridSearchPipeline</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">.hybrid_search</span><span class="w"> </span><span class="kn">import</span> <span class="n">HybridSearchPipeline</span>
     <span class="n">hp</span> <span class="o">=</span> <span class="n">HybridSearchPipeline</span><span class="p">()</span>
     <span class="n">hp</span><span class="o">.</span><span class="n">_get_reranker</span><span class="p">()</span>  <span class="c1"># triggers model load</span>
     <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Reranker loaded in </span><span class="si">%.2f</span><span class="s2">s&quot;</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
@@ -3150,14 +3150,14 @@ For lower_is_better (PE, EV/EBITDA, D/E):
 <p>This caused key mismatches (was it <code>"beta"</code> or <code>"stock_beta"?</code>), missing metadata (what methodology was used for this Sharpe ratio?), and inconsistent aggregation (is the value a float or a string? what's the valid range?). Every cross-agent metric handoff was a fragile <code>.get()</code> chain with no validation.</p>
 <h3>Solution</h3>
 <p>Introduce <code>MetricValue</code> in <code>src/shared/metrics.py</code> — a <code>float</code> subclass carrying validation metadata:</p>
-<div class="codehilite"><pre><span></span><code><span class="k">class</span> <span class="nc">MetricValue</span><span class="p">(</span><span class="nb">float</span><span class="p">):</span>
-    <span class="k">def</span> <span class="fm">__new__</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">value</span><span class="p">,</span> <span class="n">methodology</span><span class="p">,</span> <span class="n">min_valid</span><span class="p">,</span> <span class="n">max_valid</span><span class="p">,</span> <span class="n">warning</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<div class="codehilite"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">MetricValue</span><span class="p">(</span><span class="nb">float</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__new__</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">value</span><span class="p">,</span> <span class="n">methodology</span><span class="p">,</span> <span class="n">min_valid</span><span class="p">,</span> <span class="n">max_valid</span><span class="p">,</span> <span class="n">warning</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
         <span class="o">...</span>
     <span class="nd">@property</span>
-    <span class="k">def</span> <span class="nf">status</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span> <span class="o">...</span>  <span class="c1"># &quot;VALID&quot; | &quot;WARNING&quot; | &quot;ERROR&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">status</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span> <span class="o">...</span>  <span class="c1"># &quot;VALID&quot; | &quot;WARNING&quot; | &quot;ERROR&quot;</span>
     <span class="nd">@property</span>
-    <span class="k">def</span> <span class="nf">warning</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span> <span class="o">...</span>
-    <span class="k">def</span> <span class="nf">to_dict</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span> <span class="o">...</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">warning</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span> <span class="o">...</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">to_dict</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span> <span class="o">...</span>
 </code></pre></div>
 
 <p><code>MetricValue</code> behaves exactly as a float everywhere (<code>isinstance</code>, arithmetic, Pydantic fields) but adds <code>.status</code>, <code>.warning</code>, and <code>.methodology</code> properties plus a <code>to_dict()</code> serialization method. The <code>metric_result()</code> factory wraps raw floats into validated <code>MetricValue</code> instances.</p>
