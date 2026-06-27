@@ -40,7 +40,7 @@ async def _web_search_uncached(query: str, max_results: int, time_filter: str) -
                 "query": query,
                 "max_results": max_results,
                 "region": "us-en",
-                "backend": "html",
+                "backend": "auto",
             }
             if time_filter and time_filter != "none":
                 kwargs["timelimit"] = time_filter
