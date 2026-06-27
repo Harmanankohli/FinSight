@@ -6,11 +6,32 @@ import os
 from typing import Any
 
 from langfuse.span_filter import is_default_export_span
+from opentelemetry.sdk.trace import ReadableSpan
 
 from shared.settings import LANGFUSE_HOST, LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY
 from shared.trace_context import current_user_id
 
 logger = logging.getLogger(__name__)
+
+
+def _should_export_span(span: ReadableSpan) -> bool:
+    """Wrap default filter to drop orphan RAGAS eval OpenAI calls.
+
+    The Langfuse SDK auto-instruments all openai calls via its own tracer
+    (scope 'langfuse-sdk'). RAGAS eval LLM calls run in fire-and-forget
+    tasks with no parent span, creating orphan root traces in Langfuse.
+    Drop those while keeping all legitimately-parented spans.
+    """
+    if not is_default_export_span(span):
+        return False
+    if (
+        span.parent is None
+        and span.instrumentation_scope is not None
+        and span.instrumentation_scope.name == "langfuse-sdk"
+        and span.name.startswith("OpenAI")
+    ):
+        return False
+    return True
 
 # Lazy singleton: _langfuse_client is created once on first init_langfuse() call.
 # This avoids importing / configuring Langfuse at import time, which is important
@@ -46,7 +67,7 @@ def init_langfuse(service_name: str = "finsight") -> Any:
         public_key=LANGFUSE_PUBLIC_KEY,
         secret_key=LANGFUSE_SECRET_KEY,
         base_url=LANGFUSE_HOST,
-        should_export_span=is_default_export_span,
+        should_export_span=_should_export_span,
         additional_headers={
             "x-langfuse-ingestion-version": "4",
         },
