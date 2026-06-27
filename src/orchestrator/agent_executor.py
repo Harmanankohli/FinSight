@@ -70,7 +70,7 @@ async def _release_sub_agent_evals() -> None:
                 logger.debug("release-evals failed for %s (non-fatal)", base)
 
 
-def _extract_confidence(agent_outputs: dict, response_text: str) -> float:
+def _extract_confidence(agent_outputs: dict[str, Any], response_text: str) -> float:
     """Extract confidence from structured agent data, falling back to regex on response text."""
     reviewer = agent_outputs.get("reviewer_response", {})
     if isinstance(reviewer, dict):

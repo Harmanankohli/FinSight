@@ -198,7 +198,9 @@ async def _setup_ragas_clients() -> tuple[Any, Any] | None:
                 return await loop.run_in_executor(None, self.embed_text, text)
 
         try:
-            client = AsyncOpenAI(base_url=LLM_BASE_URL, api_key=LLM_API_KEY, timeout=180, max_retries=5)
+            client = AsyncOpenAI(
+                base_url=LLM_BASE_URL, api_key=LLM_API_KEY, timeout=180, max_retries=5
+            )
             patched = instructor.from_openai(client, mode=instructor.Mode.JSON)
             ragas_llm = InstructorLLM(
                 client=patched,
