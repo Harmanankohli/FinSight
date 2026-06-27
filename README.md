@@ -26,10 +26,11 @@ An autonomous multi-agent system that answers investment queries like *"Should I
 
 ```
 +--------------------------------------------------------------+
-│  Orchestrator (ADK) — port 8001 (A2A JSON-RPC)              │
-│  also serves ADK Web UI on port 8080 (browser dev)          │
-│  Discovers agents → LLM routes via send_message              │
-│  Tools: send_message(name, task), load_memory(query)         │
+│              ADK Web UI (port 8080)                           │
+│           Orchestrator (ADK LlmAgent)                        │
+│         Discovers agents → LLM routes via send_message       │
+│         Tools: send_message(name, task), load_memory(query)  │
+│         A2A JSON-RPC endpoint also on :8001 (standalone)    │
 +--------------------------------------------------------------+
                        │ A2A Protocol (JSON-RPC over HTTP, streaming)
                        ↓
