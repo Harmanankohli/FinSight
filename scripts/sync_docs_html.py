@@ -9,7 +9,9 @@ import markdown
 DOCS = Path(__file__).resolve().parent.parent / "docs"
 
 # Also sync the frontend README
-FRONTEND_README = Path(__file__).resolve().parent.parent / "src" / "web" / "nextjs-app" / "README.md"
+FRONTEND_README = (
+    Path(__file__).resolve().parent.parent / "src" / "web" / "nextjs-app" / "README.md"
+)
 
 CSS = """\
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}

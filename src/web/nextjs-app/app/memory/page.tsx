@@ -81,7 +81,6 @@ function MemoryContent() {
   useEffect(() => {
     const controller = new AbortController();
     const { signal } = controller;
-    setLoading(true);
     const ticker = urlTicker;
     if (ticker) {
       fetch(`/api/orch/api/memory/ticker/${ticker.toUpperCase()}`, { signal })
