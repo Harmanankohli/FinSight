@@ -20,7 +20,7 @@ Phase 2 introduced three trust boundaries between components. All default to ope
                          │
                          │ A2A JSON-RPC (Boundary B)
                          │ Service bearer token in Authorization header
-                         ?
+                         →
 +------------------------------------------------------------------+
 │                     Boundary B (Orchestrator?Sub-Agents)          —
 │  Orchestrator --A2A /a2a--? Sub-agent (RAG/Quant/Market)         —
@@ -31,7 +31,7 @@ Phase 2 introduced three trust boundaries between components. All default to ope
                          │
                          │ MCP SSE (Boundary C)
                          │ Service bearer token in SSE headers
-                         ?
+                         →
 +------------------------------------------------------------------+
 │                     Boundary C (Agents?MCP Server)                —
 │  Sub-agents --SSE--? MCP Server (finsight-mcp)                   —
