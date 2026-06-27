@@ -40,6 +40,7 @@ function tileStatus(cfg: typeof AGENTS[number], active: string[], running: boole
     return running ? "working" : "done";
   }
   if (active.length > 0 && cfg.phase === 1) return running ? "working" : "done";
+  if (active.length >= 4 && cfg.phase === 2) return running ? "working" : "done";
   return "idle";
 }
 

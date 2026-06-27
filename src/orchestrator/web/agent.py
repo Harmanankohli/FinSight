@@ -444,16 +444,9 @@ async def _persist_memory_callback(callback_context: Any) -> None:
     # ── Orchestrator RAGAS eval (ADK Web path) ──────────────────────────
     # ADK Web bypasses FinSightAgentExecutor, so the eval hook lives here.
     if EVAL_ENABLED and user_query and response_text:
-        trace_id = None
-        try:
-            from opentelemetry import trace as otel_trace
+        from shared.trace_context import current_trace_id
 
-            from shared.observability import get_langfuse_client
-
-            if otel_trace.get_current_span() is not otel_trace.INVALID_SPAN:
-                trace_id = get_langfuse_client().get_current_trace_id()
-        except Exception:
-            logger.debug("Could not get Langfuse trace_id", exc_info=True)
+        trace_id = current_trace_id.get(None)
         asyncio.create_task(_eval_score_response(user_query, response_text, trace_id))
         asyncio.create_task(_release_sub_agent_evals())
         logger.info("Orchestrator eval scheduled (trace=%s)", trace_id)
