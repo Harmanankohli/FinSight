@@ -13,6 +13,9 @@ FRONTEND_README = (
     Path(__file__).resolve().parent.parent / "src" / "web" / "nextjs-app" / "README.md"
 )
 
+# Also sync the root README (docs/index.html links to ../README.html)
+ROOT_README = Path(__file__).resolve().parent.parent / "README.md"
+
 CSS = """\
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,
@@ -61,7 +64,9 @@ def _title_from_md(md_text: str) -> str:
     return m.group(1).strip() if m else "FinSight"
 
 
-def convert(md_path: Path) -> str:
+def convert(md_path: Path, nav_links: list[tuple[str, str]] | None = None) -> str:
+    if nav_links is None:
+        nav_links = NAV_LINKS
     md_text = md_path.read_text(encoding="utf-8")
     title = _title_from_md(md_text)
 
@@ -76,7 +81,7 @@ def convert(md_path: Path) -> str:
 
     nav_html = "\n".join(
         f'<a href="{href}">{label}</a>'
-        for href, label in NAV_LINKS
+        for href, label in nav_links
     )
 
     return f"""<!DOCTYPE html>
@@ -116,12 +121,22 @@ def main() -> int:
         print(f"  {md_path.name} -> {html_path.name}")
         converted += 1
 
-    # Also sync frontend README
+    # Also sync the frontend README
     if FRONTEND_README.exists():
         html_path = FRONTEND_README.with_suffix(".html")
         html_content = convert(FRONTEND_README)
         html_path.write_text(html_content, encoding="utf-8")
         print(f"  {FRONTEND_README.name} -> {html_path.name} (frontend)")
+        converted += 1
+
+    # Also sync the root README (docs/index.html links to ../README.html)
+    if ROOT_README.exists():
+        html_path = ROOT_README.with_suffix(".html")
+        # Root README needs docs/ prefix in nav links
+        root_nav = [("docs/" + href, label) for href, label in NAV_LINKS]
+        html_content = convert(ROOT_README, nav_links=root_nav)
+        html_path.write_text(html_content, encoding="utf-8")
+        print(f"  {ROOT_README.name} -> {html_path.name} (root)")
         converted += 1
 
     print(f"\nConverted {converted} files")
