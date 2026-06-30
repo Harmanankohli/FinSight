@@ -25,7 +25,7 @@
 <a href="diagrams/index.html">Diagrams</a>
 </div>
 <h1 id="changelog">Changelog<a class="headerlink" href="#changelog" title="Link">&para;</a></h1>
-<h2 id="unreleased-ecb2f6397cece9">Unreleased (ecb2f63–97cece9)<a class="headerlink" href="#unreleased-ecb2f6397cece9" title="Link">&para;</a></h2>
+<h2 id="unreleased-ecb2f63921d83c">Unreleased (ecb2f63–921d83c)<a class="headerlink" href="#unreleased-ecb2f63921d83c" title="Link">&para;</a></h2>
 <h3 id="memory-page-hardening-ecb2f63">Memory Page Hardening (ecb2f63)<a class="headerlink" href="#memory-page-hardening-ecb2f63" title="Link">&para;</a></h3>
 <ul>
 <li><strong><code>src/web/nextjs-app/app/memory/page.tsx</code></strong>: Removed <code>COMMON_TICKERS</code> constant and <code>fetchAll()</code> function that auto-fetched 8 hardcoded tickers on page load and on &ldquo;Show all&rdquo; button click. The Memory page now only fetches briefs for the specific ticker entered in the search box — eliminating spurious API calls. The &ldquo;Show all&rdquo; button is removed. Empty-state message updated to &ldquo;Search for a ticker to view stored briefs.&rdquo;</li>
@@ -48,7 +48,7 @@
 <ul>
 <li><strong>Root cause</strong>: <code>src/reviewer/agent.py</code> imports <code>from langfuse.openai import AsyncOpenAI</code>, which globally monkey-patches the OpenAI module. Every <code>AsyncOpenAI</code> call in the process — including RAGAS eval&rsquo;s instructor client — gets a Langfuse span. Fire-and-forget eval tasks inherit stale parent context via <code>asyncio.create_task</code>, producing orphan root traces in Langfuse.</li>
 <li><strong><code>src/shared/observability.py</code></strong>: Reverted to default OTel provider (isolated TracerProvider approach broke main unified trace). Added <code>should_export_span</code> filter that drops spans where parent is <code>None</code> and name starts with <code>"OpenAI"</code> — this catches orphan RAGAS eval spans without affecting production instrumentation.</li>
-<li><strong><code>src/shared/runtime_eval.py</code></strong>: Detach from inherited OTel parent context in <code>_run_metrics()</code> by attaching an empty <code>Context</code>. This makes RAGAS eval LLM calls produce parentless spans that the export filter drops. Added <code>_ragas_setup_failures</code> counter with <code>_RAGAS_SETUP_MAX_FAILURES=3</code> cutoff and <code>asyncio.Lock</code> to prevent repeated setup attempts from flooding logs. Changed instructor mode from <code>Mode.JSON_SCHEMA</code> to <code>Mode.JSON</code> for OpenRouter compatibility.</li>
+<li><strong><code>src/shared/runtime_eval.py</code></strong>: Detach from inherited OTel parent context in <code>_run_metrics()</code> by attaching an empty <code>Context</code>. This makes RAGAS eval LLM calls produce parentless spans that the export filter drops. Added <code>_ragas_setup_failures</code> counter with <code>_RAGAS_SETUP_MAX_FAILURES=3</code> cutoff and <code>asyncio.Lock</code> to prevent repeated setup attempts from flooding logs.</li>
 <li><strong><code>src/orchestrator/agent_executor.py</code></strong>, <strong><code>src/orchestrator/agui_bridge.py</code></strong>, <strong><code>src/orchestrator/web/agent.py</code></strong>: Suppressed orphan Langfuse warnings from fire-and-forget eval tasks.</li>
 <li><strong><code>src/orchestrator/agent_executor.py</code></strong>: Filter orphan RAGAS eval traces from Langfuse export. Extract confidence from structured agent data before falling back to regex on response text.</li>
 </ul>
@@ -66,6 +66,16 @@
 <ul>
 <li><strong><code>.gitignore</code></strong>: Added <code>src/tests/evaluation/eval_results/</code> to exclude orchestrator trace evaluation results from version control.</li>
 <li>Removed committed eval trace JSON files from <code>src/tests/evaluation/eval_results/orchestrator_traces/</code>.</li>
+</ul>
+<h3 id="instructor-mode-revert-env-cleanup-57e58ee">Instructor Mode Revert &amp; .env Cleanup (57e58ee)<a class="headerlink" href="#instructor-mode-revert-env-cleanup-57e58ee" title="Link">&para;</a></h3>
+<ul>
+<li><strong><code>src/shared/runtime_eval.py</code></strong>: Reverted instructor mode from <code>Mode.JSON</code> back to <code>Mode.JSON_SCHEMA</code> — the <code>JSON</code> mode change from the OTel orphan trace fix caused RAGAS eval scoring failures on LM Studio. <code>JSON_SCHEMA</code> produces stricter validated output that the local model server handles correctly.</li>
+<li><strong><code>.env.example</code></strong>: Removed OpenRouter example comments (LLM_BASE_URL, LLM_API_KEY, LLM_MODEL, ADK_MODEL). Updated provider description from &ldquo;LM Studio, OpenRouter, etc.&rdquo; to &ldquo;LM Studio, etc.&rdquo;.</li>
+</ul>
+<h3 id="expandable-event-trail-items-921d83c">Expandable Event Trail Items (921d83c)<a class="headerlink" href="#expandable-event-trail-items-921d83c" title="Link">&para;</a></h3>
+<ul>
+<li><strong><code>src/web/nextjs-app/app/research/page.tsx</code></strong>: Event trail messages in the research page are now click-to-expand. Clicking an event toggles between a 60-char truncated preview and the full content. Expanded events show a chevron indicator, highlighted border, and a scrollable full-text container (max-height 260px). Tool events render <code>parsed.result</code> with <code>JSON.stringify(..., null, 2)</code> for readable formatting.</li>
+<li><strong><code>src/web/nextjs-app/app/globals.css</code></strong>: Added <code>.ev</code> hover/expanded styles, <code>.ev-expanded</code> border highlight, <code>.ev-expanded .ev-name</code> overflow override, and <code>.ev-full</code> scrollable container with monospace font and word-break.</li>
 </ul>
 <h2 id="v218-ttft-tracking-in-langfuse-7197b85a568ba6">v2.18 — TTFT Tracking in Langfuse (7197b85–a568ba6)<a class="headerlink" href="#v218-ttft-tracking-in-langfuse-7197b85a568ba6" title="Link">&para;</a></h2>
 <h3 id="ttft-time-to-first-token-tracking-7197b85">TTFT (Time to First Token) Tracking (7197b85)<a class="headerlink" href="#ttft-time-to-first-token-tracking-7197b85" title="Link">&para;</a></h3>
