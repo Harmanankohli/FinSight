@@ -226,6 +226,11 @@ code, pre, .mono { font-family: var(--mono); }
 .ev-name { font-family: var(--mono); font-size: 11px; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
 .ev-ms { font-family: var(--mono); font-size: 10px; color: var(--text-muted); }
 .ev-args { padding: 0 10px 9px; font-family: var(--mono); font-size: 10px; color: var(--text-muted); }
+.ev { transition: border-color .15s; }
+.ev:hover { border-color: var(--clay-light); }
+.ev-expanded { border-color: var(--clay-light); background: var(--ivory-dark); }
+.ev-expanded .ev-name { white-space: normal; overflow: visible; }
+.ev-full { padding: 0 10px 10px; font-family: var(--mono); font-size: 10.5px; line-height: 1.6; color: var(--text-secondary); white-space: pre-wrap; word-break: break-word; max-height: 260px; overflow-y: auto; border-top: 1px solid var(--sand); margin-top: 2px; padding-top: 8px; }
 
 /* ── Sidebar extras ──────────────────────────────────────── */
 .sb-logout {

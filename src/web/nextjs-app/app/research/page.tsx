@@ -57,6 +57,7 @@ export default function ResearchPage() {
   const { messages, sendMessage, isLoading } = useCopilotChatHeadless_c();
   const [input, setInput] = useState("");
   const [downloading, setDownloading] = useState<string | null>(null);
+  const [expandedEvents, setExpandedEvents] = useState<Set<number>>(new Set());
   const inputRef = useRef<HTMLInputElement>(null);
   const threadRef = useRef<HTMLDivElement>(null);
   const activeAgents = state?.active_agents ?? [];
@@ -324,22 +325,47 @@ export default function ResearchPage() {
                     const text = typeof m.content === "string" ? m.content : "";
                     const tag = isUser ? "USER" : isAsst ? "ASST" : isTool ? "TOOL" : "SYS";
                     const tagCls = isUser ? "call" : isAsst ? "res" : isTool ? "state" : "state";
+                    const expanded = expandedEvents.has(i);
 
                     let label = text.slice(0, 60);
+                    let fullText = text;
                     if (isTool) {
                       try {
                         const parsed = JSON.parse(text);
-                        const result = typeof parsed.result === "string" ? parsed.result : JSON.stringify(parsed.result);
+                        const result = typeof parsed.result === "string" ? parsed.result : JSON.stringify(parsed.result, null, 2);
                         label = result.slice(0, 60);
+                        fullText = result;
                       } catch { label = text.slice(0, 60); }
                     }
 
+                    const truncated = text.length > 60 || label.length >= 60;
+
                     return (
-                      <div className="ev" key={`trail-${i}`}>
+                      <div
+                        className={`ev ${expanded ? "ev-expanded" : ""}`}
+                        key={`trail-${i}`}
+                        onClick={() => {
+                          setExpandedEvents((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(i)) next.delete(i);
+                            else next.add(i);
+                            return next;
+                          });
+                        }}
+                        style={{ cursor: "pointer" }}
+                      >
                         <div className="ev-h">
                           <span className={`ev-tag ${tagCls}`}>{tag}</span>
-                          <span className="ev-name">{label || "…"}{(text.length > 60 || label.length >= 60) ? "…" : ""}</span>
+                          <span className="ev-name">{label || "…"}{(!expanded && truncated) ? "…" : ""}</span>
+                          {truncated && (
+                            <span className="ev-chevron" style={{ marginLeft: "auto", fontSize: 10, color: "var(--text-muted)", flexShrink: 0, transition: "transform .15s", transform: expanded ? "rotate(180deg)" : "rotate(0)" }}>▼</span>
+                          )}
                         </div>
+                        {expanded && (
+                          <div className="ev-full">
+                            {fullText}
+                          </div>
+                        )}
                       </div>
                     );
                   });
