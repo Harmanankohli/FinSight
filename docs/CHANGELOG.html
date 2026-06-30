@@ -24,8 +24,8 @@
 <a href="FRONTEND.html">Frontend</a>
 <a href="diagrams/index.html">Diagrams</a>
 </div>
-<p>﻿# Changelog</p>
-<h2 id="unreleased-ecb2f6326de456">Unreleased (ecb2f63–26de456)<a class="headerlink" href="#unreleased-ecb2f6326de456" title="Link">&para;</a></h2>
+<h1 id="changelog">Changelog<a class="headerlink" href="#changelog" title="Link">&para;</a></h1>
+<h2 id="unreleased-ecb2f6397cece9">Unreleased (ecb2f63–97cece9)<a class="headerlink" href="#unreleased-ecb2f6397cece9" title="Link">&para;</a></h2>
 <h3 id="memory-page-hardening-ecb2f63">Memory Page Hardening (ecb2f63)<a class="headerlink" href="#memory-page-hardening-ecb2f63" title="Link">&para;</a></h3>
 <ul>
 <li><strong><code>src/web/nextjs-app/app/memory/page.tsx</code></strong>: Removed <code>COMMON_TICKERS</code> constant and <code>fetchAll()</code> function that auto-fetched 8 hardcoded tickers on page load and on &ldquo;Show all&rdquo; button click. The Memory page now only fetches briefs for the specific ticker entered in the search box — eliminating spurious API calls. The &ldquo;Show all&rdquo; button is removed. Empty-state message updated to &ldquo;Search for a ticker to view stored briefs.&rdquo;</li>
@@ -43,6 +43,29 @@
 <ul>
 <li><strong><code>scripts/md_to_html.py</code></strong>: Broke long CSS string lines to stay under the 100-character line length limit.</li>
 <li><strong><code>src/web/nextjs-app/lib/logger.ts</code></strong>: Removed unused <code>eslint-disable</code> directives.</li>
+</ul>
+<h3 id="otellangfuse-orphan-trace-elimination-9850208-0e1b8a4-a430aa1-77172f7-8b81e3e-dea89ab">OTel/Langfuse Orphan Trace Elimination (9850208, 0e1b8a4, a430aa1, 77172f7, 8b81e3e, dea89ab)<a class="headerlink" href="#otellangfuse-orphan-trace-elimination-9850208-0e1b8a4-a430aa1-77172f7-8b81e3e-dea89ab" title="Link">&para;</a></h3>
+<ul>
+<li><strong>Root cause</strong>: <code>src/reviewer/agent.py</code> imports <code>from langfuse.openai import AsyncOpenAI</code>, which globally monkey-patches the OpenAI module. Every <code>AsyncOpenAI</code> call in the process — including RAGAS eval&rsquo;s instructor client — gets a Langfuse span. Fire-and-forget eval tasks inherit stale parent context via <code>asyncio.create_task</code>, producing orphan root traces in Langfuse.</li>
+<li><strong><code>src/shared/observability.py</code></strong>: Reverted to default OTel provider (isolated TracerProvider approach broke main unified trace). Added <code>should_export_span</code> filter that drops spans where parent is <code>None</code> and name starts with <code>"OpenAI"</code> — this catches orphan RAGAS eval spans without affecting production instrumentation.</li>
+<li><strong><code>src/shared/runtime_eval.py</code></strong>: Detach from inherited OTel parent context in <code>_run_metrics()</code> by attaching an empty <code>Context</code>. This makes RAGAS eval LLM calls produce parentless spans that the export filter drops. Added <code>_ragas_setup_failures</code> counter with <code>_RAGAS_SETUP_MAX_FAILURES=3</code> cutoff and <code>asyncio.Lock</code> to prevent repeated setup attempts from flooding logs. Changed instructor mode from <code>Mode.JSON_SCHEMA</code> to <code>Mode.JSON</code> for OpenRouter compatibility.</li>
+<li><strong><code>src/orchestrator/agent_executor.py</code></strong>, <strong><code>src/orchestrator/agui_bridge.py</code></strong>, <strong><code>src/orchestrator/web/agent.py</code></strong>: Suppressed orphan Langfuse warnings from fire-and-forget eval tasks.</li>
+<li><strong><code>src/orchestrator/agent_executor.py</code></strong>: Filter orphan RAGAS eval traces from Langfuse export. Extract confidence from structured agent data before falling back to regex on response text.</li>
+</ul>
+<h3 id="orchestrator-trace-simplification-phase-2-tile-fix-86d6659">Orchestrator Trace Simplification &amp; Phase 2 Tile Fix (86d6659)<a class="headerlink" href="#orchestrator-trace-simplification-phase-2-tile-fix-86d6659" title="Link">&para;</a></h3>
+<ul>
+<li><strong><code>src/orchestrator/web/agent.py</code></strong>: Replaced 12-line OTel/Langfuse trace_id extraction block with a single <code>current_trace_id.get(None)</code> call from <code>shared.trace_context</code>. The previous code manually checked <code>otel_trace.get_current_span()</code> and called <code>get_langfuse_client().get_current_trace_id()</code> with a broad exception catch — the shared <code>ContextVar</code> is simpler and already populated by the instrumentation layer.</li>
+<li><strong><code>src/web/nextjs-app/app/research/page.tsx</code></strong>: Added <code>if (active.length &gt;= 4 &amp;&amp; cfg.phase === 2) return running ? "working" : "done"</code> to <code>tileStatus()</code>. Fixes Phase 2 (Reviewer) tile staying idle when 4+ Phase 1 agents complete simultaneously — the existing <code>active.length &gt; 0 &amp;&amp; cfg.phase === 1</code> check only handled Phase 1 tiles.</li>
+</ul>
+<h3 id="ci-type-lint-fixes-97cece9">CI Type &amp; Lint Fixes (97cece9)<a class="headerlink" href="#ci-type-lint-fixes-97cece9" title="Link">&para;</a></h3>
+<ul>
+<li><strong><code>src/orchestrator/agent_executor.py</code></strong>: <code>_extract_confidence</code> parameter typed from <code>dict</code> to <code>dict[str, Any]</code> — fixes mypy <code>type-arg</code> warning.</li>
+<li><strong><code>src/shared/runtime_eval.py</code></strong>: Broke long <code>AsyncOpenAI(...)</code> constructor line to stay under ruff line-length limit.</li>
+</ul>
+<h3 id="eval-housekeeping-bbd58e1-049d6ba-345079d">Eval Housekeeping (bbd58e1, 049d6ba, 345079d)<a class="headerlink" href="#eval-housekeeping-bbd58e1-049d6ba-345079d" title="Link">&para;</a></h3>
+<ul>
+<li><strong><code>.gitignore</code></strong>: Added <code>src/tests/evaluation/eval_results/</code> to exclude orchestrator trace evaluation results from version control.</li>
+<li>Removed committed eval trace JSON files from <code>src/tests/evaluation/eval_results/orchestrator_traces/</code>.</li>
 </ul>
 <h2 id="v218-ttft-tracking-in-langfuse-7197b85a568ba6">v2.18 — TTFT Tracking in Langfuse (7197b85–a568ba6)<a class="headerlink" href="#v218-ttft-tracking-in-langfuse-7197b85a568ba6" title="Link">&para;</a></h2>
 <h3 id="ttft-time-to-first-token-tracking-7197b85">TTFT (Time to First Token) Tracking (7197b85)<a class="headerlink" href="#ttft-time-to-first-token-tracking-7197b85" title="Link">&para;</a></h3>
