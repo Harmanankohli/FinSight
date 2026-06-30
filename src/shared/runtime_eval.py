@@ -201,7 +201,7 @@ async def _setup_ragas_clients() -> tuple[Any, Any] | None:
             client = AsyncOpenAI(
                 base_url=LLM_BASE_URL, api_key=LLM_API_KEY, timeout=180, max_retries=5
             )
-            patched = instructor.from_openai(client, mode=instructor.Mode.JSON)
+            patched = instructor.from_openai(client, mode=instructor.Mode.JSON_SCHEMA)
             ragas_llm = InstructorLLM(
                 client=patched,
                 model=LLM_EVAL_MODEL,
