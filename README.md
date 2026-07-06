@@ -170,59 +170,102 @@ stop_servers.bat
 ## Project Structure
 
 ```
-+-- src/
-│   +-- orchestrator/          # ADK Orchestrator
-│   │   +-- agent.py           # LlmAgent with single send_message tool
-│   │   +-- agent_executor.py  # FinSightAgentExecutor (guardrails, semantic cache, A2A runtime)
-│   │   +-- sub_agent_client.py# SubAgentClient (A2A discovery + latency tracking)
-│   │   +-- main.py            # A2A server entrypoint (uvicorn)
-│   │   +-- web/               # ADK Web callbacks (merged from agents/)
-│   │   +-- Dockerfile
-│   │
-│   +-- financial_rag/          # RAG Agent
-│   │   +-- server.py           # GenericAgentExecutor(RAGAgent)
-│   │   +-- executor.py         # RAGAgent extends BaseAgent with stream()
-│   │   +-- index_manager.py    # ChromaDB multi-index + LM Studio LLM
-│   │   +-- hybrid_search.py    # BM25 + dense + RRF + reranker
-│   │   +-- document_ingestion.py
-│   │
-│   +-- quant/                  # Quant Agent
-│   │   +-- server.py           # GenericAgentExecutor(QuantAgent)
-│   │   +-- executor.py         # QuantAgent extends BaseAgent with stream()
-│   │   +-- graph.py            # LangGraph state machine
-│   │   +-- nodes/              # Compute nodes (calculations, dcf, etc.)
-│   │   +-- state.py            # QuantAnalysisState schema
-│   │
-│   +-- market_context/         # Market Context Agent
-│   │   +-- server.py           # GenericAgentExecutor(MarketContextAgent)
-│   │   +-- executor.py         # MarketContextAgent extends BaseAgent with stream()
-│   │   +-- crew.py             # MarketContextCrew (macro regime + peer landscape)
-│   │   +-- mcp_tools.py        # DynamicMCPTool with Pydantic args_schema
-│   │
-│   +-- mcp_tools/              # MCP Server (port 8010)
-│   │   +-- finsight_server.py  # get_app() (FastMCP)
-│   │   +-- tools/              # Per-tool modules (market_data, edgar, sentiment, etc.)
-│   │   +-- infra/              # Rate limiters, caching, embed loader
-│   │
-│   +-- shared/                 # Shared libraries
-│   │   +-- base_agent.py       # BaseAgent abstract class
-│   │   +-- settings.py         # Pydantic-settings BaseSettings
-│   │   +-- bootstrap.py        # Process-level side-effects
-│   │   +-- mcp_client.py       # MCP client with dynamic tool discovery
-│   │   +-- reports/            # HTML/PDF report generation
-│   │   +-- memory/             # SQLite persistence layer
-│   │   +-- templates/          # Jinja2 templates
-│   │
-│   +-- web/nextjs-app/         # Next.js 16 + CopilotKit 1.59 frontend
-│   +-- tests/                  # Unit, characterization, regression, security tests
-│   +-- scripts/                # Utility scripts
-│
-+-- db/                        # SQLite + ChromaDB data
-+-- docs/                      # Documentation
-+-- run_ui.bat                 # Start all services (AG-UI mode)
-+-- run_adk_web.bat            # Start all services (ADK web mode)
++-- .env.example
++-- .github/workflows/         # CI pipeline
++-- .python-version            # 3.12
++-- Makefile
++-- agent_cards/               # A2A agent capability descriptors
++-- deploy/                    # Production deployment (Caddyfile)
 +-- docker-compose.yml
 +-- pyproject.toml
++-- uv.lock
++-- run_adk_web.bat            # Start all services (ADK web mode)
++-- run_ui.bat                 # Start all services (AG-UI mode)
++-- stop_servers.bat
++-- stop_ui.bat
+|
++-- src/
+│   +-- orchestrator/          # ADK Orchestrator (port 8001)
+│   │   +-- agent.py
+│   │   +-- agent_executor.py  # FinSightAgentExecutor
+│   │   +-- sub_agent_client.py
+│   │   +-- agui_bridge.py / agui_endpoint.py
+│   │   +-- api_fastapi.py / api_routes.py / auth_routes.py
+│   │   +-- main.py            # A2A server entrypoint
+│   │   +-- services.py
+│   │   +-- web/               # ADK Web callbacks
+│   │   +-- Dockerfile
+│   │
+│   +-- financial_rag/         # RAG Agent — LlamaIndex (port 8002)
+│   │   +-- server.py / executor.py / index_manager.py
+│   │   +-- hybrid_search.py / document_ingestion.py
+│   │
+│   +-- quant/                 # Quant Agent — LangGraph (port 8003)
+│   │   +-- server.py / executor.py / graph.py / state.py
+│   │   +-- nodes/             # calculations, dcf, monte_carlo, portfolio,
+│   │   │                      #   technical, summary, data_fetch, bank_valuation
+│   │   +-- Dockerfile
+│   │
+│   +-- market_context/        # Market Context Agent — CrewAI (port 8004)
+│   │   +-- server.py / executor.py / crew.py / mcp_tools.py
+│   │
+│   +-- analytics/             # Analytics Agent — PydanticAI (port 8005)
+│   │   +-- server.py / executor.py / graph.py / state.py / deps.py
+│   │   +-- nodes/             # trend, forecast, anomaly, statistics,
+│   │   │                      #   data_fetch, charts, summary
+│   │   +-- Dockerfile
+│   │
+│   +-- reviewer/              # Reviewer Agent — OpenAI Agents SDK (port 8006)
+│   │   +-- server.py / executor.py / agent.py / guardrails.py
+│   │   +-- tools/             # contradiction, verification, confidence,
+│   │   │                      #   validation, consistency_checker, integrity
+│   │   +-- Dockerfile
+│   │
+│   +-- mcp_tools/             # MCP Server — FastMCP (port 8010)
+│   │   +-- finsight_server.py / _app.py
+│   │   +-- tools/             # market_data, edgar, sentiment, ticker,
+│   │   │                      #   agent_registry, web_search, sandbox
+│   │   +-- infra/             # rate_limiters, embed, news_fetch
+│   │   +-- Dockerfile
+│   │
+│   +-- shared/                # Shared library
+│   │   +-- base_agent.py / settings.py / bootstrap.py
+│   │   +-- mcp_client.py / guardrails.py / semantic_cache.py
+│   │   +-- logging_config.py / observability.py / trace_context.py
+│   │   +-- llm_queue.py / ttl_cache.py / rate_limiter.py
+│   │   +-- runtime_eval.py / eval_gate.py / metrics.py
+│   │   +-- agent_models.py / models.py / ticker_utils.py
+│   │   +-- generic_executor.py / agent_server.py
+│   │   +-- a2a_store.py / agui_sse.py / redis_cache.py
+│   │   +-- sandbox.py / data_freshness.py / peer_sets.py
+│   │   +-- auth/              # tokens, middleware, audit
+│   │   +-- memory/            # SQLite persistence layer (session, ticker,
+│   │   │                      #   portfolio, user, agent output stores)
+│   │   +-- reports/           # deck_model, html_renderer, playwright_export,
+│   │   │                      #   docx_renderer, pptx_renderer, extraction
+│   │   +-- templates/         # Jinja2 templates + deck-stage.js
+│   │
+│   +-- web/nextjs-app/        # Next.js 16 + CopilotKit 1.59 frontend
+│   │   +-- app/               # pages: dashboard, research, operator, memory, login
+│   │   +-- components/        # Providers, Sidebar
+│   │   +-- contexts/          # AuthContext
+│   │   +-- lib/               # agentColors, auth, langfuse, logger
+│   │   +-- Dockerfile
+│   │
+│   +-- tests/                 # Unit, integration, regression,
+│   │   │                      #   characterization, security, evaluation
+│   │   +-- unit/
+│   │   +-- integration/
+│   │   +-- regression/
+│   │   +-- characterization/
+│   │   +-- security/
+│   │   +-- evaluation/
+│   │
+│   +-- scripts/               # Utility scripts (create_user, seed_user,
+│                              #   generate_openapi, export_brief_fixtures)
+│
++-- db/                        # SQLite + ChromaDB data
++-- docs/                      # Documentation + architecture diagrams
 ```
 
 ## Configuration
