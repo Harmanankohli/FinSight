@@ -1,10 +1,13 @@
-"""GenericAgentExecutor pattern used by most agent servers.
+"""Reusable A2A AgentExecutor that delegates execution to a BaseAgent.
 
-Implements the A2A AgentExecutor interface with LangGraph integration.
+Translates the agent's stream() async generator into A2A protocol events
+(TaskStatusUpdateEvent / TaskArtifactUpdateEvent) so any BaseAgent subclass
+can participate in A2A task lifecycle without writing A2A boilerplate.
 """
 import asyncio
 import logging
 
+# ── A2A protocol types and helpers ──────────────────────────────────────
 from a2a.helpers import new_task_from_user_message, new_text_message
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
@@ -16,8 +19,10 @@ from a2a.types import (
     TaskStatus,
     TaskStatusUpdateEvent,
 )
+# ── Protobuf helpers for structured data ────────────────────────────────
 from google.protobuf.struct_pb2 import Struct, Value
 
+# ── Project internals ───────────────────────────────────────────────────
 from shared.base_agent import BaseAgent
 from shared.logging_config import logged
 from shared.trace_context import (
@@ -34,17 +39,18 @@ logger = logging.getLogger(__name__)
 class GenericAgentExecutor(AgentExecutor):
     """Reusable A2A AgentExecutor that delegates all logic to a BaseAgent.
 
-    Wraps the agent's ``stream()`` async generator into the A2A protocol
-    (TaskStatusUpdateEvent / TaskArtifactUpdateEvent) so any BaseAgent
-    subclass can participate in the A2A task lifecycle without writing
-    A2A boilerplate.
+    Each yielded dict from ``agent.stream()`` is mapped to one of three
+    A2A event branches — complete, input-required, or working progress.
+    Errors and cancellations are translated to their corresponding A2A
+    task states.
     """
 
     def __init__(self, agent: BaseAgent):
+        """Wrap *agent* so it can be driven through the A2A lifecycle."""
         self.agent = agent
         self._task: asyncio.Task[None] | None = None
 
-    @logged(log_args=False, log_result=False)  # type: ignore[untyped-decorator]
+    @logged(log_args=False, log_result=False)  # type: ignore[untyped-decorator] -- logged() returns Any
     async def execute(
         self,
         context: RequestContext,
@@ -52,13 +58,18 @@ class GenericAgentExecutor(AgentExecutor):
     ) -> None:
         """Run the agent and emit A2A events over the event queue.
 
-        Translates the agent's stream() yielded dicts into:
-          - TASK_STATE_WORKING       — streaming progress
-          - TASK_STATE_COMPLETED      — final result with artifact
-          - TASK_STATE_FAILED         — error result with artifact
-          - input_required            — agent needs user input
-          - TASK_STATE_CANCELED       — task was cancelled via cancel()
+        Event mapping from ``agent.stream()`` yielded dicts::
+
+            is_task_complete + is_error ──► TASK_STATE_FAILED / COMPLETED
+            require_user_input        ──► TASK_STATE_INPUT_REQUIRED
+            neither (progress tick)   ──► TASK_STATE_WORKING
+            CancelledError            ──► TASK_STATE_CANCELED
+
+        Trace/session IDs present in the query string are propagated into
+        ``ContextVar``\ s so downstream log lines carry them automatically.
         """
+        # ── Set up: grab the current asyncio task (for cancel()), resolve the
+        #    A2A task object (create one from the request message if needed). ──
         self._task = asyncio.current_task()
         query = context.get_user_input()
         task = context.current_task
@@ -68,7 +79,8 @@ class GenericAgentExecutor(AgentExecutor):
             task = new_task_from_user_message(context.message)
             await event_queue.enqueue_event(task)
 
-        # Populate ContextVars so log lines inside execute() carry the trace/session IDs.
+        # ── Populate ContextVars so async log / trace calls inside execute()
+        #    carry trace/session/user IDs without explicit plumbing. ──
         trace_id_val, _, _ = extract_trace_ids(query)
         if trace_id_val:
             current_trace_id.set(trace_id_val)
@@ -93,7 +105,7 @@ class GenericAgentExecutor(AgentExecutor):
             )
 
             # ── Stream event loop: each yielded dict from the agent maps to one of
-            #    three branches (complete / input-required / working progress). ──
+            #    three branches — complete / input-required / working progress. ──
             async for item in self.agent.stream(query, task.context_id, task.id):
                 is_task_complete = item.get("is_task_complete", False)
                 require_user_input = item.get("require_user_input", False)
@@ -102,8 +114,8 @@ class GenericAgentExecutor(AgentExecutor):
                 if is_task_complete:
                     is_error = item.get("is_error", False)
                     content = item.get("content", {})
-                    # Structured data (dict) → protobuf Struct so downstream A2A
-                    # consumers receive typed fields rather than a raw text blob.
+                    # Structured data (dict) → protobuf Struct so downstream
+                    # consumers receive typed fields rather than raw text.
                     if item.get("response_type") == "data" and isinstance(content, dict):
                         s = Struct()
                         s.update(content)
@@ -136,7 +148,7 @@ class GenericAgentExecutor(AgentExecutor):
                     )
                     return
 
-                # ── Branch 2: agent requests user input before continuing ──
+                # ── Branch 2: agent needs user input before continuing ──
                 if require_user_input:
                     await event_queue.enqueue_event(
                         TaskStatusUpdateEvent(
@@ -150,7 +162,7 @@ class GenericAgentExecutor(AgentExecutor):
                     )
                     return
 
-                # ── Branch 3: intermediate progress (streaming partial text) ──
+                # ── Branch 3: intermediate progress tick (streaming partial text) ──
                 await event_queue.enqueue_event(
                     TaskStatusUpdateEvent(
                         task_id=task.id,
@@ -164,6 +176,8 @@ class GenericAgentExecutor(AgentExecutor):
 
         except asyncio.CancelledError:
             logger.info("Agent %s task cancelled", self.agent.agent_name)
+            # Emit a terminal CANCELED event — the caller is responsible for
+            # cleaning up the task in whatever store they use.
             await event_queue.enqueue_event(
                 TaskStatusUpdateEvent(
                     task_id=task.id,
@@ -174,6 +188,9 @@ class GenericAgentExecutor(AgentExecutor):
             raise
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
-        """Cancel the in-flight agent task if one is running."""
+        """Cancel the in-flight agent task if one is running.
+
+        Called by the A2A server when a client requests task cancellation.
+        """
         if self._task and not self._task.done():
             self._task.cancel()

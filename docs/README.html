@@ -39,12 +39,12 @@
 <li><strong>RAGAS evaluation pipeline</strong>: Offline batch evaluation (Faithfulness, ResponseRelevancy, ContextPrecision, ContextRecall, ToolCallAccuracy, AgentGoalAccuracy) with Langfuse score push. Runtime per-query evaluation on live production responses with per-metric streaming, client caching, and 180s LLM timeout</li>
 <li><strong>Structured logging</strong>: <code>@logged</code>/<code>@logged_sync</code> timing decorators emit <code>→ Enter</code>, <code>← Exit ⏱</code>, <code>✗ Fail ⏱</code> with <code>latency_ms</code>; ANSI colored console output with per-level colors and service badges (aligned with frontend CSS palette); JSON file logs remain plain for log aggregators; <code>NO_COLOR</code>/<code>FORCE_COLOR</code> support</li>
 <li><strong>Portfolio correlation analysis</strong>: When you explicitly mention portfolio holdings (e.g. &ldquo;My portfolio holds AAPL, MSFT&rdquo;), the quant agent computes cross-stock correlation matrices alongside the primary analysis</li>
-<li><strong>Distributed tracing</strong>: Langfuse traces span all seven agent processes in a single trace tree via text-based context propagation. All agents (including Analytics, Market Context, and Reviewer) are fully instrumented — Analytics via PydanticAI OTEL (<code>gen_ai.*</code> spans), Reviewer via <code>langfuse.openai.AsyncOpenAI</code>, Market Context via <code>@observe()</code> on CrewAI execution.</li>
+<li><strong>Distributed tracing</strong>: Langfuse traces span all six agent processes in a single trace tree via text-based context propagation. All agents (including Analytics, Market Context, and Reviewer) are fully instrumented — Analytics via PydanticAI OTEL (<code>gen_ai.*</code> spans), Reviewer via <code>langfuse.openai.AsyncOpenAI</code>, Market Context via <code>@observe()</code> on CrewAI execution.</li>
 <li><strong>Health monitoring</strong>: <code>/health</code> endpoints on all eight services with docker-compose healthcheck integration</li>
 <li><strong>Local LLM inference</strong>: All agents use LM Studio (OpenAI-compatible API) — no cloud dependencies</li>
 <li><strong>Frontend auth bypass</strong>: <code>NEXT_PUBLIC_AUTH_ENABLED=false</code> short-circuits all frontend auth checks for local development, independently togglable from backend <code>AUTH_ENABLED</code></li>
 <li><strong>MCP data tools</strong>: Unified server providing SEC filings (via EDGAR), price data (yfinance/yahooquery), financials, news sentiment, insider transactions, peer discovery, scenario shocks, analyst activity, valuation timeseries, and more</li>
-<li><strong>Per-agent Docker images</strong>: 7 Python agent services + 1 Next.js web frontend, each with a multi-stage Dockerfile. Per-agent dependency groups in <code>pyproject.toml</code> ensure each image installs only its own framework (99-184 packages vs. 315 monolithic)</li>
+<li><strong>Per-agent Docker images</strong>: 6 Python agent services + 1 MCP data server + 1 Next.js web frontend, each with a multi-stage Dockerfile. Per-agent dependency groups in <code>pyproject.toml</code> ensure each image installs only its own framework (99-184 packages vs. 315 monolithic)</li>
 </ul>
 <h2 id="architecture">Architecture<a class="headerlink" href="#architecture" title="Link">&para;</a></h2>
 <pre><code>+--------------------------------------------------------------+
@@ -209,9 +209,9 @@ copy .env.example .env
 </code></pre>
 <h3 id="run-all-services">Run All Services<a class="headerlink" href="#run-all-services" title="Link">&para;</a></h3>
 <p>Use the batch file to start everything:</p>
-<pre><code class="language-bat">run_adk_web.bat
+<pre><code class="language-bat">run_ui.bat
 </code></pre>
-<p>Or use Docker Compose (includes all 7 Python agents + Next.js web frontend + Redis):</p>
+<p>Or use Docker Compose (includes all 6 Python agents + MCP data server + Next.js web frontend + Redis):</p>
 <pre><code class="language-bash">docker compose up --build
 </code></pre>
 <p>Or start each service manually in separate terminals:</p>

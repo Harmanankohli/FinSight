@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Codebase Guide &mdash; FinSight</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:1.7;color:#2c2c2c;background:#faf8f5;padding:2rem 1rem}
+.container{max-width:740px;margin:0 auto}
+h1,h2,h3,h4{font-family:Georgia,"Times New Roman",serif;color:#1a1a1a;line-height:1.3}
+h1{font-size:2.2rem;margin-bottom:0.25rem;border-bottom:2px solid #e8dcc8;padding-bottom:0.5rem}
+h2{font-size:1.5rem;margin-top:2.5rem;margin-bottom:0.75rem;border-bottom:1px solid #e8dcc8;padding-bottom:0.3rem}
+h3{font-size:1.2rem;margin-top:1.5rem;margin-bottom:0.5rem}
+h4{font-size:1.05rem;margin-top:1.25rem;margin-bottom:0.4rem}
+p{margin-bottom:1rem;color:#444}
+a{color:#8b6f4e;text-decoration:none;font-weight:500}
+a:hover{text-decoration:underline}
+ul,ol{margin-bottom:1rem;padding-left:1.5rem;color:#444}
+li{margin-bottom:0.25rem}
+code{background:#f0ebe3;padding:0.15em 0.4em;border-radius:3px;font-size:0.875em;font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace}
+pre{background:#1a1a1a;color:#e8dcc8;padding:1rem 1.25rem;border-radius:8px;overflow-x:auto;margin-bottom:1rem;line-height:1.5;font-size:0.85rem}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+table{width:100%;border-collapse:collapse;margin-bottom:1rem;font-size:0.9rem}
+th,td{padding:0.5rem 0.75rem;text-align:left;border-bottom:1px solid #e0d8cc}
+th{background:#f0ebe3;font-weight:600}
+blockquote{border-left:3px solid #e8dcc8;margin:0 0 1rem 0;padding:0.5rem 1rem;color:#666;background:#fff}
+hr{border:none;border-top:1px solid #e0d8cc;margin:1.5rem 0}
+.step{background:#fff;border:1px solid #e0d8cc;border-radius:8px;padding:1.25rem 1.5rem;margin-bottom:1.25rem}
+.step h3{margin-top:0;color:#8b6f4e}
+.step .meta{font-size:0.85rem;color:#888;margin-bottom:0.5rem}
+.tag{display:inline-block;background:#e8dcc8;color:#5a4a3a;padding:0.1em 0.5em;border-radius:3px;font-size:0.75rem;font-weight:600}
+.header-nav{margin-bottom:2rem;padding-bottom:1rem;border-bottom:1px solid #e0d8cc}
+.header-nav a{margin-right:1.2rem;font-size:0.9rem}
+.header-nav a.active{color:#1a1a1a;font-weight:700;border-bottom:2px solid #8b6f4e}
+.sidebar{width:220px;position:fixed;top:2rem;left:1rem;font-size:0.85rem}
+.sidebar ul{list-style:none;padding:0}
+.sidebar li{margin-bottom:0.4rem}
+.sidebar a{color:#8b6f4e}
+.sidebar a.active{color:#1a1a1a;font-weight:600}
+.sidebar .sub{padding-left:1rem;font-size:0.8rem}
+.main{margin-left:240px}
+@media(max-width:900px){.sidebar{display:none}.main{margin-left:0}}
+</style>
+</head>
+<body>
+<div class="container">
+<div class="header-nav">
+<a href="index.html">Home</a>
+<a href="README.html">Overview</a>
+<a href="ARCHITECTURE.html">Architecture</a>
+<a href="AGENTS.html">Agents</a>
+<a href="CODEGUIDE.html" class="active">Code Guide</a>
+<a href="MCP_SERVERS.html">MCP Servers</a>
+<a href="DESIGN_DECISIONS.html">Design Decisions</a>
+<a href="API_REFERENCE.html">API</a>
+<a href="SECURITY.html">Security</a>
+<a href="CHANGELOG.html">Changelog</a>
+<a href="TESTS.html">Tests</a>
+<a href="FRONTEND.html">Frontend</a>
+</div>
+
+<h1>Codebase Navigation Guide</h1>
+<p style="font-size:1.1rem;color:#666;margin-bottom:2rem">
+A recommended sequence for reading the FinSight codebase, from first-principles infrastructure to the full request lifecycle. Each step explains what to read, what you'll learn, and how it connects to the next.
+</p>
+
+<h2 id="sequence">Reading Sequence</h2>
+<p style="margin-bottom:1.5rem">Start at <strong>Step 0</strong> and proceed in order. Each step is ~15-30 minutes of focused reading. By the end you will understand the full data flow from a user query like <em>"Should I invest in NVDA?"</em> through all six agents to a final BUY/HOLD/SELL verdict.</p>
+
+<div class="step">
+<h3>Step 0 &mdash; Project Layout &amp; Configuration</h3>
+<div class="meta"><span class="tag">primer</span>  src/ &bull; pyproject.toml &bull; .env.example &bull; README.md</div>
+<p><strong>What to read:</strong></p>
+<ul>
+<li><code>README.md</code> &mdash; architecture diagram, project structure tree, key features, tech stack table, quick-start instructions</li>
+<li><code>pyproject.toml</code> &mdash; optional dependency groups that define each agent's framework (orchestrator/rag/quant/analytics/reviewer/market/mcp_server)</li>
+<li><code>.env.example</code> &mdash; every env var the system reads (<code>ADK_MODEL</code>, <code>AGENT_SEED_URLS</code>, <code>LLM_BASE_URL</code>, <code>MCP_SERVER_URL</code>, etc.)</li>
+</ul>
+<p><strong>What you learn:</strong> The system's shape &mdash; 6 Python agents + 1 web frontend + 1 MCP tool server. Each agent uses a different AI framework (ADK, LlamaIndex, LangGraph, CrewAI, PydanticAI, OpenAI Agents SDK). All communicate via A2A JSON-RPC over HTTP. LM Studio provides local LLM inference.</p>
+</div>
+
+<div class="step">
+<h3>Step 1 &mdash; Shared Library Foundation</h3>
+<div class="meta"><span class="tag">infrastructure</span>  src/shared/</div>
+<p><strong>What to read (in order):</strong></p>
+<ol>
+<li><code>settings.py</code> &mdash; pydantic-settings <code>Settings</code> class. Every agent imports <code>get_settings()</code> for ports, model names, timeouts. This is the source of truth for all configuration.</li>
+<li><code>bootstrap.py</code> &mdash; <code>bootstrap(service_name)</code> called by every agent at startup. Sets up logging, Langfuse instrumentation, event loop policy, HF_HUB_OFFLINE. The first import every agent makes.</li>
+<li><code>agent_server.py</code> &mdash; <code>build_agent_app()</code>. All 5 sub-agents use this Starlette factory to get A2A routes (<code>/card</code>, <code>/a2a</code>, <code>/health</code>, <code>/release-evals</code>) plus AuthMiddleware, Langfuse, file logging. Saves ~100 lines of boilerplate per agent.</li>
+<li><code>base_agent.py</code> &mdash; <code>BaseAgent</code> ABC with <code>stream()</code> lifecycle. All 5 sub-agent implementations extend this.</li>
+<li><code>generic_executor.py</code> &mdash; <code>GenericAgentExecutor</code> wraps <code>BaseAgent.stream()</code> into A2A <code>TaskArtifactUpdateEvent</code> / <code>TaskTerminalEvent</code> lifecycle. This is the bridge between agent logic and the A2A protocol.</li>
+<li><code>agent_models.py</code> &mdash; All Pydantic output schemas (<code>QuantAgentOutput</code>, <code>MarketContextOutput</code>, <code>RAGAgentOutput</code>, <code>AnalyticsAgentOutput</code>, <code>ReviewerAgentOutput</code>, <code>InvestmentBrief</code>). Typed boundaries between every agent.</li>
+<li><code>mcp_client.py</code> &mdash; <code>get_shared_mcp()</code> singleton. Every agent calls MCP data tools through this single process-wide SSE connection.</li>
+<li><code>ticker_utils.py</code> &mdash; <code>extract_ticker()</code>, <code>resolve_and_validate_ticker()</code>, <code>extract_holdings()</code>. Shared across all 6 agents.</li>
+<li><code>logging_config.py</code> &mdash; <code>@logged</code>/<code>@logged_sync</code> decorators with ANSI colored output, service badges, <code>latency_ms</code>.</li>
+<li><code>metrics.py</code> &mdash; <code>MetricValue</code> float subclass with validation metadata + computation functions (Sharpe, Beta, Sortino, RSI). Used by Quant and Analytics.</li>
+</ol>
+<p><strong>What you learn:</strong> The shared layer that every agent depends on. Understand <code>build_agent_app()</code> + <code>GenericAgentExecutor</code> + <code>BaseAgent</code> first because every sub-agent follows the same pattern: <code>BaseAgent.stream()</code> &rarr; yields dict &rarr; <code>GenericAgentExecutor</code> converts to A2A events. Without this foundation, agent code looks like disconnected magic.</p>
+</div>
+
+<div class="step">
+<h3>Step 2 &mdash; Memory &amp; Caching Infrastructure</h3>
+<div class="meta"><span class="tag">infrastructure</span>  src/shared/memory/ &bull; src/shared/semantic_cache.py &bull; src/shared/ttl_cache.py &bull; src/shared/llm_queue.py &bull; src/shared/eval_gate.py</div>
+<p><strong>What to read:</strong></p>
+<ol>
+<li><code>memory/store.py</code> &mdash; <code>SQLiteMemoryService</code>. The SQLite schema: <code>ticker_briefs</code>, <code>user_profiles</code>, <code>recommendations</code>, <code>eval_results</code>, <code>agent_outputs</code>, <code>audit_log</code> tables.</li>
+<li><code>memory/ticker_memory.py</code> &mdash; <code>TickerMemory</code>. <code>get_latest()</code> is the key method &mdash; the orchestrator checks it on every query to short-circuit if today's brief already exists.</li>
+<li><code>memory/agent_output_store.py</code> &mdash; Cross-process SQLite store shared between orchestrator (<code>store_agent_output</code>) and reviewer (<code>get_agent_outputs</code>).</li>
+<li><code>ttl_cache.py</code> &mdash; <code>TTLCache</code> used by MCP server for all data caches (1m prices, 1h financials, permanent filings, etc.)</li>
+<li><code>semantic_cache.py</code> &mdash; <code>SemanticCache</code>. ChromaDB-based embedding similarity. Date-scoped (same query different day = miss). Controlled by <code>SEMANTIC_CACHE_ENABLED</code>.</li>
+<li><code>llm_queue.py</code> &mdash; <code>LLMPriorityQueue</code>. 3-tier async semaphore: <code>CRITICAL</code> (production), <code>NORMAL</code> (warmup), <code>LOW</code> (eval). Prevents eval from starving production inference.</li>
+<li><code>eval_gate.py</code> &mdash; <code>defer_eval()</code>/<code>release_evals()</code>. Cross-process coordination: sub-agents defer eval LLM calls until orchestrator POSTs <code>/release-evals</code>.</li>
+</ol>
+<p><strong>What you learn:</strong> How the system avoids unnecessary work. Four caching layers (MCP TTL cache, LangChain SQLiteCache, ChromaDB semantic cache, per-query memory short-circuit). The LLM priority queue prevents LM Studio saturation. Deferred eval prevents 5 agents competing with synthesis for LLM slots.</p>
+</div>
+
+<div class="step">
+<h3>Step 3 &mdash; MCP Data Server</h3>
+<div class="meta"><span class="tag">data layer</span>  src/mcp_tools/</div>
+<p><strong>What to read:</strong></p>
+<ol>
+<li><code>_app.py</code> &mdash; <code>FastMCP("finsight-mcp")</code> composition root. Exposes all data tools via SSE on port 8010 (legacy 8007).</li>
+<li><code>tools/market_data.py</code> &mdash; <code>get_prices()</code>, <code>get_financials()</code>, <code>get_options_chain()</code>, <code>get_macro_indicators()</code>. Each function wrapped with <code>@cache_result</code> decorator pointing to the TTL cache dicts.</li>
+<li><code>tools/edgar.py</code> &mdash; <code>get_financial_filings()</code>, <code>get_filing_content()</code>, <code>full_text_search()</code>. SEC EDGAR access with CIK resolution.</li>
+<li><code>tools/ticker.py</code> &mdash; <code>validate_ticker()</code>, <code>resolve_company_ticker()</code>. Used by <code>ticker_utils.py</code>.</li>
+<li><code>tools/sentiment.py</code> &mdash; <code>get_news_sentiment()</code>, <code>get_analyst_activity()</code>, <code>get_earnings_history()</code>.</li>
+<li><code>tools/agent_registry.py</code> &mdash; <code>find_agent()</code> with sentence-embedding search over agent_cards/. Not used in main flow but interesting.</li>
+<li><code>infra/rate_limiters.py</code> &mdash; TokenBucket rate limiters for yfinance and yahooquery.</li>
+<li><code>infra/embed.py</code> &mdash; Lazy sentence-transformers loader (loaded on first call, not at import).</li>
+</ol>
+<p><strong>What you learn:</strong> Every data source in the system. All agents funnel through this single MCP server for prices, financials, news, filings, macro data, peers, insider transactions, analyst activity. The tool functions are thin wrappers around yfinance/yahooquery with caching and rate limiting. No agent fetches external data directly.</p>
+</div>
+
+<div class="step">
+<h3>Step 4 &mdash; Orchestrator (Entry Point &amp; Coordination)</h3>
+<div class="meta"><span class="tag">control plane</span>  src/orchestrator/</div>
+<p><strong>What to read (in order):</strong></p>
+<ol>
+<li><code>main.py</code> &mdash; Starlette app entry point. Lifespan runs <code>SubAgentClient.discover()</code> in background. Routes: <code>/api/</code>, <code>/card</code>, <code>/a2a</code>. <em>Note: <code>run_adk_web.bat</code> uses ADK web UI mode instead, which bypasses this file and uses <code>web/agent.py</code>.</em></li>
+<li><code>agent.py</code> &mdash; <code>root_agent</code> ADK <code>LlmAgent</code> with tools <code>send_message</code> and <code>load_memory</code>. The <code>_build_instruction()</code> generates the system prompt dynamically (callable instruction). <code>_AGENT_TASK_TEMPLATES</code> defines per-agent task content. <code>_STATIC_PREAMBLE</code> instructs the LLM to emit all <code>send_message</code> calls in one turn for parallel execution.</li>
+<li><code>agent_executor.py</code> &mdash; <code>FinSightAgentExecutor.execute()</code>. The main request handler. Sequence: guardrails &rarr; semantic cache &rarr; memory context &rarr; <code>Runner.run_async()</code> &rarr; LLM delegates to sub-agents &rarr; collect responses &rarr; output guardrails &rarr; auto-save &rarr; eval.</li>
+<li><code>sub_agent_client.py</code> &mdash; <code>SubAgentClient</code>. A2A HTTP client. <code>send_message()</code> with <code>SendMessageInput(agent_name, ticker)</code> Pydantic model. Per-agent timeouts via <code>asyncio.wait_for</code>. Trace context injection.</li>
+<li><code>services.py</code> &mdash; <code>get_memory_service()</code>, <code>get_task_service()</code> factories.</li>
+<li><code>web/agent.py</code> &mdash; ADK Web UI callback layer. <code>_memory_cache_callback</code> (before_agent &mdash; short-circuits if today's brief exists). <code>_persist_memory_callback</code> (after_agent &mdash; saves brief, fires RAGAS eval). <code>_is_analysis_turn()</code> gates persist+eval to avoid memory pollution on non-analysis turns.</li>
+<li><code>agui_bridge.py</code> &mdash; AG-UI SSE bridge for CopilotKit frontend. <code>stream_events</code> endpoint, <code>delegate_all_agents()</code>.</li>
+<li><code>api_routes.py</code> &mdash; REST API: <code>POST /api/query</code>, <code>GET /api/memory</code>, research endpoints.</li>
+<li><code>auth_routes.py</code> &mdash; Login, logout, token refresh.</li>
+</ol>
+<p><strong>What you learn:</strong> The complete request lifecycle. How a user query enters the system (frontend &rarr; AG-UI bridge / REST API / ADK web), flows through guardrails and caching, gets delegated to 5 sub-agents in parallel via A2A, and how results are synthesized into a final BUY/HOLD/SELL with auto-save and eval. Pay special attention to <code>agent_executor.py</code>, which is the single most important file in the codebase.</p>
+</div>
+
+<div class="step">
+<h3>Step 5 &mdash; Quant Agent (LangGraph)</h3>
+<div class="meta"><span class="tag">agent</span>  src/quant/</div>
+<p><strong>What to read (in order):</strong></p>
+<ol>
+<li><code>server.py</code> &mdash; <code>QuantAgent(ServerBaseAgent)</code>. Minimal &mdash; just creates the agent card and calls <code>build_agent_app()</code>.</li>
+<li><code>executor.py</code> &mdash; <code>QuantAgent.stream()</code>. Extracts holdings, calls <code>analyze()</code> which runs <code>graph.run()</code>. This is where <code>get_shared_mcp()</code> is passed into the LangGraph state.</li>
+<li><code>state.py</code> &mdash; <code>QuantAnalysisState(TypedDict)</code> with <code>Annotated</code> reducers (<code>_merge_dict</code>, <code>_last_str</code>, <code>_last_nonnull</code>). Critical for understanding LangGraph fan-in.</li>
+<li><code>graph.py</code> &mdash; 6-node DAG topology. START fans out to 5 parallel nodes, fans in at <code>format_output</code> &rarr; <code>llm_summary</code>.</li>
+<li><code>nodes/data_fetch.py</code> &mdash; 7 data-fetching nodes: prices, fundamentals, options flow, insider signals, analyst positioning, web context. All call MCP tools through the shared client in state.</li>
+<li><code>nodes/calculations.py</code> &mdash; <code>_run_monte_carlo()</code>, <code>_score_*()</code> functions (8 groups), <code>_weighted_vote()</code> &rarr; BUY/HOLD/SELL. This is the core quant logic.</li>
+<li><code>nodes/dcf.py</code> &mdash; <code>dcf_valuation_node</code>. 5-year tapered DCF with CAPM WACC, multi-scenario, sensitivity matrix. Routes banks to P/B valuation.</li>
+<li><code>nodes/technical.py</code> &mdash; <code>compute_metrics_node</code> (Sharpe, Beta, VaR, etc.) and <code>technical_analysis_node</code> (RSI, MACD, Bollinger, trends).</li>
+<li><code>nodes/monte_carlo.py</code> &mdash; <code>stress_test_node</code>. Beta-adjusted crash scenarios + GBM Monte Carlo with sector-aware shock data.</li>
+<li><code>nodes/summary.py</code> &mdash; <code>format_output_node</code> (weighted voting) and <code>llm_summary_node</code> (LLM generation, CRITICAL priority, data-readiness guard).</li>
+<li><code>nodes/portfolio.py</code> &mdash; <code>correlation_node</code>. Only fires when portfolio holdings provided.</li>
+</ol>
+<p><strong>What you learn:</strong> The most computationally intensive agent. The LangGraph fan-in topology is the trickiest part &mdash; the state reducers handle concurrent writes from parallel nodes. The volatility gate (<code>dcf_valuation</code> vs <code>stress_test</code>) is a key routing decision. The 8-group weighted voting is the final signal computation.</p>
+</div>
+
+<div class="step">
+<h3>Step 6 &mdash; RAG Agent (LlamaIndex)</h3>
+<div class="meta"><span class="tag">agent</span>  src/financial_rag/</div>
+<p><strong>What to read:</strong></p>
+<ol>
+<li><code>server.py</code> &mdash; Minimal server. Includes <code>_do_prewarm()</code> startup warm-up.</li>
+<li><code>executor.py</code> &mdash; <code>RAGAgent.stream()</code>. Ticker extraction, fires background ingestion tasks (<code>_ensure_ingested</code>, <code>_ensure_news_ingested</code>), then <code>FinancialIndexManager.query()</code> returns results immediately from already-indexed data.</li>
+<li><code>index_manager.py</code> &mdash; <code>FinancialIndexManager</code>. 3 ChromaDB collections (sec_filings, news, earnings). Query intent classification routes to the right collection. Incremental ingestion tracks ingested URLs in SQLite.</li>
+<li><code>hybrid_search.py</code> &mdash; BM25 + dense embedding + RRF fusion + CrossEncoder reranking.</li>
+<li><code>document_ingestion.py</code> &mdash; Ingestion pipeline from SEC filings + web content.</li>
+</ol>
+<p><strong>What you learn:</strong> The simplest agent. Key design: ingestion is fire-and-forget, queries return from already-indexed data. Incremental ingestion means restarts never re-index. The multi-collection query intent routing is the main architectural decision.</p>
+</div>
+
+<div class="step">
+<h3>Step 7 &mdash; Market Context Agent (CrewAI)</h3>
+<div class="meta"><span class="tag">agent</span>  src/market_context/</div>
+<p><strong>What to read:</strong></p>
+<ol>
+<li><code>server.py</code> &mdash; Minimal server.</li>
+<li><code>executor.py</code> &mdash; <code>MarketContextAgent.stream()</code>. 3-step parallel data collection: macro + financials &rarr; peer resolution &rarr; peer financials + prices.</li>
+<li><code>crew.py</code> &mdash; <code>MarketContextCrew</code>. Single Analyst crew (not multi-agent). Pre-collected data injected into task context. Outputs JSON via <code>MarketContextOutput</code> Pydantic model.</li>
+<li><code>mcp_tools.py</code> &mdash; <code>DynamicMCPTool</code> wrapping MCP tools as CrewAI <code>BaseTool</code>.</li>
+</ol>
+<p><strong>What you learn:</strong> The simplest CrewAI agent &mdash; single-agent crew with pre-collected data. The data collection pipeline is the interesting part: 3 sequential steps with parallel fetches within each step. This agent owns macro regime analysis and peer landscape positioning exclusively.</p>
+</div>
+
+<div class="step">
+<h3>Step 8 &mdash; Analytics Agent (PydanticAI)</h3>
+<div class="meta"><span class="tag">agent</span>  src/analytics/</div>
+<p><strong>What to read (in order):</strong></p>
+<ol>
+<li><code>server.py</code> &mdash; Minimal server.</li>
+<li><code>executor.py</code> &mdash; <code>AnalyticsAgent.stream()</code>. Runs <code>AnalyticsPipeline.run()</code> through the PydanticAI graph.</li>
+<li><code>state.py</code> &mdash; <code>AnalyticsState</code> dataclass. Unlike Quant (TypedDict + reducers), PydanticAI uses mutable dataclass carried through the graph.</li>
+<li><code>deps.py</code> &mdash; <code>AnalyticsDeps</code> carrying ticker, period, mcp_client.</li>
+<li><code>graph.py</code> &mdash; 4-node sequential DAG using <code>BaseNode</code> / <code>End</code> pattern.</li>
+<li><code>nodes/</code> &mdash; 6 analysis modules: <code>data_fetch</code>, <code>trend</code> (SMA/MACD/RSI), <code>forecast</code> (Holt-Winters), <code>charts</code>, <code>statistics</code> (skew/kurtosis/JB-test), <code>anomaly</code> (z-score spikes), <code>summary</code> (signal + LLM).</li>
+</ol>
+<p><strong>What you learn:</strong> The most straightforward agent pipeline &mdash; 4 sequential nodes. PydanticAI's <code>BaseNode</code> pattern is simpler than LangGraph. The analytics signal is purely statistical (trend direction, forecast change, anomaly severity, distribution shape). No LLM until the very end (summary node).</p>
+</div>
+
+<div class="step">
+<h3>Step 9 &mdash; Reviewer Agent (OpenAI Agents SDK)</h3>
+<div class="meta"><span class="tag">agent</span>  src/reviewer/</div>
+<p><strong>What to read (in order):</strong></p>
+<ol>
+<li><code>server.py</code> &mdash; Minimal server.</li>
+<li><code>executor.py</code> &mdash; <code>ReviewerAgent.stream()</code>. 6 deterministic Python checks run first, then a single LLM call synthesizes the structured review.</li>
+<li><code>agent.py</code> &mdash; <code>reviewer_agent</code> OpenAI Agents SDK <code>Agent</code> with 6 tool functions.</li>
+<li><code>tools/</code> package (6 files):
+  <ul>
+  <li><code>contradiction.py</code> &mdash; 14 cross-agent signal conflict checks</li>
+  <li><code>confidence.py</code> &mdash; Per-agent confidence derivation + meta-confidence weighting</li>
+  <li><code>validation.py</code> &mdash; Recommendation validation against data support</li>
+  <li><code>verification.py</code> &mdash; DCF math verification, source presence checks</li>
+  <li><code>consistency_checker.py</code> &mdash; RSI extremes, DCF vs MC divergence</li>
+  <li><code>dcf_validator.py</code> &mdash; Intrinsic/market ratio, WACC range, growth sanity</li>
+  </ul>
+</li>
+<li><code>guardrails.py</code> &mdash; Input guardrail for JSON payload validation.</li>
+</ol>
+<p><strong>What you learn:</strong> Design principle: deterministic tools first, LLM once. All 6 validation checks are pure Python (no LLM calls). The LLM receives pre-computed results and produces a structured <code>ReviewerAgentOutput</code> with verdict, confidence breakdown, contradictions, flags. This is the final quality gate before the recommendation reaches the user.</p>
+</div>
+
+<div class="step">
+<h3>Step 10 &mdash; Report Generator</h3>
+<div class="meta"><span class="tag">output</span>  src/shared/reports/ &bull; src/shared/templates/</div>
+<p><strong>What to read:</strong></p>
+<ol>
+<li><code>src/shared/reports/</code> package &mdash; <code>deck_model.py</code>, <code>html_renderer.py</code> (Jinja2 + Chart.js), <code>playwright_export.py</code> (A4 PDF), <code>extraction/</code> (brief-to-deck model extraction).</li>
+<li><code>src/shared/templates/</code> &mdash; Jinja2 HTML templates with Chart.js interactive charts.</li>
+</ol>
+<p><strong>What you learn:</strong> How investment briefs become self-contained HTML reports and PDFs. The extraction pipeline pulls data from the stored <code>InvestmentBrief</code> and constructs a structured deck model, then renders via Jinja2 templates with Chart.js visualizations (forecast distribution, Monte Carlo, trend overlays, stress scenarios, DCF breakdown, anomaly alerts).</p>
+</div>
+
+<div class="step">
+<h3>Step 11 &mdash; Frontend (Next.js + CopilotKit)</h3>
+<div class="meta"><span class="tag">ui</span>  src/web/nextjs-app/</div>
+<p><strong>What to read:</strong></p>
+<ol>
+<li><code>app/page.tsx</code> &mdash; Landing page</li>
+<li><code>app/research/page.tsx</code> &mdash; Research query interface (main user interaction)</li>
+<li><code>app/operator/page.tsx</code> &mdash; ADK operator UI</li>
+<li><code>app/dashboard/page.tsx</code> &mdash; Dashboard with evaluation scores</li>
+<li><code>app/memory/page.tsx</code> &mdash; Memory browser</li>
+<li><code>app/api/copilotkit/route.ts</code> &mdash; CopilotKit backend route &rarr; AG-UI bridge</li>
+<li><code>components/Sidebar.tsx</code>, <code>contexts/AuthContext.tsx</code>, <code>lib/agentColors.ts</code></li>
+</ol>
+<p><strong>What you learn:</strong> The frontend communicates with the backend via AG-UI SSE bridge (not direct A2A). CopilotKit provides the streaming chat interface. The <code>/operator</code> page uses ADK's built-in web UI. Auth is bypassed in dev via <code>NEXT_PUBLIC_AUTH_ENABLED=false</code>.</p>
+</div>
+
+<div class="step">
+<h3>Step 12 &mdash; Tests &amp; Evaluation</h3>
+<div class="meta"><span class="tag">quality</span>  src/tests/ &bull; src/shared/runtime_eval.py</div>
+<p><strong>What to read:</strong></p>
+<ol>
+<li><code>src/tests/</code> structure &mdash; unit/, integration/, regression/, characterization/, security/, evaluation/</li>
+<li><code>docs/TESTS.md</code> &mdash; Test coverage, patterns, RAGAS evaluation, running instructions</li>
+<li><code>src/shared/runtime_eval.py</code> &mdash; RAGAS scoring functions per agent (<code>score_quant_response</code>, <code>score_rag_response</code>, <code>score_market_context_response</code>, <code>score_analytics_output</code>, <code>score_reviewer_output</code>). Custom DomainSpecificRubrics for financial-specific metrics (citation_quality, risk_disclosure, etc.).</li>
+<li><code>pyproject.toml</code> &mdash; pytest configuration, marker definitions, coverage settings.</li>
+</ol>
+<p><strong>What you learn:</strong> ~370 test cases across 40+ files. RAGAS runtime evaluation fires after every production query (deferred, LOW priority). Custom financial rubrics for domain-specific quality assessment (citation quality, risk disclosure, recommendation clarity, response completeness).</p>
+</div>
+
+<h2 id="end-to-end-flow">End-to-End Request Flow</h2>
+<p>Once you've read all 12 steps, the full flow for <em>"Should I invest in NVDA?"</em> looks like this:</p>
+
+<pre>User types query in Next.js frontend
+  &rarr; CopilotKit POST /api/copilotkit &rarr; AG-UI SSE bridge
+  &rarr; FinSightAgentExecutor.execute()
+
+  1. GUARDRAILS: is_off_topic? ticker_valid? semantic_cache hit?
+  2. MEMORY: TickerMemory.get_latest("NVDA") &mdash; today's brief? return immediately
+  3. MEMORY CONTEXT: inject prior recommendation into prompt
+  4. LLM DELEGATES (parallel &mdash; one assistant turn):
+     a. send_message("Financial RAG Agent", "NVDA")
+        &rarr; RAG Agent (LlamaIndex): ChromaDB retrieval + LLM summary
+     b. send_message("Quant Analysis Agent", "NVDA")
+        &rarr; Quant Agent (LangGraph): DAG pipeline with 8-group weighted voting
+     c. send_message("Market Context Agent", "NVDA")
+        &rarr; Market Context Agent (CrewAI): macro + peer narrative
+     d. send_message("Analytics Agent", "NVDA")
+        &rarr; Analytics Agent (PydanticAI): trend, forecast, charts, stats, anomaly
+  5. REVIEW: send_message("Reviewer Agent", "NVDA")
+     &rarr; Reviewer Agent (OpenAI Agents SDK): 6 deterministic checks + LLM synthesis
+  6. LLM SYNTHESIZES all 5 outputs + review into BUY/HOLD/SELL
+  7. AUTO-SAVE: TickerMemory, PortfolioStore, PerformanceTracker
+  8. EVAL (deferred, LOW priority): RAGAS metrics &rarr; Langfuse
+  &rarr; Response streamed back to frontend via SSE</pre>
+
+<h2 id="key-files">Key Files Cheat Sheet</h2>
+<table>
+<tr><th>File</th><th>Why It Matters</th></tr>
+<tr><td><code>src/orchestrator/agent_executor.py</code></td><td>Single most important file. Orchestrator executes the full request lifecycle.</td></tr>
+<tr><td><code>src/orchestrator/agent.py</code></td><td>ADK LlmAgent definition, delegation tools, instruction builder, agent templates.</td></tr>
+<tr><td><code>src/orchestrator/sub_agent_client.py</code></td><td>A2A HTTP client. How the orchestrator talks to sub-agents.</td></tr>
+<tr><td><code>src/shared/base_agent.py</code></td><td>BaseAgent ABC. All sub-agents extend this.</td></tr>
+<tr><td><code>src/shared/generic_executor.py</code></td><td>GenericAgentExecutor. Bridge between BaseAgent and A2A protocol.</td></tr>
+<tr><td><code>src/shared/agent_server.py</code></td><td>build_agent_app() factory. Every sub-agent server uses this.</td></tr>
+<tr><td><code>src/shared/agent_models.py</code></td><td>All Pydantic output schemas. Typed boundaries between every agent.</td></tr>
+<tr><td><code>src/shared/mcp_client.py</code></td><td>get_shared_mcp() singleton. Every agent's data access layer.</td></tr>
+<tr><td><code>src/mcp_tools/_app.py</code></td><td>MCP server composition root. All data tools exposed here.</td></tr>
+<tr><td><code>src/quant/nodes/calculations.py</code></td><td>Core quant logic: Monte Carlo, signal scoring, weighted voting.</td></tr>
+<tr><td><code>src/quant/nodes/dcf.py</code></td><td>DCF valuation logic (the most complex computation in the system).</td></tr>
+<tr><td><code>src/reviewer/tools/confidence.py</code></td><td>Meta-confidence scoring formula (most involved cross-agent logic).</td></tr>
+</table>
+
+<br>
+<hr>
+<p style="color:#888;font-size:0.85rem">Last updated July 2026 &mdash; FinSight Multi-Agent Investment System</p>
+</div>
+</body>
+</html>

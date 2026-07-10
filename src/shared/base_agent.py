@@ -1,9 +1,10 @@
-"""Abstract BaseAgent class for A2A-compatible agents.
+"""Abstract base for all FinSight A2A sub-agents.
 
-Defines the agent lifecycle, task processing, and card interface.
+Defines the agent interface contract — lifecycle (stream), telemetry, and
+structured response helpers.
 """
 import logging
-from abc import ABC
+from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -14,11 +15,11 @@ logger = logging.getLogger(__name__)
 
 
 class BaseAgent(BaseModel, ABC):
-    """Abstract base for all FinSight A2A sub-agents (RAG, Quant, Market Context).
+    """Abstract base for all FinSight A2A sub-agents.
 
-    Each concrete subclass implements ``stream()`` — an async generator that
-    yields streaming status dicts and a final result.  GenericAgentExecutor
-    wraps this in the A2A protocol (TaskStatusUpdateEvent / TaskArtifactUpdateEvent).
+    Subclasses implement ``stream()`` — an async generator yielding status
+    dicts and a final result.  GenericAgentExecutor wraps this in the A2A
+    protocol (TaskStatusUpdateEvent / TaskArtifactUpdateEvent).
     """
 
     model_config = {
@@ -34,6 +35,11 @@ class BaseAgent(BaseModel, ABC):
     async def _telemetry_span(
         self, span_name: str, query: str
     ) -> AsyncIterator[tuple[dict[str, str] | None, Any, str | None]]:
+        """Context manager wrapping agent execution in a Langfuse span.
+
+        Extracts trace IDs from the query, creates a child span, and
+        yields (trace_ctx, span, trace_id) for downstream correlation.
+        """
         from shared.observability import get_langfuse_client
         from shared.trace_context import extract_trace_ids
 
@@ -55,6 +61,7 @@ class BaseAgent(BaseModel, ABC):
             yield trace_ctx, span, trace_id
 
     def _error_response(self, message: str) -> dict[str, Any]:
+        """Build a standard error result dict for the stream protocol."""
         return {
             "response_type": "text",
             "is_task_complete": True,
@@ -64,6 +71,7 @@ class BaseAgent(BaseModel, ABC):
         }
 
     def _data_response(self, data: Any) -> dict[str, Any]:
+        """Build a standard success result dict for the stream protocol."""
         return {
             "response_type": "data",
             "is_task_complete": True,
@@ -72,16 +80,16 @@ class BaseAgent(BaseModel, ABC):
             "content": data,
         }
 
+    @abstractmethod
     async def stream(
         self, query: str, context_id: str, task_id: str
     ) -> AsyncIterable[dict[str, Any]]:
-        """Execute the agent's core logic and yield streaming results.
+        """Execute the agent's core logic, yielding streaming results.
 
-        Yields dicts with keys:
-          content           – partial text or structured data
-          is_task_complete  – True on final yield
-          is_error          – True if agent failed
-          require_user_input – True if agent needs more info
+        Each yielded dict contains:
+          content            – partial text or structured data
+          is_task_complete   – True on final yield
+          is_error           – True if the agent failed
+          require_user_input – True if the agent needs more info
         """
-        raise NotImplementedError
-        yield  # pragma: no cover — makes this an async generator for type-checking
+        yield  # makes this an async generator for type-checking

@@ -31,6 +31,8 @@ class QuantRiskMetrics(BaseModel):
 
 
 class DCFValuation(BaseModel):
+    """Discounted cash flow valuation result with scenarios, sensitivity, and freshness metadata."""
+
     intrinsic_value: float = Field(gt=0)
     current_price: float = Field(gt=0)
     upside_pct: float
@@ -57,6 +59,8 @@ class DCFValuation(BaseModel):
 
 
 class MonteCarloResult(BaseModel):
+    """Percentile distribution from Monte Carlo simulation with probability of profit."""
+
     p10: float = Field(gt=0)
     p25: Optional[float] = Field(None, gt=0)
     p50: float = Field(gt=0)
@@ -71,6 +75,8 @@ class MonteCarloResult(BaseModel):
 
 
 class StressScenario(BaseModel):
+    """Single stress scenario projection (e.g. -20% market decline)."""
+
     market_decline_pct: Optional[float] = Field(None, le=0)
     beta_adj_decline_pct: Optional[float] = Field(None, le=0)
     projected_price: Optional[float] = Field(None, gt=0)
@@ -78,6 +84,8 @@ class StressScenario(BaseModel):
 
 
 class StressTestResult(BaseModel):
+    """Set of stress scenarios with VaR/CVaR, or a skip note when insufficient data."""
+
     scenarios: dict[str, StressScenario] = Field(default_factory=dict)
     var_95: Optional[float] = Field(None, le=0)
     cvar_95: Optional[float] = Field(None, le=0)
@@ -90,6 +98,8 @@ class StressTestResult(BaseModel):
 
 
 class TechnicalIndicators(BaseModel):
+    """Technical analysis indicators: moving averages, MACD, RSI, Bollinger Bands, support/resistance."""
+
     sma_20: Optional[float] = Field(None, gt=0)
     sma_50: Optional[float] = Field(None, gt=0)
     sma_200: Optional[float] = Field(None, gt=0)
@@ -120,6 +130,8 @@ class TechnicalIndicators(BaseModel):
 
 
 class Fundamentals(BaseModel):
+    """Fundamental metrics: valuation multiples, margins, growth rates, balance sheet, 52w price data."""
+
     model_config = {"populate_by_name": True}
 
     trailing_pe: Optional[float] = None
@@ -159,6 +171,8 @@ class Fundamentals(BaseModel):
 
 
 class PeerComparison(BaseModel):
+    """Peer universe, cross-sectional comparison dict, rankings, and sector medians."""
+
     industry: Optional[str] = None
     sector: Optional[str] = None
     peers: list[str] = Field(default_factory=list)
@@ -170,6 +184,8 @@ class PeerComparison(BaseModel):
 
 
 class OptionsSignals(BaseModel):
+    """Options market sentiment from put/call volume and open interest ratios."""
+
     put_call_volume_ratio: Optional[float] = None
     put_call_oi_ratio: Optional[float] = None
     call_volume: int = Field(0, ge=0)
@@ -180,6 +196,8 @@ class OptionsSignals(BaseModel):
 
 
 class InsiderSignals(BaseModel):
+    """Insider transaction activity: buy/sell counts, net direction, and holding percentage."""
+
     recent_transaction_count: int = Field(0, ge=0)
     buy_signals: int = Field(0, ge=0)
     sell_signals: int = Field(0, ge=0)
@@ -248,6 +266,8 @@ class ForwardEstimatesResponse(BaseModel):
 
 
 class AnalystPositioning(BaseModel):
+    """Aggregated analyst consensus, target price, short interest, and EPS revision momentum."""
+
     recommendation_key: Optional[str] = None
     consensus_score: int = 0
     n_analysts: Optional[int] = Field(None, ge=0)
@@ -307,6 +327,8 @@ class RAGAgentOutput(BaseModel):
 
 
 class MarketContextPeer(BaseModel):
+    """A single peer ticker with its comparative metrics."""
+
     ticker: str
     metrics: dict[str, str] = Field(default_factory=dict)
 
@@ -328,6 +350,8 @@ class MarketContextOutput(BaseModel):
 
 
 class TrendAnalysis(BaseModel):
+    """Price trend direction, strength, and moving-average crossover signals."""
+
     trend_direction: str = "neutral"
     ma_crossover_signal: Optional[str] = None
     momentum_shift: Optional[str] = None
@@ -336,6 +360,8 @@ class TrendAnalysis(BaseModel):
 
 
 class ForecastResult(BaseModel):
+    """Price forecast with confidence bands over a configurable horizon."""
+
     method: str = "exponential_smoothing"
     horizon_days: int = Field(30, gt=0)
     forecast_prices: list[float] = Field(default_factory=list)
@@ -346,6 +372,8 @@ class ForecastResult(BaseModel):
 
 
 class ChartPayload(BaseModel):
+    """Serializable chart data: type, labels, datasets, and annotations for frontend rendering."""
+
     chart_type: str = "candlestick"
     labels: list[str] = Field(default_factory=list)
     datasets: list[dict[str, Any]] = Field(default_factory=list)
@@ -353,6 +381,8 @@ class ChartPayload(BaseModel):
 
 
 class StatisticalSummary(BaseModel):
+    """Return distribution shape, normality test, and regression statistics."""
+
     return_distribution: Optional[str] = None
     skewness: Optional[float] = None
     kurtosis: Optional[float] = None
@@ -363,6 +393,8 @@ class StatisticalSummary(BaseModel):
 
 
 class AnomalyReport(BaseModel):
+    """Detected price, volume, and fundamental anomalies with severity and catalyst context."""
+
     price_anomalies: list[dict[str, Any]] = Field(default_factory=list)
     volume_anomalies: list[dict[str, Any]] = Field(default_factory=list)
     fundamental_anomalies: list[str] = Field(default_factory=list)
@@ -386,6 +418,8 @@ class AnalyticsAgentOutput(BaseModel):
 
 
 class ContradictionFlag(BaseModel):
+    """Cross-agent contradiction on a shared field (e.g. quant says BUY, reviewer says SELL)."""
+
     agents: list[str]
     field: str
     description: str
@@ -393,6 +427,8 @@ class ContradictionFlag(BaseModel):
 
 
 class SourceVerification(BaseModel):
+    """Per-agent claim verification stats: how many claims could be cross-checked."""
+
     agent_name: str
     claims_checked: int = Field(0, ge=0)
     claims_verified: int = Field(0, ge=0)
@@ -408,6 +444,8 @@ class SourceVerification(BaseModel):
 
 
 class AgentScores(BaseModel):
+    """Individual confidence scores (0-1) for each agent in the pipeline."""
+
     quant: float = Field(0.0, ge=0.0, le=1.0)
     rag: float = Field(0.0, ge=0.0, le=1.0)
     market_context: float = Field(0.0, ge=0.0, le=1.0)
@@ -422,6 +460,8 @@ class AgentScores(BaseModel):
 
 
 class ConfidenceBreakdown(BaseModel):
+    """Decomposed confidence: per-agent scores, inter-agent agreement, and data quality."""
+
     agent_scores: AgentScores = Field(default_factory=AgentScores)  # type: ignore[arg-type]
     agreement_score: float = Field(0.0, ge=0.0, le=1.0)
     data_quality_score: float = Field(0.0, ge=0.0, le=1.0)
@@ -436,6 +476,8 @@ class ConfidenceBreakdown(BaseModel):
 
 
 class RecommendationValidation(BaseModel):
+    """Validates that the final recommendation is supported by evidence; flags contradicting data."""
+
     recommendation: str = "HOLD"
     evidence_supports: bool = True
     supporting_evidence: list[str] = Field(default_factory=list)

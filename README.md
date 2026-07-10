@@ -15,12 +15,12 @@ An autonomous multi-agent system that answers investment queries like *"Should I
 - **RAGAS evaluation pipeline**: Offline batch evaluation (Faithfulness, ResponseRelevancy, ContextPrecision, ContextRecall, ToolCallAccuracy, AgentGoalAccuracy) with Langfuse score push. Runtime per-query evaluation on live production responses with per-metric streaming, client caching, and 180s LLM timeout
 - **Structured logging**: `@logged`/`@logged_sync` timing decorators emit `→ Enter`, `← Exit ⏱`, `✗ Fail ⏱` with `latency_ms`; ANSI colored console output with per-level colors and service badges (aligned with frontend CSS palette); JSON file logs remain plain for log aggregators; `NO_COLOR`/`FORCE_COLOR` support
 - **Portfolio correlation analysis**: When you explicitly mention portfolio holdings (e.g. "My portfolio holds AAPL, MSFT"), the quant agent computes cross-stock correlation matrices alongside the primary analysis
-- **Distributed tracing**: Langfuse traces span all seven agent processes in a single trace tree via text-based context propagation. All agents (including Analytics, Market Context, and Reviewer) are fully instrumented — Analytics via PydanticAI OTEL (`gen_ai.*` spans), Reviewer via `langfuse.openai.AsyncOpenAI`, Market Context via `@observe()` on CrewAI execution.
+- **Distributed tracing**: Langfuse traces span all six agent processes in a single trace tree via text-based context propagation. All agents (including Analytics, Market Context, and Reviewer) are fully instrumented — Analytics via PydanticAI OTEL (`gen_ai.*` spans), Reviewer via `langfuse.openai.AsyncOpenAI`, Market Context via `@observe()` on CrewAI execution.
 - **Health monitoring**: `/health` endpoints on all eight services with docker-compose healthcheck integration
 - **Local LLM inference**: All agents use LM Studio (OpenAI-compatible API) — no cloud dependencies
 - **Frontend auth bypass**: `NEXT_PUBLIC_AUTH_ENABLED=false` short-circuits all frontend auth checks for local development, independently togglable from backend `AUTH_ENABLED`
 - **MCP data tools**: Unified server providing SEC filings (via EDGAR), price data (yfinance/yahooquery), financials, news sentiment, insider transactions, peer discovery, scenario shocks, analyst activity, valuation timeseries, and more
-- **Per-agent Docker images**: 7 Python agent services + 1 Next.js web frontend, each with a multi-stage Dockerfile. Per-agent dependency groups in `pyproject.toml` ensure each image installs only its own framework (99-184 packages vs. 315 monolithic)
+- **Per-agent Docker images**: 6 Python agent services + 1 Next.js web frontend + 1 MCP data server, each with a multi-stage Dockerfile. Per-agent dependency groups in `pyproject.toml` ensure each image installs only its own framework (99-184 packages vs. 315 monolithic)
 
 ## Architecture
 
@@ -124,10 +124,10 @@ copy .env.example .env
 Use the batch file to start everything:
 
 ```bat
-run_adk_web.bat
+run_ui.bat
 ```
 
-Or use Docker Compose (includes all 7 Python agents + Next.js web frontend + Redis):
+Or use Docker Compose (includes all 6 Python agents + MCP data server + Next.js web frontend + Redis):
 
 ```bash
 docker compose up --build
