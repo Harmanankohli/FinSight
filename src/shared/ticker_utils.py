@@ -9,6 +9,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Matches 1-5 uppercase letters optionally followed by a dot and 1-2 uppercase letters (e.g. BRK.A, BF.B)
 _STOCK_TICKER_RE = re.compile(r"^[A-Z]{1,5}(\.[A-Z]{1,2})?$")
 
 # Common financial/tech acronyms that look like tickers but aren't; prevents
@@ -90,10 +91,12 @@ _FINANCIAL_STOP_WORDS: frozenset[str] = frozenset(
 
 
 def is_valid_ticker_format(ticker: str) -> bool:
+    """Check if a string matches the standard stock ticker format (1-5 uppercase letters, optional dot-separated class suffix e.g. .A, .B)."""
     return bool(_STOCK_TICKER_RE.match(ticker))
 
 
 def _is_financial_stop_word(word: str) -> bool:
+    """Return True if the word is a known financial/tech acronym that should not be treated as a ticker."""
     return word.upper() in _FINANCIAL_STOP_WORDS
 
 
@@ -213,6 +216,7 @@ _QUERY_NOISE_WORDS: frozenset[str] = frozenset(
 
 
 def clean_query_for_resolution(text: str) -> str:
+    """Remove noise words and financial stop words from a query to improve NLP ticker resolution accuracy."""
     words = text.split()
     cleaned = [
         w for w in words if w.lower() not in _QUERY_NOISE_WORDS and not _is_financial_stop_word(w)
@@ -225,14 +229,18 @@ def clean_query_for_resolution(text: str) -> str:
 # (3) $ prefix as explicit signal, (4) isolated uppercase words,
 # (5) case-insensitive fallback for lowercase tickers like "aapl".
 def extract_ticker(query: str) -> str:
+    """Extract a ticker symbol from text using priority-ordered regex patterns. Returns "" if no ticker found."""  # noqa: E501
+    # Priority 1: parenthesised ticker — "(AAPL)" or "(BRK.A)"
     m = re.search(r"\(([A-Z]{1,5}(?:\.[A-Z]{1,2})?)\)", query)
     if m and not _is_financial_stop_word(m.group(1)):
         return m.group(1)
 
+    # Priority 2: ticker before a parenthesised word — "NVDA (nasdaq)"
     m = re.search(r"\b([A-Z]{1,5})\s+\([A-Za-z][a-z]", query)
     if m and not _is_financial_stop_word(m.group(1)):
         return m.group(1)
 
+    # Priority 3: ticker after a preposition/verb — "buy NVDA" or "invest in $NVDA"
     m = re.search(
         r"(?:for|of|about|buy|sell|invest|in)\s+\$?([A-Z]{1,5}(?:\.[A-Z]{1,2})?)\b",
         query,
@@ -240,14 +248,17 @@ def extract_ticker(query: str) -> str:
     if m and not _is_financial_stop_word(m.group(1)):
         return m.group(1)
 
+    # Priority 4: explicit $ prefix — "$AAPL"
     m = re.search(r"\$([A-Z]{1,5}(?:\.[A-Z]{1,2})?)\b", query)
     if m:
         return m.group(1)
 
+    # Priority 5: bare uppercase 3-5 letter words, e.g. "AAPL is up"
     matches = [w for w in re.findall(r"\b([A-Z]{3,5})\b", query) if not _is_financial_stop_word(w)]
     if matches:
         return str(matches[0])
 
+    # Priority 6: bare uppercase 1-2 letter words (picks last to favour the subject)
     matches = [w for w in re.findall(r"\b([A-Z]{1,2})\b", query) if not _is_financial_stop_word(w)]
     if matches:
         return str(matches[-1])
@@ -268,7 +279,7 @@ def extract_ticker(query: str) -> str:
         ):
             return candidate
 
-    # Bare lowercase ticker (e.g. just "nvda" or "aapl" as the entire query)
+    # Priority 7: bare lowercase ticker — entire query is just "nvda" or "brk.a"
     stripped = query.strip()
     if re.fullmatch(r"[A-Za-z]{1,5}(\.[A-Za-z]{1,2})?", stripped):
         candidate = stripped.upper()
@@ -282,19 +293,25 @@ def extract_ticker(query: str) -> str:
     return ""
 
 
+# Regex patterns for extracting ticker lists from portfolio/holdings descriptions.
+# Each pattern captures a comma/and-separated list of 1-5 uppercase ticker symbols.
 _HOLDINGS_PATTERNS = [
+    # "my portfolio holds AAPL, NVDA, GOOG" / "portfolio: AAPL, NVDA"
     re.compile(
         r"(?:portfolio|holdings?)\s*(?::|holds?|contains?|includes?|consists?\s+of)\s*(\b[A-Z]{1,5}\b(?:\s*,\s*\b[A-Z]{1,5}\b)*(?:\s+(?:and|&)\s*\b[A-Z]{1,5}\b)?)",
         re.IGNORECASE,
     ),
+    # "I own/hold/include the following tickers: AAPL, NVDA"
     re.compile(
         r"(?:I\s+(?:own|hold|have|am\s+invested\s+in)|my\s+(?:current\s+)?(?:portfolio|holdings?|positions?))\s+(?:include|consist)\s+(?:of\s+)?(?:the\s+)?(?:following\s+)?(?:tickers?\s*:?\s*)?(\b[A-Z]{1,5}\b(?:\s*,\s*\b[A-Z]{1,5}\b)*(?:\s+(?:and|&)\s*\b[A-Z]{1,5}\b)?)",
         re.IGNORECASE,
     ),
+    # "my holdings/positions are AAPL, NVDA"
     re.compile(
         r"(?:my\s+(?:current\s+)?(?:portfolio|holdings?|positions?))\s+are\s+(\b[A-Z]{1,5}\b(?:\s*,\s*\b[A-Z]{1,5}\b)*(?:\s+(?:and|&)\s*\b[A-Z]{1,5}\b)?)",
         re.IGNORECASE,
     ),
+    # "I/we currently own/hold: AAPL, NVDA"
     re.compile(
         r"(?:I|we)\s+(?:currently\s+)?(?:own|hold|have)\s*:?\s*(\b[A-Z]{1,5}\b(?:\s*,\s*\b[A-Z]{1,5}\b)*(?:\s+(?:and|&)\s*\b[A-Z]{1,5}\b)?)",
         re.IGNORECASE,
@@ -396,13 +413,16 @@ async def resolve_and_validate_ticker(query: str) -> tuple[str | None, str | Non
     Pipeline: extract_ticker -> resolve_ticker (if missing) -> validate_ticker ->
               resolve_ticker (if invalid) -> validate_ticker -> result
     """
+    # Step 1: try regex-based extraction from the raw query (fast path)
     ticker = extract_ticker(query)
     resolved = False
 
+    # Step 2: if regex found nothing, fall back to NLP-based company→ticker resolution via MCP
     if not ticker:
         ticker, _ = await resolve_ticker(query)
         resolved = True
 
+    # Step 3: still nothing — return an error suggesting explicit ticker formats
     if not ticker:
         return (
             None,
@@ -410,23 +430,30 @@ async def resolve_and_validate_ticker(query: str) -> tuple[str | None, str | Non
             " Try using parentheses (AAPL) or $ prefix ($V).",
         )
 
+    # Step 4: validate the extracted/resolved ticker against the SEC database
     valid, validated_ticker, company = await validate_ticker(ticker)
+
+    # Step 5: if invalid and we haven't tried resolution yet, resolve and re-validate
     if not valid and not resolved:
         ticker, _ = await resolve_ticker(query, ticker)
         if ticker:
             valid, validated_ticker, company = await validate_ticker(ticker)
 
+    # Step 6: final validation result
     if not valid:
         return None, f"Ticker '{ticker}' is not valid. Error: {company}"
 
+    # Success — canonical ticker with company name (or ticker itself as fallback)
     return validated_ticker, company or validated_ticker
 
 
 def extract_holdings(query: str, exclude_ticker: str = "") -> list[str]:
+    """Parse a list of tickers from portfolio/holdings phrases like "I own AAPL, NVDA"."""
     for pattern in _HOLDINGS_PATTERNS:
         m = pattern.search(query)
         if m:
             raw = m.group(1)
+            # Split captured list on commas, "and", or "&" with optional surrounding whitespace
             tickers = re.split(r"\s*(?:,|and|&)\s*", raw, flags=re.IGNORECASE)
             result = [
                 t.strip().upper()
