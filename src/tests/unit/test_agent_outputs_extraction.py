@@ -184,9 +184,9 @@ def test_populate_from_quant_valuation():
 
     val_labels = [v[0] for v in data.valuation_table]
     assert "DCF Fair Value" in val_labels
-    assert "95th Percentile Target" in val_labels
+    assert "90th Percentile Target" in val_labels
     assert "Median Target (p50)" in val_labels
-    assert "5th Percentile Target" in val_labels
+    assert "10th Percentile Target" in val_labels
     assert "CVaR (95%)" in val_labels
     assert "Max Drawdown" in val_labels
     assert data.scenarios["dcf"] == "$142.50"

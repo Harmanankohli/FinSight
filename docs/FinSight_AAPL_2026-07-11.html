@@ -1,0 +1,2453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Investment Recommendation | Apple Inc. (AAPL)</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;0,9..40,800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --navy: #0c1425;
+    --navy-mid: #162036;
+    --blue: #3b7dfa;
+    --blue-light: #e8f0fe;
+    --green: #22c55e;
+    --green-dark: #15803d;
+    --amber: #f59e0b;
+    --red: #ef4444;
+    --text: #1a2236;
+    --text-mid: #475569;
+    --text-light: #94a3b8;
+    --border: #e2e8f0;
+    --surface: #f1f5f9;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html {
+    font-family: 'DM Sans', system-ui, sans-serif;
+    color: var(--text);
+    background: #f8fafc;
+    scroll-behavior: smooth;
+  }
+
+  body { min-height: 100vh; }
+
+  /* ── Hero banner ─── */
+  .hero {
+    background: var(--navy);
+    color: #fff;
+    padding: 80px 0 64px;
+  }
+  .container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 40px;
+  }
+  .hero-label {
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 2.5px;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.5);
+    margin-bottom: 18px;
+  }
+  .hero-title {
+    font-size: 56px;
+    font-weight: 800;
+    line-height: 1.1;
+    letter-spacing: -2px;
+    margin-bottom: 12px;
+  }
+  .hero-subtitle {
+    font-size: 22px;
+    font-weight: 400;
+    color: rgba(255,255,255,0.7);
+    margin-bottom: 48px;
+  }
+  .hero-metrics {
+    display: flex;
+    gap: 48px;
+    flex-wrap: wrap;
+  }
+  .hero-metric {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .hero-metric .label {
+    font-size: 13px;
+    color: rgba(255,255,255,0.45);
+    font-weight: 500;
+  }
+  .hero-metric .value {
+    font-family: 'DM Mono', monospace;
+    font-size: 32px;
+    font-weight: 500;
+  }
+
+  /* ── Section layout ─── */
+  .report-section {
+    padding: 64px 0;
+  }
+  .report-section:nth-child(even) {
+    background: #fff;
+  }
+  .section-label {
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 2.5px;
+    text-transform: uppercase;
+    color: var(--blue);
+    margin-bottom: 12px;
+  }
+  .section-title {
+    font-size: 36px;
+    font-weight: 800;
+    line-height: 1.15;
+    letter-spacing: -1px;
+    color: var(--text);
+    margin-bottom: 32px;
+  }
+
+  /* ── KPI chips ─── */
+  .kpi-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 24px;
+  }
+  .kpi-chip {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 28px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .kpi-chip .label {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-mid);
+  }
+  .kpi-chip .value {
+    font-family: 'DM Mono', monospace;
+    font-size: 36px;
+    font-weight: 500;
+    letter-spacing: -1px;
+  }
+  .kpi-chip .value.pos { color: var(--green-dark); }
+  .kpi-chip .value.neg { color: var(--red); }
+  .kpi-chip .context {
+    font-size: 13px;
+    color: var(--text-light);
+  }
+
+  /* ── Thesis / summary block ─── */
+  .thesis-block {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 40px 48px;
+    font-size: 17px;
+    line-height: 1.8;
+    color: var(--text);
+    border-left: 4px solid var(--blue);
+    white-space: pre-line;
+  }
+
+  /* ── Data tables ─── */
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 15px;
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .data-table th {
+    text-align: left;
+    font-weight: 600;
+    font-size: 12px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--text-light);
+    padding: 14px 20px;
+    border-bottom: 2px solid var(--border);
+    background: var(--surface);
+  }
+  .data-table td {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+  }
+  .data-table tr:last-child td { border-bottom: none; }
+  .data-table .metric-name {
+    font-weight: 600;
+    color: var(--text);
+  }
+  .data-table .mono {
+    font-family: 'DM Mono', monospace;
+    font-weight: 400;
+    letter-spacing: -0.3px;
+  }
+
+  /* ── Scorecard ─── */
+  .score-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+  }
+  .score-item {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 24px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .score-item .dim {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-mid);
+  }
+  .score-item .rating-badge {
+    font-size: 14px;
+    font-weight: 700;
+    padding: 5px 14px;
+    border-radius: 8px;
+    display: inline-block;
+    width: fit-content;
+  }
+  .badge-strong { background: #dcfce7; color: var(--green-dark); }
+  .badge-bullish { background: #dbeafe; color: #1d4ed8; }
+  .badge-expensive { background: #fef3c7; color: #92400e; }
+  .badge-moderate { background: #f1f5f9; color: #475569; }
+  .badge-hold { background: #dbeafe; color: #1d4ed8; }
+
+  /* ── Risk-Reward ─── */
+  .rr-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 28px;
+  }
+  .rr-col {
+    border-radius: 16px;
+    padding: 32px 28px;
+  }
+  .rr-col.opp {
+    background: #f0fdf4;
+    border: 1.5px solid #bbf7d0;
+  }
+  .rr-col.risk {
+    background: #fef2f2;
+    border: 1.5px solid #fecaca;
+  }
+  .rr-col h3 {
+    font-size: 18px;
+    font-weight: 700;
+    margin-bottom: 20px;
+  }
+  .rr-col.opp h3 { color: var(--green-dark); }
+  .rr-col.risk h3 { color: #b91c1c; }
+  .rr-col ul {
+    list-style: none;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .rr-col li {
+    font-size: 15px;
+    line-height: 1.5;
+    padding-left: 24px;
+    position: relative;
+    color: var(--text);
+  }
+  .rr-col li::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 7px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+  }
+  .rr-col.opp li::before { background: var(--green); }
+  .rr-col.risk li::before { background: var(--red); }
+
+  /* ── Peer table ─── */
+  .peer-table th:not(:first-child),
+  .peer-table td:not(:first-child) { text-align: center; }
+  .peer-table .highlight { background: rgba(59, 125, 250, 0.04); }
+  .peer-table .highlight td { font-weight: 600; }
+
+  /* ── Valuation two-col ─── */
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 32px;
+    align-items: start;
+  }
+  .scenario-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .scenario-card {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 24px;
+  }
+  .scenario-card .card-label {
+    font-size: 12px;
+    color: var(--text-light);
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    margin-bottom: 8px;
+  }
+  .scenario-card .card-value {
+    font-family: 'DM Mono', monospace;
+    font-size: 32px;
+    font-weight: 500;
+  }
+
+  /* ── Conclusion ─── */
+  .conclusion {
+    background: var(--navy);
+    color: #fff;
+    padding: 80px 0;
+    text-align: center;
+  }
+  .conclusion .section-label { color: rgba(255,255,255,0.5); }
+  .divider {
+    width: 60px;
+    height: 4px;
+    background: var(--blue);
+    border-radius: 2px;
+    margin: 0 auto 24px;
+  }
+  .rec-badge {
+    font-family: 'DM Mono', monospace;
+    font-size: 52px;
+    font-weight: 500;
+    letter-spacing: -2px;
+    color: var(--blue);
+    margin-bottom: 8px;
+  }
+  .rec-conf {
+    font-size: 18px;
+    color: rgba(255,255,255,0.45);
+    font-weight: 500;
+    margin-bottom: 28px;
+  }
+  .rec-text {
+    font-size: 17px;
+    line-height: 1.8;
+    color: rgba(255,255,255,0.7);
+    max-width: 800px;
+    margin: 0 auto;
+    white-space: pre-line;
+  }
+
+  /* ── Footer ─── */
+  .report-footer {
+    background: var(--navy);
+    color: rgba(255,255,255,0.3);
+    padding: 20px 0;
+    font-size: 13px;
+    border-top: 1px solid rgba(255,255,255,0.08);
+  }
+  .report-footer .container {
+    display: flex;
+    justify-content: space-between;
+  }
+
+  /* ── PDF download button ─── */
+  .pdf-download-bar {
+    position: sticky;
+    top: 0;
+    z-index: 1000;
+    background: rgba(255,255,255,0.92);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    padding: 10px 0;
+  }
+  .pdf-download-bar .container {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .pdf-download-bar .doc-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .btn-pdf {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 20px;
+    border-radius: 8px;
+    border: 1px solid var(--blue);
+    background: var(--blue);
+    color: #fff;
+    font-family: 'DM Sans', system-ui, sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 150ms ease, border-color 150ms ease;
+  }
+  .btn-pdf:hover { background: #2563eb; border-color: #2563eb; }
+  .btn-pdf svg { width: 16px; height: 16px; }
+
+  /* ── Responsive ─── */
+  @media (max-width: 768px) {
+    .container { padding: 0 20px; }
+    .hero { padding: 48px 0 40px; }
+    .hero-title { font-size: 36px; }
+    .hero-metrics { gap: 28px; }
+    .two-col, .rr-grid { grid-template-columns: 1fr; }
+    .kpi-row { grid-template-columns: 1fr 1fr; }
+    .thesis-block { padding: 24px 28px; }
+  }
+
+  /* ── Trend dashboard ─── */
+  .trend-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+  .trend-card {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 24px 20px;
+    text-align: center;
+  }
+  .trend-card .trend-label {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--text-light);
+    margin-bottom: 8px;
+  }
+  .trend-card .trend-value {
+    font-family: 'DM Mono', monospace;
+    font-size: 24px;
+    font-weight: 500;
+  }
+  .trend-bullish { color: var(--green-dark); }
+  .trend-bearish { color: var(--red); }
+  .trend-neutral { color: var(--text-mid); }
+
+  /* ── Chart container ─── */
+  .chart-container {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 32px;
+    margin-bottom: 24px;
+  }
+  .chart-container canvas {
+    max-height: 400px;
+  }
+  .chart-meta {
+    display: flex;
+    gap: 24px;
+    margin-top: 16px;
+    font-size: 13px;
+    color: var(--text-light);
+  }
+  .chart-meta span { font-family: 'DM Mono', monospace; }
+
+  /* ── Monte Carlo cards ─── */
+  .mc-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+  .mc-card {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 20px 16px;
+    text-align: center;
+  }
+  .mc-card .mc-label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--text-light);
+    margin-bottom: 6px;
+  }
+  .mc-card .mc-value {
+    font-family: 'DM Mono', monospace;
+    font-size: 22px;
+    font-weight: 500;
+    color: var(--text);
+  }
+
+  /* ── Anomaly alerts ─── */
+  .anomaly-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .anomaly-item {
+    background: #fff;
+    border-radius: 12px;
+    padding: 16px 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    font-size: 14px;
+  }
+  .anomaly-item.severity-high {
+    border: 1.5px solid #fecaca;
+    background: #fef2f2;
+  }
+  .anomaly-item.severity-medium {
+    border: 1.5px solid #fde68a;
+    background: #fefce8;
+  }
+  .anomaly-item.severity-low, .anomaly-item.severity-none, .anomaly-item.severity-info {
+    border: 1px solid var(--border);
+  }
+  .anomaly-badge {
+    font-size: 11px;
+    font-weight: 700;
+    padding: 4px 10px;
+    border-radius: 6px;
+    white-space: nowrap;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  .anomaly-badge.type-Price { background: #dbeafe; color: #1d4ed8; }
+  .anomaly-badge.type-Volume { background: #f3e8ff; color: #7c3aed; }
+  .anomaly-badge.type-Fundamental { background: #fef3c7; color: #92400e; }
+  .anomaly-badge.type-Catalyst { background: #f0fdf4; color: var(--green-dark); }
+
+  /* ── Reviewer cards ─── */
+  .reviewer-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+  }
+  .reviewer-card {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 28px 24px;
+  }
+  .reviewer-card h3 {
+    font-size: 16px;
+    font-weight: 700;
+    margin-bottom: 16px;
+    color: var(--text);
+  }
+  .confidence-bar-container {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 10px;
+  }
+  .confidence-bar-label {
+    font-size: 13px;
+    color: var(--text-mid);
+    min-width: 100px;
+  }
+  .confidence-bar {
+    flex: 1;
+    height: 8px;
+    background: var(--surface);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .confidence-bar-fill {
+    height: 100%;
+    border-radius: 4px;
+    background: var(--blue);
+    transition: width 0.3s ease;
+  }
+  .confidence-bar-value {
+    font-family: 'DM Mono', monospace;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text);
+    min-width: 40px;
+    text-align: right;
+  }
+  .contradiction-item {
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .contradiction-item:last-child { border-bottom: none; }
+  .contradiction-severity {
+    font-size: 11px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-right: 8px;
+  }
+  .severity-high { background: #fecaca; color: #b91c1c; }
+  .severity-medium { background: #fde68a; color: #92400e; }
+  .severity-low { background: #e2e8f0; color: #475569; }
+  .evidence-item {
+    font-size: 14px;
+    padding: 6px 0;
+    padding-left: 20px;
+    position: relative;
+    color: var(--text);
+  }
+  .evidence-item::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 11px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+  }
+  .evidence-item.supporting::before { background: var(--green); }
+  .evidence-item.contradicting::before { background: var(--red); }
+
+  /* ── Signals table ─── */
+  .signals-category {
+    font-size: 11px;
+    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 6px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    white-space: nowrap;
+  }
+  .cat-Insider { background: #dbeafe; color: #1d4ed8; }
+  .cat-Options { background: #f3e8ff; color: #7c3aed; }
+  .cat-Analyst { background: #fef3c7; color: #92400e; }
+  .cat-Signal { background: #f0fdf4; color: var(--green-dark); }
+
+  /* ── Print / PDF ─── */
+  @media print {
+    *, *::before, *::after {
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+    @page {
+      size: A4 portrait;
+      margin: 18mm 16mm 20mm 16mm;
+    }
+    @page :first { margin-top: 0; }
+
+    html, body {
+      background: #fff !important;
+      font-size: 11pt;
+      line-height: 1.5;
+    }
+
+    .pdf-download-bar { display: none !important; }
+
+    .container { max-width: 100%; padding: 0 !important; }
+
+    /* ── Cover page ─── */
+    .hero {
+      background: var(--navy) !important;
+      padding: 60mm 16mm 40mm !important;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      page-break-after: always;
+      break-after: page;
+      margin: -18mm -16mm 0 -16mm;
+      width: calc(100% + 32mm);
+    }
+    .hero .container { padding: 0 24mm !important; }
+    .hero-title { font-size: 36pt !important; }
+    .hero-subtitle { font-size: 14pt !important; }
+    .hero-metric .value { font-size: 22pt !important; }
+    .hero-metric .label { font-size: 9pt !important; }
+
+    /* ── Section layout ─── */
+    .report-section {
+      padding: 10mm 0 8mm !important;
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+    .section-title {
+      font-size: 18pt !important;
+      margin-bottom: 6mm !important;
+    }
+    .section-label {
+      font-size: 8pt !important;
+      margin-bottom: 3mm !important;
+    }
+
+    /* ── KPI chips ─── */
+    .kpi-row {
+      grid-template-columns: repeat(4, 1fr) !important;
+      gap: 4mm !important;
+    }
+    .kpi-chip {
+      padding: 5mm 4mm !important;
+      border: 0.5pt solid var(--border) !important;
+    }
+    .kpi-chip .value { font-size: 22pt !important; }
+    .kpi-chip .label { font-size: 8pt !important; }
+    .kpi-chip .context { font-size: 7pt !important; }
+
+    /* ── Thesis block ─── */
+    .thesis-block {
+      padding: 6mm 8mm !important;
+      font-size: 10.5pt !important;
+      line-height: 1.65 !important;
+      border: 0.5pt solid var(--border) !important;
+      border-left: 3pt solid var(--blue) !important;
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+
+    /* ── Tables ─── */
+    .data-table {
+      font-size: 9.5pt !important;
+      border: 0.5pt solid var(--border) !important;
+    }
+    .data-table th {
+      font-size: 7pt !important;
+      padding: 3mm 4mm !important;
+    }
+    .data-table td {
+      padding: 2.5mm 4mm !important;
+    }
+
+    /* ── Scorecard ─── */
+    .score-grid {
+      grid-template-columns: repeat(3, 1fr) !important;
+      gap: 3mm !important;
+    }
+    .score-item {
+      padding: 4mm !important;
+      border: 0.5pt solid var(--border) !important;
+    }
+    .score-item .dim { font-size: 8pt !important; }
+    .score-item .rating-badge { font-size: 9pt !important; padding: 2pt 8pt !important; }
+
+    /* ── Valuation ─── */
+    .two-col { gap: 6mm !important; }
+    .scenario-card {
+      padding: 4mm !important;
+      border: 0.5pt solid var(--border) !important;
+    }
+    .scenario-card .card-value { font-size: 18pt !important; }
+    .scenario-card .card-label { font-size: 7pt !important; }
+    .scenario-cards { gap: 3mm !important; }
+
+    /* ── Risk-Reward ─── */
+    .rr-grid {
+      gap: 5mm !important;
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+    .rr-col {
+      padding: 5mm !important;
+    }
+    .rr-col h3 { font-size: 11pt !important; margin-bottom: 4mm !important; }
+    .rr-col li {
+      font-size: 9.5pt !important;
+      padding-left: 5mm !important;
+    }
+    .rr-col li::before { width: 6px !important; height: 6px !important; top: 5px !important; }
+
+    /* ── Peer table ─── */
+    .peer-table { page-break-inside: avoid; break-inside: avoid; }
+
+    /* ── New sections ─── */
+    .trend-grid { grid-template-columns: repeat(4, 1fr) !important; gap: 3mm !important; }
+    .trend-card { padding: 4mm !important; }
+    .trend-card .trend-value { font-size: 14pt !important; }
+    .chart-container { padding: 5mm !important; page-break-inside: avoid; break-inside: avoid; }
+    .chart-container canvas { max-height: 250px !important; }
+    .mc-grid { grid-template-columns: repeat(5, 1fr) !important; gap: 3mm !important; }
+    .mc-card { padding: 3mm !important; }
+    .mc-card .mc-value { font-size: 14pt !important; }
+    .anomaly-item { padding: 3mm 4mm !important; font-size: 9pt !important; }
+    .reviewer-grid { gap: 5mm !important; page-break-inside: avoid; break-inside: avoid; }
+    .reviewer-card { padding: 4mm !important; }
+
+    /* ── Conclusion ─── */
+    .conclusion {
+      background: var(--navy) !important;
+      padding: 30mm 16mm !important;
+      page-break-before: always;
+      break-before: page;
+      margin: 0 -16mm -20mm -16mm;
+      width: calc(100% + 32mm);
+      min-height: 50vh;
+    }
+    .conclusion .container { padding: 0 24mm !important; }
+    .rec-badge { font-size: 32pt !important; }
+    .rec-conf { font-size: 12pt !important; }
+    .rec-text { font-size: 10pt !important; line-height: 1.65 !important; }
+
+    /* ── Footer ─── */
+    .report-footer {
+      background: var(--navy) !important;
+      padding: 4mm 0 !important;
+      margin: 0 -16mm -20mm -16mm;
+      width: calc(100% + 32mm);
+    }
+    .report-footer .container { padding: 0 24mm !important; }
+    .report-footer span { font-size: 7pt !important; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ── Sticky PDF bar ─── -->
+<div class="pdf-download-bar">
+  <div class="container">
+    <span class="doc-title">Apple Inc. (AAPL) — Investment Report</span>
+    <button class="btn-pdf" onclick="window.print()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+      Download PDF
+    </button>
+  </div>
+</div>
+
+<!-- ─── HERO ─── -->
+<header class="hero">
+  <div class="container">
+    <div class="hero-label">Equity Research Report</div>
+    <h1 class="hero-title">Apple Inc.</h1>
+    <p class="hero-subtitle">NASDAQ: AAPL · Technology</p>
+
+    <div class="hero-metrics">
+      <div class="hero-metric">
+        <span class="label">Recommendation</span>
+        <span class="value" style="color:var(--blue);">HOLD</span>
+      </div>
+      <div class="hero-metric">
+        <span class="label">Confidence</span>
+        <span class="value">65%</span>
+      </div>
+      
+      <div class="hero-metric">
+        <span class="label">Median Target</span>
+        <span class="value">$371.12</span>
+      </div>
+      
+      
+      <div class="hero-metric">
+        <span class="label">Analysis Date</span>
+        <span class="value" style="font-size:24px;">2026-07-11</span>
+      </div>
+      
+    </div>
+  </div>
+</header>
+
+<!-- ─── KEY METRICS ─── -->
+
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Key Metrics</div>
+    <h2 class="section-title">Performance Snapshot</h2>
+    <div class="kpi-row">
+      
+      <div class="kpi-chip">
+        <span class="label">Sharpe Ratio</span>
+        <span class="value pos">0.57</span>
+        <span class="context">Risk-adjusted return</span>
+      </div>
+      
+      <div class="kpi-chip">
+        <span class="label">Annual Volatility</span>
+        <span class="value neg">27.8%</span>
+        <span class="context">Annualized</span>
+      </div>
+      
+      <div class="kpi-chip">
+        <span class="label">Beta</span>
+        <span class="value pos">0.88</span>
+        <span class="context">Mkt sensitivity</span>
+      </div>
+      
+      <div class="kpi-chip">
+        <span class="label">RSI</span>
+        <span class="value pos">63</span>
+        <span class="context">Momentum (14-day)</span>
+      </div>
+      
+    </div>
+  </div>
+</div>
+
+
+<!-- ─── EXECUTIVE SUMMARY ─── -->
+
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Investment Thesis</div>
+    <h2 class="section-title">Executive Summary</h2>
+    <div class="thesis-block">The analysis reveals a nuanced picture for AAPL. While the Quant Agent flags a DCF downside of -50.6% and highlights a high anomaly severity, the Market Context underscores a bullish macro environment with strong brand loyalty and AI-driven ecosystem tailwinds. Conflicting signals exist between the quantitative model (DCF vs. Monte Carlo) and the qualitative narrative, but overall confidence remains moderate. The meta-confidence of 53% supports a cautious buy, tempered by data quality concerns.</div>
+  </div>
+</div>
+
+
+<!-- ─── FINANCIAL PERFORMANCE ─── -->
+
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Financial Performance</div>
+    <h2 class="section-title">Earnings &amp; Growth</h2>
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th style="width:40%;">Metric</th>
+          <th style="width:30%;">Current</th>
+          <th style="width:30%;">Context</th>
+        </tr>
+      </thead>
+      <tbody>
+        
+        <tr>
+          <td class="metric-name">Sharpe Ratio</td>
+          <td class="mono">0.57</td>
+          <td class="mono" >Risk-Adjusted</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Volatility</td>
+          <td class="mono">27.8%</td>
+          <td class="mono" >Annualized</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Beta</td>
+          <td class="mono">0.88</td>
+          <td class="mono" >vs. S&amp;P 500</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">VaR (95%, daily)</td>
+          <td class="mono">-2.7%</td>
+          <td class="mono" >Daily</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">P/E Ratio</td>
+          <td class="mono">38.31</td>
+          <td class="mono" >Price / Earnings</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Forward P/E</td>
+          <td class="mono">32.82</td>
+          <td class="mono" >Next 12 months consensus</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">ROE</td>
+          <td class="mono">141.5%</td>
+          <td class="mono" >Return on Equity</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Operating Margin</td>
+          <td class="mono">32.3%</td>
+          <td class="mono" >Profitability</td>
+        </tr>
+        
+      </tbody>
+    </table>
+  </div>
+</div>
+
+
+<!-- ─── TECHNICAL ANALYSIS ─── -->
+
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Technical Analysis</div>
+    <h2 class="section-title">Price Indicators</h2>
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th style="width:35%;">Indicator</th>
+          <th style="width:30%;">Value</th>
+          <th style="width:35%;">Signal</th>
+        </tr>
+      </thead>
+      <tbody>
+        
+        <tr>
+          <td class="metric-name">RSI (14)</td>
+          <td class="mono">62.9</td>
+          <td class="mono" style="color:var(--green-dark);">Bullish</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">SMA 20</td>
+          <td class="mono">$298.10</td>
+          <td class="mono" >Short-term trend</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">SMA 50</td>
+          <td class="mono">$297.73</td>
+          <td class="mono" >Medium-term trend</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">SMA 200</td>
+          <td class="mono">$272.10</td>
+          <td class="mono" >Long-term trend</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">EMA 12</td>
+          <td class="mono">$305.19</td>
+          <td class="mono" >Short-term EMA</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">EMA 26</td>
+          <td class="mono">$300.57</td>
+          <td class="mono" >Long-term EMA</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">MACD</td>
+          <td class="mono">4.6245</td>
+          <td class="mono" style="color:var(--green-dark);">Bullish</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">MACD Signal</td>
+          <td class="mono">1.9079</td>
+          <td class="mono" ></td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">MACD Histogram</td>
+          <td class="mono">2.7166</td>
+          <td class="mono" >Expanding</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Bollinger Upper</td>
+          <td class="mono">$321.20</td>
+          <td class="mono" ></td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Bollinger Lower</td>
+          <td class="mono">$275.01</td>
+          <td class="mono" ></td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">BB Position</td>
+          <td class="mono">0.87</td>
+          <td class="mono" >Near Upper</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Support Level</td>
+          <td class="mono">$310.66</td>
+          <td class="mono" ></td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Resistance Level</td>
+          <td class="mono">$316.22</td>
+          <td class="mono" ></td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Momentum (20d)</td>
+          <td class="mono">+6.7%</td>
+          <td class="mono" >Short-term</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Momentum (60d)</td>
+          <td class="mono">+18.5%</td>
+          <td class="mono" >Medium-term</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Golden Cross</td>
+          <td class="mono">No</td>
+          <td class="mono" ></td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Above 50d MA</td>
+          <td class="mono">Yes</td>
+          <td class="mono" ></td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Above 200d MA</td>
+          <td class="mono">Yes</td>
+          <td class="mono" ></td>
+        </tr>
+        
+      </tbody>
+    </table>
+  </div>
+</div>
+
+
+<!-- ─── TREND & MOMENTUM ─── -->
+
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Trend Analysis</div>
+    <h2 class="section-title">Momentum Dashboard</h2>
+    <div class="trend-grid">
+      <div class="trend-card">
+        <div class="trend-label">Trend</div>
+        <div class="trend-value trend-bullish">Bullish</div>
+      </div>
+      <div class="trend-card">
+        <div class="trend-label">Strength</div>
+        <div class="trend-value">Strong</div>
+      </div>
+      <div class="trend-card">
+        <div class="trend-label">MA Crossover</div>
+        <div class="trend-value trend-bullish">Bullish Alignment</div>
+      </div>
+      <div class="trend-card">
+        <div class="trend-label">Momentum</div>
+        <div class="trend-value">Accelerating</div>
+      </div>
+    </div>
+    
+    <div style="margin-top: 16px;">
+      <div style="font-size: 13px; font-weight: 600; color: var(--text-mid); margin-bottom: 8px;">Supporting Indicators</div>
+      <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+        
+        <span style="background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 6px 14px; font-size: 13px; color: var(--text);">Above SMA200 (+3)</span>
+        
+        <span style="background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 6px 14px; font-size: 13px; color: var(--text);">Above SMA50 (+2)</span>
+        
+        <span style="background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 6px 14px; font-size: 13px; color: var(--text);">SMA50 &gt; SMA200 (+2)</span>
+        
+        <span style="background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 6px 14px; font-size: 13px; color: var(--text);">MACD bullish (+1, hist=+2.7166)</span>
+        
+        <span style="background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 6px 14px; font-size: 13px; color: var(--text);">Momentum positive (+1, ROC=+6.7%)</span>
+        
+        <span style="background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 6px 14px; font-size: 13px; color: var(--text);">RSI &gt; 50 (+1, RSI=62.9)</span>
+        
+      </div>
+    </div>
+    
+  </div>
+</div>
+
+
+<!-- ─── VALUATION ─── -->
+
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Valuation</div>
+    <h2 class="section-title">Scenario Analysis</h2>
+    <div class="two-col">
+      
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Metric</th>
+            <th>Value</th>
+          </tr>
+        </thead>
+        <tbody>
+          
+          <tr>
+            <td class="metric-name">DCF Fair Value</td>
+            <td class="mono">$155.81</td>
+          </tr>
+          
+          <tr>
+            <td class="metric-name">90th Percentile Target</td>
+            <td class="mono">$535.61</td>
+          </tr>
+          
+          <tr>
+            <td class="metric-name">Median Target (p50)</td>
+            <td class="mono">$371.12</td>
+          </tr>
+          
+          <tr>
+            <td class="metric-name">10th Percentile Target</td>
+            <td class="mono">$258.12</td>
+          </tr>
+          
+          <tr>
+            <td class="metric-name">30d Forecast</td>
+            <td class="mono">$359.16</td>
+          </tr>
+          
+        </tbody>
+      </table>
+      
+
+      
+      <div class="scenario-cards">
+        
+        <div class="scenario-card">
+          <div class="card-label">90th Pct (Bull)</div>
+          <div class="card-value" style="color:var(--green-dark);">$535.61</div>
+        </div>
+        
+        <div class="scenario-card">
+          <div class="card-label">Median (Base)</div>
+          <div class="card-value" style="color:var(--blue);">$371.12</div>
+        </div>
+        
+        <div class="scenario-card">
+          <div class="card-label">DCF Fair Value</div>
+          <div class="card-value" style="color:var(--amber);">$155.81</div>
+        </div>
+        
+        <div class="scenario-card">
+          <div class="card-label">10th Pct (Bear)</div>
+          <div class="card-value" style="color:var(--red);">$258.12</div>
+        </div>
+        
+      </div>
+      
+    </div>
+  </div>
+</div>
+
+
+<!-- ─── DCF BREAKDOWN ─── -->
+
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Valuation Model</div>
+    <h2 class="section-title">Valuation Breakdown</h2>
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th style="width:50%;">Parameter</th>
+          <th style="width:50%;">Value</th>
+        </tr>
+      </thead>
+      <tbody>
+        
+        <tr>
+          <td class="metric-name">Intrinsic Value</td>
+          <td class="mono">$155.81</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Current Price</td>
+          <td class="mono">$315.32</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Upside</td>
+          <td class="mono">-50.6%</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">WACC</td>
+          <td class="mono">8.4%</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Growth Rate</td>
+          <td class="mono">9.2%</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Terminal Growth</td>
+          <td class="mono">3.0%</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">DCF Enterprise Value</td>
+          <td class="mono">$2.24T</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Market Enterprise Value</td>
+          <td class="mono">$4.58T</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Net Cash</td>
+          <td class="mono">$47.71B</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Equity Value</td>
+          <td class="mono">$2.29T</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">FCF Used</td>
+          <td class="mono">$98.77B</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Revenue Growth</td>
+          <td class="mono">16.6%</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Earnings Growth</td>
+          <td class="mono">21.8%</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Bear Case</td>
+          <td class="mono">$124.10</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Base Case</td>
+          <td class="mono">$155.81</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Bull Case</td>
+          <td class="mono">$202.80</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Valuation Reliability</td>
+          <td class="mono">88%</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Risk-Free Rate</td>
+          <td class="mono">4.30%</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Beta</td>
+          <td class="mono">0.88</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Cost of Equity</td>
+          <td class="mono">8.45%</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Cost of Debt (after-tax)</td>
+          <td class="mono">3.92%</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Tax Rate</td>
+          <td class="mono">16%</td>
+        </tr>
+        
+      </tbody>
+    </table>
+  </div>
+</div>
+
+
+<!-- ─── MONTE CARLO ─── -->
+
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Monte Carlo Simulation</div>
+    <h2 class="section-title">Price Distribution</h2>
+    <div class="mc-grid">
+      
+      <div class="mc-card">
+        <div class="mc-label">P10 (Bear)</div>
+        <div class="mc-value" style="color:var(--red);">$258.12</div>
+      </div>
+      
+      
+      <div class="mc-card">
+        <div class="mc-label">P25</div>
+        <div class="mc-value" style="color:var(--amber);">$306.87</div>
+      </div>
+      
+      
+      <div class="mc-card">
+        <div class="mc-label">P50 (Base)</div>
+        <div class="mc-value" style="color:var(--blue);">$371.12</div>
+      </div>
+      
+      
+      <div class="mc-card">
+        <div class="mc-label">P75</div>
+        <div class="mc-value" style="color:var(--green);">$449.21</div>
+      </div>
+      
+      
+      <div class="mc-card">
+        <div class="mc-label">P90 (Bull)</div>
+        <div class="mc-value" style="color:var(--green-dark);">$535.61</div>
+      </div>
+      
+    </div>
+
+    
+    <div class="chart-container">
+      <canvas id="mcChart"></canvas>
+    </div>
+    
+
+    <div style="display: flex; gap: 32px; flex-wrap: wrap; margin-top: 8px;">
+      
+      <div><span style="font-size: 13px; color: var(--text-light);">Prob. of Profit:</span> <span style="font-family: 'DM Mono', monospace; font-weight: 500;">71.8%</span></div>
+      
+      
+      <div><span style="font-size: 13px; color: var(--text-light);">Expected Return:</span> <span style="font-family: 'DM Mono', monospace; font-weight: 500;">+22.8%</span></div>
+      
+      
+      <div><span style="font-size: 13px; color: var(--text-light);">MC VaR (95%):</span> <span style="font-family: 'DM Mono', monospace; font-weight: 500;">-25.5%</span></div>
+      
+      
+      <div><span style="font-size: 13px; color: var(--text-light);">Simulations:</span> <span style="font-family: 'DM Mono', monospace; font-weight: 500;">5,000</span></div>
+      
+      
+      <div><span style="font-size: 13px; color: var(--text-light);">Horizon:</span> <span style="font-family: 'DM Mono', monospace; font-weight: 500;">252 days</span></div>
+      
+    </div>
+  </div>
+</div>
+
+
+<!-- ─── STRESS TEST ─── -->
+
+
+<!-- ─── PRICE FORECAST ─── -->
+
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Price Forecast</div>
+    <h2 class="section-title">Exponential Smoothing — 30d Horizon</h2>
+    <div class="chart-container">
+      <canvas id="forecastChart"></canvas>
+      <div class="chart-meta">
+        
+        <div>80% CI: <span>$340.14 – $378.19</span></div>
+        
+        
+        <div>MAPE: <span>12.67%</span></div>
+        
+        <div>Method: <span>Exponential Smoothing</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ─── ANALYTICS CHARTS (Moving Averages first, then Candlestick) ─── -->
+
+
+
+
+
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Analytics</div>
+    <h2 class="section-title">Price &amp; Moving Averages</h2>
+    <div class="chart-container">
+      <canvas id="maChart"></canvas>
+    </div>
+  </div>
+</div>
+
+
+
+
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Analytics</div>
+    <h2 class="section-title">90-Day Price Action (OHLC)</h2>
+    <div class="chart-container">
+      <canvas id="ohlcChart"></canvas>
+    </div>
+  </div>
+</div>
+
+
+
+
+
+
+<!-- ─── SCORECARD ─── -->
+
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Assessment</div>
+    <h2 class="section-title">Investment Scorecard</h2>
+    <div class="score-grid">
+      
+      <div class="score-item">
+        <span class="dim">Momentum</span>
+        <span class="rating-badge badge-bullish">Bullish</span>
+      </div>
+      
+      <div class="score-item">
+        <span class="dim">Technical Outlook</span>
+        <span class="rating-badge badge-bullish">Bullish</span>
+      </div>
+      
+      <div class="score-item">
+        <span class="dim">Quant Signal</span>
+        <span class="rating-badge badge-bullish">HOLD</span>
+      </div>
+      
+      <div class="score-item">
+        <span class="dim">Market Sentiment</span>
+        <span class="rating-badge badge-bullish">Bullish</span>
+      </div>
+      
+      <div class="score-item">
+        <span class="dim">Analytics Trend</span>
+        <span class="rating-badge badge-bullish">Bullish</span>
+      </div>
+      
+      <div class="score-item">
+        <span class="dim">Recommendation</span>
+        <span class="rating-badge badge-bullish">HOLD</span>
+      </div>
+      
+    </div>
+  </div>
+</div>
+
+
+<!-- ─── PEER COMPARISON ─── -->
+
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Competitive Landscape</div>
+    <h2 class="section-title">Peer Comparison</h2>
+    <table class="data-table peer-table">
+      <thead>
+        <tr>
+          <th style="width:30%;">Metric</th>
+          <th style="width:23%;">AAPL</th>
+          
+          <th style="width:23%;">SONO</th>
+          
+          <th style="width:23%;">TBCH</th>
+          
+        </tr>
+      </thead>
+      <tbody>
+        
+        <tr class="highlight">
+          <td class="metric-name">P/E Ratio</td>
+          <td class="mono">38.3</td>
+          <td class="mono">80.6</td>
+          
+          <td class="mono" style="color:var(--text-light);">642.0</td>
+          
+        </tr>
+        
+        <tr class="">
+          <td class="metric-name">EV/EBITDA</td>
+          <td class="mono">29.1</td>
+          <td class="mono">14.8</td>
+          
+          <td class="mono" style="color:var(--text-light);">14.8</td>
+          
+        </tr>
+        
+        <tr class="highlight">
+          <td class="metric-name">Revenue Growth</td>
+          <td class="mono">16.6%</td>
+          <td class="mono">8.4%</td>
+          
+          <td class="mono" style="color:var(--text-light);">-34.0%</td>
+          
+        </tr>
+        
+        <tr class="">
+          <td class="metric-name">Operating Margin</td>
+          <td class="mono">32.3%</td>
+          <td class="mono">-9.1%</td>
+          
+          <td class="mono" style="color:var(--text-light);">-33.3%</td>
+          
+        </tr>
+        
+        <tr class="highlight">
+          <td class="metric-name">ROE</td>
+          <td class="mono">141.5%</td>
+          <td class="mono">6.2%</td>
+          
+          <td class="mono" style="color:var(--text-light);">1.0%</td>
+          
+        </tr>
+        
+      </tbody>
+    </table>
+  </div>
+</div>
+
+
+<!-- ─── BEHAVIORAL SIGNALS ─── -->
+
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Behavioral Signals</div>
+    <h2 class="section-title">Insider, Options &amp; Analyst Activity</h2>
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th style="width:20%;">Source</th>
+          <th style="width:40%;">Metric</th>
+          <th style="width:40%;">Value</th>
+        </tr>
+      </thead>
+      <tbody>
+        
+        <tr>
+          <td><span class="signals-category cat-Insider">Insider</span></td>
+          <td class="metric-name">Activity Level</td>
+          <td class="mono">Low</td>
+        </tr>
+        
+        <tr>
+          <td><span class="signals-category cat-Insider">Insider</span></td>
+          <td class="metric-name">Direction</td>
+          <td class="mono">Neutral</td>
+        </tr>
+        
+        <tr>
+          <td><span class="signals-category cat-Insider">Insider</span></td>
+          <td class="metric-name">Buy Signals</td>
+          <td class="mono">0</td>
+        </tr>
+        
+        <tr>
+          <td><span class="signals-category cat-Insider">Insider</span></td>
+          <td class="metric-name">Sell Signals</td>
+          <td class="mono">0</td>
+        </tr>
+        
+        <tr>
+          <td><span class="signals-category cat-Insider">Insider</span></td>
+          <td class="metric-name">Net Shares</td>
+          <td class="mono">0</td>
+        </tr>
+        
+        <tr>
+          <td><span class="signals-category cat-Insider">Insider</span></td>
+          <td class="metric-name">Net Value</td>
+          <td class="mono">$0.00</td>
+        </tr>
+        
+        <tr>
+          <td><span class="signals-category cat-Options">Options</span></td>
+          <td class="metric-name">Flow Signal</td>
+          <td class="mono">No Data</td>
+        </tr>
+        
+        <tr>
+          <td><span class="signals-category cat-Analyst">Analyst</span></td>
+          <td class="metric-name">Consensus</td>
+          <td class="mono">Buy</td>
+        </tr>
+        
+        <tr>
+          <td><span class="signals-category cat-Analyst">Analyst</span></td>
+          <td class="metric-name"># Analysts</td>
+          <td class="mono">42</td>
+        </tr>
+        
+        <tr>
+          <td><span class="signals-category cat-Analyst">Analyst</span></td>
+          <td class="metric-name">Target Price</td>
+          <td class="mono">$315.57</td>
+        </tr>
+        
+        <tr>
+          <td><span class="signals-category cat-Analyst">Analyst</span></td>
+          <td class="metric-name">Target Upside</td>
+          <td class="mono">+10.0%</td>
+        </tr>
+        
+        <tr>
+          <td><span class="signals-category cat-Analyst">Analyst</span></td>
+          <td class="metric-name">Short Ratio</td>
+          <td class="mono">2.1</td>
+        </tr>
+        
+        <tr>
+          <td><span class="signals-category cat-Analyst">Analyst</span></td>
+          <td class="metric-name">Short % Float</td>
+          <td class="mono">1.0%</td>
+        </tr>
+        
+      </tbody>
+    </table>
+  </div>
+</div>
+
+
+<!-- ─── MACRO REGIME ─── -->
+
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Market Environment</div>
+    <h2 class="section-title">Macro Regime</h2>
+    <div class="trend-grid">
+      <div class="trend-card" style="grid-column: span 2;">
+        <div class="trend-label">Current Regime</div>
+        <div class="trend-value" style="text-transform: capitalize;">flat yield curve</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ─── ANOMALY ALERTS ─── -->
+
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Anomaly Detection</div>
+    <h2 class="section-title">Detected Anomalies</h2>
+    <div class="anomaly-list">
+      
+      <div class="anomaly-item severity-high">
+        <span class="anomaly-badge type-Price">Price</span>
+        <span>2025-08-06 Price surged +5.0% (3.2σ deviation)</span>
+      </div>
+      
+      <div class="anomaly-item severity-high">
+        <span class="anomaly-badge type-Price">Price</span>
+        <span>2025-08-08 Price surged +4.2% (2.6σ deviation)</span>
+      </div>
+      
+      <div class="anomaly-item severity-high">
+        <span class="anomaly-badge type-Price">Price</span>
+        <span>2025-09-22 Price surged +4.2% (2.7σ deviation)</span>
+      </div>
+      
+      <div class="anomaly-item severity-high">
+        <span class="anomaly-badge type-Price">Price</span>
+        <span>2026-02-02 Price surged +4.0% (2.5σ deviation)</span>
+      </div>
+      
+      <div class="anomaly-item severity-high">
+        <span class="anomaly-badge type-Price">Price</span>
+        <span>2026-02-12 Price fell -5.1% (3.5σ deviation)</span>
+      </div>
+      
+      <div class="anomaly-item severity-high">
+        <span class="anomaly-badge type-Price">Price</span>
+        <span>2026-06-09 Price fell -3.7% (2.6σ deviation)</span>
+      </div>
+      
+      <div class="anomaly-item severity-high">
+        <span class="anomaly-badge type-Price">Price</span>
+        <span>2026-06-25 Price fell -6.3% (4.3σ deviation)</span>
+      </div>
+      
+      <div class="anomaly-item severity-high">
+        <span class="anomaly-badge type-Price">Price</span>
+        <span>2026-07-02 Price surged +4.7% (3.0σ deviation)</span>
+      </div>
+      
+      <div class="anomaly-item severity-high">
+        <span class="anomaly-badge type-Volume">Volume</span>
+        <span>2025-09-19 Volume 4.9x std above average</span>
+      </div>
+      
+      <div class="anomaly-item severity-high">
+        <span class="anomaly-badge type-Volume">Volume</span>
+        <span>2025-12-19 Volume 4.1x std above average</span>
+      </div>
+      
+      <div class="anomaly-item severity-high">
+        <span class="anomaly-badge type-Volume">Volume</span>
+        <span>2026-06-26 Volume 9.2x std above average</span>
+      </div>
+      
+      <div class="anomaly-item severity-info">
+        <span class="anomaly-badge type-Catalyst">Catalyst</span>
+        <span>Apple (AAPL) Stock Trends and Sentiment 2026 - MarketBeat: 1 day ago · What do the trends say about Apple? View the latest AAPL trend and sentiment data at MarketBeat.</span>
+      </div>
+      
+      <div class="anomaly-item severity-info">
+        <span class="anomaly-badge type-Catalyst">Catalyst</span>
+        <span>All News for AAPL : Apple - Zacks.com: 12 hours ago · Today&#39;s Research Daily features new research reports on 16 major stocks, including Apple Inc. (AAPL), KLA Corp. (KLAC) and Western Digital Corp. (WDC), as well as a micro-cap stock, Optex Systems...</span>
+      </div>
+      
+    </div>
+  </div>
+</div>
+
+
+<!-- ─── STATISTICAL ANALYSIS ─── -->
+
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Statistical Analysis</div>
+    <h2 class="section-title">Return Distribution &amp; Correlations</h2>
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th style="width:30%;">Metric</th>
+          <th style="width:30%;">Value</th>
+          <th style="width:40%;">Interpretation</th>
+        </tr>
+      </thead>
+      <tbody>
+        
+        <tr>
+          <td class="metric-name">Skewness</td>
+          <td class="mono">-0.020</td>
+          <td style="color:var(--text-mid);">Near symmetric</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Kurtosis</td>
+          <td class="mono">2.220</td>
+          <td style="color:var(--text-mid);">Light tails</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Jarque-Bera p-value</td>
+          <td class="mono">0.0000</td>
+          <td style="color:var(--text-mid);">Non-normal distribution</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Distribution</td>
+          <td class="mono">platykurtic</td>
+          <td style="color:var(--text-mid);"></td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Regression Beta (1Y)</td>
+          <td class="mono">0.853</td>
+          <td style="color:var(--text-mid);">Market sensitivity</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">R-Squared</td>
+          <td class="mono">0.199</td>
+          <td style="color:var(--text-mid);">Weak fit</td>
+        </tr>
+        
+        <tr>
+          <td class="metric-name">Corr: SPY</td>
+          <td class="mono">0.446</td>
+          <td style="color:var(--text-mid);">Moderate</td>
+        </tr>
+        
+      </tbody>
+    </table>
+  </div>
+</div>
+
+
+<!-- ─── CROSS-VALIDATION REPORT ─── -->
+
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Cross-Validation</div>
+    <h2 class="section-title">Reviewer Analysis</h2>
+    <div class="reviewer-grid">
+
+      
+      <div class="reviewer-card">
+        <h3>Agent Confidence Scores</h3>
+        
+        
+        <div class="confidence-bar-container">
+          <span class="confidence-bar-label">Quant Agent</span>
+          <div class="confidence-bar"><div class="confidence-bar-fill" style="width: 11%;"></div></div>
+          <span class="confidence-bar-value">11%</span>
+        </div>
+        
+        <div style="font-size: 11px; color: var(--text-light); margin: -6px 0 8px 112px;">Low — based on Sharpe ratio strength, DCF/Monte Carlo availability, fundamentals and technicals coverage</div>
+        
+        
+        
+        
+        <div class="confidence-bar-container">
+          <span class="confidence-bar-label">RAG Agent</span>
+          <div class="confidence-bar"><div class="confidence-bar-fill" style="width: 56%;"></div></div>
+          <span class="confidence-bar-value">56%</span>
+        </div>
+        
+        <div style="font-size: 11px; color: var(--text-light); margin: -6px 0 8px 112px;">Moderate — based on Filing summary quality, number of cited sources</div>
+        
+        
+        
+        
+        <div class="confidence-bar-container">
+          <span class="confidence-bar-label">Market Context</span>
+          <div class="confidence-bar"><div class="confidence-bar-fill" style="width: 92%;"></div></div>
+          <span class="confidence-bar-value">92%</span>
+        </div>
+        
+        <div style="font-size: 11px; color: var(--text-light); margin: -6px 0 8px 112px;">High — based on Narrative depth, signal strength, tailwind/headwind identification, macro regime clarity</div>
+        
+        
+        
+        
+        <div class="confidence-bar-container">
+          <span class="confidence-bar-label">Analytics</span>
+          <div class="confidence-bar"><div class="confidence-bar-fill" style="width: 33%;"></div></div>
+          <span class="confidence-bar-value">33%</span>
+        </div>
+        
+        <div style="font-size: 11px; color: var(--text-light); margin: -6px 0 8px 112px;">Low — based on Trend analysis, forecast model, statistical summary, chart generation</div>
+        
+        
+        
+        <div style="margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border);">
+          
+          <div class="confidence-bar-container">
+            <span class="confidence-bar-label">Agreement</span>
+            <div class="confidence-bar"><div class="confidence-bar-fill" style="width: 67%; background: var(--green);"></div></div>
+            <span class="confidence-bar-value">67%</span>
+          </div>
+          
+          <div style="font-size: 11px; color: var(--text-light); margin: -6px 0 8px 112px;">Proportion of agents aligned on direction (bullish/bearish/neutral)</div>
+          
+          
+          
+          <div class="confidence-bar-container">
+            <span class="confidence-bar-label">Data Quality</span>
+            <div class="confidence-bar"><div class="confidence-bar-fill" style="width: 87%; background: var(--amber);"></div></div>
+            <span class="confidence-bar-value">87%</span>
+          </div>
+          
+          <div style="font-size: 11px; color: var(--text-light); margin: -6px 0 8px 112px;">Blend: 35% field completeness + 35% signal consistency + 20% data freshness + 10% source verification</div>
+          
+          
+          
+          <div class="confidence-bar-container">
+            <span class="confidence-bar-label" style="font-weight: 700;">Meta Score</span>
+            <div class="confidence-bar"><div class="confidence-bar-fill" style="width: 65%; background: var(--navy);"></div></div>
+            <span class="confidence-bar-value" style="font-weight: 700;">65%</span>
+          </div>
+          
+          <div style="font-size: 11px; color: var(--text-light); margin: -6px 0 4px 112px;">Weighted: 35% avg agent confidence + 25% directional agreement + 25% signal consistency + 15% source verification</div>
+          
+          
+        </div>
+      </div>
+      
+
+      
+      <div class="reviewer-card">
+        <h3>Recommendation Validation</h3>
+        <div style="margin-bottom: 16px;">
+          <span style="font-size: 14px; color: var(--text-mid);">Evidence Strength: </span>
+          <span class="rating-badge badge-strong">Strong</span>
+        </div>
+        
+        <div style="margin-bottom: 12px;">
+          <div style="font-size: 13px; font-weight: 600; color: var(--green-dark); margin-bottom: 6px;">Supporting Evidence</div>
+          
+          <div class="evidence-item supporting">Bullish technical trend</div>
+          
+          <div class="evidence-item supporting">Bullish macro context</div>
+          
+          <div class="evidence-item supporting">Monte Carlo 72% probability of profit</div>
+          
+          <div class="evidence-item supporting">Strong ROE of 141.5%</div>
+          
+          <div class="evidence-item supporting">Revenue growth of 16.6%</div>
+          
+        </div>
+        
+        
+        <div>
+          <div style="font-size: 13px; font-weight: 600; color: var(--red); margin-bottom: 6px;">Contradicting Evidence</div>
+          
+          <div class="evidence-item contradicting">DCF downside of -50.6%</div>
+          
+          <div class="evidence-item contradicting">Analytics anomaly severity high (11 anomalies detected)</div>
+          
+          <div class="evidence-item contradicting">Macro headwinds: weak discretionary spending, flat macro regime</div>
+          
+          <div class="evidence-item contradicting">Lack of near-term hardware revenue growth drivers</div>
+          
+        </div>
+        
+      </div>
+      
+
+    </div>
+
+    
+    <div style="margin-top: 24px;">
+      <h3 style="font-size: 16px; font-weight: 700; margin-bottom: 12px;">Contradictions Found</h3>
+      
+      <div class="contradiction-item">
+        <span class="contradiction-severity severity-medium">medium</span>
+        <strong>DCF valuation vs macro signal</strong> — DCF suggests a -50.6% downside while the macro context is bullish, creating a medium-severity conflict.
+        <span style="font-size: 12px; color: var(--text-light); margin-left: 8px;">(Quant Analysis Agent, Market Context Agent)</span>
+      </div>
+      
+      <div class="contradiction-item">
+        <span class="contradiction-severity severity-medium">medium</span>
+        <strong>DCF vs Monte Carlo divergence</strong> — High model disagreement: DCF estimates $155.81 vs MC median $371, indicating a significant divergence.
+        <span style="font-size: 12px; color: var(--text-light); margin-left: 8px;">(Quant Analysis Agent (DCF), Quant Analysis Agent (Monte Carlo))</span>
+      </div>
+      
+      <div class="contradiction-item">
+        <span class="contradiction-severity severity-low">low</span>
+        <strong>confidence alignment</strong> — Analytics signals a 0.33 confidence in the bullish outlook, aligning with RAG&#39;s 0.56 confidence, reinforcing overall sentiment.
+        <span style="font-size: 12px; color: var(--text-light); margin-left: 8px;">(Analytics Agent, RAG)</span>
+      </div>
+      
+      <div class="contradiction-item">
+        <span class="contradiction-severity severity-low">low</span>
+        <strong>data quality</strong> — Verification confirms strong data integrity (source_count: 5), with no critical discrepancies detected.
+        <span style="font-size: 12px; color: var(--text-light); margin-left: 8px;">(Market Context Agent)</span>
+      </div>
+      
+      <div class="contradiction-item">
+        <span class="contradiction-severity severity-low">low</span>
+        <strong>confidence breakdown</strong> — Meta-confidence stands at 53%, reflecting a balanced assessment across diverse inputs.
+        <span style="font-size: 12px; color: var(--text-light); margin-left: 8px;">(Quant Analysis Agent)</span>
+      </div>
+      
+      <div class="contradiction-item">
+        <span class="contradiction-severity severity-low">low</span>
+        <strong>confidence breakdown</strong> — Confidence score of 0.56 is consistent with the overall meta-confidence, supporting a stable outlook.
+        <span style="font-size: 12px; color: var(--text-light); margin-left: 8px;">(RAG)</span>
+      </div>
+      
+    </div>
+    
+
+    
+    <div style="margin-top: 24px;">
+      <h3 style="font-size: 16px; font-weight: 700; margin-bottom: 12px;">Source Verification</h3>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Agent</th>
+            <th>Claims Checked</th>
+            <th>Verified</th>
+            <th>Rate</th>
+          </tr>
+        </thead>
+        <tbody>
+          
+          <tr>
+            <td class="metric-name">Analytics Agent</td>
+            <td class="mono">2</td>
+            <td class="mono">2</td>
+            <td class="mono" style="color:var(--green-dark);">100%</td>
+          </tr>
+          
+        </tbody>
+      </table>
+    </div>
+    
+
+  </div>
+</div>
+
+
+<!-- ─── RISK-REWARD ─── -->
+
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Risk–Reward</div>
+    <h2 class="section-title">Assessment</h2>
+    <div class="rr-grid">
+      
+      <div class="rr-col opp">
+        <h3>Growth Opportunities</h3>
+        <ul>
+          
+          <li>Strong brand loyalty and durable product cycles in consumer electronics</li>
+          
+          <li>Ecosystem expansion driven by AI and services growth</li>
+          
+          <li>Superior operating margins (32.3%) and return on equity (141.5%) compared to peers</li>
+          
+          <li>Resilience in a flat yield curve and low-volatility macro regime</li>
+          
+          <li>Consensus analyst price targets above current levels, indicating forward momentum</li>
+          
+        </ul>
+      </div>
+      
+      
+      <div class="rr-col risk">
+        <h3>Key Risks</h3>
+        <ul>
+          
+          <li>Weak discretionary spending and delayed client decisions in the IT sector</li>
+          
+          <li>Flat macro regime with no sector rotation, limiting broader tech momentum</li>
+          
+          <li>Lack of near-term revenue growth drivers in hardware (vs. services or AI)</li>
+          
+          <li>High valuation relative to peers in growth and margin terms (though still efficient)</li>
+          
+          <li>Limited upside from rate cuts or economic expansion due to neutral macro backdrop</li>
+          
+        </ul>
+      </div>
+      
+    </div>
+  </div>
+</div>
+
+
+<!-- ─── ADDITIONAL SECTIONS ─── -->
+
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Cited Sources</div>
+    <h2 class="section-title">Cited Sources</h2>
+    <div class="thesis-block"><ul><li>AAPL_10-Q_2026-01-30.html</li><li>AAPL_news_Fri, 10 Jul 2026 23:25:00 +0000.txt</li><li>AAPL_news_Fri, 10 Jul 2026 21:45:18 +0000.txt</li><li>AAPL_news_Sat, 11 Jul 2026 02:46:10 +0000.txt</li></ul></div>
+  </div>
+</div>
+
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Market Narrative</div>
+    <h2 class="section-title">Market Narrative</h2>
+    <div class="thesis-block">Apple (AAPL) is operating within a macro regime characterized by a flat yield curve, low volatility (VIX at 15.03), and negligible sector rotation across major industries—indicating a stable but neutral macro environment. This flat curve suggests limited rate-cutting expectations and subdued yield differentials, which can support equity valuations, particularly for high-growth, high-margin tech names like AAPL. Despite weak discretionary spending and delayed client decisions in the IT sector, Apple's consumer electronics business remains resilient due to strong brand loyalty, durable product cycles, and a diversified revenue base. The company continues to benefit from AI-driven ecosystem expansion, with its services segment contributing significantly to recurring revenue and margin expansion. In this context, AAPL's robust fundamentals—16.6% revenue growth, 32.3% operating margin, and 141.5% ROE—outperform most peers, even amid a broader tech sector that is experiencing weak growth and margin compression.
+
+Peer comparisons reveal a stark contrast: SONO and TBCH are severely underperforming with negative revenue growth and operating margins, while AXIL and FXHO are small-cap or distressed names with limited scale and growth potential. AAPL stands apart not only in profitability but also in valuation discipline, with a PE of 38.3—significantly lower than SONO’s 80.6 and TBCH’s 642.0—despite its strong growth and margin profile. This relative efficiency in capital allocation and pricing power positions AAPL as a defensive yet growth-oriented leader in the tech sector. Analysts continue to maintain bullish sentiment, with average price targets ranging from $314 to $323, reflecting confidence in sustained demand and ecosystem momentum. However, the lack of sector rotation and flat macro conditions suggest limited tailwinds from broader economic expansion or rate cuts, which may constrain near-term upside.
+
+Overall, AAPL is well-aligned with the current macro regime due to its durable business model and resilience in a low-growth, low-volatility environment. Its peer positioning is clearly superior in terms of profitability, growth, and valuation stability. While the absence of strong sector rotation and weak discretionary spending pose headwinds, AAPL’s ecosystem strength, brand dominance, and margin discipline provide a strong foundation for sustained performance. The current environment favors AAPL as a high-quality, defensive tech holding with limited downside risk and modest upside potential.</div>
+  </div>
+</div>
+
+<div class="report-section">
+  <div class="container">
+    <div class="section-label">Recommendation Drivers</div>
+    <h2 class="section-title">Recommendation Drivers</h2>
+    <div class="thesis-block"><strong>Positive Signals</strong><ul><li>Bullish technical trend</li><li>Bullish macro context</li><li>Monte Carlo 72% probability of profit</li><li>Strong ROE of 141.5%</li><li>Revenue growth of 16.6%</li></ul><strong>Negative Signals</strong><ul><li>DCF downside of -50.6%</li><li>Analytics anomaly severity high (11 anomalies detected)</li><li>Macro headwinds: weak discretionary spending, flat macro regime</li><li>Lack of near-term hardware revenue growth drivers</li></ul></div>
+  </div>
+</div>
+
+
+<!-- ─── CONCLUSION ─── -->
+<div class="conclusion">
+  <div class="container">
+    <div class="section-label">Conclusion</div>
+    <div class="divider"></div>
+    <div class="rec-badge">HOLD</div>
+    <div class="rec-conf">65% Confidence</div>
+    
+    <p class="rec-text">The analysis reveals a nuanced picture for AAPL. While the Quant Agent flags a DCF downside of -50.6% and highlights a high anomaly severity, the Market Context underscores a bullish macro environment with strong brand loyalty and AI-driven ecosystem tailwinds. Conflicting signals exist between the quantitative model (DCF vs. Monte Carlo) and the qualitative narrative, but overall confidence remains moderate. The meta-confidence of 53% supports a cautious buy, tempered by data quality concerns.</p>
+    
+  </div>
+</div>
+
+<!-- ─── Footer ─── -->
+<footer class="report-footer">
+  <div class="container">
+    <span>&copy; 2026 Institutional Equity Research</span>
+    <span>For informational purposes only</span>
+  </div>
+</footer>
+
+<!-- ─── Chart.js Rendering ─── -->
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  if (typeof Chart === 'undefined') return;
+
+  
+  (function() {
+    var ctx = document.getElementById('forecastChart');
+    if (!ctx) return;
+    var dates = ["2026-07-12", "2026-07-13", "2026-07-14", "2026-07-15", "2026-07-16", "2026-07-17", "2026-07-18", "2026-07-19", "2026-07-20", "2026-07-21", "2026-07-22", "2026-07-23", "2026-07-24", "2026-07-25", "2026-07-26", "2026-07-27", "2026-07-28", "2026-07-29", "2026-07-30", "2026-07-31", "2026-08-01", "2026-08-02", "2026-08-03", "2026-08-04", "2026-08-05", "2026-08-06", "2026-08-07", "2026-08-08", "2026-08-09", "2026-08-10"];
+    var prices = [317.05, 316.94, 319.41, 320.22, 320.65, 324.76, 324.64, 327.11, 327.92, 328.36, 332.46, 332.35, 334.81, 335.62, 336.06, 340.16, 340.05, 342.51, 343.32, 343.76, 347.86, 347.75, 350.22, 351.02, 351.46, 355.56, 355.45, 357.92, 358.73, 359.16];
+    var lower = [309.29, 308.79, 310.87, 311.29, 311.34, 315.05, 314.55, 316.63, 317.05, 317.1, 320.81, 320.31, 322.39, 322.81, 322.86, 326.57, 326.07, 328.15, 328.57, 328.62, 332.33, 331.83, 333.91, 334.33, 334.38, 338.09, 337.59, 339.67, 340.09, 340.14];
+    var upper = [324.82, 325.09, 327.95, 329.14, 329.97, 334.46, 334.74, 337.59, 338.79, 339.61, 344.1, 344.38, 347.24, 348.43, 349.26, 353.75, 354.02, 356.88, 358.07, 358.9, 363.39, 363.67, 366.52, 367.72, 368.54, 373.03, 373.31, 376.16, 377.36, 378.19];
+
+    var datasets = [{
+      label: 'Forecast Price',
+      data: prices,
+      borderColor: '#3b7dfa',
+      backgroundColor: 'rgba(59,125,250,0.08)',
+      borderWidth: 2,
+      pointRadius: 2,
+      fill: false,
+      tension: 0.3
+    }];
+
+    if (upper.length && lower.length) {
+      datasets.push({
+        label: 'Upper Band',
+        data: upper,
+        borderColor: 'rgba(34,197,94,0.4)',
+        backgroundColor: 'rgba(34,197,94,0.08)',
+        borderWidth: 1,
+        borderDash: [4, 4],
+        pointRadius: 0,
+        fill: false
+      });
+      datasets.push({
+        label: 'Lower Band',
+        data: lower,
+        borderColor: 'rgba(239,68,68,0.4)',
+        backgroundColor: 'rgba(239,68,68,0.08)',
+        borderWidth: 1,
+        borderDash: [4, 4],
+        pointRadius: 0,
+        fill: '-1'
+      });
+    }
+
+    new Chart(ctx, {
+      type: 'line',
+      data: { labels: dates, datasets: datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: true,
+        aspectRatio: 2.5,
+        plugins: {
+          legend: { position: 'bottom', labels: { font: { family: 'DM Sans', size: 12 } } },
+          tooltip: { mode: 'index', intersect: false }
+        },
+        scales: {
+          x: {
+            display: true,
+            ticks: { maxRotation: 45, maxTicksLimit: 10, font: { family: 'DM Mono', size: 11 } },
+            grid: { display: false }
+          },
+          y: {
+            display: true,
+            ticks: { callback: function(v) { return '$' + v.toFixed(0); }, font: { family: 'DM Mono', size: 11 } },
+            grid: { color: 'rgba(0,0,0,0.05)' }
+          }
+        }
+      }
+    });
+  })();
+  
+
+  
+  (function() {
+    var ctx = document.getElementById('mcChart');
+    if (!ctx) return;
+    var labels = ['P10', 'P25', 'P50', 'P75', 'P90'];
+    var values = [
+      258.12,
+      306.87,
+      371.12,
+      449.21,
+      535.61
+    ];
+    var colors = ['#ef4444', '#f59e0b', '#3b7dfa', '#22c55e', '#15803d'];
+
+    new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: 'Price at Percentile',
+          data: values,
+          backgroundColor: colors.map(function(c) { return c + '33'; }),
+          borderColor: colors,
+          borderWidth: 2,
+          borderRadius: 8
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: true,
+        aspectRatio: 3,
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: function(ctx) { return '$' + ctx.parsed.y.toFixed(2); } } }
+        },
+        scales: {
+          x: { grid: { display: false }, ticks: { font: { family: 'DM Mono', size: 12, weight: 'bold' } } },
+          y: {
+            ticks: { callback: function(v) { return '$' + v.toFixed(0); }, font: { family: 'DM Mono', size: 11 } },
+            grid: { color: 'rgba(0,0,0,0.05)' }
+          }
+        }
+      }
+    });
+  })();
+  
+
+  
+  
+  
+  
+  (function() {
+    var ctx = document.getElementById('ohlcChart');
+    if (!ctx) return;
+    var rawData = [{"close": 263.5072326660156, "date": "2026-03-03T00:00:00-05:00", "high": 265.31556422164516, "low": 259.8905695547566, "open": 263.23749216234586, "volume": 38568900.0}, {"close": 262.2783508300781, "date": "2026-03-04T00:00:00-05:00", "high": 265.9050144519466, "low": 261.179387723623, "open": 264.4063951364299, "volume": 39803100.0}, {"close": 260.0504150390625, "date": "2026-03-05T00:00:00-05:00", "high": 261.3192350446657, "low": 257.01320478174756, "open": 260.54995479568396, "volume": 49658600.0}, {"close": 257.2229919433594, "date": "2026-03-06T00:00:00-05:00", "high": 258.53178361058343, "low": 254.13584003818684, "open": 258.39192833924307, "volume": 41120000.0}, {"close": 259.6407775878906, "date": "2026-03-09T00:00:00-04:00", "high": 260.9095975388004, "low": 253.44647267699952, "open": 255.45463216869055, "volume": 38218500.0}, {"close": 260.58990478515625, "date": "2026-03-10T00:00:00-04:00", "high": 262.2384104290217, "low": 256.71350175461305, "open": 257.4128391437035, "volume": 30590800.0}, {"close": 260.5699157714844, "date": "2026-03-11T00:00:00-04:00", "high": 261.888707997661, "low": 259.3110658747261, "open": 260.8496568052655, "volume": 26218900.0}, {"close": 255.52456665039062, "date": "2026-03-12T00:00:00-04:00", "high": 258.71164792954545, "low": 253.94601921584928, "open": 258.4219063383753, "volume": 40794000.0}, {"close": 249.8897705078125, "date": "2026-03-13T00:00:00-04:00", "high": 256.0940459350445, "low": 249.29033192864068, "open": 255.24483747003174, "volume": 36930000.0}, {"close": 252.58729553222656, "date": "2026-03-16T00:00:00-04:00", "high": 253.6563027081548, "low": 249.6499992581203, "open": 251.87794235419486, "volume": 32074200.0}, {"close": 253.99598693847656, "date": "2026-03-17T00:00:00-04:00", "high": 254.89516767044782, "low": 251.94787083452104, "open": 252.72716690012706, "volume": 32361600.0}, {"close": 249.70994567871094, "date": "2026-03-18T00:00:00-04:00", "high": 254.70534343896443, "low": 248.7708084606242, "open": 252.3974721128864, "volume": 35757900.0}, {"close": 248.73085021972656, "date": "2026-03-19T00:00:00-04:00", "high": 251.5982036354298, "low": 247.0723745163624, "open": 249.17043241392184, "volume": 34864100.0}, {"close": 247.76173400878906, "date": "2026-03-20T00:00:00-04:00", "high": 248.97061168291066, "low": 245.77356028907465, "open": 247.7517334570195, "volume": 88331100.0}, {"close": 251.25851440429688, "date": "2026-03-23T00:00:00-04:00", "high": 254.3656523266213, "low": 250.0496214753341, "open": 253.73622734962268, "volume": 40546100.0}, {"close": 251.4083709716797, "date": "2026-03-24T00:00:00-04:00", "high": 254.5954370944537, "low": 249.32029842391177, "open": 250.1195650925759, "volume": 45152300.0}, {"close": 252.38746643066406, "date": "2026-03-25T00:00:00-04:00", "high": 254.76528059453105, "low": 251.3684162845015, "open": 253.86611511385965, "volume": 28476700.0}, {"close": 252.6572265625, "date": "2026-03-26T00:00:00-04:00", "high": 256.76344411909713, "low": 250.53918279672283, "open": 251.88793104116345, "volume": 41796700.0}, {"close": 248.57098388671875, "date": "2026-03-27T00:00:00-04:00", "high": 255.2548282141602, "low": 247.8416601166152, "open": 253.666280215245, "volume": 47900000.0}, {"close": 246.40298461914062, "date": "2026-03-30T00:00:00-04:00", "high": 250.63907198816298, "low": 245.28400520065438, "open": 249.83982057534305, "volume": 39446200.0}, {"close": 253.55638122558594, "date": "2026-03-31T00:00:00-04:00", "high": 255.24482803058763, "low": 246.87255213324852, "open": 247.6818040942864, "volume": 49598100.0}, {"close": 255.3946990966797, "date": "2026-04-01T00:00:00-04:00", "high": 255.94418062939917, "low": 253.096813183035, "open": 253.8461228128272, "volume": 40059400.0}, {"close": 255.68443298339844, "date": "2026-04-02T00:00:00-04:00", "high": 255.89424639361263, "low": 250.4192795609811, "open": 253.96601496217014, "volume": 31289400.0}, {"close": 258.6217041015625, "date": "2026-04-06T00:00:00-04:00", "high": 261.9186847371787, "low": 256.2239194053331, "open": 256.27389167390277, "volume": 29329900.0}, {"close": 253.26666259765625, "date": "2026-04-07T00:00:00-04:00", "high": 255.96418954301222, "low": 245.47383916108728, "open": 255.92421782448065, "volume": 62148000.0}, {"close": 258.66168212890625, "date": "2026-04-08T00:00:00-04:00", "high": 259.51090582044134, "low": 256.29386854025813, "open": 258.2121146377317, "volume": 41032800.0}, {"close": 260.2502136230469, "date": "2026-04-09T00:00:00-04:00", "high": 260.879638597066, "low": 255.8342992320816, "open": 258.7615948993736, "volume": 28121600.0}, {"close": 260.240234375, "date": "2026-04-10T00:00:00-04:00", "high": 261.94865175168746, "low": 258.78155637925676, "open": 259.7406946341393, "volume": 31291500.0}, {"close": 258.96142578125, "date": "2026-04-13T00:00:00-04:00", "high": 259.9405042051452, "low": 256.4237552437805, "open": 259.49093671136296, "volume": 36234700.0}, {"close": 258.59173583984375, "date": "2026-04-14T00:00:00-04:00", "high": 261.68888841493145, "low": 256.9532612999924, "open": 259.01136264890187, "volume": 48370700.0}, {"close": 266.18475341796875, "date": "2026-04-15T00:00:00-04:00", "high": 266.3146386359468, "low": 257.57269269729437, "open": 257.92237663273806, "volume": 49913500.0}, {"close": 263.15753173828125, "date": "2026-04-16T00:00:00-04:00", "high": 266.91408037974617, "low": 261.0294875448873, "open": 266.55439590858066, "volume": 43323100.0}, {"close": 269.98126220703125, "date": "2026-04-17T00:00:00-04:00", "high": 272.0493335842862, "low": 266.47448343207725, "open": 266.7142527536172, "volume": 61436200.0}, {"close": 272.79864501953125, "date": "2026-04-20T00:00:00-04:00", "high": 274.0275237795767, "low": 270.04120633500696, "open": 270.08114756253855, "volume": 36590200.0}, {"close": 265.9250183105469, "date": "2026-04-21T00:00:00-04:00", "high": 272.5488901425708, "low": 265.1557075406741, "open": 271.250098918132, "volume": 50209800.0}, {"close": 272.9185791015625, "date": "2026-04-22T00:00:00-04:00", "high": 273.48803128351057, "low": 266.62435952726383, "open": 267.5734973129919, "volume": 43249200.0}, {"close": 273.1783142089844, "date": "2026-04-23T00:00:00-04:00", "high": 275.5161566987003, "low": 271.39995382845746, "open": 274.79681820267325, "volume": 33399600.0}, {"close": 270.81048583984375, "date": "2026-04-24T00:00:00-04:00", "high": 272.80864483253174, "low": 269.4017800912603, "open": 272.50893317942314, "volume": 38157100.0}, {"close": 267.3636474609375, "date": "2026-04-27T00:00:00-04:00", "high": 268.1129570778125, "low": 264.8260075108844, "open": 265.84505761361925, "volume": 41466800.0}, {"close": 270.4608154296875, "date": "2026-04-28T00:00:00-04:00", "high": 272.97851539952296, "low": 268.4127145556596, "open": 272.0893199684016, "volume": 40018900.0}, {"close": 269.92132568359375, "date": "2026-04-29T00:00:00-04:00", "high": 270.7905199823619, "low": 266.7942019267937, "open": 267.3037117460274, "volume": 30047900.0}, {"close": 271.1002502441406, "date": "2026-04-30T00:00:00-04:00", "high": 275.7459641951834, "low": 267.893213328058, "open": 270.25102650288807, "volume": 91848200.0}, {"close": 279.88214111328125, "date": "2026-05-01T00:00:00-04:00", "high": 286.95561044034525, "low": 278.1137509144006, "open": 278.6032901046287, "volume": 79915400.0}, {"close": 276.5751647949219, "date": "2026-05-04T00:00:00-04:00", "high": 280.3716851917065, "low": 274.60697695873915, "open": 279.4025768563376, "volume": 46668400.0}, {"close": 283.9184265136719, "date": "2026-05-05T00:00:00-04:00", "high": 284.30808218316156, "low": 276.2455026895375, "open": 276.6750995896243, "volume": 49311700.0}, {"close": 287.245361328125, "date": "2026-05-06T00:00:00-04:00", "high": 287.76487170009636, "low": 280.8112868075762, "open": 281.66051049385584, "volume": 58336100.0}, {"close": 287.1754150390625, "date": "2026-05-07T00:00:00-04:00", "high": 291.8611003514943, "low": 285.5169394038565, "open": 289.00371711581823, "volume": 45224300.0}, {"close": 293.0500183105469, "date": "2026-05-08T00:00:00-04:00", "high": 294.4886952888782, "low": 289.7330669166447, "open": 289.7430674686918, "volume": 52692800.0}, {"close": 292.67999267578125, "date": "2026-05-11T00:00:00-04:00", "high": 293.8800048828125, "low": 290.2300109863281, "open": 291.9800109863281, "volume": 42247300.0}, {"close": 294.79998779296875, "date": "2026-05-12T00:00:00-04:00", "high": 295.2699890136719, "low": 292.55999755859375, "open": 292.55999755859375, "volume": 45748100.0}, {"close": 298.8699951171875, "date": "2026-05-13T00:00:00-04:00", "high": 300.9200134277344, "low": 293.5, "open": 293.5, "volume": 52684300.0}, {"close": 298.2099914550781, "date": "2026-05-14T00:00:00-04:00", "high": 300.45001220703125, "low": 295.3800048828125, "open": 299.82000732421875, "volume": 35324900.0}, {"close": 300.2300109863281, "date": "2026-05-15T00:00:00-04:00", "high": 303.20001220703125, "low": 296.5199890136719, "open": 297.8999938964844, "volume": 54862800.0}, {"close": 297.8399963378906, "date": "2026-05-18T00:00:00-04:00", "high": 300.6600036621094, "low": 294.9100036621094, "open": 300.239990234375, "volume": 34483000.0}, {"close": 298.9700012207031, "date": "2026-05-19T00:00:00-04:00", "high": 300.510009765625, "low": 296.3500061035156, "open": 296.9700012207031, "volume": 42243600.0}, {"close": 302.25, "date": "2026-05-20T00:00:00-04:00", "high": 302.79998779296875, "low": 298.0799865722656, "open": 298.17999267578125, "volume": 38229800.0}, {"close": 304.989990234375, "date": "2026-05-21T00:00:00-04:00", "high": 305.5400085449219, "low": 300.3999938964844, "open": 301.05999755859375, "volume": 42965100.0}, {"close": 308.82000732421875, "date": "2026-05-22T00:00:00-04:00", "high": 311.3999938964844, "low": 305.8399963378906, "open": 306.1199951171875, "volume": 43670200.0}, {"close": 308.3299865722656, "date": "2026-05-26T00:00:00-04:00", "high": 311.82000732421875, "low": 307.6700134277344, "open": 309.55999755859375, "volume": 48000500.0}, {"close": 310.8500061035156, "date": "2026-05-27T00:00:00-04:00", "high": 313.260009765625, "low": 308.29998779296875, "open": 308.3299865722656, "volume": 50430900.0}, {"close": 312.510009765625, "date": "2026-05-28T00:00:00-04:00", "high": 312.79998779296875, "low": 309.57000732421875, "open": 310.67999267578125, "volume": 48220400.0}, {"close": 312.05999755859375, "date": "2026-05-29T00:00:00-04:00", "high": 315.0, "low": 309.5299987792969, "open": 311.7799987792969, "volume": 70026800.0}, {"close": 306.30999755859375, "date": "2026-06-01T00:00:00-04:00", "high": 310.94000244140625, "low": 305.0199890136719, "open": 309.6300048828125, "volume": 48849900.0}, {"close": 315.20001220703125, "date": "2026-06-02T00:00:00-04:00", "high": 315.45001220703125, "low": 306.69000244140625, "open": 307.4599914550781, "volume": 44534700.0}, {"close": 310.260009765625, "date": "2026-06-03T00:00:00-04:00", "high": 316.94000244140625, "low": 308.8500061035156, "open": 314.17999267578125, "volume": 50836700.0}, {"close": 311.2300109863281, "date": "2026-06-04T00:00:00-04:00", "high": 313.5400085449219, "low": 309.6499938964844, "open": 313.2300109863281, "volume": 44869100.0}, {"close": 307.3399963378906, "date": "2026-06-05T00:00:00-04:00", "high": 315.1700134277344, "low": 307.1499938964844, "open": 312.8599853515625, "volume": 65310500.0}, {"close": 301.5400085449219, "date": "2026-06-08T00:00:00-04:00", "high": 317.3999938964844, "low": 301.1700134277344, "open": 308.739990234375, "volume": 77949100.0}, {"close": 290.54998779296875, "date": "2026-06-09T00:00:00-04:00", "high": 300.75, "low": 287.7799987792969, "open": 300.2799987792969, "volume": 70108800.0}, {"close": 291.5799865722656, "date": "2026-06-10T00:00:00-04:00", "high": 294.75, "low": 287.3800048828125, "open": 290.739990234375, "volume": 52793300.0}, {"close": 295.6300048828125, "date": "2026-06-11T00:00:00-04:00", "high": 297.0, "low": 289.5899963378906, "open": 293.7200012207031, "volume": 42572500.0}, {"close": 291.1300048828125, "date": "2026-06-12T00:00:00-04:00", "high": 297.1400146484375, "low": 289.6199951171875, "open": 296.0299987792969, "volume": 38742100.0}, {"close": 296.4200134277344, "date": "2026-06-15T00:00:00-04:00", "high": 297.7799987792969, "low": 291.70001220703125, "open": 294.1199951171875, "volume": 45732600.0}, {"close": 299.239990234375, "date": "2026-06-16T00:00:00-04:00", "high": 300.4800109863281, "low": 293.9700012207031, "open": 295.25, "volume": 39874400.0}, {"close": 295.95001220703125, "date": "2026-06-17T00:00:00-04:00", "high": 302.07000732421875, "low": 294.3599853515625, "open": 300.8500061035156, "volume": 42745100.0}, {"close": 298.010009765625, "date": "2026-06-18T00:00:00-04:00", "high": 300.57000732421875, "low": 295.6199951171875, "open": 298.1099853515625, "volume": 85962200.0}, {"close": 297.010009765625, "date": "2026-06-22T00:00:00-04:00", "high": 302.4200134277344, "low": 296.760009765625, "open": 297.30999755859375, "volume": 44879900.0}, {"close": 294.29998779296875, "date": "2026-06-23T00:00:00-04:00", "high": 301.6400146484375, "low": 294.17999267578125, "open": 297.5400085449219, "volume": 52010900.0}, {"close": 293.0799865722656, "date": "2026-06-24T00:00:00-04:00", "high": 299.70001220703125, "low": 292.94000244140625, "open": 295.3599853515625, "volume": 53081900.0}, {"close": 275.1499938964844, "date": "2026-06-25T00:00:00-04:00", "high": 288.79998779296875, "low": 273.75, "open": 287.3999938964844, "volume": 107013700.0}, {"close": 283.7799987792969, "date": "2026-06-26T00:00:00-04:00", "high": 285.95001220703125, "low": 274.2099914550781, "open": 275.0, "volume": 261775500.0}, {"close": 281.739990234375, "date": "2026-06-29T00:00:00-04:00", "high": 288.3699951171875, "low": 279.8500061035156, "open": 286.7300109863281, "volume": 66427000.0}, {"close": 289.3599853515625, "date": "2026-06-30T00:00:00-04:00", "high": 289.94000244140625, "low": 280.70001220703125, "open": 281.1700134277344, "volume": 65100200.0}, {"close": 294.3800048828125, "date": "2026-07-01T00:00:00-04:00", "high": 296.5899963378906, "low": 289.20001220703125, "open": 293.44000244140625, "volume": 50164200.0}, {"close": 308.6300048828125, "date": "2026-07-02T00:00:00-04:00", "high": 309.4200134277344, "low": 293.67999267578125, "open": 294.1199951171875, "volume": 75352800.0}, {"close": 312.6600036621094, "date": "2026-07-06T00:00:00-04:00", "high": 314.20001220703125, "low": 307.0, "open": 307.3599853515625, "volume": 53590000.0}, {"close": 310.6600036621094, "date": "2026-07-07T00:00:00-04:00", "high": 315.4800109863281, "low": 310.1499938964844, "open": 315.2900085449219, "volume": 42490000.0}, {"close": 313.3900146484375, "date": "2026-07-08T00:00:00-04:00", "high": 314.82000732421875, "low": 307.04998779296875, "open": 311.9100036621094, "volume": 41323500.0}, {"close": 316.2200012207031, "date": "2026-07-09T00:00:00-04:00", "high": 316.5299987792969, "low": 308.1600036621094, "open": 310.510009765625, "volume": 48124500.0}, {"close": 315.32000732421875, "date": "2026-07-10T00:00:00-04:00", "high": 316.9100036621094, "low": 312.1700134277344, "open": 314.7200012207031, "volume": 34109200.0}];
+    var labels = rawData.map(function(d) { return d.date; });
+    var highs = rawData.map(function(d) { return d.high; });
+    var lows = rawData.map(function(d) { return d.low; });
+    var opens = rawData.map(function(d) { return d.open; });
+    var closes = rawData.map(function(d) { return d.close; });
+    var barColors = rawData.map(function(d) { return d.close >= d.open ? 'rgba(34,197,94,0.7)' : 'rgba(239,68,68,0.7)'; });
+    var barBorders = rawData.map(function(d) { return d.close >= d.open ? '#15803d' : '#dc2626'; });
+    var barData = rawData.map(function(d) {
+      var top = Math.max(d.open, d.close);
+      var bot = Math.min(d.open, d.close);
+      return [bot, top];
+    });
+    new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: labels,
+        datasets: [
+          {
+            label: 'High',
+            data: highs,
+            type: 'line',
+            borderColor: 'rgba(34,197,94,0.25)',
+            borderWidth: 1,
+            pointRadius: 0,
+            fill: false,
+            order: 1
+          },
+          {
+            label: 'Low',
+            data: lows,
+            type: 'line',
+            borderColor: 'rgba(239,68,68,0.25)',
+            borderWidth: 1,
+            pointRadius: 0,
+            fill: false,
+            order: 1
+          },
+          {
+            label: 'OHLC',
+            data: barData,
+            backgroundColor: barColors,
+            borderColor: barBorders,
+            borderWidth: 1,
+            borderRadius: 1,
+            order: 0
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: true,
+        aspectRatio: 2.5,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: function(ctx) {
+                var i = ctx.dataIndex;
+                return 'O: $' + opens[i].toFixed(2) + '  H: $' + highs[i].toFixed(2) + '  L: $' + lows[i].toFixed(2) + '  C: $' + closes[i].toFixed(2);
+              }
+            }
+          }
+        },
+        scales: {
+          x: { display: true, ticks: { maxRotation: 45, maxTicksLimit: 10, font: { family: 'DM Mono', size: 11 } }, grid: { display: false } },
+          y: { display: true, ticks: { callback: function(v) { return '$' + v.toFixed(0); }, font: { family: 'DM Mono', size: 11 } }, grid: { color: 'rgba(0,0,0,0.05)' } }
+        }
+      }
+    });
+  })();
+  
+  
+  
+  (function() {
+    var ctx = document.getElementById('maChart');
+    if (!ctx) return;
+    var labels = ["2025-07-11T00:00:00-04:00", "2025-07-14T00:00:00-04:00", "2025-07-15T00:00:00-04:00", "2025-07-16T00:00:00-04:00", "2025-07-17T00:00:00-04:00", "2025-07-18T00:00:00-04:00", "2025-07-21T00:00:00-04:00", "2025-07-22T00:00:00-04:00", "2025-07-23T00:00:00-04:00", "2025-07-24T00:00:00-04:00", "2025-07-25T00:00:00-04:00", "2025-07-28T00:00:00-04:00", "2025-07-29T00:00:00-04:00", "2025-07-30T00:00:00-04:00", "2025-07-31T00:00:00-04:00", "2025-08-01T00:00:00-04:00", "2025-08-04T00:00:00-04:00", "2025-08-05T00:00:00-04:00", "2025-08-06T00:00:00-04:00", "2025-08-07T00:00:00-04:00", "2025-08-08T00:00:00-04:00", "2025-08-11T00:00:00-04:00", "2025-08-12T00:00:00-04:00", "2025-08-13T00:00:00-04:00", "2025-08-14T00:00:00-04:00", "2025-08-15T00:00:00-04:00", "2025-08-18T00:00:00-04:00", "2025-08-19T00:00:00-04:00", "2025-08-20T00:00:00-04:00", "2025-08-21T00:00:00-04:00", "2025-08-22T00:00:00-04:00", "2025-08-25T00:00:00-04:00", "2025-08-26T00:00:00-04:00", "2025-08-27T00:00:00-04:00", "2025-08-28T00:00:00-04:00", "2025-08-29T00:00:00-04:00", "2025-09-02T00:00:00-04:00", "2025-09-03T00:00:00-04:00", "2025-09-04T00:00:00-04:00", "2025-09-05T00:00:00-04:00", "2025-09-08T00:00:00-04:00", "2025-09-09T00:00:00-04:00", "2025-09-10T00:00:00-04:00", "2025-09-11T00:00:00-04:00", "2025-09-12T00:00:00-04:00", "2025-09-15T00:00:00-04:00", "2025-09-16T00:00:00-04:00", "2025-09-17T00:00:00-04:00", "2025-09-18T00:00:00-04:00", "2025-09-19T00:00:00-04:00", "2025-09-22T00:00:00-04:00", "2025-09-23T00:00:00-04:00", "2025-09-24T00:00:00-04:00", "2025-09-25T00:00:00-04:00", "2025-09-26T00:00:00-04:00", "2025-09-29T00:00:00-04:00", "2025-09-30T00:00:00-04:00", "2025-10-01T00:00:00-04:00", "2025-10-02T00:00:00-04:00", "2025-10-03T00:00:00-04:00", "2025-10-06T00:00:00-04:00", "2025-10-07T00:00:00-04:00", "2025-10-08T00:00:00-04:00", "2025-10-09T00:00:00-04:00", "2025-10-10T00:00:00-04:00", "2025-10-13T00:00:00-04:00", "2025-10-14T00:00:00-04:00", "2025-10-15T00:00:00-04:00", "2025-10-16T00:00:00-04:00", "2025-10-17T00:00:00-04:00", "2025-10-20T00:00:00-04:00", "2025-10-21T00:00:00-04:00", "2025-10-22T00:00:00-04:00", "2025-10-23T00:00:00-04:00", "2025-10-24T00:00:00-04:00", "2025-10-27T00:00:00-04:00", "2025-10-28T00:00:00-04:00", "2025-10-29T00:00:00-04:00", "2025-10-30T00:00:00-04:00", "2025-10-31T00:00:00-04:00", "2025-11-03T00:00:00-05:00", "2025-11-04T00:00:00-05:00", "2025-11-05T00:00:00-05:00", "2025-11-06T00:00:00-05:00", "2025-11-07T00:00:00-05:00", "2025-11-10T00:00:00-05:00", "2025-11-11T00:00:00-05:00", "2025-11-12T00:00:00-05:00", "2025-11-13T00:00:00-05:00", "2025-11-14T00:00:00-05:00", "2025-11-17T00:00:00-05:00", "2025-11-18T00:00:00-05:00", "2025-11-19T00:00:00-05:00", "2025-11-20T00:00:00-05:00", "2025-11-21T00:00:00-05:00", "2025-11-24T00:00:00-05:00", "2025-11-25T00:00:00-05:00", "2025-11-26T00:00:00-05:00", "2025-11-28T00:00:00-05:00", "2025-12-01T00:00:00-05:00", "2025-12-02T00:00:00-05:00", "2025-12-03T00:00:00-05:00", "2025-12-04T00:00:00-05:00", "2025-12-05T00:00:00-05:00", "2025-12-08T00:00:00-05:00", "2025-12-09T00:00:00-05:00", "2025-12-10T00:00:00-05:00", "2025-12-11T00:00:00-05:00", "2025-12-12T00:00:00-05:00", "2025-12-15T00:00:00-05:00", "2025-12-16T00:00:00-05:00", "2025-12-17T00:00:00-05:00", "2025-12-18T00:00:00-05:00", "2025-12-19T00:00:00-05:00", "2025-12-22T00:00:00-05:00", "2025-12-23T00:00:00-05:00", "2025-12-24T00:00:00-05:00", "2025-12-26T00:00:00-05:00", "2025-12-29T00:00:00-05:00", "2025-12-30T00:00:00-05:00", "2025-12-31T00:00:00-05:00", "2026-01-02T00:00:00-05:00", "2026-01-05T00:00:00-05:00", "2026-01-06T00:00:00-05:00", "2026-01-07T00:00:00-05:00", "2026-01-08T00:00:00-05:00", "2026-01-09T00:00:00-05:00", "2026-01-12T00:00:00-05:00", "2026-01-13T00:00:00-05:00", "2026-01-14T00:00:00-05:00", "2026-01-15T00:00:00-05:00", "2026-01-16T00:00:00-05:00", "2026-01-20T00:00:00-05:00", "2026-01-21T00:00:00-05:00", "2026-01-22T00:00:00-05:00", "2026-01-23T00:00:00-05:00", "2026-01-26T00:00:00-05:00", "2026-01-27T00:00:00-05:00", "2026-01-28T00:00:00-05:00", "2026-01-29T00:00:00-05:00", "2026-01-30T00:00:00-05:00", "2026-02-02T00:00:00-05:00", "2026-02-03T00:00:00-05:00", "2026-02-04T00:00:00-05:00", "2026-02-05T00:00:00-05:00", "2026-02-06T00:00:00-05:00", "2026-02-09T00:00:00-05:00", "2026-02-10T00:00:00-05:00", "2026-02-11T00:00:00-05:00", "2026-02-12T00:00:00-05:00", "2026-02-13T00:00:00-05:00", "2026-02-17T00:00:00-05:00", "2026-02-18T00:00:00-05:00", "2026-02-19T00:00:00-05:00", "2026-02-20T00:00:00-05:00", "2026-02-23T00:00:00-05:00", "2026-02-24T00:00:00-05:00", "2026-02-25T00:00:00-05:00", "2026-02-26T00:00:00-05:00", "2026-02-27T00:00:00-05:00", "2026-03-02T00:00:00-05:00", "2026-03-03T00:00:00-05:00", "2026-03-04T00:00:00-05:00", "2026-03-05T00:00:00-05:00", "2026-03-06T00:00:00-05:00", "2026-03-09T00:00:00-04:00", "2026-03-10T00:00:00-04:00", "2026-03-11T00:00:00-04:00", "2026-03-12T00:00:00-04:00", "2026-03-13T00:00:00-04:00", "2026-03-16T00:00:00-04:00", "2026-03-17T00:00:00-04:00", "2026-03-18T00:00:00-04:00", "2026-03-19T00:00:00-04:00", "2026-03-20T00:00:00-04:00", "2026-03-23T00:00:00-04:00", "2026-03-24T00:00:00-04:00", "2026-03-25T00:00:00-04:00", "2026-03-26T00:00:00-04:00", "2026-03-27T00:00:00-04:00", "2026-03-30T00:00:00-04:00", "2026-03-31T00:00:00-04:00", "2026-04-01T00:00:00-04:00", "2026-04-02T00:00:00-04:00", "2026-04-06T00:00:00-04:00", "2026-04-07T00:00:00-04:00", "2026-04-08T00:00:00-04:00", "2026-04-09T00:00:00-04:00", "2026-04-10T00:00:00-04:00", "2026-04-13T00:00:00-04:00", "2026-04-14T00:00:00-04:00", "2026-04-15T00:00:00-04:00", "2026-04-16T00:00:00-04:00", "2026-04-17T00:00:00-04:00", "2026-04-20T00:00:00-04:00", "2026-04-21T00:00:00-04:00", "2026-04-22T00:00:00-04:00", "2026-04-23T00:00:00-04:00", "2026-04-24T00:00:00-04:00", "2026-04-27T00:00:00-04:00", "2026-04-28T00:00:00-04:00", "2026-04-29T00:00:00-04:00", "2026-04-30T00:00:00-04:00", "2026-05-01T00:00:00-04:00", "2026-05-04T00:00:00-04:00", "2026-05-05T00:00:00-04:00", "2026-05-06T00:00:00-04:00", "2026-05-07T00:00:00-04:00", "2026-05-08T00:00:00-04:00", "2026-05-11T00:00:00-04:00", "2026-05-12T00:00:00-04:00", "2026-05-13T00:00:00-04:00", "2026-05-14T00:00:00-04:00", "2026-05-15T00:00:00-04:00", "2026-05-18T00:00:00-04:00", "2026-05-19T00:00:00-04:00", "2026-05-20T00:00:00-04:00", "2026-05-21T00:00:00-04:00", "2026-05-22T00:00:00-04:00", "2026-05-26T00:00:00-04:00", "2026-05-27T00:00:00-04:00", "2026-05-28T00:00:00-04:00", "2026-05-29T00:00:00-04:00", "2026-06-01T00:00:00-04:00", "2026-06-02T00:00:00-04:00", "2026-06-03T00:00:00-04:00", "2026-06-04T00:00:00-04:00", "2026-06-05T00:00:00-04:00", "2026-06-08T00:00:00-04:00", "2026-06-09T00:00:00-04:00", "2026-06-10T00:00:00-04:00", "2026-06-11T00:00:00-04:00", "2026-06-12T00:00:00-04:00", "2026-06-15T00:00:00-04:00", "2026-06-16T00:00:00-04:00", "2026-06-17T00:00:00-04:00", "2026-06-18T00:00:00-04:00", "2026-06-22T00:00:00-04:00", "2026-06-23T00:00:00-04:00", "2026-06-24T00:00:00-04:00", "2026-06-25T00:00:00-04:00", "2026-06-26T00:00:00-04:00", "2026-06-29T00:00:00-04:00", "2026-06-30T00:00:00-04:00", "2026-07-01T00:00:00-04:00", "2026-07-02T00:00:00-04:00", "2026-07-06T00:00:00-04:00", "2026-07-07T00:00:00-04:00", "2026-07-08T00:00:00-04:00", "2026-07-09T00:00:00-04:00", "2026-07-10T00:00:00-04:00"];
+    var colorMap = {'Close': '#1a2236', 'SMA-20': '#3b7dfa', 'SMA-50': '#f59e0b', 'SMA-200': '#ef4444'};
+    var datasets = [];
+    
+    datasets.push({
+      label: "Close",
+      data: [210.33, 207.8, 208.28, 209.33, 209.19, 210.35, 211.64, 213.55, 213.3, 212.92, 213.03, 213.2, 210.44, 208.22, 206.75, 201.58, 202.55, 202.12, 212.41, 219.16, 228.44, 226.54, 229.0, 232.67, 232.12, 230.94, 230.24, 229.91, 225.37, 224.27, 227.12, 226.52, 228.66, 229.84, 231.9, 231.49, 229.07, 237.8, 239.1, 239.01, 237.21, 233.69, 226.15, 229.38, 233.41, 236.03, 237.48, 238.32, 237.21, 244.81, 255.36, 253.71, 251.6, 256.15, 254.74, 253.71, 253.91, 254.73, 256.4, 257.29, 255.97, 255.76, 257.33, 253.32, 244.58, 246.96, 247.07, 248.64, 246.75, 251.58, 261.5, 262.03, 257.72, 258.85, 262.08, 268.05, 268.24, 268.94, 270.63, 269.61, 268.29, 269.28, 269.38, 269.01, 267.71, 268.93, 274.74, 272.96, 272.44, 271.9, 266.96, 266.94, 268.06, 265.76, 270.99, 275.41, 276.46, 277.04, 278.33, 282.58, 285.66, 283.62, 280.18, 278.26, 277.37, 276.67, 278.26, 277.51, 277.76, 273.6, 274.1, 271.34, 271.69, 273.16, 270.47, 271.85, 273.3, 272.89, 273.25, 272.57, 271.36, 270.51, 266.76, 261.87, 259.85, 258.56, 258.89, 259.77, 260.57, 259.48, 257.73, 255.06, 246.24, 247.19, 247.89, 247.58, 254.94, 257.79, 255.96, 257.8, 259.0, 269.51, 268.98, 275.98, 275.4, 277.6, 274.37, 273.43, 275.25, 261.49, 255.54, 263.64, 264.11, 260.34, 264.34, 265.93, 271.89, 273.98, 272.7, 263.94, 264.48, 263.51, 262.28, 260.05, 257.22, 259.64, 260.59, 260.57, 255.52, 249.89, 252.59, 254.0, 249.71, 248.73, 247.76, 251.26, 251.41, 252.39, 252.66, 248.57, 246.4, 253.56, 255.39, 255.68, 258.62, 253.27, 258.66, 260.25, 260.24, 258.96, 258.59, 266.18, 263.16, 269.98, 272.8, 265.93, 272.92, 273.18, 270.81, 267.36, 270.46, 269.92, 271.1, 279.88, 276.58, 283.92, 287.25, 287.18, 293.05, 292.68, 294.8, 298.87, 298.21, 300.23, 297.84, 298.97, 302.25, 304.99, 308.82, 308.33, 310.85, 312.51, 312.06, 306.31, 315.2, 310.26, 311.23, 307.34, 301.54, 290.55, 291.58, 295.63, 291.13, 296.42, 299.24, 295.95, 298.01, 297.01, 294.3, 293.08, 275.15, 283.78, 281.74, 289.36, 294.38, 308.63, 312.66, 310.66, 313.39, 316.22, 315.32],
+      borderColor: colorMap["Close"] || '#94a3b8',
+      borderWidth: "Close" === 'Close' ? 2 : 1.5,
+      pointRadius: 0,
+      fill: false,
+      tension: 0.1,
+      spanGaps: true
+    });
+    
+    datasets.push({
+      label: "SMA-20",
+      data: [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, 209.81, 210.71, 211.65, 212.69, 213.85, 215.0, 216.03, 216.96, 217.78, 218.38, 218.95, 219.65, 220.32, 221.23, 222.31, 223.57, 225.06, 226.39, 228.17, 229.51, 230.5, 230.94, 231.3, 231.15, 230.99, 231.05, 231.31, 231.67, 232.09, 232.68, 233.71, 235.12, 236.48, 237.63, 238.94, 240.09, 241.2, 242.44, 243.29, 244.15, 245.06, 246.0, 247.11, 248.66, 249.86, 250.42, 250.97, 251.45, 251.96, 252.44, 252.78, 253.08, 253.5, 253.81, 253.94, 254.31, 255.03, 255.74, 256.45, 257.16, 257.78, 258.4, 259.07, 259.67, 260.46, 261.62, 262.71, 264.1, 265.31, 266.6, 267.61, 267.89, 268.13, 268.65, 269.0, 269.44, 269.81, 270.22, 270.63, 271.01, 271.66, 272.53, 273.24, 273.78, 274.25, 274.73, 275.12, 275.29, 275.52, 275.79, 275.87, 276.23, 276.45, 276.63, 277.0, 276.97, 276.8, 276.64, 276.43, 276.18, 275.68, 274.96, 274.31, 273.64, 272.82, 271.94, 271.03, 270.07, 269.18, 268.32, 267.61, 266.79, 265.98, 264.71, 263.41, 262.28, 261.07, 260.15, 259.39, 258.53, 257.79, 257.17, 257.12, 257.23, 257.94, 258.72, 259.67, 260.44, 261.12, 261.86, 261.96, 261.85, 262.28, 263.17, 263.83, 264.65, 265.57, 266.42, 267.23, 268.06, 268.37, 268.64, 268.34, 268.01, 267.21, 266.3, 265.41, 264.72, 264.07, 263.09, 262.51, 262.36, 261.88, 261.16, 260.58, 259.75, 259.01, 257.99, 256.91, 255.91, 255.14, 254.24, 253.74, 253.4, 253.18, 253.25, 252.93, 252.83, 252.82, 253.05, 253.51, 253.81, 254.42, 255.09, 256.15, 257.4, 258.14, 259.21, 260.25, 261.16, 262.1, 263.3, 264.12, 264.9, 266.11, 267.01, 268.54, 269.97, 271.32, 272.96, 274.65, 276.46, 278.09, 279.84, 281.36, 282.61, 284.26, 285.73, 287.32, 289.22, 291.27, 293.29, 295.41, 297.46, 298.78, 300.72, 302.03, 303.23, 304.24, 304.66, 304.56, 304.4, 304.24, 303.88, 303.69, 303.76, 303.61, 303.4, 303.0, 302.27, 301.51, 299.73, 298.29, 296.77, 295.93, 294.88, 294.8, 294.87, 295.04, 295.63, 296.92, 298.1],
+      borderColor: colorMap["SMA-20"] || '#94a3b8',
+      borderWidth: "SMA-20" === 'Close' ? 2 : 1.5,
+      pointRadius: 0,
+      fill: false,
+      tension: 0.1,
+      spanGaps: true
+    });
+    
+    datasets.push({
+      label: "SMA-50",
+      data: [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, 223.2, 224.1, 225.02, 225.88, 226.82, 227.73, 228.6, 229.44, 230.27, 231.13, 232.02, 232.87, 233.72, 234.66, 235.56, 236.32, 237.23, 238.12, 239.05, 239.74, 240.39, 241.05, 241.76, 242.33, 242.85, 243.45, 244.2, 244.96, 245.74, 246.64, 247.55, 248.37, 249.23, 250.04, 250.82, 251.54, 252.29, 253.2, 253.91, 254.57, 255.23, 255.83, 256.49, 257.33, 258.06, 258.81, 259.6, 260.38, 261.15, 261.97, 262.73, 263.33, 263.93, 264.5, 264.95, 265.4, 265.86, 266.34, 266.8, 267.23, 267.55, 267.92, 268.23, 268.52, 268.91, 269.43, 269.93, 270.45, 270.94, 271.47, 271.89, 272.08, 272.25, 272.43, 272.5, 272.45, 272.26, 272.07, 271.89, 271.69, 271.49, 271.28, 270.99, 270.53, 270.09, 269.7, 269.27, 268.87, 268.57, 268.24, 267.96, 267.8, 267.85, 267.87, 268.07, 268.16, 268.2, 268.16, 268.09, 268.03, 267.61, 267.0, 266.6, 266.28, 265.92, 265.66, 265.45, 265.32, 265.25, 265.15, 264.96, 264.76, 264.61, 264.42, 264.16, 263.89, 263.65, 263.39, 263.15, 262.79, 262.34, 261.96, 261.63, 261.29, 261.03, 260.79, 260.64, 260.49, 260.34, 260.19, 259.97, 259.74, 259.71, 259.89, 260.06, 260.28, 260.39, 260.47, 260.52, 260.6, 260.63, 260.62, 260.55, 260.43, 260.31, 260.26, 260.03, 260.0, 259.99, 259.91, 260.02, 260.32, 260.45, 260.59, 260.98, 261.22, 261.58, 261.89, 262.15, 262.56, 263.14, 263.74, 264.45, 265.17, 265.97, 266.78, 267.57, 268.4, 269.29, 270.36, 271.53, 272.69, 273.86, 275.11, 276.26, 277.61, 278.79, 279.99, 281.09, 282.06, 282.9, 283.81, 284.65, 285.36, 286.18, 286.99, 287.84, 288.63, 289.37, 290.05, 290.73, 291.06, 291.41, 291.78, 292.17, 292.6, 293.46, 294.25, 295.0, 295.85, 296.83, 297.73],
+      borderColor: colorMap["SMA-50"] || '#94a3b8',
+      borderWidth: "SMA-50" === 'Close' ? 2 : 1.5,
+      pointRadius: 0,
+      fill: false,
+      tension: 0.1,
+      spanGaps: true
+    });
+    
+    datasets.push({
+      label: "SMA-200",
+      data: [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, 253.39, 253.69, 254.0, 254.31, 254.67, 255.0, 255.37, 255.75, 256.12, 256.52, 256.92, 257.32, 257.75, 258.19, 258.65, 259.11, 259.59, 260.09, 260.61, 261.09, 261.53, 261.95, 262.38, 262.79, 263.16, 263.58, 263.97, 264.38, 264.76, 265.14, 265.48, 265.8, 266.14, 266.46, 266.79, 267.13, 267.45, 267.79, 268.09, 268.37, 268.64, 268.83, 269.08, 269.35, 269.65, 269.96, 270.32, 270.7, 271.06, 271.44, 271.8, 272.1],
+      borderColor: colorMap["SMA-200"] || '#94a3b8',
+      borderWidth: "SMA-200" === 'Close' ? 2 : 1.5,
+      pointRadius: 0,
+      fill: false,
+      tension: 0.1,
+      spanGaps: true
+    });
+    
+    new Chart(ctx, {
+      type: 'line',
+      data: { labels: labels, datasets: datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: true,
+        aspectRatio: 2.5,
+        plugins: {
+          legend: { position: 'bottom', labels: { font: { family: 'DM Sans', size: 12 } } },
+          tooltip: { mode: 'index', intersect: false }
+        },
+        scales: {
+          x: { display: true, ticks: { maxRotation: 45, maxTicksLimit: 12, font: { family: 'DM Mono', size: 11 } }, grid: { display: false } },
+          y: { display: true, ticks: { callback: function(v) { return '$' + v.toFixed(0); }, font: { family: 'DM Mono', size: 11 } }, grid: { color: 'rgba(0,0,0,0.05)' } }
+        }
+      }
+    });
+  })();
+  
+  
+  
+  
+});
+</script>
+
+</body>
+</html>

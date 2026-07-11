@@ -430,194 +430,205 @@ async def _stream(
 
     _KEEPALIVE_INTERVAL = 15
 
+    # Root Langfuse span (mirrors FinSightAgentExecutor.execute): gives the run
+    # a known trace_id so sub-agent trace injection and RAGAS scores land on
+    # the same Langfuse trace. Must be 32 lowercase hex chars (W3C format).
+    from langfuse import propagate_attributes
+
+    from shared.observability import get_langfuse_client
+
+    langfuse = get_langfuse_client()
+    trace_id = uuid.uuid4().hex
+
     try:
-        event_iter = runner.run_async(
-            user_id=user_id, session_id=session_id, new_message=content
-        ).__aiter__()
-        while True:
-            deadline = _TOOL_TIMEOUT if _awaiting_tool_response > 0 else _LLM_TIMEOUT
-            elapsed: float = 0
-            event: Any = None
-            next_task = asyncio.ensure_future(event_iter.__anext__())
-            while elapsed < deadline:
-                wait = min(_KEEPALIVE_INTERVAL, deadline - elapsed)
-                done, _ = await asyncio.wait({next_task}, timeout=wait)
-                if done:
+        with (
+            langfuse.start_as_current_observation(
+                as_type="span",
+                name="finsight-query",
+                trace_context={"trace_id": trace_id},
+                input={"query": user_text},
+                metadata={"ticker": ticker_hint, "session_id": session_id, "run_id": run_id},
+            ) as span,
+            propagate_attributes(session_id=session_id, user_id=user_id),
+        ):
+            event_iter = runner.run_async(
+                user_id=user_id, session_id=session_id, new_message=content
+            ).__aiter__()
+            while True:
+                deadline = _TOOL_TIMEOUT if _awaiting_tool_response > 0 else _LLM_TIMEOUT
+                elapsed: float = 0
+                event: Any = None
+                next_task = asyncio.ensure_future(event_iter.__anext__())
+                while elapsed < deadline:
+                    wait = min(_KEEPALIVE_INTERVAL, deadline - elapsed)
+                    done, _ = await asyncio.wait({next_task}, timeout=wait)
+                    if done:
+                        try:
+                            event = next_task.result()
+                        except StopAsyncIteration:
+                            event = _SENTINEL
+                        break
+                    elapsed += wait
+                    yield ": keepalive\n\n"
+                else:
+                    next_task.cancel()
                     try:
-                        event = next_task.result()
-                    except StopAsyncIteration:
-                        event = _SENTINEL
+                        await next_task
+                    except (asyncio.CancelledError, StopAsyncIteration):
+                        pass
+                if event is _SENTINEL:
                     break
-                elapsed += wait
-                yield ": keepalive\n\n"
-            else:
-                next_task.cancel()
-                try:
-                    await next_task
-                except (asyncio.CancelledError, StopAsyncIteration):
-                    pass
-            if event is _SENTINEL:
-                break
-            if event is None:
-                logger.error(
-                    "Orchestrator timed out after %ds "
-                    "(awaiting_tools=%d, model may be unavailable)",
-                    deadline,
-                    _awaiting_tool_response,
-                )
-                yield sse(
-                    RunErrorEvent(
-                        type=EventType.RUN_ERROR,
-                        message=(
-                            "Orchestrator timed out — the LLM model"
-                            " may be unavailable. Check that the"
-                            " model is loaded."
-                        ),
-                        code=None,
+                if event is None:
+                    logger.error(
+                        "Orchestrator timed out after %ds "
+                        "(awaiting_tools=%d, model may be unavailable)",
+                        deadline,
+                        _awaiting_tool_response,
                     )
-                )
-                break
-
-            # Function calls → sub-agent delegations
-            for fn_call in event.get_function_calls():
-                _awaiting_tool_response += 1
-                call_id = str(uuid.uuid4())
-                fn_name = fn_call.name or ""
-                fn_id = getattr(fn_call, "id", None) or fn_name
-                pending_calls[call_id] = fn_name
-                pending_by_fn_id[fn_id] = call_id
-
-                if fn_name == "send_message":
-                    had_send_message = True
-                    args = dict(fn_call.args or {})
-                    agent_raw = args.get("agent_name", "")
-                    agent_display = _display_name(agent_raw)
-                    if agent_display not in active_agents:
-                        active_agents.append(agent_display)
-                    delta_ops = [
-                        {
-                            "op": "replace",
-                            "path": "/active_agents",
-                            "value": list(active_agents),
-                        },
-                        {"op": "replace", "path": "/active_agent", "value": agent_display},
-                    ]
-                    agent_ticker = args.get("ticker", "").strip().upper()
-                    if agent_ticker and ticker_hint == "unknown":
-                        ticker_hint = agent_ticker
-                        delta_ops.append({
-                            "op": "replace",
-                            "path": "/ticker",
-                            "value": agent_ticker,
-                        })
                     yield sse(
-                        StateDeltaEvent(
-                            type=EventType.STATE_DELTA,
-                            delta=delta_ops,
+                        RunErrorEvent(
+                            type=EventType.RUN_ERROR,
+                            message=(
+                                "Orchestrator timed out — the LLM model"
+                                " may be unavailable. Check that the"
+                                " model is loaded."
+                            ),
+                            code=None,
+                        )
+                    )
+                    break
+
+                # Function calls → sub-agent delegations
+                for fn_call in event.get_function_calls():
+                    _awaiting_tool_response += 1
+                    call_id = str(uuid.uuid4())
+                    fn_name = fn_call.name or ""
+                    fn_id = getattr(fn_call, "id", None) or fn_name
+                    pending_calls[call_id] = fn_name
+                    pending_by_fn_id[fn_id] = call_id
+
+                    if fn_name == "send_message":
+                        had_send_message = True
+                        args = dict(fn_call.args or {})
+                        agent_raw = args.get("agent_name", "")
+                        agent_display = _display_name(agent_raw)
+                        if agent_display not in active_agents:
+                            active_agents.append(agent_display)
+                        delta_ops = [
+                            {
+                                "op": "replace",
+                                "path": "/active_agents",
+                                "value": list(active_agents),
+                            },
+                            {"op": "replace", "path": "/active_agent", "value": agent_display},
+                        ]
+                        agent_ticker = args.get("ticker", "").strip().upper()
+                        if agent_ticker and ticker_hint == "unknown":
+                            ticker_hint = agent_ticker
+                            delta_ops.append({
+                                "op": "replace",
+                                "path": "/ticker",
+                                "value": agent_ticker,
+                            })
+                        yield sse(
+                            StateDeltaEvent(
+                                type=EventType.STATE_DELTA,
+                                delta=delta_ops,
+                            )
+                        )
+
+                    yield sse(
+                        ToolCallStartEvent(
+                            type=EventType.TOOL_CALL_START,
+                            tool_call_id=call_id,
+                            tool_call_name=fn_name,
+                            parent_message_id=msg_id,
+                        )
+                    )
+                    yield sse(
+                        ToolCallArgsEvent(
+                            type=EventType.TOOL_CALL_ARGS,
+                            tool_call_id=call_id,
+                            delta=json.dumps(dict(fn_call.args or {})),
+                        )
+                    )
+                    yield sse(ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=call_id))
+
+                # Function responses → sub-agent results
+                for fn_resp in event.get_function_responses():
+                    _awaiting_tool_response = max(0, _awaiting_tool_response - 1)
+                    fn_id = getattr(fn_resp, "id", None) or fn_resp.name or ""
+                    call_id = pending_by_fn_id.get(fn_id, str(uuid.uuid4()))
+                    raw = fn_resp.response
+                    if isinstance(raw, str):
+                        result_text = raw
+                    elif isinstance(raw, (dict, list, int, float, bool, type(None))):
+                        result_text = json.dumps(raw)
+                    elif hasattr(raw, "model_dump"):
+                        result_text = json.dumps(raw.model_dump())
+                    else:
+                        result_text = str(raw)
+                    yield sse(
+                        ToolCallResultEvent(
+                            type=EventType.TOOL_CALL_RESULT,
+                            message_id=str(uuid.uuid4()),
+                            tool_call_id=call_id,
+                            content=result_text,
+                            role="tool",
                         )
                     )
 
-                yield sse(
-                    ToolCallStartEvent(
-                        type=EventType.TOOL_CALL_START,
-                        tool_call_id=call_id,
-                        tool_call_name=fn_name,
-                        parent_message_id=msg_id,
-                    )
-                )
-                yield sse(
-                    ToolCallArgsEvent(
-                        type=EventType.TOOL_CALL_ARGS,
-                        tool_call_id=call_id,
-                        delta=json.dumps(dict(fn_call.args or {})),
-                    )
-                )
-                yield sse(ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=call_id))
-
-            # Function responses → sub-agent results
-            for fn_resp in event.get_function_responses():
-                _awaiting_tool_response = max(0, _awaiting_tool_response - 1)
-                fn_id = getattr(fn_resp, "id", None) or fn_resp.name or ""
-                call_id = pending_by_fn_id.get(fn_id, str(uuid.uuid4()))
-                raw = fn_resp.response
-                if isinstance(raw, str):
-                    result_text = raw
-                elif isinstance(raw, (dict, list, int, float, bool, type(None))):
-                    result_text = json.dumps(raw)
-                elif hasattr(raw, "model_dump"):
-                    result_text = json.dumps(raw.model_dump())
-                else:
-                    result_text = str(raw)
-                yield sse(
-                    ToolCallResultEvent(
-                        type=EventType.TOOL_CALL_RESULT,
-                        message_id=str(uuid.uuid4()),
-                        tool_call_id=call_id,
-                        content=result_text,
-                        role="tool",
-                    )
-                )
-
-            # Text content → final synthesis
-            if event.content and event.content.parts:
-                for part in event.content.parts:
-                    if part.text:
-                        if not text_started:
+                # Text content → final synthesis
+                if event.content and event.content.parts:
+                    for part in event.content.parts:
+                        if part.text:
+                            if not text_started:
+                                yield sse(
+                                    TextMessageStartEvent(
+                                        type=EventType.TEXT_MESSAGE_START,
+                                        message_id=msg_id,
+                                        role="assistant",
+                                    )
+                                )
+                                text_started = True
+                            synthesis_parts.append(part.text)
                             yield sse(
-                                TextMessageStartEvent(
-                                    type=EventType.TEXT_MESSAGE_START,
+                                TextMessageContentEvent(
+                                    type=EventType.TEXT_MESSAGE_CONTENT,
                                     message_id=msg_id,
-                                    role="assistant",
+                                    delta=part.text,
                                 )
                             )
-                            text_started = True
-                        synthesis_parts.append(part.text)
-                        yield sse(
-                            TextMessageContentEvent(
-                                type=EventType.TEXT_MESSAGE_CONTENT,
-                                message_id=msg_id,
-                                delta=part.text,
-                            )
-                        )
 
-        if text_started:
-            yield sse(TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=msg_id))
+            if text_started:
+                yield sse(TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=msg_id))
 
-        if active_agents:
-            yield sse(
-                StateDeltaEvent(
-                    type=EventType.STATE_DELTA,
-                    delta=[
-                        {"op": "replace", "path": "/active_agents", "value": []},
-                        {"op": "replace", "path": "/active_agent", "value": None},
-                    ],
+            if active_agents:
+                yield sse(
+                    StateDeltaEvent(
+                        type=EventType.STATE_DELTA,
+                        delta=[
+                            {"op": "replace", "path": "/active_agents", "value": []},
+                            {"op": "replace", "path": "/active_agent", "value": None},
+                        ],
+                    )
                 )
-            )
 
-        yield sse(StepFinishedEvent(type=EventType.STEP_FINISHED, step_name="orchestrator"))
+            yield sse(StepFinishedEvent(type=EventType.STEP_FINISHED, step_name="orchestrator"))
 
-        if had_send_message and synthesis_parts:
-            response_text = "".join(synthesis_parts)
-            asyncio.create_task(_auto_save_brief(user_text, response_text, session_id, user_id))
+            if had_send_message and synthesis_parts:
+                response_text = "".join(synthesis_parts)
+                span.update(output={"response": response_text[:2000]})
+                asyncio.create_task(_auto_save_brief(user_text, response_text, session_id, user_id))
 
-            from shared.settings import EVAL_ENABLED
+                from shared.settings import EVAL_ENABLED
 
-            if EVAL_ENABLED and response_text:
-                from shared.runtime_eval import score_response as _eval_score
+                if EVAL_ENABLED and response_text:
+                    from shared.runtime_eval import score_response as _eval_score
 
-                trace_id = None
-                try:
-                    from opentelemetry import trace as otel_trace
-
-                    from shared.observability import get_langfuse_client
-
-                    if otel_trace.get_current_span() is not otel_trace.INVALID_SPAN:
-                        trace_id = get_langfuse_client().get_current_trace_id()
-                except Exception:
-                    logger.debug("Failed to get Langfuse trace ID for eval")
-                asyncio.create_task(_eval_score(user_text, response_text, trace_id))
-                asyncio.create_task(_release_sub_agent_evals())
-                logger.info("Orchestrator eval scheduled (trace=%s)", trace_id)
+                    asyncio.create_task(_eval_score(user_text, response_text, trace_id))
+                    asyncio.create_task(_release_sub_agent_evals())
+                    logger.info("Orchestrator eval scheduled (trace=%s)", trace_id)
 
     except asyncio.CancelledError:
         logger.info("Bridge stream cancelled run_id=%s", run_id)

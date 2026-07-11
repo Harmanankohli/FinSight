@@ -23,13 +23,13 @@ def _deck_to_template_context(deck: DeckData) -> dict[str, Any]:
 
     scenario_cards = []
     if deck.scenarios.get("bull"):
-        scenario_cards.append(("95th Pct (Bull)", deck.scenarios["bull"], "var(--green-dark)"))
+        scenario_cards.append(("90th Pct (Bull)", deck.scenarios["bull"], "var(--green-dark)"))
     if deck.scenarios.get("base"):
         scenario_cards.append(("Median (Base)", deck.scenarios["base"], "var(--blue)"))
     if deck.scenarios.get("dcf"):
         scenario_cards.append(("DCF Fair Value", deck.scenarios["dcf"], "var(--amber)"))
     if deck.scenarios.get("bear"):
-        scenario_cards.append(("5th Pct (Bear)", deck.scenarios["bear"], "var(--red)"))
+        scenario_cards.append(("10th Pct (Bear)", deck.scenarios["bear"], "var(--red)"))
 
     return {
         "deck": deck,

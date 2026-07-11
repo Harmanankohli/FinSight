@@ -163,9 +163,10 @@ class MarketContextAgent(BaseAgent):
                     ("returnOnEquity", "ROE", True),
                     ("operatingMargins", "Operating Margin", True),
                     ("trailingPE", "P/E Ratio", False),
+                    ("enterpriseToEbitda", "EV/EBITDA", False),
                 ]:
                     if pinfo.get(key) is not None:
-                        metrics[label] = f"{pinfo[key] * 100:.1f}%" if pct else f"{pinfo[key]:.1f}x"
+                        metrics[label] = f"{pinfo[key] * 100:.1f}%" if pct else f"{pinfo[key]:.1f}"
                 if metrics:
                     peer_comparison.append({"ticker": sym, "metrics": metrics})
         result["peer_comparison"] = peer_comparison[:3]

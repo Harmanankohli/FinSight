@@ -11,7 +11,7 @@
   "financials": [
     [
       "Revenue Growth",
-      "+122.0%",
+      "122.0%",
       "YoY"
     ],
     [
@@ -36,7 +36,7 @@
       "context": "Year-over-year",
       "label": "Revenue Growth",
       "positive": true,
-      "value": "+122.0%"
+      "value": "122.0%"
     },
     {
       "context": "Risk-adjusted return",
@@ -54,7 +54,7 @@
       "context": "Annualized",
       "label": "Annual Volatility",
       "positive": false,
-      "value": "+42.0%"
+      "value": "42.0%"
     }
   ],
   "macro_regime": "",
@@ -112,11 +112,11 @@
       "$1,100.00"
     ],
     [
-      "95th Percentile Target",
+      "90th Percentile Target",
       "$1,350.00"
     ],
     [
-      "5th Percentile Target",
+      "10th Percentile Target",
       "$680.00"
     ]
   ]
