@@ -92,4 +92,4 @@ class BaseAgent(BaseModel, ABC):
           is_error           – True if the agent failed
           require_user_input – True if the agent needs more info
         """
-        yield  # makes this an async generator for type-checking
+        yield {}  # makes this an async generator for type-checking

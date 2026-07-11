@@ -305,7 +305,8 @@ class Settings(BaseSettings):
                 problems.append("SEC_USER_AGENT placeholder in production")
             if self.sandbox_mode == "ast" and sys.platform == "win32":
                 problems.append(
-                    "SANDBOX_MODE=ast is insecure on Windows (no resource limits); set SANDBOX_MODE=disabled or use container"
+                    "SANDBOX_MODE=ast is insecure on Windows (no resource limits); "
+                    "set SANDBOX_MODE=disabled or use container"
                 )
             if self.sandbox_mode == "container" and shutil.which("docker") is None:
                 problems.append(
