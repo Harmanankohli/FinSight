@@ -510,6 +510,10 @@ async def _stream(
                     if fn_name == "send_message":
                         had_send_message = True
                         args = dict(fn_call.args or {})
+                        # send_message takes a single Pydantic param named "args",
+                        # so the model nests the fields one level down.
+                        if isinstance(args.get("args"), dict):
+                            args = args["args"]
                         agent_raw = args.get("agent_name", "")
                         agent_display = _display_name(agent_raw)
                         if agent_display not in active_agents:
