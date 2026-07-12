@@ -98,7 +98,7 @@ class StressTestResult(BaseModel):
 
 
 class TechnicalIndicators(BaseModel):
-    """Technical analysis indicators: moving averages, MACD, RSI, Bollinger Bands, support/resistance."""
+    """Technical indicators: moving averages, MACD, RSI, Bollinger Bands, support/resistance."""
 
     sma_20: Optional[float] = Field(None, gt=0)
     sma_50: Optional[float] = Field(None, gt=0)
@@ -130,7 +130,7 @@ class TechnicalIndicators(BaseModel):
 
 
 class Fundamentals(BaseModel):
-    """Fundamental metrics: valuation multiples, margins, growth rates, balance sheet, 52w price data."""
+    """Fundamentals: valuation multiples, margins, growth rates, balance sheet, 52w price data."""
 
     model_config = {"populate_by_name": True}
 
@@ -476,7 +476,7 @@ class ConfidenceBreakdown(BaseModel):
 
 
 class RecommendationValidation(BaseModel):
-    """Validates that the final recommendation is supported by evidence; flags contradicting data."""
+    """Validates the final recommendation is supported by evidence; flags contradicting data."""
 
     recommendation: str = "HOLD"
     evidence_supports: bool = True

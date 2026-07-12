@@ -290,7 +290,9 @@ class FinSightAgentExecutor(AgentExecutor):
             parts=[types.Part.from_text(text=user_input)],
         )
 
-        trace_id = str(uuid.uuid4())
+        # Langfuse requires a 32-lowercase-hex (W3C) trace id; a dashed UUID
+        # makes start_as_current_observation raise ValueError.
+        trace_id = uuid.uuid4().hex
 
         with langfuse.start_as_current_observation(
             as_type="span",

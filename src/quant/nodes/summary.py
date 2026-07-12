@@ -503,8 +503,8 @@ async def llm_summary_node(state: QuantAnalysisState) -> dict:
     if mc:
         prompt += (
             f"Price Distribution (Monte Carlo, 1yr): "
-            f"5th_pct=${mc.get('p10')}, median=${mc.get('p50')}, "
-            f"95th_pct=${mc.get('p90')}, prob_profit={mc.get('prob_profit'):.0%}\n"
+            f"10th_pct=${mc.get('p10')}, median=${mc.get('p50')}, "
+            f"90th_pct=${mc.get('p90')}, prob_profit={mc.get('prob_profit'):.0%}\n"
         )
     if stress:
         prompt += f"Stress CVaR: {stress.get('cvar_95')}\n"

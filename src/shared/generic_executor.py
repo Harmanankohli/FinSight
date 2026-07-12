@@ -19,6 +19,7 @@ from a2a.types import (
     TaskStatus,
     TaskStatusUpdateEvent,
 )
+
 # ── Protobuf helpers for structured data ────────────────────────────────
 from google.protobuf.struct_pb2 import Struct, Value
 
@@ -50,13 +51,13 @@ class GenericAgentExecutor(AgentExecutor):
         self.agent = agent
         self._task: asyncio.Task[None] | None = None
 
-    @logged(log_args=False, log_result=False)  # type: ignore[untyped-decorator] -- logged() returns Any
+    @logged(log_args=False, log_result=False)  # type: ignore[untyped-decorator]  # logged() returns Any
     async def execute(
         self,
         context: RequestContext,
         event_queue: EventQueue,
     ) -> None:
-        """Run the agent and emit A2A events over the event queue.
+        r"""Run the agent and emit A2A events over the event queue.
 
         Event mapping from ``agent.stream()`` yielded dicts::
 

@@ -194,17 +194,26 @@ def _parse_markdown_sections(text: str) -> list[Section]:
     return sections
 
 
-def _fmt_pct(val: float | None, mult100: bool = False) -> str:
+def _fmt_pct(val: float | None, mult100: bool = False, signed: bool = True) -> str:
+    """Format a percentage. Pass signed=False for level metrics (ROE, margins,
+    volatility, rates) where a leading '+' would wrongly imply a change/delta."""
     if val is None:
         return "N/A"
     v = val * 100 if mult100 else val
-    sign = "+" if v > 0 else ""
+    sign = "+" if signed and v > 0 else ""
     return f"{sign}{v:.1f}%"
 
 
 def _fmt_dollar(val: float | None) -> str:
     if val is None:
         return "N/A"
+    magnitude = abs(val)
+    if magnitude >= 1e12:
+        return f"${val / 1e12:.2f}T"
+    if magnitude >= 1e9:
+        return f"${val / 1e9:.2f}B"
+    if magnitude >= 1e6:
+        return f"${val / 1e6:.2f}M"
     return f"${val:,.2f}"
 
 
@@ -678,14 +687,14 @@ def _stage_scenarios(ctx: ExtractionCtx) -> None:
     if not d.scenarios.get("bull"):
         bull_m = re.search(r"bull\s+case[:\s]*\$\s*([\d,]+\.?\d*)", text, re.IGNORECASE)
         if bull_m:
-            d.valuation_table.append(("95th Percentile Target", f"${bull_m.group(1)}"))
+            d.valuation_table.append(("Bull Case Target", f"${bull_m.group(1)}"))
             d.scenarios["bull"] = f"${bull_m.group(1)}"
         else:
             p90_m = re.search(
                 r"(?:90th|95th)\s+percentile[:\s]*\$\s*([\d,]+\.?\d*)", text, re.IGNORECASE
             )
             if p90_m:
-                d.valuation_table.append(("95th Percentile Target", f"${p90_m.group(1)}"))
+                d.valuation_table.append(("90th Percentile Target", f"${p90_m.group(1)}"))
                 d.scenarios["bull"] = f"${p90_m.group(1)}"
             else:
                 mc_p90_pats = [
@@ -696,21 +705,21 @@ def _stage_scenarios(ctx: ExtractionCtx) -> None:
                 for pat in mc_p90_pats:
                     m = re.search(pat, text, re.IGNORECASE)
                     if m:
-                        d.valuation_table.append(("95th Percentile Target", f"${m.group(1)}"))
+                        d.valuation_table.append(("90th Percentile Target", f"${m.group(1)}"))
                         d.scenarios["bull"] = f"${m.group(1)}"
                         break
 
     if not d.scenarios.get("bear"):
         bear_m = re.search(r"bear\s+case[:\s]*\$\s*([\d,]+\.?\d*)", text, re.IGNORECASE)
         if bear_m:
-            d.valuation_table.append(("5th Percentile Target", f"${bear_m.group(1)}"))
+            d.valuation_table.append(("Bear Case Target", f"${bear_m.group(1)}"))
             d.scenarios["bear"] = f"${bear_m.group(1)}"
         else:
             p10_m = re.search(
                 r"(?:5th|10th)\s+percentile[:\s]*\$\s*([\d,]+\.?\d*)", text, re.IGNORECASE
             )
             if p10_m:
-                d.valuation_table.append(("5th Percentile Target", f"${p10_m.group(1)}"))
+                d.valuation_table.append(("10th Percentile Target", f"${p10_m.group(1)}"))
                 d.scenarios["bear"] = f"${p10_m.group(1)}"
             else:
                 mc_p10_pats = [
@@ -721,7 +730,7 @@ def _stage_scenarios(ctx: ExtractionCtx) -> None:
                 for pat in mc_p10_pats:
                     m = re.search(pat, text, re.IGNORECASE)
                     if m:
-                        d.valuation_table.append(("5th Percentile Target", f"${m.group(1)}"))
+                        d.valuation_table.append(("10th Percentile Target", f"${m.group(1)}"))
                         d.scenarios["bear"] = f"${m.group(1)}"
                         break
 
@@ -1269,12 +1278,12 @@ def _populate_from_agent_outputs(data: DeckData, brief_data: dict[str, Any], res
             data.kpi_chips.append(
                 {
                     "label": "Annual Volatility",
-                    "value": _fmt_pct(av, True),
+                    "value": _fmt_pct(av, True, signed=False),
                     "context": "Annualized",
                     "positive": av < 0.25,
                 }
             )
-            data.financials.append(("Volatility", _fmt_pct(av, True), "Annualized"))
+            data.financials.append(("Volatility", _fmt_pct(av, True, signed=False), "Annualized"))
         if metrics.get("beta"):
             data.kpi_chips.append(
                 {
@@ -1301,7 +1310,7 @@ def _populate_from_agent_outputs(data: DeckData, brief_data: dict[str, Any], res
             for key, label, is_pct, ctx in _CHIP_FUNDAMENTALS:
                 val = fundamentals.get(key)
                 if val is not None and len(data.kpi_chips) < 4:
-                    formatted = _fmt_pct(val, is_pct) if is_pct else f"{val:.2f}"
+                    formatted = _fmt_pct(val, is_pct, signed=False) if is_pct else f"{val:.2f}"
                     positive = val > 0 if is_pct else True
                     data.kpi_chips.append(
                         {"label": label, "value": formatted, "context": ctx, "positive": positive}
@@ -1315,13 +1324,13 @@ def _populate_from_agent_outputs(data: DeckData, brief_data: dict[str, Any], res
 
         mc = quant.get("monte_carlo") or {}
         if mc.get("p90") is not None:
-            data.valuation_table.append(("95th Percentile Target", _fmt_dollar(mc["p90"])))
+            data.valuation_table.append(("90th Percentile Target", _fmt_dollar(mc["p90"])))
             data.scenarios["bull"] = _fmt_dollar(mc["p90"])
         if mc.get("p50") is not None:
             data.valuation_table.append(("Median Target (p50)", _fmt_dollar(mc["p50"])))
             data.scenarios["base"] = _fmt_dollar(mc["p50"])
         if mc.get("p10") is not None:
-            data.valuation_table.append(("5th Percentile Target", _fmt_dollar(mc["p10"])))
+            data.valuation_table.append(("10th Percentile Target", _fmt_dollar(mc["p10"])))
             data.scenarios["bear"] = _fmt_dollar(mc["p10"])
 
         _FUND_MAP = {
@@ -1343,7 +1352,7 @@ def _populate_from_agent_outputs(data: DeckData, brief_data: dict[str, Any], res
                 data.financials.append(
                     (
                         label,
-                        _fmt_pct(val, is_pct) if is_pct else f"{val:.2f}",
+                        _fmt_pct(val, is_pct, signed=False) if is_pct else f"{val:.2f}",
                         _FIN_CONTEXT.get(label, ""),
                     )
                 )
@@ -1626,8 +1635,8 @@ def _populate_from_agent_outputs(data: DeckData, brief_data: dict[str, Any], res
                     "market_context": _confidence_reason("market_context", mc_c),
                     "analytics": _confidence_reason("analytics", a),
                     "agreement": "Proportion of agents aligned on direction (bullish/bearish/neutral)",
-                    "data_quality": f"Non-null fields across all agents ({dq:.0%} populated)",
-                    "meta": "Weighted: 40% avg agent confidence + 30% directional agreement + 30% data quality",
+                    "data_quality": "Blend: 35% field completeness + 35% signal consistency + 20% data freshness + 10% source verification",
+                    "meta": "Weighted: 35% avg agent confidence + 25% directional agreement + 25% signal consistency + 15% source verification",
                 },
             }
 
@@ -1716,12 +1725,12 @@ def _populate_from_validated_outputs(data: DeckData, outputs: Any) -> None:
             data.kpi_chips.append(
                 {
                     "label": "Annual Volatility",
-                    "value": _fmt_pct(av, True),
+                    "value": _fmt_pct(av, True, signed=False),
                     "context": "Annualized",
                     "positive": av < 0.25,
                 }
             )
-            data.financials.append(("Volatility", _fmt_pct(av, True), "Annualized"))
+            data.financials.append(("Volatility", _fmt_pct(av, True, signed=False), "Annualized"))
         if m.beta:
             data.kpi_chips.append(
                 {
@@ -1747,7 +1756,7 @@ def _populate_from_validated_outputs(data: DeckData, outputs: Any) -> None:
             for attr, label, is_pct, ctx in _CHIP_FUND:
                 val = getattr(f, attr, None)
                 if val is not None and len(data.kpi_chips) < 4:
-                    fmt = _fmt_pct(val, is_pct) if is_pct else f"{val:.2f}"
+                    fmt = _fmt_pct(val, is_pct, signed=False) if is_pct else f"{val:.2f}"
                     data.kpi_chips.append(
                         {"label": label, "value": fmt, "context": ctx, "positive": val > 0}
                     )
@@ -1762,13 +1771,13 @@ def _populate_from_validated_outputs(data: DeckData, outputs: Any) -> None:
         if quant.monte_carlo:
             mc = quant.monte_carlo
             if mc.p90 is not None:
-                data.valuation_table.append(("95th Percentile Target", _fmt_dollar(mc.p90)))
+                data.valuation_table.append(("90th Percentile Target", _fmt_dollar(mc.p90)))
                 data.scenarios["bull"] = _fmt_dollar(mc.p90)
             if mc.p50 is not None:
                 data.valuation_table.append(("Median Target (p50)", _fmt_dollar(mc.p50)))
                 data.scenarios["base"] = _fmt_dollar(mc.p50)
             if mc.p10 is not None:
-                data.valuation_table.append(("5th Percentile Target", _fmt_dollar(mc.p10)))
+                data.valuation_table.append(("10th Percentile Target", _fmt_dollar(mc.p10)))
                 data.scenarios["bear"] = _fmt_dollar(mc.p10)
 
         # Fundamentals → financials table
@@ -1792,7 +1801,7 @@ def _populate_from_validated_outputs(data: DeckData, outputs: Any) -> None:
                     data.financials.append(
                         (
                             label,
-                            _fmt_pct(val, is_pct) if is_pct else f"{val:.2f}",
+                            _fmt_pct(val, is_pct, signed=False) if is_pct else f"{val:.2f}",
                             _FIN_CONTEXT.get(label, ""),
                         )
                     )
@@ -1929,9 +1938,13 @@ def _populate_from_validated_outputs(data: DeckData, outputs: Any) -> None:
                 if dcf.fair_pb_multiple is not None:
                     data.dcf_breakdown.append(("Fair P/B Multiple", f"{dcf.fair_pb_multiple:.2f}x"))
             else:
-                data.dcf_breakdown.append(("WACC", _fmt_pct(dcf.wacc, True)))
-                data.dcf_breakdown.append(("Growth Rate", _fmt_pct(dcf.growth_rate, True)))
-                data.dcf_breakdown.append(("Terminal Growth", _fmt_pct(dcf.terminal_growth, True)))
+                data.dcf_breakdown.append(("WACC", _fmt_pct(dcf.wacc, True, signed=False)))
+                data.dcf_breakdown.append(
+                    ("Growth Rate", _fmt_pct(dcf.growth_rate, True, signed=False))
+                )
+                data.dcf_breakdown.append(
+                    ("Terminal Growth", _fmt_pct(dcf.terminal_growth, True, signed=False))
+                )
                 data.dcf_breakdown.append(("DCF Enterprise Value", _fmt_dollar(dcf.enterprise_value)))
                 if dcf.market_enterprise_value is not None:
                     data.dcf_breakdown.append(("Market Enterprise Value", _fmt_dollar(dcf.market_enterprise_value)))
@@ -1942,9 +1955,13 @@ def _populate_from_validated_outputs(data: DeckData, outputs: Any) -> None:
                     data.dcf_breakdown.append(("Equity Value", _fmt_dollar(dcf.equity_value)))
                 data.dcf_breakdown.append(("FCF Used", _fmt_dollar(dcf.fcf_used)))
                 if dcf.revenue_growth is not None:
-                    data.dcf_breakdown.append(("Revenue Growth", _fmt_pct(dcf.revenue_growth, True)))
+                    data.dcf_breakdown.append(
+                        ("Revenue Growth", _fmt_pct(dcf.revenue_growth, True, signed=False))
+                    )
                 if dcf.earnings_growth is not None:
-                    data.dcf_breakdown.append(("Earnings Growth", _fmt_pct(dcf.earnings_growth, True)))
+                    data.dcf_breakdown.append(
+                        ("Earnings Growth", _fmt_pct(dcf.earnings_growth, True, signed=False))
+                    )
                 if hasattr(dcf, "scenarios") and dcf.scenarios:
                     for label, key in [("Bear Case", "bear"), ("Base Case", "base"), ("Bull Case", "bull")]:
                         val = dcf.scenarios.get(key)
@@ -2014,7 +2031,7 @@ def _populate_from_validated_outputs(data: DeckData, outputs: Any) -> None:
                 data.signals_table.append(("Insider", "Net Value", _fmt_dollar(ins.net_value)))
             if ins.insider_pct_held is not None:
                 data.signals_table.append(
-                    ("Insider", "Insider Ownership", _fmt_pct(ins.insider_pct_held, True))
+                    ("Insider", "Insider Ownership", _fmt_pct(ins.insider_pct_held, True, signed=False))
                 )
 
         # Options signals
@@ -2066,7 +2083,7 @@ def _populate_from_validated_outputs(data: DeckData, outputs: Any) -> None:
                 data.signals_table.append(("Analyst", "Short Ratio", f"{pos.short_ratio:.1f}"))
             if pos.short_pct_float is not None:
                 data.signals_table.append(
-                    ("Analyst", "Short % Float", _fmt_pct(pos.short_pct_float, True))
+                    ("Analyst", "Short % Float", _fmt_pct(pos.short_pct_float, True, signed=False))
                 )
             if pos.short_squeeze_risk:
                 data.signals_table.append(("Analyst", "Short Squeeze Risk", "Yes"))
@@ -2446,8 +2463,8 @@ def _populate_from_validated_outputs(data: DeckData, outputs: Any) -> None:
                     "market_context": _confidence_reason("market_context", mc),
                     "analytics": _confidence_reason("analytics", a),
                     "agreement": "Proportion of agents aligned on direction (bullish/bearish/neutral)",
-                    "data_quality": f"Non-null fields across all agents ({dq:.0%} populated)",
-                    "meta": "Weighted: 40% avg agent confidence + 30% directional agreement + 30% data quality",
+                    "data_quality": "Blend: 35% field completeness + 35% signal consistency + 20% data freshness + 10% source verification",
+                    "meta": "Weighted: 35% avg agent confidence + 25% directional agreement + 25% signal consistency + 15% source verification",
                 },
             }
 
@@ -2608,7 +2625,7 @@ def _extract_deck_data(
             data.kpi_chips.append(
                 {
                     "label": "Revenue Growth",
-                    "value": _fmt_pct(ri["revenue_growth_yoy"], True),
+                    "value": _fmt_pct(ri["revenue_growth_yoy"], True, signed=False),
                     "context": "Year-over-year",
                     "positive": ri["revenue_growth_yoy"] > 0,
                 }
@@ -2635,7 +2652,7 @@ def _extract_deck_data(
             data.kpi_chips.append(
                 {
                     "label": "Annual Volatility",
-                    "value": _fmt_pct(qm["annual_volatility"], True),
+                    "value": _fmt_pct(qm["annual_volatility"], True, signed=False),
                     "context": "Annualized",
                     "positive": qm["annual_volatility"] < 0.25,
                 }
@@ -2644,7 +2661,7 @@ def _extract_deck_data(
         # Financials table
         if ri.get("revenue_growth_yoy") is not None:
             data.financials.append(
-                ("Revenue Growth", _fmt_pct(ri["revenue_growth_yoy"], True), "YoY")
+                ("Revenue Growth", _fmt_pct(ri["revenue_growth_yoy"], True, signed=False), "YoY")
             )
         if qm.get("beta") is not None:
             data.financials.append(("Beta", f"{qm['beta']:.2f}", "vs. S&P 500"))
@@ -2670,13 +2687,13 @@ def _extract_deck_data(
         if mc:
             if mc.get("p90") and "bull" not in data.scenarios:
                 data.scenarios["bull"] = _fmt_dollar(mc["p90"])
-                data.valuation_table.append(("95th Percentile Target", _fmt_dollar(mc["p90"])))
+                data.valuation_table.append(("90th Percentile Target", _fmt_dollar(mc["p90"])))
             if mc.get("p50") and "base" not in data.scenarios:
                 data.scenarios["base"] = _fmt_dollar(mc["p50"])
                 data.valuation_table.append(("Median Target (p50)", _fmt_dollar(mc["p50"])))
             if mc.get("p10"):
                 data.scenarios["bear"] = _fmt_dollar(mc["p10"])
-                data.valuation_table.append(("5th Percentile Target", _fmt_dollar(mc["p10"])))
+                data.valuation_table.append(("10th Percentile Target", _fmt_dollar(mc["p10"])))
 
         # Scorecard
         data.scorecard.append(
@@ -3205,7 +3222,7 @@ def _enrich_from_markdown(
         for pat in mc_p90_pats:
             m = re.search(pat, text, re.IGNORECASE)
             if m:
-                data.valuation_table.append(("95th Percentile Target", f"${m.group(1)}"))
+                data.valuation_table.append(("90th Percentile Target", f"${m.group(1)}"))
                 data.scenarios["bull"] = f"${m.group(1)}"
                 break
 
@@ -3231,7 +3248,7 @@ def _enrich_from_markdown(
         for pat in mc_p10_pats:
             m = re.search(pat, text, re.IGNORECASE)
             if m:
-                data.valuation_table.append(("5th Percentile Target", f"${m.group(1)}"))
+                data.valuation_table.append(("10th Percentile Target", f"${m.group(1)}"))
                 data.scenarios["bear"] = f"${m.group(1)}"
                 break
 

@@ -1,6 +1,33 @@
 # Changelog
 
-## Unreleased (ecb2f63–921d83c)
+## Unreleased (ecb2f63–d54c46d)
+
+### CI Lint & Type Fixes (d54c46d)
+
+- **`src/shared/agent_models.py`**: Shortened multi-line docstrings to stay under ruff 100-char line limit (E501) on `TechnicalIndicators`, `Fundamentals`, `ConfidenceBreakdown`, `RecommendationValidation`.
+- **`src/shared/ticker_utils.py`**: Shortened docstrings and fixed line-length violations.
+- **`src/shared/agent_server.py`**: Added blank line before Starlette import to satisfy ruff I001.
+- **`src/shared/generic_executor.py`**: Used raw docstring (`r"""`) for backslash escape sequence (W605). Fixed mypy `type: ignore` comment formatting (added double-space before `#`). Sorted imports.
+- **`src/shared/base_agent.py`**: Yields `{}` dict instead of bare `yield` in `BaseAgent.stream()` — satisfies declared async-generator yield type.
+
+### AG-UI Bridge: Nested send_message Args Unwrap (f5d2776)
+
+- **`src/orchestrator/agui_bridge.py`**: Added `if isinstance(args.get("args"), dict): args = args["args"]` in `_stream()` to unwrap the nested `args` dict. Commit 7859ccc changed `send_message` to take a single `SendMessageInput` Pydantic param, so ADK emits function calls with fields one level down (`{"args": {"agent_name": ..., "ticker": ...}}`). The bridge was reading `agent_name`/`ticker` at the top level, causing empty delegation display names, the "1 agents" bug, and the Reviewer tile never lighting.
+
+### Refactor: AG-UI Bridge Langfuse Span, Quant HOLD Confidence Fix, MCP Client Docs, Percentile Label Alignment (bfb5d0d)
+
+- **`src/orchestrator/agui_bridge.py`**: Wrapped `_stream()` in a `langfuse.start_as_current_observation` span with a W3C-compliant `trace_id` (32-char hex). Replaced the fragile eval `trace_id` extraction (OTel span → Langfuse client with broad exception catch) with the pre-generated `trace_id`. Added `span.update(output=...)` when synthesis completes.
+- **`src/orchestrator/agent_executor.py`**: Fixed `trace_id` from `str(uuid.uuid4())` (dashed UUID, e.g. `"f5d2776e-..."`) to `uuid.uuid4().hex` (32-char lowercase hex) — Langfuse requires W3C format or it raises `ValueError` in `start_as_current_observation`.
+- **`src/quant/nodes/calculations.py`**: `_weighted_vote()` now computes separate `conviction` for HOLD: `1.0 - abs(composite) / 0.15` instead of reusing `abs(composite)`. For BUY/SELL, conviction is `abs(composite)`. This means balanced signals produce a confident HOLD rather than an uncertain one (the HOLD band is `|composite| ≤ 0.15`, so near-zero composite = very confident hold).
+- **`src/quant/nodes/summary.py`**: Monte Carlo prompt labels changed from `5th_pct` → `10th_pct` and `95th_pct` → `90th_pct` to match the actual percentiles produced by the simulation.
+- **`src/shared/reports/html_renderer.py`**: Scenario card labels aligned: `"95th Pct (Bull)"` → `"90th Pct (Bull)"`, `"5th Pct (Bear)"` → `"10th Pct (Bear)"`.
+- **`src/shared/reports/extraction.py`**: Updated extraction percentile labels to match the new 10th/90th naming.
+- **`src/tests/`**: Updated golden fixture (`structured.json`) and unit test (`test_agent_outputs_extraction.py`) percentile labels accordingly.
+- **`src/market_context/executor.py`**: Added `enterpriseToEbitda` (EV/EBITDA) to peer comparison metrics. Fixed peer metric value format — removed stray `x` suffix from non-percentage values.
+- **`src/reviewer/agent.py`**: System prompt hardened with explicit "CRITICAL" guardrails: populate contradictions ONLY from the contradictions input (never from verifications/confidence/validation); never conflate agent names or confidence scores; every claim must be directionally consistent with the cited number; cite numbers exactly as they appear attributed to the correct agent.
+- **`src/shared/mcp_client.py`**: Full docstring and comment overhaul — added class docstrings (`MCPClient`, `MCPServerConfig`), method docstrings (`connect_all`, `_connect_server`, `_discover_tools`, `call_tool`, `call_tool_by_name`, `list_tools`, `list_resources`, `read_resource`, `disconnect_all`), and improved `get_shared_mcp()` and `parse_mcp_result()` docstrings.
+- **`src/shared/settings.py`**: Broke long line in `validate_runtime()` to stay under ruff line-length limit.
+- **`src/shared/generic_executor.py`**: Added blank line before protobuf import to satisfy ruff I001.
 
 ### Memory Page Hardening (ecb2f63)
 

@@ -25,7 +25,34 @@
 <a href="diagrams/index.html">Diagrams</a>
 </div>
 <h1 id="changelog">Changelog<a class="headerlink" href="#changelog" title="Link">&para;</a></h1>
-<h2 id="unreleased-ecb2f63921d83c">Unreleased (ecb2f63–921d83c)<a class="headerlink" href="#unreleased-ecb2f63921d83c" title="Link">&para;</a></h2>
+<h2 id="unreleased-ecb2f63d54c46d">Unreleased (ecb2f63–d54c46d)<a class="headerlink" href="#unreleased-ecb2f63d54c46d" title="Link">&para;</a></h2>
+<h3 id="ci-lint-type-fixes-d54c46d">CI Lint &amp; Type Fixes (d54c46d)<a class="headerlink" href="#ci-lint-type-fixes-d54c46d" title="Link">&para;</a></h3>
+<ul>
+<li><strong><code>src/shared/agent_models.py</code></strong>: Shortened multi-line docstrings to stay under ruff 100-char line limit (E501) on <code>TechnicalIndicators</code>, <code>Fundamentals</code>, <code>ConfidenceBreakdown</code>, <code>RecommendationValidation</code>.</li>
+<li><strong><code>src/shared/ticker_utils.py</code></strong>: Shortened docstrings and fixed line-length violations.</li>
+<li><strong><code>src/shared/agent_server.py</code></strong>: Added blank line before Starlette import to satisfy ruff I001.</li>
+<li><strong><code>src/shared/generic_executor.py</code></strong>: Used raw docstring (<code>r"""</code>) for backslash escape sequence (W605). Fixed mypy <code>type: ignore</code> comment formatting (added double-space before <code>#</code>). Sorted imports.</li>
+<li><strong><code>src/shared/base_agent.py</code></strong>: Yields <code>{}</code> dict instead of bare <code>yield</code> in <code>BaseAgent.stream()</code> — satisfies declared async-generator yield type.</li>
+</ul>
+<h3 id="ag-ui-bridge-nested-send_message-args-unwrap-f5d2776">AG-UI Bridge: Nested send_message Args Unwrap (f5d2776)<a class="headerlink" href="#ag-ui-bridge-nested-send_message-args-unwrap-f5d2776" title="Link">&para;</a></h3>
+<ul>
+<li><strong><code>src/orchestrator/agui_bridge.py</code></strong>: Added <code>if isinstance(args.get("args"), dict): args = args["args"]</code> in <code>_stream()</code> to unwrap the nested <code>args</code> dict. Commit 7859ccc changed <code>send_message</code> to take a single <code>SendMessageInput</code> Pydantic param, so ADK emits function calls with fields one level down (<code>{"args": {"agent_name": ..., "ticker": ...}}</code>). The bridge was reading <code>agent_name</code>/<code>ticker</code> at the top level, causing empty delegation display names, the &ldquo;1 agents&rdquo; bug, and the Reviewer tile never lighting.</li>
+</ul>
+<h3 id="refactor-ag-ui-bridge-langfuse-span-quant-hold-confidence-fix-mcp-client-docs-percentile-label-alignment-bfb5d0d">Refactor: AG-UI Bridge Langfuse Span, Quant HOLD Confidence Fix, MCP Client Docs, Percentile Label Alignment (bfb5d0d)<a class="headerlink" href="#refactor-ag-ui-bridge-langfuse-span-quant-hold-confidence-fix-mcp-client-docs-percentile-label-alignment-bfb5d0d" title="Link">&para;</a></h3>
+<ul>
+<li><strong><code>src/orchestrator/agui_bridge.py</code></strong>: Wrapped <code>_stream()</code> in a <code>langfuse.start_as_current_observation</code> span with a W3C-compliant <code>trace_id</code> (32-char hex). Replaced the fragile eval <code>trace_id</code> extraction (OTel span → Langfuse client with broad exception catch) with the pre-generated <code>trace_id</code>. Added <code>span.update(output=...)</code> when synthesis completes.</li>
+<li><strong><code>src/orchestrator/agent_executor.py</code></strong>: Fixed <code>trace_id</code> from <code>str(uuid.uuid4())</code> (dashed UUID) to <code>uuid.uuid4().hex</code> (32-char lowercase hex) — Langfuse requires W3C format or it raises <code>ValueError</code> in <code>start_as_current_observation</code>.</li>
+<li><strong><code>src/quant/nodes/calculations.py</code></strong>: <code>_weighted_vote()</code> now computes separate <code>conviction</code> for HOLD: <code>1.0 - abs(composite) / 0.15</code> instead of reusing <code>abs(composite)</code>. For BUY/SELL, conviction is <code>abs(composite)</code>. This means balanced signals produce a confident HOLD rather than an uncertain one (the HOLD band is <code>|composite| ≤ 0.15</code>, so near-zero composite = very confident hold).</li>
+<li><strong><code>src/quant/nodes/summary.py</code></strong>: Monte Carlo prompt labels changed from <code>5th_pct</code> → <code>10th_pct</code> and <code>95th_pct</code> → <code>90th_pct</code> to match the actual percentiles produced by the simulation.</li>
+<li><strong><code>src/shared/reports/html_renderer.py</code></strong>: Scenario card labels aligned: <code>"95th Pct (Bull)"</code> → <code>"90th Pct (Bull)"</code>, <code>"5th Pct (Bear)"</code> → <code>"10th Pct (Bear)"</code>.</li>
+<li><strong><code>src/shared/reports/extraction.py</code></strong>: Updated extraction percentile labels.</li>
+<li><strong><code>src/tests/</code></strong>: Updated golden fixture (<code>structured.json</code>) and unit test percentile labels accordingly.</li>
+<li><strong><code>src/market_context/executor.py</code></strong>: Added <code>enterpriseToEbitda</code> (EV/EBITDA) to peer comparison metrics. Fixed peer metric value format — removed stray <code>x</code> suffix from non-percentage values.</li>
+<li><strong><code>src/reviewer/agent.py</code></strong>: System prompt hardened with explicit &ldquo;CRITICAL&rdquo; guardrails: populate contradictions ONLY from the contradictions input; never conflate agent names or confidence scores; every claim must be directionally consistent with the cited number.</li>
+<li><strong><code>src/shared/mcp_client.py</code></strong>: Full docstring and comment overhaul — added class/method docstrings across <code>MCPClient</code>, <code>MCPServerConfig</code>, <code>get_shared_mcp()</code>, and <code>parse_mcp_result()</code>.</li>
+<li><strong><code>src/shared/settings.py</code></strong>: Broke long line in <code>validate_runtime()</code> to stay under ruff line-length limit.</li>
+<li><strong><code>src/shared/generic_executor.py</code></strong>: Added blank line before protobuf import to satisfy ruff I001.</li>
+</ul>
 <h3 id="memory-page-hardening-ecb2f63">Memory Page Hardening (ecb2f63)<a class="headerlink" href="#memory-page-hardening-ecb2f63" title="Link">&para;</a></h3>
 <ul>
 <li><strong><code>src/web/nextjs-app/app/memory/page.tsx</code></strong>: Removed <code>COMMON_TICKERS</code> constant and <code>fetchAll()</code> function that auto-fetched 8 hardcoded tickers on page load and on &ldquo;Show all&rdquo; button click. The Memory page now only fetches briefs for the specific ticker entered in the search box — eliminating spurious API calls. The &ldquo;Show all&rdquo; button is removed. Empty-state message updated to &ldquo;Search for a ticker to view stored briefs.&rdquo;</li>

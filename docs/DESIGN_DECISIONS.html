@@ -1985,7 +1985,13 @@ return await self.index.query(ticker, query_text)
     &quot;risk&quot;:         0.15,
 }
 </code></pre>
-<p>Confidence formula (§8.6.2): <code>|composite| × (1 − std(present_signals))</code></p>
+<p>Confidence formula (§8.6.2): conviction × max(0.0, 1.0 − std(present_signals)), where conviction depends on the signal type:</p>
+<ul>
+<li><strong>BUY/SELL</strong>: <code>conviction = |composite|</code> — polarity determines confidence.</li>
+<li><strong>HOLD</strong>: <code>conviction = 1.0 − |composite| / 0.15</code> — when |composite| ≤ 0.15 (the HOLD band), balanced signals near the center yield a confident HOLD rather than an uncertain one.</li>
+</ul>
+<h3 id="why-separate-hold-conviction">Why separate HOLD conviction?<a class="headerlink" href="#why-separate-hold-conviction" title="Link">&para;</a></h3>
+<p>Previously, HOLD confidence used <code>|composite|</code> (same as BUY/SELL), but the HOLD band is <code>|composite| ≤ 0.15</code>, so a HOLD signal would always produce near-zero confidence regardless of how balanced the underlying signals were. The fix (<code>calculations.py:450-453</code>) computes HOLD conviction from proximity to the band center: the closer <code>composite</code> is to 0.0, the more certain the HOLD.</p>
 <h3 id="why-raw-weighted-sum-instead-of-normalized">Why raw weighted sum instead of normalized?<a class="headerlink" href="#why-raw-weighted-sum-instead-of-normalized" title="Link">&para;</a></h3>
 <p>The plan&rsquo;s original <code>normalize_weights = {k: v / sum_present for k, v in _SIGNAL_WEIGHTS.items()}</code> renormalized weights to sum to 1.0 using only the signals present in a given ticker&rsquo;s response. This made confidence uninformative: a response with only 2 signals (e.g. technical + fundamental, sum=0.30) would normalize them to 0.50 each, producing the same composite as if all 8 were present. The fix (<code>nodes.py:228</code>) keeps the raw weighted sum — if only 2 of 8 signals are present, the composite is inherently lower (0.30 × signal values), which correctly reflects the reduced signal density.</p>
 <h3 id="key-properties_34">Key properties<a class="headerlink" href="#key-properties_34" title="Link">&para;</a></h3>
@@ -1994,7 +2000,7 @@ return await self.index.query(ticker, query_text)
 <li>✅ Same peer resolver (<code>src/shared/peer_sets.py</code>) as Market Context Agent</li>
 <li>✅ Normalized signals (-1 to +1) for uniform voting</li>
 <li>✅ 8-group coverage across fundamental, technical, behavioral, and macro dimensions</li>
-<li>✅ Confidence formula accounts for signal sparsity</li>
+<li>✅ Confidence formula accounts for signal sparsity and HOLD band centering</li>
 </ul>
 <h2 id="quant-behavioral-signal-refinements-options-flow-insider-data-monte-carlo-schema-validator">Quant Behavioral Signal Refinements: Options Flow, Insider Data, Monte Carlo &amp; Schema Validator<a class="headerlink" href="#quant-behavioral-signal-refinements-options-flow-insider-data-monte-carlo-schema-validator" title="Link">&para;</a></h2>
 <h3 id="options-flow-why-return-no_data-instead-of-misleading-ratios">Options Flow — Why return <code>no_data</code> instead of misleading ratios?<a class="headerlink" href="#options-flow-why-return-no_data-instead-of-misleading-ratios" title="Link">&para;</a></h3>
@@ -3192,23 +3198,23 @@ if label not in _snap:
 <tbody>
 <tr>
 <td><code>_populate_from_agent_outputs</code></td>
-<td>&ldquo;Bull Case (p90)&rdquo;</td>
+<td>&ldquo;Bull Case (p90)&rdquo; (→ now &ldquo;90th Percentile&rdquo;)</td>
 </tr>
 <tr>
 <td><code>_populate_from_validated_outputs</code></td>
-<td>&ldquo;95th Percentile Target&rdquo;</td>
+<td>&ldquo;90th Percentile Target&rdquo;</td>
 </tr>
 <tr>
 <td><code>_extract_deck_data</code></td>
-<td>&ldquo;Bull Case (MC p90)&rdquo;</td>
+<td>&ldquo;Bull Case (MC p90)&rdquo; (→ now &ldquo;90th Percentile&rdquo;)</td>
 </tr>
 <tr>
 <td><code>_enrich_from_markdown</code></td>
-<td>&ldquo;Bear Case (p10)&rdquo;</td>
+<td>&ldquo;Bear Case (p10)&rdquo; (→ now &ldquo;10th Percentile&rdquo;)</td>
 </tr>
 </tbody>
 </table>
-<p>This meant the same report could show both &ldquo;Bull Case (p90)&rdquo; and &ldquo;95th Percentile Target&rdquo; for the same value, confusing users. The HTML template also used different labels depending on which extraction path populated the data.</p>
+<p>This meant the same report could show both &ldquo;Bull Case (p90)&rdquo; and &ldquo;90th Percentile Target&rdquo; for the same value, confusing users. The HTML template also used different labels depending on which extraction path populated the data.</p>
 <h3 id="solution_49">Solution<a class="headerlink" href="#solution_49" title="Link">&para;</a></h3>
 <p>Map all legacy labels to a single standard set across all extraction paths:</p>
 <table>
@@ -3221,7 +3227,7 @@ if label not in _snap:
 <tbody>
 <tr>
 <td>&ldquo;Bull Case (p90)&rdquo; / &ldquo;Bull Case (MC p90)&rdquo;</td>
-<td>&ldquo;95th Percentile Target&rdquo;</td>
+<td>&ldquo;90th Percentile Target&rdquo;</td>
 </tr>
 <tr>
 <td>&ldquo;Base Case (p50)&rdquo; / &ldquo;Base Case (MC p50)&rdquo;</td>
@@ -3229,13 +3235,13 @@ if label not in _snap:
 </tr>
 <tr>
 <td>&ldquo;Bear Case (p10)&rdquo; / &ldquo;Bear Case (MC p10)&rdquo;</td>
-<td>&ldquo;5th Percentile Target&rdquo;</td>
+<td>&ldquo;10th Percentile Target&rdquo;</td>
 </tr>
 </tbody>
 </table>
-<p>The mapping is applied in every extraction path that parses agent outputs or falls back to regex. The same standard labels are used in the HTML template, so reports are consistent regardless of which extraction path fires.</p>
+<p>The mapping is applied in every extraction path that parses agent outputs or falls back to regex. The same standard labels are used in the HTML template, so reports are consistent regardless of which extraction path fires. Labels changed from 95th/5th to 90th/10th in bfb5d0d when the Monte Carlo simulation percentile outputs were corrected to match their actual computed values.</p>
 <h3 id="why-percentile-based-names-instead-of-bullbasebear">Why percentile-based names instead of &ldquo;Bull/Base/Bear&rdquo;?<a class="headerlink" href="#why-percentile-based-names-instead-of-bullbasebear" title="Link">&para;</a></h3>
-<p>&ldquo;Bull Case&rdquo; and &ldquo;Bear Case&rdquo; imply directional bias (bullish/bearish outlook), which is misleading — p90 and p10 are purely statistical percentiles from a Monte Carlo simulation. &ldquo;95th Percentile Target&rdquo; accurately describes what the number represents. This also matches how institutional research reports label scenario analysis (Goldman, Morgan Stanley use &ldquo;p50&rdquo; not &ldquo;Base Case&rdquo;).</p>
+<p>&ldquo;Bull Case&rdquo; and &ldquo;Bear Case&rdquo; imply directional bias (bullish/bearish outlook), which is misleading — p90 and p10 are purely statistical percentiles from a Monte Carlo simulation. &ldquo;90th Percentile Target&rdquo; accurately describes what the number represents. This also matches how institutional research reports label scenario analysis (Goldman, Morgan Stanley use &ldquo;p50&rdquo; not &ldquo;Base Case&rdquo;).</p>
 <h3 id="why-not-store-the-label-mapping-in-a-single-config-dict">Why not store the label mapping in a single config dict?<a class="headerlink" href="#why-not-store-the-label-mapping-in-a-single-config-dict" title="Link">&para;</a></h3>
 <p>With 5+ extraction functions each switching on different input shapes (agent output dicts, validated Pydantic models, markdown tables, raw JSON), a centralized mapping would require every function to know about the mapping. Inline string constants with <code>str.replace()</code> are visible at the call site and don&rsquo;t need indirection. If a new label needs to be added, it&rsquo;s grep-able across the file.</p>
 <h3 id="key-properties_84">Key properties<a class="headerlink" href="#key-properties_84" title="Link">&para;</a></h3>

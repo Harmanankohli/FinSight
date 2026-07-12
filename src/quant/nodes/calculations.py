@@ -423,8 +423,12 @@ def _weighted_vote(group_scores: dict[str, float]) -> tuple[str, float]:
     Missing/zero signals have their weights redistributed proportionally
     across present signals so that total weight always sums to 1.0.
 
-    Confidence (per plan §8.6.2): |composite| × (1 − std(present_signals))
-    — rewards consensus across signals, penalises conflict.
+    Confidence (per plan §8.6.2): conviction × (1 − std(present_signals))
+    — rewards consensus across signals, penalises conflict. For BUY/SELL,
+    conviction is |composite|. For HOLD, |composite| is near zero by
+    construction (the hold band is |composite| ≤ 0.15), so conviction is
+    instead measured by how close the composite sits to the centre of the
+    band — balanced signals mean a confident HOLD, not an uncertain one.
     """
     present = {k: v for k, v in group_scores.items() if v != 0.0}
     if not present:
@@ -440,11 +444,15 @@ def _weighted_vote(group_scores: dict[str, float]) -> tuple[str, float]:
         rec = "SELL"
     else:
         rec = "HOLD"
+    if rec == "HOLD":
+        conviction = 1.0 - abs(composite) / 0.15
+    else:
+        conviction = abs(composite)
     if len(present) > 1:
         vals = list(present.values())
         mean = sum(vals) / len(vals)
         std = (sum((v - mean) ** 2 for v in vals) / len(vals)) ** 0.5
-        confidence = abs(composite) * max(0.0, 1.0 - std)
+        confidence = conviction * max(0.0, 1.0 - std)
     else:
-        confidence = abs(composite)
+        confidence = conviction
     return rec, round(min(1.0, confidence), 3)

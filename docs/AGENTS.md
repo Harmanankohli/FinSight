@@ -302,7 +302,7 @@ On Starlette startup, `_prewarm()` runs an LLM ping via LangChain's `aiohttp` se
 
 **Monte Carlo Simulation**: `_run_monte_carlo()` at `nodes.py:42` runs 5,000 geometric Brownian motion paths over a 252-day horizon. Returns p10/p25/p50/p75/p90 percentiles, probability of profit, and MC VaR(95). Stored in `QuantAnalysisState.monte_carlo`.
 
-**8-Group Weighted Voting**: `_SIGNAL_WEIGHTS` at `nodes.py:108-124` sum to 1.0 across 8 groups. Confidence = `|composite| — (1 - std(present_signals))`. Raw weighted sum (not normalized) — signal density naturally reduces composite when fewer signals are present. Previous normalized-weight approach distorted confidence when few signals were present.
+**8-Group Weighted Voting**: `_SIGNAL_WEIGHTS` at `nodes.py:108-124` sum to 1.0 across 8 groups. Conviction is computed separately per signal type: for BUY/SELL, `conviction = |composite|`; for HOLD (where `|composite| ≤ 0.15`), `conviction = 1.0 - |composite| / 0.15` — balanced signals near the center of the HOLD band yield a confident HOLD rather than an uncertain one. Final confidence = `conviction × max(0.0, 1.0 - std(present_signals))`, rewarding consensus and penalising conflict. Raw weighted sum (not normalized) — signal density naturally reduces composite when fewer signals are present. Previous normalized-weight approach distorted confidence when few signals were present.
 
 **Peer Discovery**: The `peer_comparison_node` uses dynamic peer discovery via MCP `get_peers` (yfinance `Industry`/`Sector` classes), not `src/shared/peer_sets.py`. The static `peer_sets.py` is available as a fallback. The Market Context agent also uses dynamic `get_peers`.
 

@@ -2301,7 +2301,14 @@ _SIGNAL_WEIGHTS = {
 }
 ```
 
-Confidence formula (§8.6.2): `|composite| × (1 − std(present_signals))`
+Confidence formula (§8.6.2): conviction × max(0.0, 1.0 − std(present_signals)), where conviction depends on the signal type:
+
+- **BUY/SELL**: `conviction = |composite|` — polarity determines confidence.
+- **HOLD**: `conviction = 1.0 − |composite| / 0.15` — when |composite| ≤ 0.15 (the HOLD band), balanced signals near the center yield a confident HOLD rather than an uncertain one.
+
+### Why separate HOLD conviction?
+
+Previously, HOLD confidence used `|composite|` (same as BUY/SELL), but the HOLD band is `|composite| ≤ 0.15`, so a HOLD signal would always produce near-zero confidence regardless of how balanced the underlying signals were. The fix (`calculations.py:450-453`) computes HOLD conviction from proximity to the band center: the closer `composite` is to 0.0, the more certain the HOLD.
 
 ### Why raw weighted sum instead of normalized?
 
@@ -2313,7 +2320,7 @@ The plan's original `normalize_weights = {k: v / sum_present for k, v in _SIGNAL
 - ✅ Same peer resolver (`src/shared/peer_sets.py`) as Market Context Agent
 - ✅ Normalized signals (-1 to +1) for uniform voting
 - ✅ 8-group coverage across fundamental, technical, behavioral, and macro dimensions
-- ✅ Confidence formula accounts for signal sparsity
+- ✅ Confidence formula accounts for signal sparsity and HOLD band centering
 
 ## Quant Behavioral Signal Refinements: Options Flow, Insider Data, Monte Carlo & Schema Validator
 
@@ -3850,12 +3857,12 @@ Different code paths in the extraction pipeline used different labels for the sa
 
 | Code Path | Label Used |
 |---|---|
-| `_populate_from_agent_outputs` | "Bull Case (p90)" |
-| `_populate_from_validated_outputs` | "95th Percentile Target" |
-| `_extract_deck_data` | "Bull Case (MC p90)" |
-| `_enrich_from_markdown` | "Bear Case (p10)" |
+| `_populate_from_agent_outputs` | "Bull Case (p90)" (→ now "90th Percentile") |
+| `_populate_from_validated_outputs` | "90th Percentile Target" |
+| `_extract_deck_data` | "Bull Case (MC p90)" (→ now "90th Percentile") |
+| `_enrich_from_markdown` | "Bear Case (p10)" (→ now "10th Percentile") |
 
-This meant the same report could show both "Bull Case (p90)" and "95th Percentile Target" for the same value, confusing users. The HTML template also used different labels depending on which extraction path populated the data.
+This meant the same report could show both "Bull Case (p90)" and "90th Percentile Target" for the same value, confusing users. The HTML template also used different labels depending on which extraction path populated the data.
 
 ### Solution
 
@@ -3863,15 +3870,15 @@ Map all legacy labels to a single standard set across all extraction paths:
 
 | Old Label | Standard Label |
 |---|---|
-| "Bull Case (p90)" / "Bull Case (MC p90)" | "95th Percentile Target" |
+| "Bull Case (p90)" / "Bull Case (MC p90)" | "90th Percentile Target" |
 | "Base Case (p50)" / "Base Case (MC p50)" | "Median Target (p50)" |
-| "Bear Case (p10)" / "Bear Case (MC p10)" | "5th Percentile Target" |
+| "Bear Case (p10)" / "Bear Case (MC p10)" | "10th Percentile Target" |
 
-The mapping is applied in every extraction path that parses agent outputs or falls back to regex. The same standard labels are used in the HTML template, so reports are consistent regardless of which extraction path fires.
+The mapping is applied in every extraction path that parses agent outputs or falls back to regex. The same standard labels are used in the HTML template, so reports are consistent regardless of which extraction path fires. Labels changed from 95th/5th to 90th/10th in bfb5d0d when the Monte Carlo simulation percentile outputs were corrected to match their actual computed values.
 
 ### Why percentile-based names instead of "Bull/Base/Bear"?
 
-"Bull Case" and "Bear Case" imply directional bias (bullish/bearish outlook), which is misleading — p90 and p10 are purely statistical percentiles from a Monte Carlo simulation. "95th Percentile Target" accurately describes what the number represents. This also matches how institutional research reports label scenario analysis (Goldman, Morgan Stanley use "p50" not "Base Case").
+"Bull Case" and "Bear Case" imply directional bias (bullish/bearish outlook), which is misleading — p90 and p10 are purely statistical percentiles from a Monte Carlo simulation. "90th Percentile Target" accurately describes what the number represents. This also matches how institutional research reports label scenario analysis (Goldman, Morgan Stanley use "p50" not "Base Case").
 
 ### Why not store the label mapping in a single config dict?
 

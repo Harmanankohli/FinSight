@@ -9,7 +9,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Matches 1-5 uppercase letters optionally followed by a dot and 1-2 uppercase letters (e.g. BRK.A, BF.B)
+# Matches 1-5 uppercase letters, optionally a dot and 1-2 uppercase letters (e.g. BRK.A, BF.B)
 _STOCK_TICKER_RE = re.compile(r"^[A-Z]{1,5}(\.[A-Z]{1,2})?$")
 
 # Common financial/tech acronyms that look like tickers but aren't; prevents
@@ -91,12 +91,15 @@ _FINANCIAL_STOP_WORDS: frozenset[str] = frozenset(
 
 
 def is_valid_ticker_format(ticker: str) -> bool:
-    """Check if a string matches the standard stock ticker format (1-5 uppercase letters, optional dot-separated class suffix e.g. .A, .B)."""
+    """Check if a string matches the standard stock ticker format.
+
+    Format: 1-5 uppercase letters, optional dot-separated class suffix (e.g. .A, .B).
+    """
     return bool(_STOCK_TICKER_RE.match(ticker))
 
 
 def _is_financial_stop_word(word: str) -> bool:
-    """Return True if the word is a known financial/tech acronym that should not be treated as a ticker."""
+    """Return True if the word is a financial/tech acronym not to be treated as a ticker."""
     return word.upper() in _FINANCIAL_STOP_WORDS
 
 
@@ -216,7 +219,7 @@ _QUERY_NOISE_WORDS: frozenset[str] = frozenset(
 
 
 def clean_query_for_resolution(text: str) -> str:
-    """Remove noise words and financial stop words from a query to improve NLP ticker resolution accuracy."""
+    """Remove noise words and financial stop words to improve NLP ticker resolution accuracy."""
     words = text.split()
     cleaned = [
         w for w in words if w.lower() not in _QUERY_NOISE_WORDS and not _is_financial_stop_word(w)
